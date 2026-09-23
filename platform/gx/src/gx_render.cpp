@@ -38,6 +38,8 @@ static std::unordered_map<const void*, Xfb> s_xfbs;
 static const void* s_lastXfb = nullptr;
 
 void markXfMemDirty() { s_xfDirty = true; }
+void (*g_displayCopyHook)(const void* xfb) = nullptr;
+bool rendererReady() { return s_ready; }
 
 static GLuint compileProgram(const char* vs, const char* fs) {
     auto sh = [](GLenum t, const char* src) {
@@ -583,6 +585,7 @@ void executeCopy(uint32_t ctrl) {
     }
     if (clear) clearRect(x, y, w, h);
     glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
+    if (disp && g_displayCopyHook) g_displayCopyHook(dest);
 }
 
 }  // namespace gx

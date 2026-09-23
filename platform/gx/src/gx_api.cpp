@@ -14,6 +14,7 @@ using namespace gx;
 
 namespace gx {
 extern void (*drawSyncCallback)(uint16_t);
+bool rendererReady();
 }
 
 // ------------------------------------------------------------------ helpers
@@ -136,6 +137,8 @@ static GXTexRegion* defaultTexRegionCb(GXTexObj*, GXTexMapID) { return &s_texReg
 static GXTlutRegion* defaultTlutRegionCb(u32 idx) { return &s_tlutRegions[idx < 20 ? idx : 0]; }
 
 GXFifoObj* GXInit(void* base, u32 size) {
+    // bring up a window (or a headless context) unless the host already did
+    if (!rendererReady()) GXPC_InitAuto(1);
     resetState();
     FifoObjInt* f = reinterpret_cast<FifoObjInt*>(&s_fifo);
     f->base = static_cast<uint8_t*>(base);

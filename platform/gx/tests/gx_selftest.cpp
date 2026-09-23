@@ -2,7 +2,8 @@
 // EGL (surfaceless Mesa, falling back to the default display), drives the GX
 // and GD APIs the way game code does and checks EFB/XFB pixels.
 //
-//   gx_selftest [out.ppm]     writes the final EFB to out.ppm when given
+//   gx_selftest [--headless|--window] [out.ppm]
+//     --window shows the final frame for two seconds; out.ppm receives the EFB
 //
 // GXVert.h is replaced by sms_gx/gxvert_pc.h (included first, it claims the
 // header guard), which is the TARGET_PC configuration the port uses.
@@ -14,8 +15,6 @@
 
 #include "sms_gx/gx_pc.h"
 
-#include <EGL/egl.h>
-#include <EGL/eglext.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -51,29 +50,6 @@ static void expect(const char* what, bool ok) {
     printf("%s %s\n", ok ? "PASS" : "FAIL", what);
     ok ? s_pass++ : s_fail++;
 }
-
-// ------------------------------------------------------------------ EGL
-static bool initEGL() {
-    EGLDisplay dpy = EGL_NO_DISPLAY;
-    auto getPlatformDisplay = reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(eglGetProcAddress("eglGetPlatformDisplayEXT"));
-    if (getPlatformDisplay) dpy = getPlatformDisplay(EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, nullptr);
-    EGLint major, minor;
-    if (dpy == EGL_NO_DISPLAY || !eglInitialize(dpy, &major, &minor)) {
-        dpy = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-        if (dpy == EGL_NO_DISPLAY || !eglInitialize(dpy, &major, &minor)) return false;
-    }
-    if (!eglBindAPI(EGL_OPENGL_API)) return false;
-    const EGLint cfgAttr[] = {EGL_SURFACE_TYPE, EGL_PBUFFER_BIT, EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT, EGL_NONE};
-    EGLConfig cfg;
-    EGLint n = 0;
-    if (!eglChooseConfig(dpy, cfgAttr, &cfg, 1, &n) || n < 1) return false;
-    const EGLint ctxAttr[] = {EGL_CONTEXT_MAJOR_VERSION, 3, EGL_CONTEXT_MINOR_VERSION, 3,
-                              EGL_CONTEXT_OPENGL_PROFILE_MASK, EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT, EGL_NONE};
-    EGLContext ctx = eglCreateContext(dpy, cfg, EGL_NO_CONTEXT, ctxAttr);
-    if (ctx == EGL_NO_CONTEXT) return false;
-    return eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, ctx) == EGL_TRUE;
-}
-static void* getProc(const char* name) { return reinterpret_cast<void*>(eglGetProcAddress(name)); }
 
 // ------------------------------------------------------------------ helpers
 static void setOrtho() {
@@ -160,13 +136,13 @@ static void texSetup() {
 }
 
 int main(int argc, char** argv) {
-    if (!initEGL()) {
-        fprintf(stderr, "no EGL/OpenGL 3.3 context available; skipping\n");
+    // default to offscreen; `gx_selftest --window` shows the result instead
+    GXPC_SetHeadless(1);
+    GXPC_ParseArgs(&argc, argv);
+    GXPC_SetAutoPresent(0);
+    if (!GXPC_InitAuto(1)) {
+        fprintf(stderr, "no OpenGL 3.3 context available; skipping\n");
         return 77;
-    }
-    if (!GXPC_Init(getProc, 1)) {
-        fprintf(stderr, "GXPC_Init failed\n");
-        return 1;
     }
     // emulated main memory: command streams carry 32-bit offsets into it
     static u8 arena[8 << 20] __attribute__((aligned(32)));
@@ -415,6 +391,10 @@ int main(int argc, char** argv) {
             for (int i = 0; i < w * h; i++) fwrite(&px[size_t(i) * 4], 1, 3, f);
             fclose(f);
         }
+    }
+    if (!GXPC_IsHeadless()) {
+        GXPC_SetAutoPresent(1);
+        for (int i = 0; i < 120; i++) GXPC_Present(xfb);
     }
     printf("%d passed, %d failed\n", s_pass, s_fail);
     GXPC_Shutdown();
