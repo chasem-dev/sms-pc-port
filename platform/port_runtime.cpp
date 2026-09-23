@@ -15,6 +15,9 @@
 #include <execinfo.h>
 
 const char* port_disc_root = "/home/netflix/sms/orig/GMSE01/files";
+// SMS_SKIP_MOVIES=1 reports every THP movie as finished at once (patch 0016).
+extern "C" int port_skip_movies;
+int port_skip_movies = 0;
 
 extern "C" void port_log(const char* fmt, ...)
 {
@@ -132,6 +135,8 @@ static void pick_glx_vendor()
 extern "C" void port_init(int argc, char** argv)
 {
 	pick_glx_vendor();
+	if (const char* m = getenv("SMS_SKIP_MOVIES"))
+		port_skip_movies = *m && strcmp(m, "0") != 0;
 	for (int i = 1; i < argc; i++)
 		if (strcmp(argv[i], "--headless") == 0) {
 			setenv("SMS_HEADLESS", "1", 1);

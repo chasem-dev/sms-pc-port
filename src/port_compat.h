@@ -38,6 +38,22 @@
  * decomp scope uses stdio's EOF. */
 #undef EOF
 
+/* MSL's rand(): RAND_MAX is 32767 (the game computes 1.f / (RAND_MAX + 1)
+ * in int, which overflows with glibc's 2^31-1) and the sequence is the ANSI C
+ * reference LCG. platform/misc/msl_rand.c provides it. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+int sms_msl_rand(void);
+void sms_msl_srand(unsigned int seed);
+#ifdef __cplusplus
+}
+#endif
+#undef RAND_MAX
+#define RAND_MAX 32767
+#define rand sms_msl_rand
+#define srand sms_msl_srand
+
 /* MWCC-only syntax. */
 #define __declspec(x)
 /* Whole-function `asm` definitions keep their Gekko bodies inside

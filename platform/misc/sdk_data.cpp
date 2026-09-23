@@ -23,10 +23,10 @@ __attribute__((weak)) GXRenderModeObj GXNtsc480Int = {
 
 // DSP task list (the task manager in JSystem/osdsp_task.c drives it). There is
 // no DSP on the host; the audio layer will replace this.
-DSPTaskInfo* __DSP_curr_task;
-DSPTaskInfo* __DSP_first_task;
-DSPTaskInfo* __DSP_last_task;
-// Minimal fake DSP: the boot handshake mail is delivered and the task's init
+__attribute__((weak)) DSPTaskInfo* __DSP_curr_task;
+__attribute__((weak)) DSPTaskInfo* __DSP_first_task;
+__attribute__((weak)) DSPTaskInfo* __DSP_last_task;
+// Minimal fake DSP (weak: platform/audio's DSP HLE replaces it when linked): the boot handshake mail is delivered and the task's init
 // callback runs; mail to the DSP is accepted and dropped. No audio is mixed.
 static u32 s_mail_from_dsp[16];
 static int s_mail_head, s_mail_count;
@@ -37,8 +37,8 @@ static void dsp_post_mail(u32 m)
 		s_mail_count++;
 	}
 }
-extern "C" u32 DSPCheckMailFromDSP(void) { return s_mail_count ? 0x80000000u | (s_mail_from_dsp[s_mail_head] >> 16) : 0; }
-extern "C" u32 DSPReadMailFromDSP(void)
+extern "C" __attribute__((weak)) u32 DSPCheckMailFromDSP(void) { return s_mail_count ? 0x80000000u | (s_mail_from_dsp[s_mail_head] >> 16) : 0; }
+extern "C" __attribute__((weak)) u32 DSPReadMailFromDSP(void)
 {
 	if (!s_mail_count)
 		return 0;
@@ -47,7 +47,7 @@ extern "C" u32 DSPReadMailFromDSP(void)
 	s_mail_count--;
 	return m;
 }
-extern "C" u32 DSPCheckMailToDSP(void) { return 0; }
+extern "C" __attribute__((weak)) u32 DSPCheckMailToDSP(void) { return 0; }
 // Command framing used by JSystem/dsptask.c DSPSendCommands2: a word count,
 // DSPAssertInt, then the words. The real microcode acknowledges each command
 // by mailing back, which ends in DspFinishWork(first word >> 16); the fake
@@ -55,7 +55,7 @@ extern "C" u32 DSPCheckMailToDSP(void) { return 0; }
 void DspFinishWork(u16 id);
 static u32 s_last_mail, s_cmd_words, s_cmd_seen, s_cmd_first;
 static bool s_in_cmd;
-extern "C" void DSPSendMailToDSP(u32 mail)
+extern "C" __attribute__((weak)) void DSPSendMailToDSP(u32 mail)
 {
 	s_last_mail = mail;
 	if (!s_in_cmd)
@@ -67,14 +67,14 @@ extern "C" void DSPSendMailToDSP(u32 mail)
 		DspFinishWork((u16)(s_cmd_first >> 16));
 	}
 }
-extern "C" void DSPAssertInt(void)
+extern "C" __attribute__((weak)) void DSPAssertInt(void)
 {
 	s_cmd_words = s_last_mail ? s_last_mail : 2;
 	s_cmd_seen  = 0;
 	s_in_cmd    = true;
 }
-extern "C" void DSPInit(void) {}
-extern "C" void __DSP_boot_task(DSPTaskInfo* task)
+extern "C" __attribute__((weak)) void DSPInit(void) {}
+extern "C" __attribute__((weak)) void __DSP_boot_task(DSPTaskInfo* task)
 {
 	fprintf(stderr, "[dsp] boot task %p (fake DSP: handshake only, no mixing)\n", task);
 	__DSP_curr_task = task;
@@ -84,6 +84,6 @@ extern "C" void __DSP_boot_task(DSPTaskInfo* task)
 	if (task->init_cb)
 		task->init_cb(task);
 }
-extern "C" void __DSP_insert_task(DSPTaskInfo* task) {}
-extern "C" void __DSP_exec_task(DSPTaskInfo* curr, DSPTaskInfo* next) {}
-extern "C" void __DSP_remove_task(DSPTaskInfo* task) {}
+extern "C" __attribute__((weak)) void __DSP_insert_task(DSPTaskInfo* task) {}
+extern "C" __attribute__((weak)) void __DSP_exec_task(DSPTaskInfo* curr, DSPTaskInfo* next) {}
+extern "C" __attribute__((weak)) void __DSP_remove_task(DSPTaskInfo* task) {}

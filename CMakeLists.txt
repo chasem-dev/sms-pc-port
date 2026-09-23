@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(sms_port C CXX)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(SMS_DECOMP ${CMAKE_CURRENT_SOURCE_DIR}/decomp)
 set(SMS_PORT_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -66,6 +67,8 @@ if(SMS_ARCH STREQUAL "64")
 endif()
 
 set_source_files_properties(${SMS_DECOMP_CXX_SOURCES} PROPERTIES LANGUAGE CXX)
+set_source_files_properties(${SMS_DECOMP_CXX_SOURCES} ${SMS_DECOMP_C_SOURCES} PROPERTIES
+  OBJECT_DEPENDS ${SMS_PATCH_HEADER_STAMP})
 set_source_files_properties(${SMS_DECOMP_PCH_SOURCES} PROPERTIES
   COMPILE_OPTIONS "-include;${SMS_DECOMP}/include/SMS.pch")
 

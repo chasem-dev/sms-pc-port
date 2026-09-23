@@ -2,7 +2,7 @@
 # Run build/sms under gdb for N seconds (default 12), then dump every thread's
 # game-level stack (host sync frames filtered out).
 N=${1:-12}; shift 2>/dev/null
-cd "$(dirname "$0")/../${SMS_BUILD:-build-gx}"
+cd "$(dirname "$0")/../${SMS_BUILD:-build}"
 printf 'set debuginfod enabled off\nset pagination off\nhandle SIGALRM stop print\nhandle SIG34 nostop noprint\nrun\nthread apply all bt 14\n' > hang.gdb
 (SMS_QUIET_STUBS=1 timeout $((N + 60)) gdb -q -batch -x hang.gdb --args ./sms "$@" > hang.txt 2>&1 &)
 sleep "$N"; pkill -ALRM -x sms; sleep 4

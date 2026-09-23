@@ -42,6 +42,7 @@ struct ControllerButtonEvent {
 extern "C" {
 __attribute__((weak)) void sms_gx_set_event_callback(void (*cb)(const union SDL_Event* ev));
 __attribute__((weak)) void sms_gx_pump_events(void);
+__attribute__((weak)) int GXPC_IsHeadless(void);
 }
 
 namespace {
@@ -241,7 +242,6 @@ void init()
 		parse_bindings(text, path);
 		port_log("[pad] loaded key bindings from %s\n", path);
 	}
-	autopress_init();
 	if (sms_gx_set_event_callback)
 		sms_gx_set_event_callback(on_event);
 	else
@@ -292,7 +292,9 @@ void autopress_init()
 		a.until     = a.at + hold;
 		g_auto.push_back(a);
 	}
-	g_push = (PushEventFn)dlsym(RTLD_DEFAULT, "SDL_PushEvent");
+	// Headless runs have no SDL event loop: set the key state directly.
+	if (!(GXPC_IsHeadless && GXPC_IsHeadless()))
+		g_push = (PushEventFn)dlsym(RTLD_DEFAULT, "SDL_PushEvent");
 	port_log("[pad] SMS_AUTOPRESS: %u scripted presses via %s\n", (unsigned)g_auto.size(),
 	         g_push ? "SDL_PushEvent (keyboard path)" : "direct key state");
 }
@@ -350,6 +352,11 @@ extern "C" void PADControlAllMotors(const u32*) {}
 extern "C" u32 PADRead(PADStatus* status)
 {
 	init();
+	static bool autoInited;
+	if (!autoInited) {
+		autoInited = true;
+		autopress_init();
+	}
 	if (sms_gx_pump_events)
 		sms_gx_pump_events();
 	for (int i = 0; i < 4; i++) {

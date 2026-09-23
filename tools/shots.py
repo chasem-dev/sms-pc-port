@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
-"""Convert captured frames (shots/field*.ppm) to PNG and build side-by-side
+"""Convert captured frames (build/shots-raw/field*.ppm, from SMS_SHOTS with
+SMS_SHOT_DIR=build/shots-raw) to PNG in shots/ and build side-by-side
 comparisons with the retail captures of the same field.
 
-usage: tools/shots.py [shots_dir] [retail_dir]
-Writes <shots>/fieldNNNNN.png and <shots>/compare-fieldNNNNN.png (port left,
+usage: tools/shots.py [raw_dir] [out_dir] [retail_dir]
+Writes <out>/fieldNNNNN.png and <out>/compare-fieldNNNNN.png (port left,
 retail right) and prints a mean-absolute-difference score per field."""
 import os, re, sys
 from PIL import Image, ImageChops, ImageStat
 
-shots = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), '..', 'shots')
-retail = sys.argv[2] if len(sys.argv) > 2 else '/home/netflix/dolphin-oracle/shots'
-for f in sorted(os.listdir(shots)):
+here = os.path.dirname(os.path.abspath(__file__))
+raw = sys.argv[1] if len(sys.argv) > 1 else os.path.join(here, '..', 'build', 'shots-raw')
+shots = sys.argv[2] if len(sys.argv) > 2 else os.path.join(here, '..', 'shots')
+retail = sys.argv[3] if len(sys.argv) > 3 else '/home/netflix/dolphin-oracle/shots'
+os.makedirs(shots, exist_ok=True)
+for f in sorted(os.listdir(raw)):
     m = re.match(r'field(\d+)\.ppm$', f)
     if not m:
         continue
     n = int(m.group(1))
-    im = Image.open(os.path.join(shots, f)).convert('RGB')
+    im = Image.open(os.path.join(raw, f)).convert('RGB')
     png = os.path.join(shots, 'field%05d.png' % n)
     im.save(png)
-    os.remove(os.path.join(shots, f))
     ref = os.path.join(retail, 'retail-field%05d.png' % n)
     if not os.path.exists(ref):
         print('field %5d: %s (no retail capture)' % (n, png))
