@@ -97,4 +97,35 @@ using std::fmod;
 using std::pow;
 #endif
 
+/* Endianness: game data on disc is big-endian. Loaders that the port has
+ * patched call these (decomp-patches/). */
+static inline u16 port_bswap16(u16 v) { return (u16)((v >> 8) | (v << 8)); }
+static inline u32 port_bswap32(u32 v) { return __builtin_bswap32(v); }
+static inline u32 port_be32(const void* p)
+{
+	const u8* b = (const u8*)p;
+	return ((u32)b[0] << 24) | ((u32)b[1] << 16) | ((u32)b[2] << 8) | b[3];
+}
+static inline u16 port_be16(const void* p)
+{
+	const u8* b = (const u8*)p;
+	return (u16)((b[0] << 8) | b[1]);
+}
+#ifdef __cplusplus
+extern "C" {
+#endif
+/* Convert a whole RARC image (header, info block, nodes, file entries) to
+ * native byte order in place. Idempotent: checks the magic's byte order. */
+void port_rarc_to_native(void* arc);
+/* Convert just the 0x20-byte RARC header / the info block and what follows
+ * it, for loaders that read the pieces separately. */
+void port_rarc_header_to_native(void* hdr);
+void port_rarc_info_to_native(void* info);
+/* Convert a resource file (recognised by its magic) to native byte order in
+ * place; unknown formats are logged once and left alone. Idempotent. */
+void port_res_to_native(void* data, u32 size);
+#ifdef __cplusplus
+}
+#endif
+
 #endif /* SMS_PORT_COMPAT_H */

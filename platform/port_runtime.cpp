@@ -85,6 +85,20 @@ static void map_mem1()
 	port_log("[port] MEM1: %u MiB at %p\n", mb, p);
 }
 
+// Hardware register window. The only direct access left in game code is the
+// GX write-gather pipe (GXWGFifo at 0xCC008000, written by the inline GXVert.h
+// vertex/command writers). Until the GX layer redirects those writes, map the
+// window as a write sink so they are harmless.
+static void map_hw_sink()
+{
+	void* want = (void*)(uintptr_t)0xCC000000u;
+	void* p    = mmap(want, 0x10000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+	if (p != want)
+		port_log("[port] cannot map the hardware register sink at 0xCC000000 (%p)\n", p);
+	else
+		port_log("[port] GX WG pipe 0xCC008000 is a write sink\n");
+}
+
 extern "C" void port_init(int argc, char** argv)
 {
 	if (const char* d = getenv("SMS_DISC_ROOT"))
@@ -99,6 +113,8 @@ extern "C" void port_init(int argc, char** argv)
 	signal(SIGABRT, crash_handler);
 	atexit(port_stub_report);
 	map_mem1();
+	if (sizeof(void*) == 4)
+		map_hw_sink();
 	port_os_init();
 	port_dvd_init();
 	port_vi_init();

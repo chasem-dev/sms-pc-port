@@ -51,6 +51,10 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches.cmake)
 set(SMS_COMMON_DEFS GEKKO TARGET_PC VERSION_GMSE01 BUILD_VERSION=2 NDEBUG=1)
 set(SMS_GAME_FLAGS
   -w -fno-strict-aliasing -fwrapv -fno-omit-frame-pointer
+  # 39 decomp functions fall off the end of a non-void body (retail returned
+  # whatever was in r3). At -O0 this returns garbage like MWCC instead of
+  # trapping; at -O1+ it is real UB (see build/noreturn.txt).
+  -fno-unreachable-traps
   $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++03 -fno-gnu-keywords -fpermissive -fno-threadsafe-statics>
   $<$<COMPILE_LANGUAGE:C>:-std=gnu99 -fcommon>
   -include ${SMS_PORT_SRC}/port_compat.h)
@@ -68,6 +72,21 @@ target_include_directories(sms_game BEFORE PRIVATE
   ${SMS_PORT_SRC}/port_include ${SMS_PATCHED_INCLUDE_DIR} ${SMS_DECOMP}/include)
 target_compile_definitions(sms_game PRIVATE ${SMS_COMMON_DEFS})
 target_compile_options(sms_game PRIVATE ${SMS_GAME_FLAGS})
+
+# The game replaces the global operator new/delete with JKRHeap allocation,
+# which would also capture libstdc++ and the platform layer (and crash before
+# the first JKRHeap exists). Rename the game's definitions and every game
+# reference to them, so only game code allocates from JKR heaps.
+if(SMS_ARCH STREQUAL "32")
+  set(_sz j)
+else()
+  set(_sz m)
+endif()
+file(WRITE ${CMAKE_BINARY_DIR}/game_new_syms.txt
+  "_Znw${_sz} __sms_game_new\n_Zna${_sz} __sms_game_new_array\n_ZdlPv __sms_game_delete\n_ZdaPv __sms_game_delete_array\n")
+add_custom_command(TARGET sms_game POST_BUILD
+  COMMAND objcopy --redefine-syms=${CMAKE_BINARY_DIR}/game_new_syms.txt $<TARGET_FILE:sms_game>
+  COMMENT "Renaming the game's global operator new/delete")
 
 # --- Platform layer ---------------------------------------------------------
 file(GLOB_RECURSE SMS_PLATFORM_SOURCES CONFIGURE_DEPENDS
@@ -92,7 +111,8 @@ if(SMS_ARCH STREQUAL "64")
 endif()
 find_package(Threads REQUIRED)
 target_link_libraries(sms PRIVATE -Wl,--whole-archive sms_game -Wl,--no-whole-archive Threads::Threads m)
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/platform/gx/CMakeLists.txt)
+option(SMS_WITH_GX "Build and link platform/gx (the graphics layer)" OFF)
+if(SMS_WITH_GX AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/platform/gx/CMakeLists.txt)
   add_subdirectory(platform/gx)
 endif()
 if(TARGET sms_gx)

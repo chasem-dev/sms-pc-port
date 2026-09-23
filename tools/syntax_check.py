@@ -10,7 +10,7 @@ if len(sys.argv) > 1:
     cc = [e for e in cc if any(a in e['file'] for a in sys.argv[1:])]
 def run(e):
     cmd = e['command']
-    cmd = re.sub(r'\s-o\s+\S+', ' ', cmd) + ' -fsyntax-only -fmax-errors=50'
+    cmd = re.sub(r'\s-o\s+\S+', ' ', cmd) + ' -fsyntax-only -fmax-errors=50 ' + os.environ.get('EXTRA', '')
     r = subprocess.run('nice -n 19 ' + cmd, shell=True, cwd=e['directory'], capture_output=True, text=True)
     return e['file'], r.returncode, r.stderr
 fails = []

@@ -1,0 +1,35 @@
+Reason: endian: convert RARC metadata to host order when a memory archive is opened, and each resource (by format magic) when first fetched
+--- a/src/JSystem/JKernel/JKRMemArchive.cpp
++++ b/src/JSystem/JKernel/JKRMemArchive.cpp
+@@ -138,6 +138,7 @@
+ 	if (!mArcHeader) {
+ 		mMountMode = UNKNOWN_MOUNT_MODE;
+ 	} else {
++		port_rarc_to_native(mArcHeader);
+ 		JUT_ASSERT(mArcHeader->signature == 'RARC');
+ 		mArcInfoBlock
+ 		    = (SArcDataInfo*)((u8*)mArcHeader + mArcHeader->header_length);
+@@ -159,6 +160,7 @@
+ bool JKRMemArchive::open(void* buffer, u32 bufferSize, JKRMemBreakFlag flag)
+ {
+ 	mArcHeader = (SArcHeader*)buffer;
++	port_rarc_to_native(mArcHeader);
+ 	JUT_ASSERT(mArcHeader->signature == 'RARC');
+ 	mArcInfoBlock
+ 	    = (SArcDataInfo*)((u8*)mArcHeader + mArcHeader->header_length);
+@@ -186,6 +188,7 @@
+ 	JUT_ASSERT(isMounted());
+ 	if (!fileEntry->mData) {
+ 		fileEntry->mData = mArchiveData + fileEntry->mDataOffset;
++		port_res_to_native(fileEntry->mData, fileEntry->mSize);
+ 	}
+ 
+ 	if (resourceSize) {
+@@ -215,6 +218,7 @@
+ 		    bufferSize, compression);
+ 	}
+ 
++	port_res_to_native(buffer, srcLength);
+ 	if (resourceSize) {
+ 		*resourceSize = srcLength;
+ 	}
