@@ -191,7 +191,10 @@ void reschedule(bool yield)
 		next = pick(self, yield);
 		if (next)
 			break;
-		// Idle: every thread is blocked. Wait for an interrupt source.
+		// Idle: every thread is blocked. Wait for an interrupt source (or, with
+		// a deterministic clock, make the next retrace happen now).
+		if (port_vi_idle_advance())
+			continue;
 		struct timespec ts;
 		clock_gettime(CLOCK_REALTIME, &ts);
 		ts.tv_nsec += 1000000;
@@ -406,6 +409,8 @@ extern "C" void OSExitThread(OSThread* valArg)
 		next = pick(NULL, true);
 		if (next)
 			break;
+		if (port_vi_idle_advance())
+			continue;
 		struct timespec ts;
 		clock_gettime(CLOCK_REALTIME, &ts);
 		ts.tv_nsec = (ts.tv_nsec + 1000000) % 1000000000;

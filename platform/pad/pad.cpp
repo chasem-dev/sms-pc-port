@@ -349,8 +349,13 @@ extern "C" void PADSetSamplingRate(unsigned long) {}
 extern "C" void PADControlMotor(s32, u32) {}
 extern "C" void PADControlAllMotors(const u32*) {}
 
+extern "C" __attribute__((weak)) int port_trace_pad_read(struct PADStatus* status);
+
 extern "C" u32 PADRead(PADStatus* status)
 {
+	// A .dtm movie (platform/trace, SMS_MOVIE) replaces live input.
+	if (port_trace_pad_read && port_trace_pad_read(status))
+		return PAD_CHAN0_BIT;
 	init();
 	static bool autoInited;
 	if (!autoInited) {

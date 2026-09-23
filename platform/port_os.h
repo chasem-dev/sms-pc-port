@@ -12,6 +12,9 @@ void port_os_init(void);
 void port_dvd_init(void);
 void port_vi_init(void);
 void port_noaudio_init(void);
+int port_vi_idle_advance(void);   /* deterministic VI: retrace on idle */
+int port_vi_deterministic(void);
+s64 port_vi_virtual_ticks(void);
 int port_dvd_override(const char* path, const void* data, u32 size);
 extern int port_no_audio;
 /* Interrupt emulation: the running game thread owns the "CPU"; interrupt

@@ -39,6 +39,10 @@ extern "C" void port_os_init(void)
 	localtime_r(&now, &lt);
 	s64 local = (s64)now + lt.tm_gmtoff - 946684800LL;
 	s_time_base = local * (s64)(__OSBusClock / 4);
+	// Deterministic runs start at a fixed date (2002-07-19, the game's release).
+	if (const char* d = getenv("SMS_VI_DETERMINISTIC"))
+		if (*d && strcmp(d, "0") != 0)
+			s_time_base = (s64)(1027036800LL - 946684800LL) * (s64)(__OSBusClock / 4);
 	port_os_threads_init();
 }
 
@@ -70,6 +74,8 @@ extern "C" void OSInit(void) {}
 
 extern "C" s64 port_time_ticks(void)
 {
+	if (port_vi_deterministic())
+		return s_time_base + port_vi_virtual_ticks();
 	struct timespec t;
 	clock_gettime(CLOCK_MONOTONIC, &t);
 	s64 ns = (s64)(t.tv_sec - s_t0.tv_sec) * 1000000000LL + (t.tv_nsec - s_t0.tv_nsec);

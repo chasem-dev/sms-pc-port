@@ -9,6 +9,7 @@
 #include <atomic>
 #include <algorithm>
 #include <time.h>
+#include <stdint.h>
 #include <vector>
 #include <string>
 #include <sys/stat.h>
@@ -21,6 +22,7 @@
 extern "C" __attribute__((weak)) int GXPC_ReadXFB(const void* xfb, void* rgba, int* w, int* h);
 extern "C" __attribute__((weak)) u32 GXPC_FrameCount(void);
 extern "C" void port_pad_autopress_field(u32 field);
+extern "C" __attribute__((weak)) void port_trace_on_retrace(uint32_t retrace_count);
 
 namespace {
 std::atomic<u32> g_pending(0);
@@ -30,6 +32,17 @@ VIRetraceCallback g_pre, g_post;
 void* g_next_fb;
 void* g_cur_fb;
 bool g_black = true;
+
+// SMS_VI_DETERMINISTIC=1: no wall clock. A retrace happens only when every
+// game thread is blocked (the CPU would idle until the next retrace), or when
+// the game polls VIGetRetraceCount without making progress; OSGetTime /
+// OSGetTick advance with the retrace count (plus a small step per call inside
+// a field). Movie-driven runs are then repeatable (audio: use SMS_AUDIO=0,
+// its DMA pacing follows the host clock).
+bool g_det;
+u32 g_det_polls;
+u32 g_det_time_calls;
+const s64 kTicksPerField = 40500000LL * 1001 / 60000; // 675675
 std::vector<u32> g_shots;
 size_t g_next_shot;
 std::string g_shot_dir;
@@ -119,6 +132,9 @@ void retrace_irq()
 		n = 1; // the game fell behind; do not replay a burst of retraces
 	while (n--) {
 		g_retrace_count++;
+		g_det_time_calls = 0;
+		if (port_trace_on_retrace)
+			port_trace_on_retrace(g_retrace_count);
 		port_pad_autopress_field(game_field());
 		if (g_pre)
 			g_pre(g_retrace_count);
@@ -137,9 +153,37 @@ extern "C" void port_vi_init(void)
 	OSInitThreadQueue(&g_retrace_queue);
 	shots_init();
 	port_irq_add_source(retrace_irq);
+	const char* d = getenv("SMS_VI_DETERMINISTIC");
+	g_det         = d && *d && strcmp(d, "0") != 0;
+	if (g_det) {
+		port_log("[vi] deterministic retrace clock (SMS_VI_DETERMINISTIC)\n");
+		return;
+	}
 	pthread_t th;
 	pthread_create(&th, NULL, timer_thread, NULL);
 	pthread_detach(th);
+}
+
+// Called by the scheduler when no thread can run. In deterministic mode the
+// next retrace fires now; returns 1 if it did.
+extern "C" int port_vi_idle_advance(void)
+{
+	if (!g_det)
+		return 0;
+	g_pending.fetch_add(1);
+	g_det_polls = 0;
+	return 1;
+}
+
+extern "C" int port_vi_deterministic(void) { return g_det; }
+
+// Virtual OSTime in deterministic mode, relative to the boot time base.
+extern "C" s64 port_vi_virtual_ticks(void)
+{
+	s64 step = (s64)(g_det_time_calls++) * 64;
+	if (step >= kTicksPerField)
+		step = kTicksPerField - 1;
+	return (s64)g_retrace_count * kTicksPerField + step;
 }
 
 extern "C" void VIInit(void) {}
@@ -152,6 +196,12 @@ extern "C" void VISetBlack(BOOL black) { g_black = black != 0; }
 extern "C" void VISet3D(BOOL) {}
 extern "C" u32 VIGetRetraceCount(void)
 {
+	// Deterministic mode: a busy-wait on the counter must still see time pass.
+	if (g_det && ++g_det_polls >= 4096) {
+		g_det_polls = 0;
+		g_pending.fetch_add(1);
+		port_irq_kick();
+	}
 	port_irq_check();
 	return g_retrace_count;
 }
