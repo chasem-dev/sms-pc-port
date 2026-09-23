@@ -7,6 +7,8 @@
 #include "port_platform.h"
 #include <dolphin/dvd.h>
 #include <dolphin/os.h>
+#include <dolphin/vi.h>
+#include <functional>
 #include <string>
 #include <vector>
 #include <fcntl.h>
@@ -328,10 +330,73 @@ extern "C" BOOL DVDGetCurrentDir(char* path, u32 maxlen)
 	return TRUE;
 }
 
+// --- Drive timing model --------------------------------------------------------
+// Off by default (reads complete at once). SMS_DVD_BPS=<bytes/s> and
+// SMS_DVD_SEEK_MS=<ms per read> make each read occupy the drive for that long,
+// measured in VI fields, so the game's timeline (e.g. the boot-field count at
+// which the Nintendo logo appears) can be brought in line with retail in
+// SMS_VI_DETERMINISTIC runs. SMS_DVD_LOG=1 logs every read with its field.
+namespace {
+double g_dvd_bps, g_dvd_seek_fields;
+bool g_dvd_log, g_dvd_timing_init;
+double g_drive_free; // field at which the drive becomes idle
+struct PendingRead {
+	double due;
+	std::function<void()> done;
+};
+std::vector<PendingRead> g_pending_reads;
+
+void dvd_timing_init()
+{
+	if (g_dvd_timing_init)
+		return;
+	g_dvd_timing_init = true;
+	if (const char* e = getenv("SMS_DVD_BPS"))
+		g_dvd_bps = atof(e);
+	if (const char* e = getenv("SMS_DVD_SEEK_MS"))
+		g_dvd_seek_fields = atof(e) * 59.94 / 1000.0;
+	g_dvd_log = getenv("SMS_DVD_LOG") != NULL;
+}
+
+// Field at which a read of `len` bytes issued now completes.
+double schedule_read(u32 entry, s32 len, s32 offset)
+{
+	dvd_timing_init();
+	double now = (double)VIGetRetraceCount();
+	if (g_dvd_log)
+		port_log("[dvd] field %u: read %s +0x%x, 0x%x bytes\n", (unsigned)now,
+		         entry < g_fst.size() ? g_fst[entry].name.c_str() : "?", offset, len);
+	if (g_dvd_bps <= 0 && g_dvd_seek_fields <= 0)
+		return now;
+	double start = g_drive_free > now ? g_drive_free : now;
+	g_drive_free = start + g_dvd_seek_fields + (g_dvd_bps > 0 ? len / g_dvd_bps * 59.94 : 0);
+	return g_drive_free;
+}
+
+void poll_reads()
+{
+	if (g_pending_reads.empty())
+		return;
+	double now = (double)VIGetRetraceCount();
+	for (size_t i = 0; i < g_pending_reads.size();) {
+		if (g_pending_reads[i].due <= now) {
+			std::function<void()> fn = g_pending_reads[i].done;
+			g_pending_reads.erase(g_pending_reads.begin() + i);
+			fn();
+		} else {
+			i++;
+		}
+	}
+}
+} // namespace
+
 extern "C" s32 DVDReadPrio(DVDFileInfo* fi, void* addr, s32 length, s32 offset, s32 prio)
 {
 	fi->cb.state = DVD_STATE_BUSY;
+	double due   = schedule_read(fi->startAddr, length, offset);
 	s32 r        = do_read(fi, addr, length, offset);
+	while ((double)VIGetRetraceCount() < due)
+		VIWaitForRetrace(); // the thread sleeps while the drive works
 	fi->cb.state = r < 0 ? DVD_STATE_FATAL_ERROR : DVD_STATE_END;
 	port_irq_check();
 	return r;
@@ -341,12 +406,24 @@ extern "C" BOOL DVDReadAsyncPrio(DVDFileInfo* fi, void* addr, s32 length, s32 of
 {
 	fi->cb.state = DVD_STATE_BUSY;
 	fi->callback = cb;
+	double due   = schedule_read(fi->startAddr, length, offset);
 	s32 r        = do_read(fi, addr, length, offset);
-	port_irq_defer([fi, r, cb]() {
+	std::function<void()> done = [fi, r, cb]() {
 		fi->cb.state = r < 0 ? DVD_STATE_FATAL_ERROR : DVD_STATE_END;
 		if (cb)
 			cb(r, fi);
-	});
+	};
+	if (due > (double)VIGetRetraceCount()) {
+		static bool registered;
+		if (!registered) {
+			registered = true;
+			port_irq_add_source(poll_reads);
+		}
+		PendingRead pr = { due, done };
+		g_pending_reads.push_back(pr);
+		return TRUE;
+	}
+	port_irq_defer(done);
 	port_irq_kick();
 	return TRUE;
 }

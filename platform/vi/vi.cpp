@@ -23,6 +23,7 @@ extern "C" __attribute__((weak)) int GXPC_ReadXFB(const void* xfb, void* rgba, i
 extern "C" __attribute__((weak)) u32 GXPC_FrameCount(void);
 extern "C" void port_pad_autopress_field(u32 field);
 extern "C" __attribute__((weak)) void port_trace_on_retrace(uint32_t retrace_count);
+extern "C" __attribute__((weak)) void port_audio_on_retrace(void);
 
 namespace {
 std::atomic<u32> g_pending(0);
@@ -53,11 +54,12 @@ pthread_t g_gx_thread;
 // line up with retail even when host rendering runs slower than real time.
 // SMS_FIELD_CLOCK=retrace uses raw VI retraces (wall-clock) instead.
 bool g_clock_retrace;
+u32 g_field_base; // SMS_VI_FIELD_BASE
 u32 game_field()
 {
-	if (g_clock_retrace || !GXPC_FrameCount)
-		return g_retrace_count;
-	return GXPC_FrameCount() * 2;
+	if (g_clock_retrace || g_det || !GXPC_FrameCount)
+		return g_retrace_count; // the deterministic clock is game time already
+	return g_field_base + GXPC_FrameCount() * 2;
 }
 
 void shots_init()
@@ -107,7 +109,11 @@ void shots_poll(u32 field, void* xfb)
 
 void* timer_thread(void*)
 {
-	const long period_ns = 16683350; // 1001/60 Hz
+	// SMS_VI_HZ=<rate> overrides the 59.94 Hz retrace (benchmarking).
+	long period_ns = 16683350; // 1001/60 Hz
+	if (const char* hz = getenv("SMS_VI_HZ"))
+		if (atof(hz) > 0)
+			period_ns = (long)(1e9 / atof(hz));
 	struct timespec t;
 	clock_gettime(CLOCK_MONOTONIC, &t);
 	for (;;) {
@@ -135,6 +141,8 @@ void retrace_irq()
 		g_det_time_calls = 0;
 		if (port_trace_on_retrace)
 			port_trace_on_retrace(g_retrace_count);
+		if (port_audio_on_retrace)
+			port_audio_on_retrace();
 		port_pad_autopress_field(game_field());
 		if (g_pre)
 			g_pre(g_retrace_count);
@@ -153,6 +161,13 @@ extern "C" void port_vi_init(void)
 	OSInitThreadQueue(&g_retrace_queue);
 	shots_init();
 	port_irq_add_source(retrace_irq);
+	// SMS_VI_FIELD_BASE=<n>: the retrace counter starts at n instead of 0, to
+	// stand for the time retail spends before the game's first frame (IPL,
+	// apploader, DOL load) and to pick the field parity of game frames.
+	if (const char* b = getenv("SMS_VI_FIELD_BASE")) {
+		g_field_base    = (u32)strtoul(b, NULL, 0);
+		g_retrace_count = g_field_base;
+	}
 	const char* d = getenv("SMS_VI_DETERMINISTIC");
 	g_det         = d && *d && strcmp(d, "0") != 0;
 	if (g_det) {

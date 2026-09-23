@@ -5,9 +5,13 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(SMS_DECOMP ${CMAKE_CURRENT_SOURCE_DIR}/decomp)
 set(SMS_PORT_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
+# Default: optimised with debug info. -DNDEBUG is left to the decomp's own
+# NDEBUG=1 definition, so the stock RelWithDebInfo flags are replaced.
 if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE Debug CACHE STRING "" FORCE)
+  set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "" FORCE)
 endif()
+set(CMAKE_C_FLAGS_RELWITHDEBINFO "-O2 -g" CACHE STRING "" FORCE)
+set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g" CACHE STRING "" FORCE)
 
 # --- Target word size -------------------------------------------------------
 # The game assumes 32-bit pointers (pointer-in-u32 slots, in-place relocated
@@ -52,11 +56,14 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches.cmake)
 set(SMS_COMMON_DEFS GEKKO TARGET_PC VERSION_GMSE01 BUILD_VERSION=2 NDEBUG=1)
 set(SMS_GAME_FLAGS
   -w -fno-strict-aliasing -fwrapv -fno-omit-frame-pointer
+  # Retail MSL has no _FORTIFY_SOURCE checks (Ubuntu g++ enables them at -O1+;
+  # TMapObjTree::initMapObj passes snprintf a 0x100 size for a 64-byte buffer)
+  # nor stack protectors.
+  -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector
   # String literals are Shift-JIS on disc and in the MWCC build (sjiswrap).
   -finput-charset=UTF-8 -fexec-charset=CP932
-  # 39 decomp functions fall off the end of a non-void body (retail returned
-  # whatever was in r3). At -O0 this returns garbage like MWCC instead of
-  # trapping; at -O1+ it is real UB (see build/noreturn.txt).
+  # decomp-patches/ret-* give the fall-off-the-end functions their returns;
+  # keep any future ones from trapping.
   -fno-unreachable-traps
   $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++03 -fno-gnu-keywords -fpermissive -fno-threadsafe-statics>
   $<$<COMPILE_LANGUAGE:C>:-std=gnu99 -fcommon>
@@ -101,6 +108,8 @@ endif()
 add_library(sms_game STATIC ${SMS_DECOMP_CXX_SOURCES} ${SMS_DECOMP_C_SOURCES})
 # Host THP decoders (the decomp's SDK decoder, patched; platform/thp).
 include(${CMAKE_CURRENT_SOURCE_DIR}/platform/thp/thp.cmake)
+# The SDK's PADClamp (dead zone / octagon), built from the decomp as C.
+target_sources(sms_game PRIVATE ${SMS_DECOMP}/src/dolphin/pad/Padclamp.c)
 target_include_directories(sms_game BEFORE PRIVATE
   ${SMS_PORT_SRC}/port_include ${SMS_PATCHED_INCLUDE_DIR} ${SMS_DECOMP}/include)
 if(TARGET sms_gx AND SMS_GX_OVERRIDE_INCLUDE_DIR)
@@ -138,7 +147,7 @@ target_include_directories(sms PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/platform ${SMS_PORT_SRC}
   ${SMS_PORT_SRC}/port_include ${SMS_DECOMP}/include)
 target_compile_definitions(sms PRIVATE ${SMS_COMMON_DEFS} SMS_AUDIO_DSP_HLE=1)
-target_compile_options(sms PRIVATE -fno-strict-aliasing -Wno-unused-parameter
+target_compile_options(sms PRIVATE -fno-strict-aliasing -Wno-unused-parameter -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
   $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++11>)
 # dsptask.c points a DSP task at the fixed low-memory address 0x80004600.
 target_link_options(sms PRIVATE -Wl,--defsym=lbl_80004600=0x80004600)

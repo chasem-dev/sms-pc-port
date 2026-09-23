@@ -399,23 +399,24 @@ extern "C" u32 PADRead(PADStatus* status)
 	s.analogA      = (b & PAD_BUTTON_A) ? 255 : 0;
 	s.analogB      = (b & PAD_BUTTON_B) ? 255 : 0;
 	s.button       = b;
-	// Sticks: keys give full deflection (half with HALF_TILT); the controller
-	// is scaled to the GameCube's range.
-	int full = held(C_HALF) ? 36 : 72;
+	// Sticks are reported raw (a real stick reads about +-100 at the rim);
+	// the decomp's PADClamp (src/dolphin/pad/Padclamp.c) then applies the dead
+	// zone and the octagon exactly as on hardware. Keys give full deflection
+	// (half with HALF_TILT).
+	int full = held(C_HALF) ? 50 : 100;
 	int x = held(C_RIGHT) * full - held(C_LEFT) * full;
 	int y = held(C_UP) * full - held(C_DOWN) * full;
 	if (x && y) {
 		x = x * 7 / 10;
 		y = y * 7 / 10;
 	}
-	s.stickX    = (s8)(x ? x : axis8(g_axis[0], 72));
-	s.stickY    = (s8)(y ? y : axis8((s16)-g_axis[1], 72));
-	int cx      = held(C_CRIGHT) * 59 - held(C_CLEFT) * 59;
-	int cy      = held(C_CUP) * 59 - held(C_CDOWN) * 59;
-	s.substickX = (s8)(cx ? cx : axis8(g_axis[2], 59));
-	s.substickY = (s8)(cy ? cy : axis8((s16)-g_axis[3], 59));
+	s.stickX    = (s8)(x ? x : axis8(g_axis[0], 100));
+	s.stickY    = (s8)(y ? y : axis8((s16)-g_axis[1], 100));
+	int cx      = held(C_CRIGHT) * 100 - held(C_CLEFT) * 100;
+	int cy      = held(C_CUP) * 100 - held(C_CDOWN) * 100;
+	s.substickX = (s8)(cx ? cx : axis8(g_axis[2], 100));
+	s.substickY = (s8)(cy ? cy : axis8((s16)-g_axis[3], 100));
 	return PAD_CHAN0_BIT;
 }
 
-// Sticks are produced inside the GameCube's range already.
-extern "C" void PADClamp(PADStatus*) {}
+// PADClamp comes from the decomp (src/dolphin/pad/Padclamp.c, see CMakeLists.txt).

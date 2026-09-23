@@ -227,6 +227,12 @@ void init_output()
 	e              = getenv("SMS_AUDIO_OUT");
 	bool headless  = getenv("SMS_HEADLESS") && strcmp(getenv("SMS_HEADLESS"), "0") != 0;
 	bool wantSdl   = e ? strcmp(e, "sdl") == 0 : !headless;
+	// SMS_VI_DETERMINISTIC: no device and no host clock; AI blocks are paced by
+	// VI retraces instead (port_audio_on_retrace), so runs stay repeatable.
+	if (port_vi_deterministic()) {
+		port_log("[audio] deterministic VI clock: AI DMA paced by retraces, no output device\n");
+		return;
+	}
 	g.sdl          = wantSdl && open_sdl();
 	if (!g.sdl) {
 		port_log("[audio] no audio device: pacing AI DMA from the host clock\n");
@@ -274,6 +280,8 @@ void dma_block()
 		g.cb();
 }
 
+u64 g_det_acc; // deterministic pacing: samples owed, in 1/60000 units
+
 // Interrupt source, polled on the emulated CPU when kicked.
 void ai_poll()
 {
@@ -304,6 +312,23 @@ void ai_poll()
 }
 
 } // namespace
+
+// Called by platform/vi once per retrace. In deterministic mode each retrace
+// owes 32000 * 1001 / 60000 samples; whole DMA blocks become due.
+extern "C" void port_audio_on_retrace(void)
+{
+	if (!port_vi_deterministic() || !g.enabled || !g.running)
+		return;
+	g_det_acc += (u64)kRate * 1001;
+	u32 len      = g.latchedLen ? g.latchedLen : 0x460 * 2;
+	u64 perBlock = (u64)(len / 4) * 60000;
+	while (g_det_acc >= perBlock) {
+		g_det_acc -= perBlock;
+		g.due.fetch_add(1);
+	}
+	if (g.due.load() > 0)
+		port_irq_kick();
+}
 
 extern "C" void AIInit(u8*)
 {
