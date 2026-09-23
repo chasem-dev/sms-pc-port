@@ -67,7 +67,28 @@ set_source_files_properties(${SMS_DECOMP_CXX_SOURCES} PROPERTIES LANGUAGE CXX)
 set_source_files_properties(${SMS_DECOMP_PCH_SOURCES} PROPERTIES
   COMPILE_OPTIONS "-include;${SMS_DECOMP}/include/SMS.pch")
 
-option(SMS_WITH_GX "Build and link platform/gx (the graphics layer)" OFF)
+option(SMS_WITH_GX "Build and link platform/gx (the graphics layer)" ON)
+if(SMS_WITH_GX AND SMS_ARCH STREQUAL "32")
+  # Only the i386 runtime libraries are installed (no :i386 -dev packages):
+  # compile against the amd64 SDL2/EGL headers and link the .so files directly.
+  set(_i386 /usr/lib/i386-linux-gnu)
+  if(EXISTS ${_i386}/libSDL2-2.0.so.0 AND NOT TARGET SDL2::SDL2)
+    set(_shim ${CMAKE_BINARY_DIR}/sdl2-m32)
+    file(WRITE ${_shim}/SDL2/_real_SDL_config.h
+      "/* 32-bit build against the amd64 SDL2 headers. */\n"
+      "#include \"/usr/include/x86_64-linux-gnu/SDL2/_real_SDL_config.h\"\n"
+      "#undef SIZEOF_VOIDP\n#define SIZEOF_VOIDP 4\n")
+    add_library(SDL2::SDL2 SHARED IMPORTED GLOBAL)
+    set_target_properties(SDL2::SDL2 PROPERTIES
+      IMPORTED_LOCATION ${_i386}/libSDL2-2.0.so.0
+      INTERFACE_INCLUDE_DIRECTORIES "${_shim};/usr/include/SDL2")
+    set(CMAKE_DISABLE_FIND_PACKAGE_SDL2 ON)
+  endif()
+  if(EXISTS ${_i386}/libEGL.so.1)
+    set(SMS_GX_EGL_LIB ${_i386}/libEGL.so.1 CACHE FILEPATH "" FORCE)
+    set(SMS_GX_EGL_INCLUDE /usr/include CACHE PATH "" FORCE)
+  endif()
+endif()
 if(SMS_WITH_GX AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/platform/gx/CMakeLists.txt)
   add_subdirectory(platform/gx)
 endif()
