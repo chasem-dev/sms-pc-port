@@ -24,6 +24,11 @@ if os.path.exists(extra):
         if l and l not in names:
             names.append(l)
 
+# Headers not to pull into the stub TU: __start.h redeclares OSInit/
+# OSResetSystem with C++ linkage, DebuggerDriver.h (OdemuExi2 only) clashes
+# with DBInterface.h.
+SKIP_HEADERS = {'dolphin/__start.h', 'dolphin/odemuexi/DebuggerDriver.h'}
+macros = set()
 text = {}
 for d, _, fs in os.walk(os.path.join(inc, 'dolphin')):
     for f in fs:
@@ -31,6 +36,9 @@ for d, _, fs in os.walk(os.path.join(inc, 'dolphin')):
             continue
         p = os.path.join(d, f)
         s = open(p, encoding='utf-8', errors='replace').read()
+        macros.update(re.findall(r'^\s*#\s*define\s+(\w+)\(', s, flags=re.M))
+        if os.path.relpath(p, inc) in SKIP_HEADERS:
+            continue
         s = re.sub(r'/\*.*?\*/', ' ', s, flags=re.S)
         s = re.sub(r'//[^\n]*', '', s)
         s = re.sub(r'^\s*#(?:[^\n]*\\\n)*[^\n]*', ';', s, flags=re.M)
@@ -50,6 +58,9 @@ DEFAULTS = {
 
 out, missing, inline = [], [], []
 for n in names:
+    if n in macros:
+        inline.append(n)
+        continue
     pat = re.compile(r'(?:^|[;{}])\s*([A-Za-z_][\w\s\*]*?[\s\*])' + re.escape(n) +
                      r'\s*\(((?:[^()]|\((?:[^()]|\([^()]*\))*\))*)\)\s*([;{])')
     hit = None

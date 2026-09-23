@@ -65,6 +65,7 @@ struct EfbCopy;  // defined in gx_render.cpp
 
 struct State {
     uint32_t bp[256];
+    uint32_t kreg[8];         // konst colours share BP 0xE0-0xE7 with the TEV registers (bit 23 set)
     uint32_t bpMask;          // one-shot mask set by BP 0xFE
     uint32_t cpMatA, cpMatB, cpVcdLo, cpVcdHi;
     uint32_t cpVatA[8], cpVatB[8], cpVatC[8];

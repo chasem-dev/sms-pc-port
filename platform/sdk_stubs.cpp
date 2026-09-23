@@ -2,7 +2,6 @@
 // implementations elsewhere in platform/ (these stubs are weak).
 #include "port_compat.h"
 #include "port_stub.h"
-#include <dolphin/__start.h>
 #include <dolphin/ai.h>
 #include <dolphin/ar.h>
 #include <dolphin/base/PPCArch.h>
@@ -42,7 +41,6 @@
 #include <dolphin/gx/GXTexture.h>
 #include <dolphin/gx/GXTransform.h>
 #include <dolphin/mtx.h>
-#include <dolphin/odemuexi/DebuggerDriver.h>
 #include <dolphin/os.h>
 #include <dolphin/os/OSAlloc.h>
 #include <dolphin/os/OSCache.h>
@@ -52,6 +50,7 @@
 #include <dolphin/os/OSMemory.h>
 #include <dolphin/os/OSMessage.h>
 #include <dolphin/os/OSMutex.h>
+#include <dolphin/os/OSReset.h>
 #include <dolphin/os/OSResetSW.h>
 #include <dolphin/os/OSRtc.h>
 #include <dolphin/os/OSStopwatch.h>
@@ -173,7 +172,6 @@ SDK_WEAK void GXPixModeSync(void) { SDK_STUB(GXPixModeSync); }
 SDK_WEAK void GXSetIndTexMtx(GXIndTexMtxID mtx_id, f32 offset[2][3], s8 scale_exp) { SDK_STUB(GXSetIndTexMtx); }
 SDK_WEAK void GXSetTevColorS10(GXTevRegID id, GXColorS10 color) { SDK_STUB(GXSetTevColorS10); }
 SDK_WEAK void OSCancelThread(OSThread*) { SDK_STUB(OSCancelThread); }
-SDK_WEAK void* OSPhysicalToCached(u32 paddr) { SDK_STUB(OSPhysicalToCached); return stub_default<void* >(); }
 SDK_WEAK s32 OSSuspendThread(OSThread* thread) { SDK_STUB(OSSuspendThread); return stub_default<s32 >(); }
 SDK_WEAK u32 VIGetNextField(void) { SDK_STUB(VIGetNextField); return (u32)(1); }
 SDK_WEAK void VISetBlack(BOOL black) { SDK_STUB(VISetBlack); }
@@ -238,7 +236,6 @@ SDK_WEAK void GXSetCopyClamp(GXFBClamp clamp) { SDK_STUB(GXSetCopyClamp); }
 SDK_WEAK void GXSetCopyClear(GXColor clear_clr, u32 clear_z) { SDK_STUB(GXSetCopyClear); }
 SDK_WEAK void GXSetDispCopyGamma(GXGamma gamma) { SDK_STUB(GXSetDispCopyGamma); }
 SDK_WEAK void GXSetFog(GXFogType type, f32 startz, f32 endz, f32 nearz, f32 farz, GXColor color) { SDK_STUB(GXSetFog); }
-SDK_WEAK void* OSCachedToUncached(void* caddr) { SDK_STUB(OSCachedToUncached); return stub_default<void* >(); }
 SDK_WEAK long OSCheckHeap(int heap) { SDK_STUB(OSCheckHeap); return stub_default<long >(); }
 SDK_WEAK int OSCreateHeap(void* start, void* end) { SDK_STUB(OSCreateHeap); return stub_default<int >(); }
 SDK_WEAK void OSDestroyHeap(int heap) { SDK_STUB(OSDestroyHeap); }
@@ -277,13 +274,7 @@ SDK_WEAK s32 CARDUnmount(s32 chan) { SDK_STUB(CARDUnmount); return stub_default<
 SDK_WEAK long CARDWrite(struct CARDFileInfo* fileInfo, void* buf, long length, long offset) { SDK_STUB(CARDWrite); return stub_default<long >(); }
 SDK_WEAK void C_MTXLightFrustum(Mtx m, f32 t, f32 b, f32 l, f32 r, f32 n, f32 scaleS, f32 scaleT, f32 transS, f32 transT) { SDK_STUB(C_MTXLightFrustum); }
 SDK_WEAK void C_MTXLightOrtho(Mtx m, f32 t, f32 b, f32 l, f32 r, f32 scaleS, f32 scaleT, f32 transS, f32 transT) { SDK_STUB(C_MTXLightOrtho); }
-SDK_WEAK void DBClose(void) { SDK_STUB(DBClose); }
 SDK_WEAK void DBInitComm(int* inputFlagPtr, int* mtrCallback) { SDK_STUB(DBInitComm); }
-SDK_WEAK void DBInitInterrupts(void) { SDK_STUB(DBInitInterrupts); }
-SDK_WEAK void DBOpen(void) { SDK_STUB(DBOpen); }
-SDK_WEAK u32 DBQueryData(void) { SDK_STUB(DBQueryData); return stub_default<u32 >(); }
-SDK_WEAK int DBRead(void* data, u32 size) { SDK_STUB(DBRead); return stub_default<int >(); }
-SDK_WEAK int DBWrite(const void* data, u32 size) { SDK_STUB(DBWrite); return stub_default<int >(); }
 SDK_WEAK void DCFlushRangeNoSync(void* addr, u32 nBytes) { SDK_STUB(DCFlushRangeNoSync); }
 SDK_WEAK void DCZeroRange(void* addr, u32 nBytes) { SDK_STUB(DCZeroRange); }
 SDK_WEAK DSPTaskInfo* DSPAddTask(DSPTaskInfo* task) { SDK_STUB(DSPAddTask); return stub_default<DSPTaskInfo* >(); }
@@ -364,7 +355,7 @@ SDK_WEAK void OSInitStopwatch(struct OSStopwatch* sw, char* name) { SDK_STUB(OSI
 SDK_WEAK void OSInitThreadQueue(OSThreadQueue* queue) { SDK_STUB(OSInitThreadQueue); }
 SDK_WEAK unsigned long OSReferentSize(void* ptr) { SDK_STUB(OSReferentSize); return stub_default<unsigned long >(); }
 SDK_WEAK void OSResetStopwatch(struct OSStopwatch* sw) { SDK_STUB(OSResetStopwatch); }
-SDK_WEAK void OSResetSystem(BOOL reset, u32 resetCode, BOOL forceMenu) { SDK_STUB(OSResetSystem); }
+SDK_WEAK void OSResetSystem(int reset, u32 resetCode, BOOL forceMenu) { SDK_STUB(OSResetSystem); }
 SDK_WEAK void OSSetArenaHi(void*) { SDK_STUB(OSSetArenaHi); }
 SDK_WEAK void OSSetArenaLo(void*) { SDK_STUB(OSSetArenaLo); }
 SDK_WEAK void OSSleepThread(OSThreadQueue* queue) { SDK_STUB(OSSleepThread); }

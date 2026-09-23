@@ -73,6 +73,10 @@ target_compile_options(sms_game PRIVATE ${SMS_GAME_FLAGS})
 file(GLOB_RECURSE SMS_PLATFORM_SOURCES CONFIGURE_DEPENDS
   ${CMAKE_CURRENT_SOURCE_DIR}/platform/*.c
   ${CMAKE_CURRENT_SOURCE_DIR}/platform/*.cpp)
+# platform/gx is owned by the graphics layer and builds itself: if it provides
+# platform/gx/CMakeLists.txt defining a library target `sms_gx`, it is linked
+# in and its strong GX* definitions replace the weak stubs.
+list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/gx/")
 add_executable(sms ${SMS_PORT_SRC}/port_main.cpp ${SMS_PLATFORM_SOURCES})
 target_include_directories(sms PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/platform ${SMS_PORT_SRC}
@@ -80,9 +84,17 @@ target_include_directories(sms PRIVATE
 target_compile_definitions(sms PRIVATE ${SMS_COMMON_DEFS})
 target_compile_options(sms PRIVATE -fno-strict-aliasing -Wno-unused-parameter
   $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++11>)
+# dsptask.c points a DSP task at the fixed low-memory address 0x80004600.
+target_link_options(sms PRIVATE -Wl,--defsym=lbl_80004600=0x80004600)
 if(SMS_ARCH STREQUAL "64")
   target_compile_options(sms PRIVATE -fno-pie)
   target_link_options(sms PRIVATE -no-pie)
 endif()
 find_package(Threads REQUIRED)
 target_link_libraries(sms PRIVATE -Wl,--whole-archive sms_game -Wl,--no-whole-archive Threads::Threads m)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/platform/gx/CMakeLists.txt)
+  add_subdirectory(platform/gx)
+endif()
+if(TARGET sms_gx)
+  target_link_libraries(sms PRIVATE -Wl,--whole-archive sms_gx -Wl,--no-whole-archive)
+endif()
