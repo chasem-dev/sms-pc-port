@@ -24,10 +24,12 @@ void GXPC_Shutdown(void);
 
 /* 32-bit "physical" addresses appear inside command streams: display lists
  * built by GD/J3D carry texture, TLUT, vertex-array and EFB-copy addresses.
- * sms_gx maps them as phys = ptr - base.  The OS layer must implement
- * OSCachedToPhysical/OSPhysicalToCached with the same mapping (it can just call
- * these).  With no window set, base is 0 (identity; only valid on 32-bit hosts,
- * and BP texture addresses then only reach the low 512 MiB). */
+ * sms_gx maps them as phys = ptr - base.  The default base is 0x80000000,
+ * matching the unmodified OSCachedToPhysical macro and a MEM1 arena mapped at
+ * the GameCube address; call this only if emulated MEM1 lives elsewhere, and
+ * keep OSCachedToPhysical consistent with it.  API calls (GXInitTexObj,
+ * GXSetArray, GXCopyTex, ...) keep full host pointers and work for memory
+ * outside the window too. */
 void GXPC_SetMemoryWindow(void* base, uint32_t size);
 uint32_t GXPC_PtrToPhys(const void* ptr);
 void* GXPC_PhysToPtr(uint32_t phys);
@@ -44,6 +46,11 @@ void GXPC_InvalidateRange(const void* ptr, uint32_t size);
  * (GX_VA_POS..GX_VA_TEX7, GX_POS_MTX_ARRAY..GX_LIGHT_ARRAY, GX_VA_NBT). */
 void GXPC_SetArrayBigEndian(int attr, int bigEndian);
 void GXPC_SetDefaultArrayBigEndian(int bigEndian);
+/* Preferred: tell sms_gx which memory holds on-disc (big-endian) data, e.g.
+ * every resource file loaded in place.  GXSetArray / CP array bases that point
+ * into a registered range are then read big-endian automatically. */
+void GXPC_AddBigEndianRange(const void* ptr, uint32_t size);
+void GXPC_RemoveBigEndianRange(const void* ptr);
 
 /* The write-gather pipe (0xCC008000).  GXVert.h's inline writers and direct
  * `GXWGFifo.u8 = ...` stores must end up here on PC; see README.md. */

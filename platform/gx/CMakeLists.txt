@@ -25,10 +25,16 @@ set(SMS_GX_GD_SOURCES
 set_source_files_properties(${SMS_GX_GD_SOURCES} PROPERTIES
     COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/src/gd_host_prefix.h;-w;-fcommon")
 
+# Game sources must see port_include/dolphin/gx/GXVert.h before the decomp's.
+set(SMS_GX_OVERRIDE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/port_include" "${CMAKE_CURRENT_SOURCE_DIR}/include")
+if(NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    set(SMS_GX_OVERRIDE_INCLUDE_DIR "${SMS_GX_OVERRIDE_INCLUDE_DIR}" PARENT_SCOPE)
+endif()
+
 add_library(sms_gx STATIC ${SMS_GX_SOURCES} ${SMS_GX_GD_SOURCES})
 target_include_directories(sms_gx
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${SMS_DECOMP_DIR}/include)
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/port_include ${SMS_DECOMP_DIR}/include)
 target_compile_features(sms_gx PRIVATE cxx_std_17)
 set_target_properties(sms_gx PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

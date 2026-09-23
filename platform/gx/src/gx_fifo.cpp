@@ -6,6 +6,7 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <math.h>
+#include <map>
 
 namespace gx {
 
@@ -53,21 +54,35 @@ uint64_t hashBytes(const void* data, size_t n, uint64_t seed) {
     return h;
 }
 
-static uint8_t* s_memBase = nullptr;
-static uint32_t s_memSize = 0;
+// Default window: MEM1 mapped at the GameCube's own cached base, which is what
+// the unmodified OSCachedToPhysical macro (addr - 0x80000000) assumes.
+static uint8_t* s_memBase = reinterpret_cast<uint8_t*>(static_cast<uintptr_t>(0x80000000u));
+static uint32_t s_memSize = 0x01800000;
 
 void* physToPtr(uint32_t phys) {
     phys &= 0x3FFFFFFF;
-    if (s_memBase) return s_memBase + phys;
-    return reinterpret_cast<void*>(static_cast<uintptr_t>(phys));
+    if (!phys) return nullptr;
+    return s_memBase + phys;
 }
 
 uint32_t ptrToPhys(const void* p) {
-    if (s_memBase) {
-        uintptr_t off = reinterpret_cast<uintptr_t>(p) - reinterpret_cast<uintptr_t>(s_memBase);
-        return static_cast<uint32_t>(off);
-    }
-    return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(p));
+    if (!p) return 0;
+    uintptr_t off = reinterpret_cast<uintptr_t>(p) - reinterpret_cast<uintptr_t>(s_memBase);
+    return static_cast<uint32_t>(off);
+}
+
+// ------------------------------------------------------------------ big-endian ranges
+// Memory holding data in its on-disc byte order (resource files loaded in
+// place).  Vertex arrays that start inside such a range are read big-endian.
+static std::map<uintptr_t, uintptr_t> s_beRanges;  // start -> end
+
+bool isBigEndianData(const void* p) {
+    if (s_beRanges.empty() || !p) return false;
+    uintptr_t a = reinterpret_cast<uintptr_t>(p);
+    auto it = s_beRanges.upper_bound(a);
+    if (it == s_beRanges.begin()) return false;
+    --it;
+    return a < it->second;
 }
 
 static inline uint16_t be16(const uint8_t* p) { return uint16_t(p[0] << 8 | p[1]); }
@@ -76,7 +91,8 @@ static inline uint32_t be32(const uint8_t* p) {
 }
 
 // ------------------------------------------------------------------ register writes
-static bool s_defaultArrayBE = false;
+bool g_defaultArrayBE = false;
+#define s_defaultArrayBE g_defaultArrayBE
 
 void resetState() {
     bool be[16];
@@ -169,7 +185,10 @@ void writeCP(uint8_t reg, uint32_t value) {
     case CP_VAT_A: g.cpVatA[reg & 7] = value; break;
     case CP_VAT_B: g.cpVatB[reg & 7] = value; break;
     case CP_VAT_C: g.cpVatC[reg & 7] = value; break;
-    case CP_ARRAY_BASE: g.arrayBase[reg & 15] = static_cast<const uint8_t*>(physToPtr(value)); break;
+    case CP_ARRAY_BASE:
+        g.arrayBase[reg & 15] = static_cast<const uint8_t*>(physToPtr(value));
+        g.arrayBigEndian[reg & 15] = s_defaultArrayBE || isBigEndianData(g.arrayBase[reg & 15]);
+        break;
     case CP_ARRAY_STRIDE: g.arrayStride[reg & 15] = value & 0xFF; break;
     default: break;
     }
@@ -575,6 +594,13 @@ void GXPC_SetMemoryWindow(void* base, uint32_t size) {
     s_memBase = static_cast<uint8_t*>(base);
     s_memSize = size;
 }
+
+void GXPC_AddBigEndianRange(const void* p, uint32_t size) {
+    if (!p || !size) return;
+    uintptr_t a = reinterpret_cast<uintptr_t>(p);
+    s_beRanges[a] = a + size;
+}
+void GXPC_RemoveBigEndianRange(const void* p) { s_beRanges.erase(reinterpret_cast<uintptr_t>(p)); }
 uint32_t GXPC_PtrToPhys(const void* p) { return ptrToPhys(p); }
 void* GXPC_PhysToPtr(uint32_t phys) { return physToPtr(phys); }
 

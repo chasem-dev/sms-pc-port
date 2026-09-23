@@ -461,6 +461,7 @@ void GXSetArray(GXAttr attr, const void* base, u8 stride) {
     }
     g.arrayBase[slot] = static_cast<const uint8_t*>(base);
     g.arrayStride[slot] = stride;
+    g.arrayBigEndian[slot] = g_defaultArrayBE || isBigEndianData(base);
 }
 void GXInvalidateVtxCache(void) {}
 

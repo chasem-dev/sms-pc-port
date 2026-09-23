@@ -95,6 +95,8 @@ extern State g;
 // Physical-address window used by 32-bit addresses inside command streams.
 void* physToPtr(uint32_t phys);
 uint32_t ptrToPhys(const void* p);
+bool isBigEndianData(const void* p);
+extern bool g_defaultArrayBE;
 
 // ---------------------------------------------------------------- register writes (gx_fifo.cpp)
 void writeBP(uint32_t value);
