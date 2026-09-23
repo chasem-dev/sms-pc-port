@@ -76,6 +76,11 @@ static int resource(void* data, uint32_t size, const char* name)
 			return PE_FMT_ALREADY_NATIVE;
 		return port_endian_bti(data, size) ? PE_FMT_BTI : PE_FMT_UNKNOWN;
 	}
+	// Read through converting JSU typed reads (0013 + endian-05/08/13), or
+	// byte data: nothing to do, and nothing to log.
+	if (ext_is(ext, ".prm") || ext_is(ext, ".bin") || ext_is(ext, ".bmp") || ext_is(ext, ".me") ||
+	    ext_is(ext, ".txt") || ext_is(ext, ".map"))
+		return PE_FMT_KEEP_BE;
 	if (ext_is(ext, ".bpl") || ext_is(ext, ".tlut")) {
 		if (d[4] == PE_NATIVE_MARK)
 			return PE_FMT_ALREADY_NATIVE;

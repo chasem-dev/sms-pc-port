@@ -53,6 +53,11 @@ The CPU reads them too (`J3DCluster`, `MapMirror`, `DrawUtil`, `PollutionCount`)
 | Memory card save | `TFlagManager::save`/`load`/`saveOption`/`loadOption`, `TCardSector` (`CardManager.cpp`), bookmark preview via typed reads | `TCardSector`, `TCardBookmarkInfo` | stream | – | **retail big-endian on card** (`endian-11`): both sides agree; sectors stay in card byte order in memory |
 | `mSound.asn`, `.me`, `/mario.MAP` | – | – | not read / text | – | nothing needed |
 
+## Blockers found on the boot path that are not byte order
+
+- **Shift-JIS literals.** JDrama looks objects up by name, and the names in `stageArc.bin`/scene `.bin` are Shift-JIS (`ステージ毎シナリオアーカイブ名群` is at offset 77 of `stageArc.bin` in CP932, absent in UTF-8). GCC encodes the decomp's literals as UTF-8, so every Japanese-name search fails (first crash: `TApplication::mountStageArchive`). Building the game with `-fexec-charset=CP932` (C and C++) fixes it; verified in a private build that then boots into the file-select screen load.
+- **Decomp bug in `TCardLoad::load` (`src/GC2D/CardLoad.cpp:361`)**: `search('sh0k' + i)` must be `search('sh0k' + i * 0x100)`. `load_score.blo` has `sh0k`..`sh6k`, and retail (`8016F760`, `addis r4, r22, 0x7368` with `r22 += 0x100` per file) steps by 0x100. The PC build dereferences the null pane for i = 1. This needs fixing in the decomp.
+
 ## Other big-endian assumptions found on the way
 
 - `JUtility::TColor::set(u32)`/`toUInt32()` stored the u32 by memory layout; `endian-04` makes them value-based (`0xRRGGBBAA`), which fixes colours from typed reads and colour literals.
