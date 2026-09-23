@@ -51,6 +51,8 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches.cmake)
 set(SMS_COMMON_DEFS GEKKO TARGET_PC VERSION_GMSE01 BUILD_VERSION=2 NDEBUG=1)
 set(SMS_GAME_FLAGS
   -w -fno-strict-aliasing -fwrapv -fno-omit-frame-pointer
+  # String literals are Shift-JIS on disc and in the MWCC build (sjiswrap).
+  -finput-charset=UTF-8 -fexec-charset=CP932
   # 39 decomp functions fall off the end of a non-void body (retail returned
   # whatever was in r3). At -O0 this returns garbage like MWCC instead of
   # trapping; at -O1+ it is real UB (see build/noreturn.txt).

@@ -274,6 +274,18 @@ extern "C" void port_irq_add_source(port_irq_poll_fn fn) { g_sources.push_back(f
 
 void port_irq_defer(std::function<void()> fn) { g_deferred.push_back(fn); }
 
+// Run `fn` now, in interrupt context (used for "DMA" that completes
+// instantly, where game code busy-waits on the completion callback's effect).
+void port_irq_run_now(std::function<void()> fn)
+{
+	bool was = g_in_irq;
+	g_in_irq = true;
+	fn();
+	g_in_irq = was;
+	if (!was && g_irq_enabled)
+		preempt_check();
+}
+
 extern "C" void port_irq_check(void)
 {
 	if (!g_irq_enabled || g_in_irq)

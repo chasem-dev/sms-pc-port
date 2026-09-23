@@ -1,7 +1,18 @@
 Reason: port: SMS_NO_AUDIO substitutes an empty sound configuration and makes JAudio's per-frame work and wave-load queries no-ops
 --- a/src/MSound/MSound.cpp
 +++ b/src/MSound/MSound.cpp
-@@ -521,6 +521,11 @@
+@@ -405,6 +405,10 @@
+ 
+ bool MSound::checkWaveOnAram(MS_SCENE_WAVE wave)
+ {
++#ifdef TARGET_PC
++	if (port_no_audio)
++		return true; // SMS_NO_AUDIO: no waves to wait for
++#endif
+ 	u8 hi = wave >> 8;
+ 	u8 lo = wave & 0xff;
+ 	if (wave == 0x210) {
+@@ -521,6 +525,11 @@
  	JAIGlobalParameter::setParamOutputGainUp(5.0);
  	setInitFileLoadSwitch(2);
  

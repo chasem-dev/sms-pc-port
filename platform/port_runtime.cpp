@@ -103,8 +103,35 @@ static void map_hw_sink()
 extern "C" __attribute__((weak)) int GXPC_ParseArgs(int* argc, char** argv);
 extern "C" __attribute__((weak)) void GXPC_SetHeadless(int headless);
 
+// The 32-bit NVIDIA GLX library must match the kernel module's version
+// exactly, or context creation fails (X_GLXCreateContext BadValue). If this
+// host's i386 NVIDIA userspace does not match, use Mesa (llvmpipe) for the
+// window instead, unless the user chose a GLX vendor.
+static void pick_glx_vendor()
+{
+	if (sizeof(void*) != 4 || getenv("__GLX_VENDOR_LIBRARY_NAME"))
+		return;
+	FILE* f = fopen("/proc/driver/nvidia/version", "r");
+	if (!f)
+		return;
+	char line[256] = { 0 };
+	fgets(line, sizeof line, f);
+	fclose(f);
+	const char* k = strstr(line, "Kernel Module");
+	char ver[64]  = { 0 };
+	if (!k || sscanf(k, "Kernel Module %63s", ver) != 1)
+		return;
+	char lib[256];
+	snprintf(lib, sizeof lib, "/usr/lib/i386-linux-gnu/libGLX_nvidia.so.%s", ver);
+	if (access(lib, R_OK) == 0)
+		return;
+	setenv("__GLX_VENDOR_LIBRARY_NAME", "mesa", 1);
+	port_log("[port] no 32-bit NVIDIA GLX for kernel module %s; using Mesa for the window\n", ver);
+}
+
 extern "C" void port_init(int argc, char** argv)
 {
+	pick_glx_vendor();
 	for (int i = 1; i < argc; i++)
 		if (strcmp(argv[i], "--headless") == 0) {
 			setenv("SMS_HEADLESS", "1", 1);

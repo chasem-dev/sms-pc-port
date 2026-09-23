@@ -26,5 +26,7 @@ s64 port_time_ticks(void);
 /* Queue work to run in interrupt context at the next check point. Caller must
  * be a game thread (holds the CPU). */
 void port_irq_defer(std::function<void()> fn);
+/* Run fn immediately in interrupt context (instant DMA completions). */
+void port_irq_run_now(std::function<void()> fn);
 #endif
 #endif
