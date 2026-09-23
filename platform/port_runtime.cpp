@@ -14,7 +14,11 @@
 #include <signal.h>
 #include <execinfo.h>
 
-const char* port_disc_root = "/home/netflix/sms/orig/GMSE01/files";
+// Default game source on this machine: the user's disc image, else the
+// extracted folder. A bare argument, SMS_DISC_IMAGE or SMS_DISC_ROOT override it.
+static const char* const kDefaultImage = "/home/netflix/sms/Super Mario Sunshine (2002)(Nintendo)(US).iso";
+static const char* const kDefaultFolder = "/home/netflix/sms/orig/GMSE01/files";
+const char* port_disc_root = kDefaultFolder;
 // SMS_SKIP_MOVIES=1 reports every THP movie as finished at once (patch 0016).
 extern "C" int port_skip_movies;
 int port_skip_movies = 0;
@@ -145,6 +149,8 @@ extern "C" void port_init(int argc, char** argv)
 		}
 	if (GXPC_ParseArgs)
 		GXPC_ParseArgs(&argc, argv);
+	if (access(kDefaultImage, R_OK) == 0)
+		port_disc_root = kDefaultImage;
 	if (const char* d = getenv("SMS_DISC_ROOT"))
 		port_disc_root = d;
 	for (int i = 1; i < argc; i++)
@@ -163,5 +169,5 @@ extern "C" void port_init(int argc, char** argv)
 	port_dvd_init();
 	port_noaudio_init();
 	port_vi_init();
-	port_log("[port] platform ready (disc root %s)\n", port_disc_root);
+	port_log("[port] platform ready\n");
 }

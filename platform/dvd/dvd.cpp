@@ -15,6 +15,7 @@
 #include <dirent.h>
 #include <strings.h>
 #include <algorithm>
+#include "disc/gcdisc.h"
 
 namespace {
 
@@ -30,6 +31,7 @@ struct Entry {
 };
 
 std::vector<Entry> g_fst;
+GCDisc* g_disc; // disc image (platform/disc), or NULL for an extracted folder
 u32 g_cwd;
 DVDDiskID g_disk_id;
 
@@ -168,6 +170,11 @@ s32 do_read(DVDFileInfo* fi, void* addr, s32 length, s32 offset)
 	u32 entry = fi->startAddr;
 	if (entry >= g_fst.size() || g_fst[entry].dir)
 		return DVD_RESULT_FATAL_ERROR;
+	if (g_disc && !g_fst[entry].mem) {
+		u32 n = gcdisc_read_file(g_disc, entry, (u32)offset, addr, (u32)length);
+		fi->cb.transferredSize = n;
+		return (s32)n;
+	}
 	if (const u8* mem = g_fst[entry].mem) {
 		u32 len = g_fst[entry].length;
 		s32 n   = offset >= (s32)len ? 0 : std::min(length, (s32)(len - offset));
@@ -191,8 +198,48 @@ s32 do_read(DVDFileInfo* fi, void* addr, s32 length, s32 offset)
 
 } // namespace
 
+// The disc source: SMS_DISC_IMAGE, or port_disc_root when it names an image
+// file (.iso/.gcm/.ciso), else port_disc_root as an extracted files/ folder.
+static bool open_image()
+{
+	const char* img = getenv("SMS_DISC_IMAGE");
+	if (!img) {
+		struct stat st;
+		if (stat(port_disc_root, &st) == 0 && S_ISREG(st.st_mode))
+			img = port_disc_root;
+	}
+	if (!img)
+		return false;
+	g_disc = gcdisc_open(img, 1);
+	if (!g_disc) {
+		port_log("[dvd] %s is not a usable GameCube disc image\n", img);
+		exit(1);
+	}
+	u32 n = gcdisc_entry_count(g_disc);
+	g_fst.resize(n);
+	for (u32 i = 0; i < n; i++) {
+		GCDiscEntry e;
+		gcdisc_entry(g_disc, i, &e);
+		Entry& d = g_fst[i];
+		d.dir    = e.is_dir != 0;
+		d.name   = i ? std::string(e.name) : std::string();
+		d.parent = d.dir ? e.parent : 0;
+		d.next   = d.dir ? e.next : 0;
+		d.length = d.dir ? 0 : e.size;
+		d.fd     = -1;
+		d.mem    = NULL;
+	}
+	memcpy(&g_disk_id, gcdisc_header(g_disc), sizeof g_disk_id);
+	port_log("[dvd] disc image %s (%s): %u entries\n", gcdisc_game_id(g_disc), img, n);
+	return true;
+}
+
 extern "C" void port_dvd_init(void)
 {
+	if (open_image()) {
+		g_cwd = 0;
+		return;
+	}
 	std::string root = port_disc_root;
 	if (!load_fst_bin(root)) {
 		port_log("[dvd] no sys/fst.bin next to %s; building the FST from the directory tree\n", root.c_str());

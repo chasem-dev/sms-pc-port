@@ -99,6 +99,8 @@ if(SMS_WITH_GX AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/platform/gx/CMakeLists.txt
 endif()
 
 add_library(sms_game STATIC ${SMS_DECOMP_CXX_SOURCES} ${SMS_DECOMP_C_SOURCES})
+# Host THP decoders (the decomp's SDK decoder, patched; platform/thp).
+include(${CMAKE_CURRENT_SOURCE_DIR}/platform/thp/thp.cmake)
 target_include_directories(sms_game BEFORE PRIVATE
   ${SMS_PORT_SRC}/port_include ${SMS_PATCHED_INCLUDE_DIR} ${SMS_DECOMP}/include)
 if(TARGET sms_gx AND SMS_GX_OVERRIDE_INCLUDE_DIR)
@@ -135,7 +137,7 @@ add_executable(sms ${SMS_PORT_SRC}/port_main.cpp ${SMS_PLATFORM_SOURCES})
 target_include_directories(sms PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/platform ${SMS_PORT_SRC}
   ${SMS_PORT_SRC}/port_include ${SMS_DECOMP}/include)
-target_compile_definitions(sms PRIVATE ${SMS_COMMON_DEFS})
+target_compile_definitions(sms PRIVATE ${SMS_COMMON_DEFS} SMS_AUDIO_DSP_HLE=1)
 target_compile_options(sms PRIVATE -fno-strict-aliasing -Wno-unused-parameter
   $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++11>)
 # dsptask.c points a DSP task at the fixed low-memory address 0x80004600.
