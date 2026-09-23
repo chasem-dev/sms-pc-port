@@ -129,6 +129,7 @@ extern "C" void port_init(int argc, char** argv)
 		map_hw_sink();
 	port_os_init();
 	port_dvd_init();
+	port_noaudio_init();
 	port_vi_init();
 	port_log("[port] platform ready (disc root %s)\n", port_disc_root);
 }

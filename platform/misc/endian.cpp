@@ -117,8 +117,15 @@ int s_nseen;
 
 } // namespace
 
-extern "C" void port_res_to_native(void* data, u32 size)
+// platform/endian (the resource converters) is linked when present.
+extern "C" __attribute__((weak)) int port_endian_resource(void* data, uint32_t size, const char* name);
+
+extern "C" void port_res_to_native(void* data, u32 size) { port_res_to_native_named(data, size, NULL); }
+
+extern "C" void port_res_to_native_named(void* data, u32 size, const char* name)
 {
+	if (port_endian_resource && port_endian_resource(data, size, name) != 0)
+		return; // recognised by platform/endian (PE_FMT_UNKNOWN is 0)
 	u8* d = (u8*)data;
 	if (!d || size < 8)
 		return;
@@ -142,5 +149,5 @@ extern "C" void port_res_to_native(void* data, u32 size)
 			return;
 	if (s_nseen < 64)
 		memcpy(s_seen[s_nseen++].magic, m, 9);
-	port_log("[endian] resource format not converted: '%s' (%u bytes)\n", m, size);
+	port_log("[endian] resource format not converted: '%s' (%u bytes%s%s)\n", m, size, name ? ", " : "", name ? name : "");
 }

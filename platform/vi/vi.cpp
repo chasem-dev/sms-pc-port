@@ -7,7 +7,19 @@
 #include <dolphin/vi.h>
 #include <pthread.h>
 #include <atomic>
+#include <algorithm>
 #include <time.h>
+#include <vector>
+#include <string>
+#include <sys/stat.h>
+
+// Frame capture (SMS_SHOTS=field,field,... SMS_SHOT_DIR=dir): the XFB handed to
+// VISetNextFrameBuffer is read back through the GX layer at the first VIFlush
+// on or after each listed retrace ("field") count, and written as
+// <dir>/field<NNNNN>.ppm (tools/shots.py converts and compares). Fields match
+// the retail capture numbering (VI retraces since boot).
+extern "C" __attribute__((weak)) int GXPC_ReadXFB(const void* xfb, void* rgba, int* w, int* h);
+extern "C" void port_pad_autopress_field(u32 field);
 
 namespace {
 std::atomic<u32> g_pending(0);
@@ -17,6 +29,52 @@ VIRetraceCallback g_pre, g_post;
 void* g_next_fb;
 void* g_cur_fb;
 bool g_black = true;
+std::vector<u32> g_shots;
+size_t g_next_shot;
+std::string g_shot_dir;
+pthread_t g_gx_thread;
+
+void shots_init()
+{
+	g_gx_thread = pthread_self();
+	const char* e = getenv("SMS_SHOTS");
+	if (!e || !*e)
+		return;
+	for (const char* p = e; *p;) {
+		g_shots.push_back((u32)strtoul(p, (char**)&p, 10));
+		while (*p == ',' || *p == ' ')
+			p++;
+	}
+	std::sort(g_shots.begin(), g_shots.end());
+	const char* d = getenv("SMS_SHOT_DIR");
+	g_shot_dir    = d ? d : "shots";
+	mkdir(g_shot_dir.c_str(), 0777);
+}
+
+void shots_poll(u32 field, void* xfb)
+{
+	if (g_next_shot >= g_shots.size() || field < g_shots[g_next_shot] || !xfb || !GXPC_ReadXFB)
+		return;
+	if (!pthread_equal(pthread_self(), g_gx_thread))
+		return; // GL calls only from the GX thread
+	int w = 0, h = 0;
+	if (!GXPC_ReadXFB(xfb, NULL, &w, &h) || w <= 0 || h <= 0)
+		return;
+	std::vector<u8> px((size_t)w * h * 4);
+	GXPC_ReadXFB(xfb, px.data(), &w, &h);
+	char path[1024];
+	snprintf(path, sizeof path, "%s/field%05u.ppm", g_shot_dir.c_str(), g_shots[g_next_shot]);
+	FILE* f = fopen(path, "wb");
+	if (f) {
+		fprintf(f, "P6\n%d %d\n255\n", w, h);
+		for (int i = 0; i < w * h; i++)
+			fwrite(&px[(size_t)i * 4], 1, 3, f);
+		fclose(f);
+		port_log("[vi] captured field %u (retrace %u) -> %s\n", g_shots[g_next_shot], field, path);
+	}
+	while (g_next_shot < g_shots.size() && g_shots[g_next_shot] <= field)
+		g_next_shot++;
+}
 
 void* timer_thread(void*)
 {
@@ -45,6 +103,7 @@ void retrace_irq()
 		n = 1; // the game fell behind; do not replay a burst of retraces
 	while (n--) {
 		g_retrace_count++;
+		port_pad_autopress_field(g_retrace_count);
 		if (g_pre)
 			g_pre(g_retrace_count);
 		if (g_next_fb) {
@@ -60,6 +119,7 @@ void retrace_irq()
 extern "C" void port_vi_init(void)
 {
 	OSInitThreadQueue(&g_retrace_queue);
+	shots_init();
 	port_irq_add_source(retrace_irq);
 	pthread_t th;
 	pthread_create(&th, NULL, timer_thread, NULL);
@@ -69,7 +129,7 @@ extern "C" void port_vi_init(void)
 extern "C" void VIInit(void) {}
 extern "C" void VIConfigure(GXRenderModeObj* rm) {}
 extern "C" void VIConfigurePan(u16, u16, u16, u16) {}
-extern "C" void VIFlush(void) {}
+extern "C" void VIFlush(void) { shots_poll(g_retrace_count, g_next_fb); }
 extern "C" void VISetNextFrameBuffer(void* fb) { g_next_fb = fb; }
 extern "C" void VISetNextRightFrameBuffer(void*) {}
 extern "C" void VISetBlack(BOOL black) { g_black = black != 0; }

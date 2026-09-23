@@ -124,6 +124,10 @@ void port_rarc_info_to_native(void* info);
 /* Convert a resource file (recognised by its magic) to native byte order in
  * place; unknown formats are logged once and left alone. Idempotent. */
 void port_res_to_native(void* data, u32 size);
+void port_res_to_native_named(void* data, u32 size, const char* name);
+/* SMS_NO_AUDIO: an empty init-data stream for JAudio, or NULL when audio is on. */
+u8* port_noaudio_init_data(void);
+extern int port_no_audio; /* SMS_NO_AUDIO=1 */
 #ifdef __cplusplus
 }
 #endif

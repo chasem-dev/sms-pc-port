@@ -11,6 +11,9 @@ extern u32 port_mem1_size;
 void port_os_init(void);
 void port_dvd_init(void);
 void port_vi_init(void);
+void port_noaudio_init(void);
+int port_dvd_override(const char* path, const void* data, u32 size);
+extern int port_no_audio;
 /* Interrupt emulation: the running game thread owns the "CPU"; interrupt
  * work runs at check points (OS calls, blocking, idle). */
 void port_irq_check(void);          /* deliver pending interrupts if enabled */

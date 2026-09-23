@@ -12,6 +12,8 @@
 #include <string.h>
 #include <strings.h>
 #include <ctype.h>
+#include <dlfcn.h>
+#include <vector>
 
 // --- SDL2 event ABI (SDL_events.h, SDL_scancode.h, SDL_gamecontroller.h) ---
 namespace sdl {
@@ -215,6 +217,8 @@ s8 axis8(s16 v, int range)
 	return (s8)(x > 127 ? 127 : x < -128 ? -128 : x);
 }
 
+void autopress_init();
+
 void init()
 {
 	if (g_inited)
@@ -237,13 +241,97 @@ void init()
 		parse_bindings(text, path);
 		port_log("[pad] loaded key bindings from %s\n", path);
 	}
+	autopress_init();
 	if (sms_gx_set_event_callback)
 		sms_gx_set_event_callback(on_event);
 	else
 		port_log("[pad] no GX/SDL event source linked: controller 1 stays idle\n");
 }
 
+// --- Test input: SMS_AUTOPRESS=control@field[+hold],... ------------------------
+// e.g. SMS_AUTOPRESS=start@600,a@900+20 presses Start at retrace 600 and A at
+// 900 (held for 20 retraces; default 8). With the GX layer's SDL window the
+// press goes through the real keyboard path: an SDL key event carrying the
+// control's first bound key is pushed with SDL_PushEvent. Without SDL the key
+// state is set directly.
+struct AutoPress {
+	int control;
+	u32 at, until;
+	bool down, done;
+};
+std::vector<AutoPress> g_auto;
+typedef int (*PushEventFn)(void* ev);
+PushEventFn g_push;
+
+void autopress_init()
+{
+	const char* e = getenv("SMS_AUTOPRESS");
+	if (!e || !*e)
+		return;
+	char buf[1024];
+	strncpy(buf, e, sizeof buf - 1);
+	buf[sizeof buf - 1] = 0;
+	for (char* tok = strtok(buf, ","); tok; tok = strtok(NULL, ",")) {
+		char* at = strchr(tok, '@');
+		if (!at)
+			continue;
+		*at        = 0;
+		u32 hold   = 8;
+		char* plus = strchr(at + 1, '+');
+		if (plus)
+			hold = (u32)atoi(plus + 1);
+		int c = -1;
+		for (int i = 0; i < C_COUNT; i++)
+			if (strcasecmp(kControlNames[i], tok) == 0)
+				c = i;
+		if (c < 0 || g_nbind[c] == 0) {
+			port_log("[pad] SMS_AUTOPRESS: unknown or unbound control '%s'\n", tok);
+			continue;
+		}
+		AutoPress a = { c, (u32)atoi(at + 1), 0, false, false };
+		a.until     = a.at + hold;
+		g_auto.push_back(a);
+	}
+	g_push = (PushEventFn)dlsym(RTLD_DEFAULT, "SDL_PushEvent");
+	port_log("[pad] SMS_AUTOPRESS: %u scripted presses via %s\n", (unsigned)g_auto.size(),
+	         g_push ? "SDL_PushEvent (keyboard path)" : "direct key state");
+}
+
+void send_key(int scancode, bool down)
+{
+	if (g_push) {
+		union {
+			sdl::KeyboardEvent k;
+			u8 raw[56];
+		} ev;
+		memset(&ev, 0, sizeof ev);
+		ev.k.type     = down ? sdl::KEYDOWN : sdl::KEYUP;
+		ev.k.state    = down ? 1 : 0;
+		ev.k.scancode = scancode;
+		if (g_push(&ev) >= 0)
+			return;
+	}
+	g_key[scancode] = down;
+}
+
 } // namespace
+
+extern "C" void port_pad_autopress_field(u32 field)
+{
+	for (size_t i = 0; i < g_auto.size(); i++) {
+		AutoPress& a = g_auto[i];
+		if (a.done)
+			continue;
+		if (!a.down && field >= a.at) {
+			a.down = true;
+			port_log("[pad] autopress %s down at field %u\n", kControlNames[a.control], field);
+			send_key(g_bind[a.control][0], true);
+		} else if (a.down && field >= a.until) {
+			a.done = true;
+			send_key(g_bind[a.control][0], false);
+		}
+	}
+}
 
 extern "C" BOOL PADInit()
 {

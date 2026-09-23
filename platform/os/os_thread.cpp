@@ -356,6 +356,7 @@ extern "C" int OSCreateThread(OSThread* t, void* (*func)(void*), void* param, vo
 {
 	if (prio < OS_PRIORITY_MIN || prio > OS_PRIORITY_MAX)
 		return FALSE;
+	bool wasDead = t->state == OS_THREAD_STATE_MORIBUND;
 	memset(&t->state, 0, sizeof(*t) - offsetof(OSThread, state));
 	t->state     = OS_THREAD_STATE_READY;
 	t->attr      = attr & OS_THREAD_ATTR_DETACH;
@@ -364,7 +365,7 @@ extern "C" int OSCreateThread(OSThread* t, void* (*func)(void*), void* param, vo
 	t->stackBase = (u8*)stack;
 	t->stackEnd  = (u32*)((u8*)stack - stackSize);
 	Host* h      = host_of(t);
-	if (h && h->started) {
+	if (h && h->started && !wasDead) {
 		port_log("[os] OSCreateThread reusing a live thread object %p\n", t);
 	}
 	if (!h) {

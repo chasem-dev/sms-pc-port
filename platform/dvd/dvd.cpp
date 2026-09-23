@@ -26,6 +26,7 @@ struct Entry {
 	u32 next;         // dirs: one past last descendant
 	u32 length;       // files: size
 	int fd;
+	const u8* mem;    // in-memory replacement (port_dvd_override)
 };
 
 std::vector<Entry> g_fst;
@@ -62,6 +63,7 @@ bool load_fst_bin(const std::string& files)
 		d.next      = d.dir ? be32(e + 8) : 0;
 		d.length    = d.dir ? 0 : be32(e + 8);
 		d.fd        = -1;
+		d.mem       = NULL;
 	}
 	// Host paths: walk directories in order, tracking the path stack.
 	g_fst[0].host = files;
@@ -97,6 +99,7 @@ void walk(const std::string& host, u32 parent)
 		e.name = names[i];
 		e.host = host + "/" + names[i];
 		e.fd   = -1;
+		e.mem  = NULL;
 		struct stat st;
 		stat(e.host.c_str(), &st);
 		e.dir    = S_ISDIR(st.st_mode);
@@ -165,6 +168,13 @@ s32 do_read(DVDFileInfo* fi, void* addr, s32 length, s32 offset)
 	u32 entry = fi->startAddr;
 	if (entry >= g_fst.size() || g_fst[entry].dir)
 		return DVD_RESULT_FATAL_ERROR;
+	if (const u8* mem = g_fst[entry].mem) {
+		u32 len = g_fst[entry].length;
+		s32 n   = offset >= (s32)len ? 0 : std::min(length, (s32)(len - offset));
+		memcpy(addr, mem + offset, n);
+		fi->cb.transferredSize = n;
+		return n;
+	}
 	int fd = file_fd(entry);
 	if (fd < 0)
 		return DVD_RESULT_FATAL_ERROR;
@@ -192,6 +202,7 @@ extern "C" void port_dvd_init(void)
 		r.parent = 0;
 		r.length = 0;
 		r.fd     = -1;
+		r.mem    = NULL;
 		g_fst.push_back(r);
 		walk(root, 0);
 		g_fst[0].next = (u32)g_fst.size();
@@ -207,6 +218,17 @@ extern "C" void port_dvd_init(void)
 		memcpy(g_disk_id.company, "01", 2);
 	}
 	port_log("[dvd] FST: %u entries from %s\n", (unsigned)g_fst.size(), root.c_str());
+}
+
+// Serve `path` (an existing disc file) from memory instead of the disc.
+extern "C" int port_dvd_override(const char* path, const void* data, u32 size)
+{
+	s32 e = lookup(path);
+	if (e < 0 || g_fst[e].dir)
+		return 0;
+	g_fst[e].mem    = (const u8*)data;
+	g_fst[e].length = size;
+	return 1;
 }
 
 extern "C" void DVDInit(void) {}
