@@ -99,8 +99,20 @@ static void map_hw_sink()
 		port_log("[port] GX WG pipe 0xCC008000 is a write sink\n");
 }
 
+// Window/headless switches belong to the GX layer (weak: absent without it).
+extern "C" __attribute__((weak)) int GXPC_ParseArgs(int* argc, char** argv);
+extern "C" __attribute__((weak)) void GXPC_SetHeadless(int headless);
+
 extern "C" void port_init(int argc, char** argv)
 {
+	for (int i = 1; i < argc; i++)
+		if (strcmp(argv[i], "--headless") == 0) {
+			setenv("SMS_HEADLESS", "1", 1);
+			if (GXPC_SetHeadless)
+				GXPC_SetHeadless(1);
+		}
+	if (GXPC_ParseArgs)
+		GXPC_ParseArgs(&argc, argv);
 	if (const char* d = getenv("SMS_DISC_ROOT"))
 		port_disc_root = d;
 	for (int i = 1; i < argc; i++)

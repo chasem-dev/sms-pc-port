@@ -67,9 +67,18 @@ set_source_files_properties(${SMS_DECOMP_CXX_SOURCES} PROPERTIES LANGUAGE CXX)
 set_source_files_properties(${SMS_DECOMP_PCH_SOURCES} PROPERTIES
   COMPILE_OPTIONS "-include;${SMS_DECOMP}/include/SMS.pch")
 
+option(SMS_WITH_GX "Build and link platform/gx (the graphics layer)" OFF)
+if(SMS_WITH_GX AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/platform/gx/CMakeLists.txt)
+  add_subdirectory(platform/gx)
+endif()
+
 add_library(sms_game STATIC ${SMS_DECOMP_CXX_SOURCES} ${SMS_DECOMP_C_SOURCES})
 target_include_directories(sms_game BEFORE PRIVATE
   ${SMS_PORT_SRC}/port_include ${SMS_PATCHED_INCLUDE_DIR} ${SMS_DECOMP}/include)
+if(TARGET sms_gx AND SMS_GX_OVERRIDE_INCLUDE_DIR)
+  # GXVert.h vertex writers become functions implemented by sms_gx.
+  target_include_directories(sms_game BEFORE PRIVATE ${SMS_GX_OVERRIDE_INCLUDE_DIR})
+endif()
 target_compile_definitions(sms_game PRIVATE ${SMS_COMMON_DEFS})
 target_compile_options(sms_game PRIVATE ${SMS_GAME_FLAGS})
 
@@ -111,10 +120,6 @@ if(SMS_ARCH STREQUAL "64")
 endif()
 find_package(Threads REQUIRED)
 target_link_libraries(sms PRIVATE -Wl,--whole-archive sms_game -Wl,--no-whole-archive Threads::Threads m)
-option(SMS_WITH_GX "Build and link platform/gx (the graphics layer)" OFF)
-if(SMS_WITH_GX AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/platform/gx/CMakeLists.txt)
-  add_subdirectory(platform/gx)
-endif()
 if(TARGET sms_gx)
   target_link_libraries(sms PRIVATE -Wl,--whole-archive sms_gx -Wl,--no-whole-archive)
 endif()
