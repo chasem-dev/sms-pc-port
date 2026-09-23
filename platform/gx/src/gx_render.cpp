@@ -6,6 +6,7 @@
 #include "sms_gx/gx_pc.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 #include <unordered_map>
 
@@ -38,6 +39,10 @@ static std::unordered_map<const void*, Xfb> s_xfbs;
 static const void* s_lastXfb = nullptr;
 
 void markXfMemDirty() { s_xfDirty = true; }
+FILE* traceFile();
+void traceFrameAdvance();
+void traceDraw(int prim, uint32_t nverts, uint32_t nidx, const HostVertex* v);
+void traceCopy(bool disp, int x, int y, int w, int h, const void* dest, uint32_t ctrl);
 void (*g_displayCopyHook)(const void* xfb) = nullptr;
 bool rendererReady() { return s_ready; }
 
@@ -492,6 +497,7 @@ void flushBatch() {
     GLenum mode = s_bclass == PRIM_TRIS ? GL_TRIANGLES : s_bclass == PRIM_LINES ? GL_LINES : GL_POINTS;
     glDrawElements(mode, GLsizei(s_bidx.size()), GL_UNSIGNED_INT, nullptr);
     s_stats.draws++;
+    if (traceFile()) traceDraw(int(s_bclass), uint32_t(s_bverts.size()), uint32_t(s_bidx.size()), s_bverts.data());
     s_bidx.clear();
     s_bverts.clear();
 }
@@ -520,6 +526,7 @@ void executeCopy(uint32_t ctrl) {
     const void* dest = g.copyDest;
     bool disp = (ctrl >> 14) & 1;
     bool clear = (ctrl >> 11) & 1;
+    if (traceFile()) traceCopy(disp, x, y, w, h, dest, ctrl);
     int S = s_scale;
     glDisable(GL_SCISSOR_TEST);
     glDisable(GL_BLEND);
@@ -585,6 +592,7 @@ void executeCopy(uint32_t ctrl) {
     }
     if (clear) clearRect(x, y, w, h);
     glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
+    if (disp) traceFrameAdvance();
     if (disp && g_displayCopyHook) g_displayCopyHook(dest);
 }
 

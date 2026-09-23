@@ -13,6 +13,7 @@ set(SMS_GX_SOURCES
     src/gx_render.cpp
     src/gx_shader.cpp
     src/gx_texture.cpp
+    src/gx_trace.cpp
     src/gx_vert.cpp)
 
 # GD is compiled from the decompiled SDK sources: it only emits command bytes.
