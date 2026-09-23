@@ -149,6 +149,7 @@ void efbCopyRegister(const void* addr, unsigned tex, int w, int h, uint32_t fmt)
 // ---------------------------------------------------------------- shaders (gx_shader.cpp)
 struct ShaderProgram {
     unsigned prog;
+    int id;  // creation order; SMS_GX_DUMP_SHADERS=dir writes dir/prog<id>.vs/.fs
     int uTevReg, uKonst, uTexScale, uAlphaRef, uFog, uFogColor, uIndMtx, uTexSize, uEfb,
         uProj, uViewport, uAmbMat, uDstAlpha;
 };

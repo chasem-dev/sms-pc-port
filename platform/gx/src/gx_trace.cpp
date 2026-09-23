@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 namespace gx {
 
@@ -89,11 +90,11 @@ static float xfregf(int r) {
     return f;
 }
 
-void traceDraw(int prim, uint32_t nverts, uint32_t nidx, const HostVertex* v) {
+void traceDraw(int prim, uint32_t nverts, uint32_t nidx, const HostVertex* v, int progId) {
     FILE* f = s_file;
     if (!f) return;
     static const char* kPrim[3] = {"TRIS", "LINES", "POINTS"};
-    fprintf(f, "\n== draw %u: %s, %u vertices, %u indices\n", s_drawNo++, kPrim[prim], nverts, nidx);
+    fprintf(f, "\n== draw %u: %s, %u vertices, %u indices, program %d\n", s_drawNo++, kPrim[prim], nverts, nidx, progId);
     uint32_t gen = g.bp[BP_GENMODE];
     uint32_t nst = ((gen >> 10) & 15) + 1, nind = (gen >> 16) & 7;
     fprintf(f, "  genmode: texgens=%u chans=%u tevstages=%u indstages=%u cull=%u | xf texgens=%u chans=%u\n", gen & 15,
@@ -116,7 +117,19 @@ void traceDraw(int prim, uint32_t nverts, uint32_t nidx, const HostVertex* v) {
     fprintf(f, "  alphacmp: %s %u %s %s %u\n", kCmp[(ac >> 16) & 7], ac & 0xFF,
             ((const char*[]){"AND", "OR", "XOR", "XNOR"})[(ac >> 22) & 3], kCmp[(ac >> 19) & 7], (ac >> 8) & 0xFF);
     uint32_t f3 = g.bp[BP_FOG3];
-    if ((f3 >> 21) & 7) fprintf(f, "  fog: type %u color %06X\n", (f3 >> 21) & 7, g.bp[BP_FOG_COLOR]);
+    if ((f3 >> 21) & 7) {
+        auto fogFloat = [](uint32_t r) {
+            uint32_t bits = ((r >> 19) & 1) << 31 | ((r >> 11) & 0xFF) << 23 | (r & 0x7FF) << 12;
+            float v;
+            memcpy(&v, &bits, 4);
+            return v;
+        };
+        int bs = int(g.bp[BP_FOG2] & 31);
+        fprintf(f, "  fog: type %u color %06X A=%g B=%g C=%g proj=%u rangeadj=%03X\n", (f3 >> 21) & 7,
+                g.bp[BP_FOG_COLOR], ldexp(fogFloat(g.bp[BP_FOG0]), bs),
+                ldexp(double(g.bp[BP_FOG1] & 0xFFFFFF) / 8388638.0, bs - 1), fogFloat(f3), (f3 >> 20) & 1,
+                g.bp[BP_FOG_RANGE] & 0x7FF);
+    }
     for (int c = 0; c < 2; c++)
         fprintf(f, "  chan%d: color ctrl %04X alpha ctrl %04X amb %08X mat %08X\n", c, g.xfReg[XFR_COLOR0CTRL + c],
                 g.xfReg[XFR_ALPHA0CTRL + c], g.xfReg[XFR_AMB0 + c], g.xfReg[XFR_MAT0 + c]);
@@ -219,9 +232,9 @@ void traceProbe() {
     if (!n) return;
     fprintf(f, "  probe:");
     for (int i = 0; i < n; i++) {
-        uint32_t c = peekColor(pts[i][0], pts[i][1]);
         FILE* saved = s_file;
-        s_file = nullptr;  // keep peekZ's own trace line out of the probe
+        s_file = nullptr;  // keep the peeks' own trace lines out of the probe
+        uint32_t c = peekColor(pts[i][0], pts[i][1]);
         uint32_t z = peekZ(pts[i][0], pts[i][1]);
         s_file = saved;
         fprintf(f, " (%d,%d)=%02X%02X%02X/%02X z=%06X", pts[i][0], pts[i][1], (c >> 16) & 255, (c >> 8) & 255, c & 255,

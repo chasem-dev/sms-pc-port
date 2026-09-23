@@ -351,6 +351,30 @@ int main(int argc, char** argv) {
         GXSetChanCtrl(GX_COLOR0A0, GX_TRUE, GX_SRC_REG, GX_SRC_REG, GX_LIGHT0 | GX_LIGHT1, GX_DF_CLAMP, GX_AF_SPOT);
         GXSetZMode(GX_FALSE, GX_ALWAYS, GX_FALSE);
         quad(0, 1.5f, -10, 1);
+        // linear fog: eye distance 10 between start 0 and end 20 -> half fog colour
+        GXColor fogc = {0, 0, 255, 255};
+        GXSetChanCtrl(GX_COLOR0A0, GX_FALSE, GX_SRC_REG, GX_SRC_REG, GX_LIGHT_NULL, GX_DF_NONE, GX_AF_NONE);
+        GXSetFog(GX_FOG_LIN, 0.0f, 20.0f, n, f, fogc);
+        quad(2, 1.5f, -10, 1);
+        GXSetFog(GX_FOG_NONE, 0, 1, 0.1f, 1, fogc);
+        {
+            // the game's underwater fog: near 1, far 33333, start -8.4, end 111.6
+            Mtx44 p2;
+            memcpy(p2, p, sizeof(p2));
+            float f2 = 33333.0f;
+            p2[2][2] = -n / (f2 - n);
+            p2[2][3] = -(f2 * n) / (f2 - n);
+            GXSetProjection(p2, GX_PERSPECTIVE);
+            GXSetFog(GX_FOG_LIN, -8.4f, 111.6f, n, f2, fogc);
+            quad(-2, 1.5f, -10, 1);
+            GXSetFog(GX_FOG_NONE, 0, 1, 0.1f, 1, fogc);
+            GXSetProjection(p, GX_PERSPECTIVE);
+            int gx = int(320 + 320 * (-2 * cot / aspect / 10)), gy = int(240 - 240 * (1.5f * cot / 10));
+            // (10 + 8.4) / 120 = 0.153 of the fog colour
+            expectPixel("fog with a far plane of 33333", gx, gy, 169, 85, 81, 4);
+        }
+        int fx = int(320 + 320 * (2 * cot / aspect / 10)), fy = int(240 - 240 * (1.5f * cot / 10));
+        expectPixel("linear fog at half distance", fx, fy, 100, 50, 153, 3);
         int cy = int(240 - 240 * (1.5f * cot / 10));
         expectPixel("spot light with zero attenuation ignored", 320, cy, 200, 100, 50, 2);
         setOrtho();

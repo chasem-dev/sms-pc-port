@@ -5,6 +5,8 @@
 #include "gx_internal.h"
 #include "gl_funcs.h"
 
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <string>
 #include <unordered_map>
@@ -534,6 +536,14 @@ const ShaderProgram* shaderForCurrentState() {
     glDeleteShader(f);
     ShaderProgram sp;
     sp.prog = p;
+    sp.id = int(g_statShaderCompiles);
+    if (const char* dir = getenv("SMS_GX_DUMP_SHADERS")) {
+        char path[1024];
+        snprintf(path, sizeof path, "%s/prog%d.vs", dir, sp.id);
+        if (FILE* f = fopen(path, "w")) { fputs(vs.c_str(), f); fclose(f); }
+        snprintf(path, sizeof path, "%s/prog%d.fs", dir, sp.id);
+        if (FILE* f = fopen(path, "w")) { fputs(fs.c_str(), f); fclose(f); }
+    }
     glUseProgram(p);
     GLuint blk = glGetUniformBlockIndex(p, "XFBlock");
     if (blk != GL_INVALID_INDEX) glUniformBlockBinding(p, blk, 0);

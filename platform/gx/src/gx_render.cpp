@@ -41,7 +41,7 @@ static const void* s_lastXfb = nullptr;
 void markXfMemDirty() { s_xfDirty = true; }
 FILE* traceFile();
 void traceFrameAdvance();
-void traceDraw(int prim, uint32_t nverts, uint32_t nidx, const HostVertex* v);
+void traceDraw(int prim, uint32_t nverts, uint32_t nidx, const HostVertex* v, int progId);
 void traceCopy(bool disp, int x, int y, int w, int h, const void* dest, uint32_t ctrl);
 void traceProbe();
 void (*g_displayCopyHook)(const void* xfb) = nullptr;
@@ -498,7 +498,7 @@ void flushBatch() {
     GLenum mode = s_bclass == PRIM_TRIS ? GL_TRIANGLES : s_bclass == PRIM_LINES ? GL_LINES : GL_POINTS;
     glDrawElements(mode, GLsizei(s_bidx.size()), GL_UNSIGNED_INT, nullptr);
     s_stats.draws++;
-    if (traceFile()) traceDraw(int(s_bclass), uint32_t(s_bverts.size()), uint32_t(s_bidx.size()), s_bverts.data());
+    if (traceFile()) traceDraw(int(s_bclass), uint32_t(s_bverts.size()), uint32_t(s_bidx.size()), s_bverts.data(), sp->id);
     s_bidx.clear();
     s_bverts.clear();
     if (traceFile()) traceProbe();
@@ -631,7 +631,9 @@ uint32_t peekColor(int x, int y) {
     glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(x * s_scale, y * s_scale, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
-    return uint32_t(px[3]) << 24 | uint32_t(px[0]) << 16 | uint32_t(px[1]) << 8 | px[2];
+    uint32_t c = uint32_t(px[3]) << 24 | uint32_t(px[0]) << 16 | uint32_t(px[1]) << 8 | px[2];
+    if (FILE* f = traceFile()) fprintf(f, "  GXPeekARGB(%d,%d) = %08X\n", x, y, c);
+    return c;
 }
 uint32_t peekZ(int x, int y) {
     flushBatch();
