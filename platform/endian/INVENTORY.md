@@ -62,5 +62,6 @@ The CPU reads them too (`J3DCluster`, `MapMirror`, `DrawUtil`, `PollutionCount`)
 
 - `JUtility::TColor::set(u32)`/`toUInt32()` stored the u32 by memory layout; `endian-04` makes them value-based (`0xRRGGBBAA`), which fixes colours from typed reads and colour literals.
 - `MarioUtil/DrawUtil.cpp:744` reads `*(u16*)(p + 1)` from a J3D display list (vertex count); `endian-09` makes it a big-endian load.
+- `J3DSkinDeform::initMtxIndexArray` (`J3DCluster.cpp`) also walks display lists (vertex count, u16 position/normal indices); `endian-14` reads them big-endian.
 - JDrama names in `.bin` files are Shift-JIS; the MWCC build encodes literals as Shift-JIS (sjiswrap), so the GCC build needs `-fexec-charset=CP932` (CMake, not a patch).
 - `JUTNameTab` hashes names with `char`, which is signed on x86 as on MWCC; only non-ASCII names could differ.
