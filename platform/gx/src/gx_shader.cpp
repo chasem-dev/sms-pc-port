@@ -86,6 +86,10 @@ vec3 lightPos(int l) { return R3(608 + l * 16 + 10); }
 vec3 lightDir(int l) { return R3(608 + l * 16 + 13); }
 )";
 
+// Attenuation divides by k0 + k1*d + k2*d^2.  A light loaded with all-zero
+// coefficients (J3D leaves unused lights like that) must contribute nothing
+// rather than 0/0 = NaN, which would turn the whole channel black; a zero
+// denominator with a positive numerator saturates, as the hardware reciprocal does.
 static void emitLight(std::string& s, uint32_t ctrl, const char* comp, const char* sumName, int light) {
     char buf[1024];
     std::string sumS = std::string(sumName) + comp;
@@ -101,14 +105,14 @@ static void emitLight(std::string& s, uint32_t ctrl, const char* comp, const cha
         snprintf(buf, sizeof buf,
                  "  { vec3 L = lightPos(%d) - vpos; float d2 = dot(L, L); float d = sqrt(d2); L /= d;\n"
                  "    float cs = max(dot(L, lightDir(%d)), 0.0); vec3 a = lightA(%d); vec3 k = lightK(%d);\n"
-                 "    float at = max(a.x + a.y * cs + a.z * cs * cs, 0.0) / (k.x + k.y * d + k.z * d2);\n"
+                 "    float at = max(a.x + a.y * cs + a.z * cs * cs, 0.0) / max(k.x + k.y * d + k.z * d2, 1e-30);\n"
                  "    %s += at * (%s) * lightColor(%d)%s; }\n",
                  light, light, light, light, sum, dfn, light, comp);
     } else {
         snprintf(buf, sizeof buf,
                  "  { vec3 L = normalize(lightPos(%d)); float nl = dot(N, L);\n"
                  "    float t = nl > 0.0 ? max(dot(N, lightDir(%d)), 0.0) : 0.0; vec3 a = lightA(%d); vec3 k = lightK(%d);\n"
-                 "    float at = max(a.x + a.y * t + a.z * t * t, 0.0) / (k.x + k.y * t + k.z * t * t);\n"
+                 "    float at = max(a.x + a.y * t + a.z * t * t, 0.0) / max(k.x + k.y * t + k.z * t * t, 1e-30);\n"
                  "    %s += at * (%s) * lightColor(%d)%s; }\n",
                  light, light, light, light, sum, dfn, light, comp);
     }

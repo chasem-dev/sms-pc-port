@@ -43,6 +43,7 @@ FILE* traceFile();
 void traceFrameAdvance();
 void traceDraw(int prim, uint32_t nverts, uint32_t nidx, const HostVertex* v);
 void traceCopy(bool disp, int x, int y, int w, int h, const void* dest, uint32_t ctrl);
+void traceProbe();
 void (*g_displayCopyHook)(const void* xfb) = nullptr;
 bool rendererReady() { return s_ready; }
 
@@ -500,6 +501,7 @@ void flushBatch() {
     if (traceFile()) traceDraw(int(s_bclass), uint32_t(s_bverts.size()), uint32_t(s_bidx.size()), s_bverts.data());
     s_bidx.clear();
     s_bverts.clear();
+    if (traceFile()) traceProbe();
 }
 
 // ------------------------------------------------------------------ EFB copies

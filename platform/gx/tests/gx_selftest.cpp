@@ -337,7 +337,22 @@ int main(int argc, char** argv) {
         GXPeekZ(u16(lx), u16(ly), &z);
         // depth of z=-10 with near 1 far 100: (f/(f-n)) - f*n/((f-n)*10) = 0.90909 * 16777215
         expect("GXPeekZ reports the near quad's depth", z > 15100000 && z < 15300000);
+        // regression (file-select blocks were black): a spot-attenuated channel
+        // whose second light has all-zero a/k coefficients must ignore that light
+        // instead of producing 0/0 = NaN.
+        GXInitLightAttn(&lo, 1, 0, 0, 1, 0, 0);
+        GXInitLightDir(&lo, 0, 0, -1);
+        GXLoadLightObjImm(&lo, GX_LIGHT0);
+        GXLightObj zero;
+        memset(&zero, 0, sizeof(zero));
+        GXInitLightColor(&zero, white);
+        GXInitLightPos(&zero, 0, 0, 1000);
+        GXLoadLightObjImm(&zero, GX_LIGHT1);
+        GXSetChanCtrl(GX_COLOR0A0, GX_TRUE, GX_SRC_REG, GX_SRC_REG, GX_LIGHT0 | GX_LIGHT1, GX_DF_CLAMP, GX_AF_SPOT);
         GXSetZMode(GX_FALSE, GX_ALWAYS, GX_FALSE);
+        quad(0, 1.5f, -10, 1);
+        int cy = int(240 - 240 * (1.5f * cot / 10));
+        expectPixel("spot light with zero attenuation ignored", 320, cy, 200, 100, 50, 2);
         setOrtho();
     }
 

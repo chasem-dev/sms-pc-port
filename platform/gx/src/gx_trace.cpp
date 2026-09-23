@@ -120,6 +120,19 @@ void traceDraw(int prim, uint32_t nverts, uint32_t nidx, const HostVertex* v) {
     for (int c = 0; c < 2; c++)
         fprintf(f, "  chan%d: color ctrl %04X alpha ctrl %04X amb %08X mat %08X\n", c, g.xfReg[XFR_COLOR0CTRL + c],
                 g.xfReg[XFR_ALPHA0CTRL + c], g.xfReg[XFR_AMB0 + c], g.xfReg[XFR_MAT0 + c]);
+    uint32_t lmask = 0;
+    for (int c = 0; c < 4; c++) {
+        uint32_t ctrl = g.xfReg[XFR_COLOR0CTRL + c];
+        if (ctrl & 2) lmask |= ((ctrl >> 2) & 15) | ((ctrl >> 11) & 15) << 4;
+    }
+    for (int l = 0; l < 8; l++) {
+        if (!(lmask & (1u << l))) continue;
+        const uint32_t* w = &g.xfMem[0x600 + l * 16];
+        float v[12];
+        memcpy(v, w + 4, sizeof v);
+        fprintf(f, "  light%d: color %08X a(%g %g %g) k(%g %g %g) pos(%g %g %g) dir(%g %g %g)\n", l, w[3], v[0], v[1],
+                v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10], v[11]);
+    }
     for (uint32_t i = 0; i < g.xfReg[XFR_NUMTEXGENS] && i < 8; i++) {
         uint32_t tg = g.xfReg[XFR_TEXGEN + i];
         fprintf(f, "  texgen%u: %s type=%u src_row=%u form=%s post=%03X (dualtex=%u)\n", i, (tg >> 1) & 1 ? "3x4" : "2x4",
@@ -181,6 +194,35 @@ void traceDraw(int prim, uint32_t nverts, uint32_t nidx, const HostVertex* v) {
                 hv.pos[0], hv.pos[1], hv.pos[2], hv.nrm[0], hv.nrm[1], hv.nrm[2], hv.clr[0][0], hv.clr[0][1],
                 hv.clr[0][2], hv.clr[0][3], hv.tex[0][0], hv.tex[0][1], hv.tex[1][0], hv.tex[1][1], hv.mtx[0], hv.mtx[1]);
     }
+    fflush(f);
+}
+
+// SMS_GX_TRACE_PROBE=x,y[;x,y...]: after each traced draw, log the EFB colour at those points.
+void traceProbe() {
+    FILE* f = s_file;
+    if (!f) return;
+    static int n = -1;
+    static int pts[16][2];
+    if (n < 0) {
+        n = 0;
+        const char* e = getenv("SMS_GX_TRACE_PROBE");
+        while (e && *e && n < 16) {
+            int x, y;
+            if (sscanf(e, "%d,%d", &x, &y) != 2) break;
+            pts[n][0] = x;
+            pts[n][1] = y;
+            n++;
+            e = strchr(e, ';');
+            if (e) e++;
+        }
+    }
+    if (!n) return;
+    fprintf(f, "  probe:");
+    for (int i = 0; i < n; i++) {
+        uint32_t c = peekColor(pts[i][0], pts[i][1]);
+        fprintf(f, " (%d,%d)=%02X%02X%02X/%02X", pts[i][0], pts[i][1], (c >> 16) & 255, (c >> 8) & 255, c & 255, c >> 24);
+    }
+    fprintf(f, "\n");
     fflush(f);
 }
 
