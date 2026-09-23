@@ -105,3 +105,31 @@ Still big-endian where the game reads them in place:
 - J2D: BLO screens (`J2DScreen`, `J2DPane` family) and BTI images (`ResTIMG` in `JUTTexture`/`JUTPalette`).
 - JMessage/BMG message files (`MESGbmg1`), JParticle JPA resources (`JPAResourceLoader`), JDrama/scene `.bin` files and `stageArc.bin` (read through JSU streams, now swapped at the typed-read level; any struct reads via `read(void*, n)` still need per-site work), map collision `.col` and other `MapCollision`/`MapData` structs, `MActorData` tables, THP headers (`THPRead`).
 - Unrecognised resource magics are logged once by `port_res_to_native` (`[endian] resource format not converted: ...`), which gives the order to tackle them in.
+
+## Performance
+
+Measured headless on this machine (Mesa llvmpipe software GL), 2026-09-23; details are in the commit that added this section.
+
+- **Returns fixed.**
+  `decomp-patches/ret-01..03` give all 42 fall-off-the-end functions (39 with no return statement, 3 with a path that falls off) the value retail's r3 carries.
+  Five of them are live and their callers read the result: `DSPBuf::mixDSP`, `Dvd::openDvd`, `TMap::intersectLine`, `TLampTrapSpike::receiveMessage` and `TConductor::isBossDefeated`.
+  After the patches, `-Wreturn-type` reports nothing over all units, so the game library no longer depends on `-O0`.
+- **-O1/-O2 are safe as far as the port reaches.**
+  With the existing `-fno-strict-aliasing -fwrapv`, a game library built at -O1 or -O2 boots through the logo, the attract movies (THP) and the title to file select, with audio, and showed no crashes over about 10 runs of 60–100 s.
+  Gameplay levels are not reachable yet, so level code is untested at -O2.
+- **Where the time goes** (main thread = game threads plus the GX translation and the GL driver front-end):
+
+  | Build | Title/movies, VI uncapped | Boot to frame 1600 (VI 240 Hz) | File select: main thread | File select: fps (VI 240 Hz) |
+  | --- | --- | --- | --- | --- |
+  | all -O0 (current) | 61 fps | 97 s | 26.3 ms/frame | ~13 |
+  | game lib -O1 | – | 73 s | 26.2 ms/frame | 17.4 |
+  | game lib -O2 | 77 fps | 58 s | 26.2 ms/frame | 17.8 |
+  | game lib + platform + `platform/gx` -O2 | – | ~42 s | 10.2 ms/frame | 36.6 |
+
+  The game library's -O level mainly speeds up boot and movies (THP decoding lives there).
+  The per-frame cost of 3D scenes is in `platform/` and `platform/gx` at -O0.
+  After both are optimised, llvmpipe (about 52 ms of CPU per frame, spread over its threads) is the limit.
+- **Proposal for the build lead:** build `sms_game`, `sms` and `sms_gx` with `-O2`.
+  Keep `-g`, `-fno-strict-aliasing` and `-fwrapv` (the decomp type-puns freely; strict aliasing was not tried).
+  For example, set `CMAKE_BUILD_TYPE` to `RelWithDebInfo` with `CMAKE_CXX_FLAGS_RELWITHDEBINFO="-O2 -g"`, and drop the `-O0` note in Building.
+  To benchmark past the 60 Hz cap, a `SMS_VI_HZ=<rate>` override of `period_ns` in `platform/vi/vi.cpp` was used privately (not committed; `vi.cpp` belongs to the lead).
