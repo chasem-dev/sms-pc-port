@@ -639,6 +639,7 @@ uint32_t peekZ(int x, int y) {
     glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
     glPixelStorei(GL_PACK_ALIGNMENT, 4);
     glReadPixels(x * s_scale, y * s_scale, 1, 1, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, &v);
+    if (FILE* f = traceFile()) fprintf(f, "  GXPeekZ(%d,%d) = %06X\n", x, y, v >> 8);
     return v >> 8;
 }
 }  // namespace gx

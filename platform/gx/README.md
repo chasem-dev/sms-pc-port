@@ -88,6 +88,14 @@ The renderer reads its state only from that register file, so API calls, GD disp
 8. **Threads.**
    All GX calls must come from the thread that ran `GXInit`, which owns the GL context.
 
+## Debugging aids
+
+- `SMS_GX_TRACE_FRAME=n` (or `a-b`) writes every draw of display frame n (the draws after the n-th `GXCopyDisp`) to `$SMS_GX_DUMP_DIR/gx_trace_frame<n>.txt`, or to `$SMS_GX_TRACE_FILE` for a single frame.
+  Each draw lists primitive and vertex counts, projection/viewport/scissor, z/blend/alpha-compare/fog state, lighting channels and the lights they use, texgens, every TEV stage decoded (`PREV = (ZERO + lerp(ZERO,TEXC,RASC))*1 clamp`), TEV/konst registers, swap tables, bound texture maps (address, format, size, wrap/filter/LOD, TLUT, whether it is an EFB copy) and the first vertices.
+  EFB copies and `GXPeekZ` calls appear in order.
+- `SMS_GX_TRACE_PROBE=x,y;x,y` adds, after each traced draw, the EFB colour/alpha and depth at those points, which finds the draw that breaks a pixel.
+- `SMS_GX_DUMP_EVERY=n` writes every n-th XFB as a PPM (see above).
+
 ## Coverage against `api-surface.tsv`
 
 All **181** GX (149) and GD (32) functions the game, JSystem and THPPlayer call are provided.

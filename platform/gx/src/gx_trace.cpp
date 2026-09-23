@@ -220,7 +220,12 @@ void traceProbe() {
     fprintf(f, "  probe:");
     for (int i = 0; i < n; i++) {
         uint32_t c = peekColor(pts[i][0], pts[i][1]);
-        fprintf(f, " (%d,%d)=%02X%02X%02X/%02X", pts[i][0], pts[i][1], (c >> 16) & 255, (c >> 8) & 255, c & 255, c >> 24);
+        FILE* saved = s_file;
+        s_file = nullptr;  // keep peekZ's own trace line out of the probe
+        uint32_t z = peekZ(pts[i][0], pts[i][1]);
+        s_file = saved;
+        fprintf(f, " (%d,%d)=%02X%02X%02X/%02X z=%06X", pts[i][0], pts[i][1], (c >> 16) & 255, (c >> 8) & 255, c & 255,
+                c >> 24, z);
     }
     fprintf(f, "\n");
     fflush(f);
