@@ -31,8 +31,15 @@ struct Run {
 	uint32_t count;
 };
 
+struct Copy {
+	uint32_t gc, nat, width, count;
+	char kind;
+};
+
 struct Range {
 	std::string label, loc, layout_text;
+	std::vector<Copy> map; // GameCube offset <- native offset, per member run
+	uint32_t native_len;   // bytes read from the native object
 	bool deref, host;
 	uintptr_t addr; // host: static address (relocated at init); mem: absolute
 	uint32_t off;   // added after the dereference
@@ -88,27 +95,62 @@ bool resolve(const Range& r, uintptr_t* where)
 		a = (uintptr_t)p;
 	}
 	a += r.off;
-	if (!readable(a, r.len))
+	if (!readable(a, r.native_len))
 		return false;
 	*where = a;
 	return true;
 }
 
-// Copy a range and convert it to big-endian with its layout.
+// Rebuild a range in the GameCube layout (member offsets from MWCC's rules)
+// and big-endian byte order. Padding that has no member stays zero.
 void snapshot(const Range& r, uintptr_t a, std::vector<uint8_t>& buf)
 {
-	buf.assign((const uint8_t*)a, (const uint8_t*)a + r.len);
-	uint32_t pos = 0;
-	for (size_t i = 0; i < r.layout.size(); i++) {
-		const Run& run = r.layout[i];
-		for (uint32_t c = 0; c < run.count && pos + run.width <= r.len; c++, pos += run.width)
-			if (run.kind != 'b' && run.width > 1)
-				for (uint32_t k = 0; k < run.width / 2; k++) {
-					uint8_t t                       = buf[pos + k];
-					buf[pos + k]                    = buf[pos + run.width - 1 - k];
-					buf[pos + run.width - 1 - k]    = t;
-				}
+	const uint8_t* src = (const uint8_t*)a;
+	buf.assign(r.len, 0);
+	for (size_t i = 0; i < r.map.size(); i++) {
+		const Copy& c = r.map[i];
+		for (uint32_t n = 0; n < c.count; n++) {
+			uint32_t g = c.gc + n * c.width, s = c.nat + n * c.width;
+			if (g + c.width > r.len)
+				break;
+			if (c.kind == 'b' || c.width == 1)
+				memcpy(&buf[g], src + s, c.width);
+			else
+				for (uint32_t k = 0; k < c.width; k++)
+					buf[g + k] = src[s + c.width - 1 - k];
+		}
 	}
+}
+
+bool parse_map(const char* s, std::vector<Copy>& out, uint32_t* native_len)
+{
+	*native_len = 0;
+	while (*s) {
+		char* e;
+		Copy c;
+		c.gc = (uint32_t)strtoul(s, &e, 16);
+		if (*e != ':')
+			return false;
+		c.nat = (uint32_t)strtoul(e + 1, &e, 16);
+		if (*e != ':')
+			return false;
+		c.width = (uint32_t)strtoul(e + 1, &e, 10);
+		c.kind  = *e++;
+		c.count = 1;
+		if (*e == 'x')
+			c.count = (uint32_t)strtoul(e + 1, &e, 10);
+		if (c.nat + c.width * c.count > *native_len)
+			*native_len = c.nat + c.width * c.count;
+		out.push_back(c);
+		if (*e == ',')
+			e++;
+		else if (*e && *e != '\n')
+			return false;
+		s = e;
+		if (*s == '\n')
+			break;
+	}
+	return true;
 }
 
 bool parse_layout(const char* s, std::vector<Run>& out)
@@ -138,17 +180,23 @@ void load_ranges(const char* path)
 		fprintf(stderr, "[trace] cannot open ranges %s\n", path);
 		return;
 	}
-	char line[8192];
+	char* line  = NULL;
+	size_t cap  = 0;
 	uintptr_t anchor = 0;
-	while (fgets(line, sizeof line, f)) {
+	while (getline(&line, &cap, f) > 0) {
 		if (sscanf(line, "# anchor %lx", (unsigned long*)&anchor) == 1)
 			continue;
 		if (line[0] == '#' || line[0] == '\n')
 			continue;
-		char loc[256], label[128], lay[7000];
+		char loc[256], label[128];
 		unsigned len;
-		if (sscanf(line, "%255s %x %127s layout=%6999s", loc, &len, label, lay) != 4)
+		if (sscanf(line, "%255s %x %127s", loc, &len, label) != 3)
 			continue;
+		const char* lp = strstr(line, " layout=");
+		const char* mp = strstr(line, " map=");
+		if (!lp || !mp)
+			continue;
+		std::string lay(lp + 8, strcspn(lp + 8, " \n"));
 		Range r;
 		r.label       = label;
 		r.loc         = loc;
@@ -170,10 +218,11 @@ void load_ranges(const char* path)
 			r.addr += r.off;
 			r.off = 0;
 		}
-		if (!parse_layout(lay, r.layout))
+		if (!parse_layout(lay.c_str(), r.layout) || !parse_map(mp + 5, r.map, &r.native_len))
 			continue;
 		g.ranges.push_back(r);
 	}
+	free(line);
 	fclose(f);
 	// Load bias of the executable (0 for non-PIE): static address = runtime - bias.
 	struct Bias {

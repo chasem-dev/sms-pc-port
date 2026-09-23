@@ -117,6 +117,41 @@ At run time each range is copied and every multi-byte member byte-swapped, so th
 The oracle's own `compare_traces.py` compares two Dolphin runs.
 This tool is its native counterpart: it uses the native trace's layouts in place of the two linker maps.
 
+### GameCube layout
+
+The oracle's offsets are GameCube (MWCC) offsets, and the port's g++ layout differs from them.
+- **Tail padding:** the Itanium ABI puts a derived class's first member into its base's tail padding.
+  For example `JDrama::TViewObj::unkC` sits at 10, not 0xC, so `TPlacement::mPosition` sits at 0xC, not 0x10.
+- **Alignment:** 8-byte members align to 4, not 8.
+
+`trace_resolve.py` therefore recomputes every type's MWCC layout from its DWARF members: no tail-padding reuse, 8-byte scalars aligned to 8, members in declaration order.
+It emits a copy map (`map=gcoff:natoff:<w><k>[x<n>]`), and the writer rebuilds each range in the GameCube layout before byte-swapping.
+Bytes that no member covers stay zero.
+
+The rebuilt layout is only as complete as the decomp's declared members.
+Where retail has a member the decomp header does not declare, later offsets shift.
+Known case: the `JUTGamePad` header comments put `mPortNum` at 0x7C, but its declared `CRumble` is 0x10 bytes, which puts `mPortNum` at 0x78.
+So `gamepad0` is shifted by 4 from `mPortNum` up to `mPadReplay`.
+
 ## Status (2026-09-23)
 
-See the final section of the report in `docs` of this change (below) for the first native-vs-retail comparison against `runs/play-r9`.
+What was checked: a native run (worktree build with the two hooks) traced against `dolphin-oracle/runs/play-r9` (`movies/play5.dtm`, 11500 fields).
+
+- **Tracing and sync:** the whole path traces, 11,260 native fields.
+  With `SMS_TRACE_SYNC=app+8:1=2@231,app+e:4=0x0f000000@456,app+e:4=0@1244,mdstate+0:1=0@5352`, sync lands at native retrace 3–4, and the title re-sync moves native by +9..+11 fields.
+  Native reaches the logo and title faster than retail's DVD loads.
+- **Pad input:** the movie reaches the game correctly.
+  `JUTGamePad::mPadStatus[0].button` and the gamepad's `mButton` follow retail's START/A presses, e.g. START at retail fields 340–341 and native 339–340 (or 340–341 in another run).
+- **App states:** `app` states match the retail sequence: 2 → 3 → 4 → 5 on area 15, i.e. boot, Nintendo logo, title.
+- **Native is not deterministic run to run.**
+  - The VI retrace is a real-time 59.94 Hz host timer, so sync lands one retrace earlier or later from run to run, and input lands with it.
+  - In one run native left file select into the airstrip at field 1283 (retail 1244, then 4100 fields of opening movie).
+  - In two runs it stayed in file select.
+  - For true lockstep, VI needs a deterministic clock: one retrace per game frame, or retraces driven by the game's `VIWaitForRetrace`/`GXCopyDisp` instead of wall time.
+  - This is platform/vi, the lead's file.
+- **Heap ranges:** `cardload` and `blockA/B/C` are absolute retail heap addresses, and the native heap layout differs, so they never match.
+  They need symbolic starts (a pointer path from a global) before they are useful natively.
+- **Bug found:** tracing the airstrip exposed a stack smash in `J3DSkinDeform::initMtxIndexArray`: display lists were parsed as native u16.
+  It is fixed by `decomp-patches/endian-14-J3DSkinDeform-dl-be.patch`.
+- **First real divergence:** `TMarioGamePad::mFlags` reads 0x40 in native from field 231 and 0 in retail.
+  This comparison is unreliable until the `gamepad0` offsets are corrected (see above).

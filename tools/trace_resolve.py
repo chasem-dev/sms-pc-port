@@ -83,6 +83,75 @@ def layout_of(t, base=0, name='', out=None, limit=1 << 16):
     return out
 
 
+def gc_layout(t, native_base=0, gc_base=0, name='', out=None):
+    """Lay a type out the way MWCC (PowerPC EABI) does and pair every scalar's
+    GameCube offset with its native offset.  Differences from the i386 g++ ABI
+    that matter here: base-class tail padding is never reused (g++ puts a
+    derived class's first member into it), and 8-byte scalars align to 8.
+    Returns (size, align); appends (gc_off, native_off, width, kind, name)."""
+    t = t.strip_typedefs()
+    code = t.code
+    if code in (gdb.TYPE_CODE_STRUCT, gdb.TYPE_CODE_UNION):
+        off, align, size = 0, 1, 0
+        for f in t.fields():
+            if not hasattr(f, 'bitpos') or f.bitpos is None:
+                continue
+            nat = native_base + f.bitpos // 8
+            fname = (name + '.' if name else '') + (f.name or ('<base>' if f.is_base_class else '?'))
+            if f.bitsize:
+                # bitfield: keep its storage unit where g++ put it, relative to the class
+                if out is not None:
+                    out.append((gc_base + f.bitpos // 8, nat, 1, 'b', fname))
+                continue
+            fsize, falign = gc_layout(f.type, 0, 0, '', None)
+            if code == gdb.TYPE_CODE_UNION:
+                gc_layout(f.type, nat, gc_base, fname, out)
+                size, align = max(size, fsize), max(align, falign)
+                continue
+            off = (off + falign - 1) // falign * falign
+            gc_layout(f.type, nat, gc_base + off, fname, out)
+            off += fsize
+            align = max(align, falign)
+        size = max(size, off)
+        size = max(1, (size + align - 1) // align * align) if (size or t.fields()) else 0
+        return size, align
+    if code == gdb.TYPE_CODE_ARRAY:
+        et = t.target()
+        esize, ealign = gc_layout(et, 0, 0, '', None)
+        n = t.sizeof // max(et.sizeof, 1)
+        if out is not None:
+            for i in range(n):
+                gc_layout(et, native_base + i * et.sizeof, gc_base + i * esize, '%s[%d]' % (name, i), out)
+        return esize * n, ealign
+    w = t.sizeof
+    if code in (gdb.TYPE_CODE_PTR, gdb.TYPE_CODE_REF, gdb.TYPE_CODE_METHODPTR, gdb.TYPE_CODE_MEMBERPTR):
+        k = 'p'
+    elif code == gdb.TYPE_CODE_FLT:
+        k = 'f'
+    elif code in (gdb.TYPE_CODE_INT, gdb.TYPE_CODE_ENUM, gdb.TYPE_CODE_BOOL, gdb.TYPE_CODE_CHAR):
+        k = 'i' if w > 1 else 'b'
+    else:
+        k = 'b'
+    if out is not None:
+        out.append((gc_base, native_base, w, k, name))
+    return w, min(max(w, 1), 8)
+
+
+def map_tokens(pairs):
+    """Copy runs gcoff:natoff:<w><k>[x<n>] (consecutive members merged)."""
+    runs = []
+    for g, n, w, k in sorted(pairs):
+        if w == 1:
+            k = 'b'
+        if runs:
+            rg, rn, rw, rk, rc = runs[-1]
+            if rw == w and rk == k and g == rg + rw * rc and n == rn + rw * rc:
+                runs[-1][4] += 1
+                continue
+        runs.append([g, n, w, k, 1])
+    return ','.join('%x:%x:%d%s%s' % (g, n, w, k, ('x%d' % c) if c > 1 else '') for g, n, w, k, c in runs)
+
+
 def tokens(scalars, length):
     """Compact layout string covering [0, length)."""
     runs = []
@@ -180,14 +249,36 @@ def resolve(line, types):
         n = typ.sizeof - base_off
     else:
         n = int(length, 0)
-    scalars = []
+    scalars, pairs = [], []
+    native_base = base_off
     if typ is not None:
-        full = layout_of(typ, 0, '', None, base_off + n)
-        scalars = [(o - base_off, w, k, nm) for o, w, k, nm in full if base_off <= o and o + w <= base_off + n]
+        full = []
+        gc_layout(typ, 0, 0, '', full)
+        # base_off / length are GameCube offsets (the oracle's range files); the
+        # native address of the range start is the native offset of the member
+        # at GameCube offset base_off.
+        native_base = 0
+        for g, nat, w, k, nm in full:
+            if g == base_off:
+                native_base = nat
+                break
+        else:
+            native_base = base_off
+        for g, nat, w, k, nm in full:
+            if base_off <= g and g + w <= base_off + n:
+                scalars.append((g - base_off, w, k, nm))
+                pairs.append((g - base_off, nat - native_base, w, k))
     else:
-        # unknown layout: 4-byte words
+        # unknown layout: 4-byte words, same offsets on both sides
         scalars = [(o, 4, 'i', '+0x%x' % o) for o in range(0, n - n % 4, 4)]
-    return label, (loc, n, tokens(scalars, n), scalars, str(typ) if typ is not None else '?'), None
+        pairs = [(o, o, 4, 'i') for o in range(0, n - n % 4, 4)]
+    if native_base != base_off:
+        # re-point the range at the native member (deref: offset after the pointer)
+        if loc.startswith('*'):
+            loc = loc[:loc.rindex('+0x')] + '+0x%x' % native_base
+        elif where == 'host':
+            loc = '@0x%x' % (addr + native_base)
+    return label, (loc, n, tokens(scalars, n), scalars, str(typ) if typ is not None else '?', map_tokens(pairs)), None
 
 
 def main():
@@ -215,8 +306,8 @@ def main():
                 f.write('# skip %s: %s\n' % (label, err))
                 print('trace_resolve: skip %s: %s' % (label, err))
                 continue
-            loc, n, lay, scalars, tname = info
-            f.write('%s 0x%x %s layout=%s\n' % (loc, n, label, lay))
+            loc, n, lay, scalars, tname, cmap = info
+            f.write('%s 0x%x %s layout=%s map=%s\n' % (loc, n, label, lay, cmap))
             names[label] = {'type': tname, 'fields': [[o, w, k, nm] for o, w, k, nm in sorted(scalars)]}
             print('trace_resolve: %-16s %-24s 0x%-5x %s' % (label, loc, n, tname))
     json.dump(names, open(out + '.json', 'w'), indent=0)
