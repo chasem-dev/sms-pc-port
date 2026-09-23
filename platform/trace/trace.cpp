@@ -40,9 +40,9 @@ struct Range {
 	std::string label, loc, layout_text;
 	std::vector<Copy> map; // GameCube offset <- native offset, per member run
 	uint32_t native_len;   // bytes read from the native object
-	bool deref, host;
-	uintptr_t addr; // host: static address (relocated at init); mem: absolute
-	uint32_t off;   // added after the dereference
+	bool host;
+	uintptr_t addr;             // host: static address (relocated at init); mem: absolute
+	std::vector<uint32_t> hops; // per dereference: read the pointer, add this
 	uint32_t len;
 	std::vector<Run> layout;
 };
@@ -85,16 +85,15 @@ bool readable(uintptr_t a, uint32_t n)
 bool resolve(const Range& r, uintptr_t* where)
 {
 	uintptr_t a = r.addr;
-	if (r.deref) {
+	for (size_t i = 0; i < r.hops.size(); i++) {
 		if (!readable(a, 4))
 			return false;
 		uint32_t p;
 		memcpy(&p, (const void*)a, 4);
 		if (!p)
 			return false;
-		a = (uintptr_t)p;
+		a = (uintptr_t)p + r.hops[i];
 	}
-	a += r.off;
 	if (!readable(a, r.native_len))
 		return false;
 	*where = a;
@@ -202,22 +201,14 @@ void load_ranges(const char* path)
 		r.loc         = loc;
 		r.layout_text = lay;
 		r.len         = len;
-		r.off         = 0;
 		const char* p = loc;
-		r.deref       = *p == '*';
-		if (r.deref)
-			p++;
-		r.host = *p == '@';
+		r.host        = *p == '@';
 		if (r.host)
 			p++;
 		char* e;
 		r.addr = (uintptr_t)strtoul(p, &e, 16);
-		if (*e == '+')
-			r.off = (uint32_t)strtoul(e + 1, NULL, 16);
-		if (!r.deref && r.off) {
-			r.addr += r.off;
-			r.off = 0;
-		}
+		while (*e == '/')
+			r.hops.push_back((uint32_t)strtoul(e + 1, &e, 16));
 		if (!parse_layout(lay.c_str(), r.layout) || !parse_map(mp + 5, r.map, &r.native_len))
 			continue;
 		g.ranges.push_back(r);

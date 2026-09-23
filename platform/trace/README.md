@@ -128,10 +128,35 @@ The oracle's offsets are GameCube (MWCC) offsets, and the port's g++ layout diff
 It emits a copy map (`map=gcoff:natoff:<w><k>[x<n>]`), and the writer rebuilds each range in the GameCube layout before byte-swapping.
 Bytes that no member covers stay zero.
 
-The rebuilt layout is only as complete as the decomp's declared members.
-Where retail has a member the decomp header does not declare, later offsets shift.
-Known case: the `JUTGamePad` header comments put `mPortNum` at 0x7C, but its declared `CRumble` is 0x10 bytes, which puts `mPortNum` at 0x78.
-So `gamepad0` is shifted by 4 from `mPortNum` up to `mPadReplay`.
+The rebuilt layout is only as complete as the decomp's declared members, and those match retail wherever the decomp matches.
+Checked for `JUTGamePad` against retail's constructor (`__ct__10JUTGamePadFQ210JUTGamePad8EPadPort`), all confirmed by the stores in retail's code:
+- `sth r0,0x78(r29)` → `mPortNum` at 0x78.
+- `addi r30,r29,0x7c` for the `JSULink` → `mLink` at 0x7C.
+- `stw 0x8c`/`0x90` → `mPadRecord` 0x8C, `mPadReplay` 0x90.
+- `stb 0x98` → `mButtonReset` 0x98.
+
+The resolver computes exactly this.
+Only the offset *comments* in `decomp/include/JSystem/JUtility/JUTGamePad.hpp` are wrong from `mPortNum` on:
+- `mPortNum` 0x78, not 0x7C.
+- `mErrorStatus` 0x7A, not 0x7E.
+- `mLink` 0x7C, not 0x80.
+- `mPadRecord` 0x8C, not 0x90.
+- `mPadReplay` 0x90, not 0x94.
+- `field_0x9c` 0x94.
+
+This is cosmetic: no code depends on the comments.
+
+## Range syntax
+
+The resolver reads dolphin-oracle range files (`symbol[+off]`, `0xADDR`, `*symbol[+off]`, `*(symbol+n)[+off]`), plus nesting.
+`*(*gpCardLoad+0x298)+0x10` reads the pointer at offset 0x298 of the object `gpCardLoad` points to, then adds 0x10.
+All offsets are GameCube offsets; each one is translated through the MWCC layout of the type it indexes.
+Native starts are written as `@0xSTATIC` (host symbol) or `0xMEM1`, followed by `/0xOFF` per dereference.
+
+Heap objects should be reached through pointers, never absolute addresses, because the native heap layout differs from retail's.
+`/home/netflix/dolphin-oracle/ranges/play-symbolic.txt` is `play.txt` with `cardload = *gpCardLoad` and the three blocks as `*(*gpCardLoad+0x298/0x29c/0x2a0)`.
+It was checked against `runs/play-r9`: retail's `TCardLoad` holds the old blockA/B/C addresses at those offsets.
+The oracle's `run_oracle.py` resolves `cardload` today, and skips the nested block lines until its Dolphin range format supports a pointer chain.
 
 ## Status (2026-09-23)
 
@@ -149,9 +174,9 @@ What was checked: a native run (worktree build with the two hooks) traced agains
   - In two runs it stayed in file select.
   - For true lockstep, VI needs a deterministic clock: one retrace per game frame, or retraces driven by the game's `VIWaitForRetrace`/`GXCopyDisp` instead of wall time.
   - This is platform/vi, the lead's file.
-- **Heap ranges:** `cardload` and `blockA/B/C` are absolute retail heap addresses, and the native heap layout differs, so they never match.
-  They need symbolic starts (a pointer path from a global) before they are useful natively.
+- **Heap ranges:** `cardload` and `blockA/B/C` in `play.txt` are absolute retail heap addresses, which never match natively.
+  Use `play-symbolic.txt` (see Range syntax).
 - **Bug found:** tracing the airstrip exposed a stack smash in `J3DSkinDeform::initMtxIndexArray`: display lists were parsed as native u16.
   It is fixed by `decomp-patches/endian-14-J3DSkinDeform-dl-be.patch`.
-- **First real divergence:** `TMarioGamePad::mFlags` reads 0x40 in native from field 231 and 0 in retail.
-  This comparison is unreliable until the `gamepad0` offsets are corrected (see above).
+- **Earlier gamepad divergence:** the `TMarioGamePad::mFlags` difference at field 231 came from comparing native (g++) offsets.
+  With the GameCube layout it is gone.

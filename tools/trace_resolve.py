@@ -10,7 +10,10 @@
 # used by tools/trace_compare.py).
 #
 # Range syntax (as dolphin-oracle): <start> <length|size> <label>
-#   start: symbol[+off] | 0xADDR | *symbol[+off] | *(symbol+n)[+off]
+#   start: symbol[+off] | 0xADDR | *symbol[+off] | *(symbol+n)[+off], nesting allowed:
+#          *(*gpCardLoad+0x298)+0x10. Offsets are GameCube offsets.
+# Output start: @0xSTATIC (host symbol) or 0xMEM1, then /0xOFF per dereference
+# (read the pointer at the current address, add OFF).
 # CodeWarrior-mangled static members (mPadStatus__10JUTGamePad) are looked up
 # as JUTGamePad::mPadStatus. 0xADDR in MEM1 is used as is (the port maps MEM1
 # at 0x80000000); its layout is unknown unless a "# type <label> <Type>" line
@@ -198,46 +201,86 @@ def member_type_at(t, off):
     return t if off == 0 else None
 
 
+def parse_start(text):
+    """Range start -> (base, ops). base: symbol name or int; ops: ('add', n) / ('deref',).
+    Grammar (dolphin-oracle's, plus nesting):  E := sym[+off] | 0xADDR[+off] | *E' [+off] | *(E)[+off]
+    where '*sym+off' follows the pointer stored at sym and then adds off, and
+    '*(E)' follows the pointer stored at E, so '*(*gpCardLoad+0x298)' reads the
+    pointer at offset 0x298 of the object gpCardLoad points to."""
+    text = text.strip()
+    if text.startswith('*('):
+        depth, i = 0, 1
+        for i in range(1, len(text)):
+            depth += {'(': 1, ')': -1}.get(text[i], 0)
+            if depth == 0:
+                break
+        base, ops = parse_start(text[2:i])
+        ops = ops + [('deref',)]
+        rest = text[i + 1:]
+    elif text.startswith('*'):
+        head, _, rest = text[1:].partition('+')
+        base, ops = parse_start(head)
+        ops = ops + [('deref',)]
+        rest = ('+' + rest) if rest else ''
+    else:
+        head, _, rest = text.partition('+')
+        base = int(head, 16) if re.match(r'^0x[0-9a-fA-F]+$', head) else head
+        ops = []
+        rest = ('+' + rest) if rest else ''
+    for part in [x for x in rest.split('+') if x]:
+        ops.append(('add', int(part, 0)))
+    return base, ops
+
+
+def gc_member(t, gc_off):
+    """(native offset, gdb.Type) of the member at GameCube offset gc_off of type t."""
+    if t is None:
+        return gc_off, None
+    full = []
+    gc_layout(t, 0, 0, '', full)
+    for g, nat, w, k, nm in full:
+        if g == gc_off:
+            return nat, member_type_at(t, nat)
+    return gc_off, None
+
+
 def resolve(line, types):
     words = line.split('#', 1)[0].split()
     if len(words) < 3:
         return None
     start, length, label = words[:3]
-    m = re.match(r'^(\*)?(?:\((\w+)\+(\w+)\)|(\w+))(?:\+(\w+))?$', start)
-    if not m:
+    try:
+        base, ops = parse_start(start)
+    except ValueError:
         return label, None, 'unsupported start %s' % start
-    deref = bool(m.group(1))
-    sym = m.group(2) or m.group(4)
-    inner = int(m.group(3), 0) if m.group(3) else 0
-    off = int(m.group(5), 0) if m.group(5) else 0
-    typ = None
-    if re.match(r'^0x[0-9a-fA-F]+$', sym):
-        addr = int(sym, 16) + inner
-        loc = '0x%08x' % addr if MEM1_LO <= addr < MEM1_HI else None
-        if loc is None:
+    if isinstance(base, int):
+        if not MEM1_LO <= base < MEM1_HI:
             return label, None, 'absolute address outside MEM1'
-        where = 'mem'
+        loc, typ = '0x%08x' % base, None
     else:
-        hit = lookup(sym)
+        hit = lookup(base)
         if not hit:
-            return label, None, 'symbol %s not in the port binary' % sym
+            return label, None, 'symbol %s not in the port binary' % base
         addr, typ = hit
-        addr += inner
         loc = '@0x%x' % addr
-        where = 'host'
-        if inner:
-            typ = member_type_at(typ, inner)
-    if deref:
-        # the object is where the pointer points; its static type is the pointee
-        if typ is not None:
-            st = typ.strip_typedefs()
-            typ = st.target() if st.code == gdb.TYPE_CODE_PTR else None
-        loc = '*%s+0x%x' % (loc, off)
-        base_off = off
-    else:
-        if off:
-            loc = '%s+0x%x' % (loc, off) if where == 'host' else '0x%08x' % (int(loc, 16) + off)
-        base_off = off
+    # walk: GameCube offsets become native offsets through each type's MWCC layout
+    chain = []        # native offsets added after each dereference
+    static_add = 0    # native offset added before the first dereference
+    pending = 0       # GameCube offset not yet applied
+    for op in ops:
+        if op[0] == 'add':
+            pending += op[1]
+            continue
+        nat, mtype = gc_member(typ, pending) if pending else (0, typ)
+        if chain:
+            chain[-1] += nat
+        else:
+            static_add += nat
+        st = mtype.strip_typedefs() if mtype is not None else None
+        typ = st.target() if st is not None and st.code == gdb.TYPE_CODE_PTR else None
+        chain.append(0)
+        pending = 0
+    base_off = pending  # the range is this GameCube slice of `typ`
     if label in types:
         try:
             typ = gdb.lookup_type(types[label])
@@ -246,7 +289,7 @@ def resolve(line, types):
     if length == 'size':
         if typ is None:
             return label, None, 'size of an untyped range'
-        n = typ.sizeof - base_off
+        n = gc_layout(typ, 0, 0, '', None)[0] - base_off
     else:
         n = int(length, 0)
     scalars, pairs = [], []
@@ -254,30 +297,25 @@ def resolve(line, types):
     if typ is not None:
         full = []
         gc_layout(typ, 0, 0, '', full)
-        # base_off / length are GameCube offsets (the oracle's range files); the
-        # native address of the range start is the native offset of the member
-        # at GameCube offset base_off.
-        native_base = 0
-        for g, nat, w, k, nm in full:
-            if g == base_off:
-                native_base = nat
-                break
-        else:
-            native_base = base_off
+        native_base = next((nat for g, nat, w, k, nm in full if g >= base_off), base_off)
+        first_g = next((g for g, nat, w, k, nm in full if g >= base_off), base_off)
+        native_base -= first_g - base_off
         for g, nat, w, k, nm in full:
             if base_off <= g and g + w <= base_off + n:
                 scalars.append((g - base_off, w, k, nm))
                 pairs.append((g - base_off, nat - native_base, w, k))
     else:
-        # unknown layout: 4-byte words, same offsets on both sides
         scalars = [(o, 4, 'i', '+0x%x' % o) for o in range(0, n - n % 4, 4)]
         pairs = [(o, o, 4, 'i') for o in range(0, n - n % 4, 4)]
-    if native_base != base_off:
-        # re-point the range at the native member (deref: offset after the pointer)
-        if loc.startswith('*'):
-            loc = loc[:loc.rindex('+0x')] + '+0x%x' % native_base
-        elif where == 'host':
-            loc = '@0x%x' % (addr + native_base)
+    if chain:
+        chain[-1] += native_base
+    else:
+        static_add += native_base
+    if loc.startswith('@'):
+        loc = '@0x%x' % (int(loc[1:], 16) + static_add)
+    else:
+        loc = '0x%08x' % (int(loc, 16) + static_add)
+    loc += ''.join('/0x%x' % c for c in chain)
     return label, (loc, n, tokens(scalars, n), scalars, str(typ) if typ is not None else '?', map_tokens(pairs)), None
 
 
