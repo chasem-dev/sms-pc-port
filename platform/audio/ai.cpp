@@ -27,6 +27,8 @@
 #include <time.h>
 #include <vector>
 
+extern "C" int port_audio_dsp_frame_pending(void) __attribute__((weak));
+
 namespace {
 
 // Minimal SDL2 ABI (public SDL_audio.h): only what the output needs.
@@ -277,6 +279,10 @@ void ai_poll()
 {
 	if (!g.running)
 		return;
+	if (port_audio_dsp_frame_pending && port_audio_dsp_frame_pending()) {
+		port_irq_kick(); // the audio thread is mid-frame: retry at the next check point
+		return;
+	}
 	if (g.sdl) {
 		size_t level;
 		{

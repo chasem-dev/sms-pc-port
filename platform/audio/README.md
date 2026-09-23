@@ -12,6 +12,7 @@ This module replaces the hardware it talks to: the DSP microcode that mixes voic
 | `noaudio.cpp` | bring-up lead | `SMS_NO_AUDIO` (empty sound configuration). |
 | `tests/` | audio | `audio_test`: offline mixer test against the disc (not part of the CMake build). |
 | `../../decomp-patches/audio-01-*.patch`, `audio-02-*.patch` | audio | JAudio bitfield/byte views that assumed big-endian layout (mix-config bus numbers, BMS note-on flags). |
+| `../../decomp-patches/audio-03-*.patch` | audio | No host-time "DSP overload" voice stealing on TARGET_PC. |
 
 ## Integration (for the bring-up lead)
 
@@ -56,22 +57,23 @@ It boots, and the logo, UI sounds, sequences and voice clips play; see Status.
 | `SMS_AUDIO_TRACE=1` | log each voice start and the voice counts every 5 s |
 | `SMS_AUDIO_FX=0` | bypass the FX (echo) lines |
 | `SMS_AUDIO_SWAP=0` | keep DMA pair order (the default swaps the (right, left) DMA pairs for SDL) |
-| `SMS_AUDIO_MASTER_SHIFT=n` | fixed point of the DSP master level (default 14: 0x4000 = unity) |
+| `SMS_AUDIO_MASTER_SHIFT=n` | fixed point of the DSP master level (default 15, measured) |
+| `SMS_AUDIO_SLOT_SHIFT=n` | fixed point of `mixChannels` volumes (default 14, measured) |
+| `SMS_AUDIO_ARAM_DUMP=file[,n]` | write the ARAM image after `n` subframes (default 16000) |
 
 ## Status
 
-- **Decoders are bit-exact against the disc.**
-  Decoding every looped wave from its start reproduces the loop-start history stored in the WSYS tables: 449 of 449 ADPCM4 loops and 3 of 3 ADPCM2 loops (`tests/audio_test`).
-- **In game** (60–100 s headless runs with `SMS_AUDIO_WAV`, using `SMS_AUTOPRESS` to reach the menus): the boot jingle, menu sound effects, Mario's PCM16 voice clips and BMS sequence music play.
-  That is about 2,000 note-ons in 100 s, up to 13 simultaneous voices, and voices are released and reused.
-  Output is paced in real time (29.3 s recorded in a 30 s SDL run).
-- Before `audio-02`, every sequence note-on was misparsed (little-endian bitfields): notes never released, all 64 voices stayed busy, and `TNoteMgr::getChannel` could crash on a slot index of 121.
-  Before `audio-01`, the mix-config bus number read the wrong byte.
-- Levels: with the Q14 master, the loudest moments peak near full scale and clipping is rare: 2 clipped samples in a 99 s run and 17 (at one moment) in a 30 s run.
-  The Q14 choice is an inference (PROTOCOL.md, Levels).
-- Stream voices (DirectPCM, `title.afc` and cutscene audio) are implemented to the protocol but have not been reached in a test run yet.
-- Not implemented: oscillator voices, per-voice FIR/IIR/low-pass filters, surround delay, Dolby surround buses.
-  The FX line model is an approximation (PROTOCOL.md).
+Compared against retail running under Dolphin with DSP LLE (the game's own microcode), boot → title → file select; the numbers are in PROTOCOL.md.
+
+- The boot jingle matches retail sample for sample (correlation 1.000, gain 0.99–1.00).
+  This fixed the master at Q15 (earlier Q14 was 2× too loud); `mixChannels` volumes are Q14 (auto mixer Q15).
+- Voices, waves and volumes match retail's voice blocks (the same ARAM addresses, the same slot volumes).
+  File-select music plays with retail's voice count (11–13 vs 10.9) and a continuous floor, after two timing fixes: AI blocks wait for the DSP frame, and `audio-03` stops the host-time "DSP overload" voice stealing that cut notes to about a third.
+- Bus 1 is left, bus 2 right, as retail.
+- **Decoders are bit-exact against the disc** (all 449 ADPCM4 and 3 ADPCM2 loop histories; `tests/audio_test`).
+- Untested against retail: stream voices (not used in this segment), surround mode, FX lines (no fx sends in this segment), oscillator voices, per-voice filters (retail's IIR coefficients were identity here).
+
+Debug aids: `SMS_AUDIO_TRACE=1` (voice starts, ends with reason and lifetime, counts every 5 s) and `SMS_AUDIO_ARAM_DUMP=file[,subframe]` (writes the ARAM image once, for replaying traced voice blocks offline).
 
 ## Offline test
 

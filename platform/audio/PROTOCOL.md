@@ -86,13 +86,44 @@ SMS's scenes: lines 0/1 return to buses 1/2 (gain 4096 or 2047), second target b
 **Assumed**: line *i* is fed by bus 3+*i* (the per-voice fx sends), its delayed signal is FIR-filtered, fed back into the delay line, and returned to its first bus at gain/4096; returns to buses other than 1/2 are dropped.
 This gives an echo/reverb tail of the right length and routing, not a verified match.
 
-## Levels
+## Levels (measured against retail)
 
-Voice volumes are Q15 (the CPU caps channel volumes at `MAX_MIXERLEVEL` = 0.802 × 16384 in SMS; auto-mixer volumes go up to 0x7FFF).
-`DSP_MIXERLEVEL` defaults to 0x4000 and SMS sets 5.0 × 4096 = 0x5000.
-**Assumed**: Q14, i.e. 0x4000 = unity and SMS's 0x5000 = 1.25×.
-The Q12 reading (5×) clips most of the game's output; Q14 leaves the boot jingle at about −1.5 dBFS and clips only 2 samples in 99 s of play.
-`SMS_AUDIO_MASTER_SHIFT` overrides it.
+Reference: Dolphin (the dolphin-oracle build) running the retail disc with **DSP LLE**, i.e. the game's own microcode, with `DumpAudio` capturing the AI DMA stream.
+Boot → title → file select from `movies/title.dtm`, in `runs/audio-retail-lle` of the oracle tree.
+Dolphin's DSP HLE gave the same levels (the boot jingle peaks at 13760 in both).
+
+- **Master** (`DSP_MIXERLEVEL`, SMS sets 0x5000): **Q15**, i.e. 0x5000 = 0.625×.
+  The boot jingle (an auto-mixer voice) then matches retail sample for sample: correlation 1.000 and gain 0.994–1.001 on both channels (Q14 gave 0.497).
+- **Auto-mixer volume** (0x056): Q15 with a sine/cosine pan law (0.707 each at centre); fixed by the same jingle match.
+- **`mixChannels` volumes**: **Q14**, consistent with JAudio capping them at `MAX_MIXERLEVEL = gain × 16384`.
+  Evidence: retail's own voice blocks (the oracle traced `CH_BUF` every field over 600 fields of file-select music) replayed through this mixer come out 1.2–1.3× quieter than retail's dump with Q14, and about 2.5× quieter with Q15 (envelope regression; field-rate snapshots limit this to ±20 %).
+- These three scales cannot be told apart from "`mixChannels` Q15, auto-mixer at half, master Q14": every path gives the same output.
+  Streams (0x7FFF sends) therefore play at 1.25×, and their loudest peaks can saturate, as they would under either reading.
+- `SMS_AUDIO_MASTER_SHIFT` and `SMS_AUDIO_SLOT_SHIFT` override the two shifts.
+
+## Bus → channel
+
+In retail file select, every voice uses buses 1–4 (0x0D00/0x0D60/0x0DC0/0x0E20), with no FX sends; the auto-mixer voices' `mixChannels` hold garbage bus words, as on the port.
+Bus 1 comes out as the dump's left channel: the replay's bus 1 is louder like retail's L (L/R rms 1.13 replay, 1.33 retail), and envelope correlation is bus1–L 0.60 against bus2–L 0.38.
+The port's (right, left) DMA order plus the swap for SDL/WAV output is therefore right.
+
+## Timing
+
+Two port-side problems made the music irregular and thin; both are fixed:
+
+- **AI pacing.** DMA blocks were consumed as fast as interrupts could be delivered after a stall, before the audio thread had rendered the next DSP frame, so JAudio's `DSPBuf` repeated stale samples (gaps) while the sequencer fell behind.
+  The AI now starts a block only when no DSP frame is pending (`port_audio_dsp_frame_pending`).
+- **Voice stealing.** `TDSPChannel::updateAll` measures DSP load with `OSGetTick` gaps between subframe updates and calls `breakLowerActive`.
+  On the port those gaps measure host scheduling, and it cut most notes (median life 20 subframes against retail's 7 fields ≈ 47).
+  `decomp-patches/audio-03` skips the guard on TARGET_PC.
+  Afterwards the port averages 11–13 simultaneous voices at file select (retail 10.9), and the music floor is continuous (quietest-quartile energy 0.6–0.8 of the mean; retail 0.5–0.65, before the fix 0.04–0.18).
+
+## Surround (Dolby Pro Logic II)
+
+In stereo output mode (the IPL default, and what the port's `OSGetSoundMode` returns) JAudio routes only to buses 1–4 and remaps bus 8 to 11.
+Retail used nothing else in the traced segment.
+Surround mode (output mode 2, from the in-game option menu) uses buses 8/9 and the auto mixer's dolby byte; the microcode's matrix encoding into the stereo pair is **not verified** (buses 8/9 are currently dropped).
+An oracle run that selects surround in the options menu would settle it.
 
 ## Wave data
 
@@ -119,4 +150,5 @@ Without the game's table (the WAV test) a Catmull-Rom table is built instead.
 - Oscillator voices (`samplesSourceType` < 4, `noteOnOsc`): skipped (logged once), still finished on stop requests.
 - Per-voice FIR8/IIR/low-pass filters and the surround delay bytes.
 - Buses 5–11 other than as FX inputs (Dolby surround output mode).
-- DVD audio streaming (DTK `AISetStreamPlayState`, `JASHardStream`): SMS's streams go through DirectPCM voices instead.
+- DVD audio streaming (DTK `AISetStreamPlayState`, `JASHardStream`): SMS's streams go through DirectPCM voices instead (the retail dump's DTK track was silent throughout).
+- Stream voices (DirectPCM, source 0x21) are not exercised by boot/title/file select: `title.afc` is not the title music (correlation ≤ 0.2 against the decoded file), so they remain untested against retail.

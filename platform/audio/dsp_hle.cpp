@@ -20,6 +20,7 @@
 #include "dsp_mixer.h"
 
 #include <deque>
+#include <string>
 #include <vector>
 
 extern "C" u8* port_aram_ptr(u32 addr);
@@ -63,8 +64,33 @@ void raise_irq(u32 first, u32 second)
 
 void reply(u32 low16) { raise_irq(0xDCD10004u, kPrefix | low16); }
 
+// Debug: SMS_AUDIO_ARAM_DUMP=path[,subframe] writes the 16 MiB ARAM image once
+// (default after 40 s of audio) for offline mixer runs (tests/, PROTOCOL.md).
+void maybe_dump_aram()
+{
+	static int state; // 0 unchecked, 1 armed, 2 done
+	static u64 at;
+	static const char* path;
+	if (state == 0) {
+		path  = getenv("SMS_AUDIO_ARAM_DUMP");
+		state = path && *path ? 1 : 2;
+		const char* c = path ? strchr(path, ',') : NULL;
+		at            = c ? strtoull(c + 1, NULL, 10) : 16000;
+	}
+	if (state != 1 || g.subframesRendered < at)
+		return;
+	state = 2;
+	std::string fn(path, strchr(path, ',') ? strchr(path, ',') - path : strlen(path));
+	if (FILE* f = fopen(fn.c_str(), "wb")) {
+		fwrite(port_aram_ptr(0), 1, 16u << 20, f);
+		fclose(f);
+		port_log("[audio] ARAM image written to %s\n", fn.c_str());
+	}
+}
+
 void render_subframe()
 {
+	maybe_dump_aram();
 	u32 n = g.subSamples;
 	port_dspmix_render(g.outA + g.sub * n, g.outB + g.sub * n, (int)n, g.master);
 	g.sub++;
@@ -165,6 +191,13 @@ extern "C" void port_audio_dsp_assert_int(void)
 }
 
 extern "C" u64 port_audio_dsp_subframes(void) { return g.subframesRendered; }
+
+// True while a frame started by 0x82 still has subframes to render. The AI
+// layer does not start another DMA block until it is done: on hardware the
+// DSP always finishes a frame within one block period, and consuming blocks
+// faster than JAudio produces frames makes DSPBuf repeat stale samples (gaps)
+// while the sequencer falls behind.
+extern "C" int port_audio_dsp_frame_pending(void) { return g.outA && g.sub < g.subframes; }
 
 #ifdef SMS_AUDIO_DSP_HLE
 // SDK surface (replaces the handshake-only fake in platform/misc/sdk_data.cpp).

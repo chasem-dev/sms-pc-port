@@ -128,6 +128,7 @@ struct Decoder {
 	uint8_t header;
 	uint32_t remaining; // direct PCM: samples left to pull
 	uint32_t written;   // remainingLength as last written back
+	uint32_t startTick; // trace: subframe the voice started
 	int16_t win[4];   // x[n-1], x[n], x[n+1], x[n+2]
 	uint32_t frac;    // Q16 position between win[1] and win[2]
 };
@@ -145,7 +146,8 @@ struct State {
 	uint32_t fxPos[4];
 	int32_t fxHist[4][8];
 	int active;
-	int masterShift; // master level fixed point: 0x4000 (the DSP default) = unity
+	int masterShift; // master level fixed point: Q15 (measured against retail, PROTOCOL.md)
+	int slotShift;   // mixChannels volume fixed point: Q14
 	bool fxOff;
 	bool trace;
 	uint32_t traceTick;
@@ -316,13 +318,16 @@ int resample(Decoder& d, const Voice& v, int32_t* out, int n)
 	return k;
 }
 
-void mix_slot(int32_t* bus, const int32_t* src, int n, int32_t cur, int32_t tgt)
+// `shift` is the volume's fixed point: 14 for mixChannels sends (JAudio caps
+// them at MAX_MIXERLEVEL = gain x 16384), 15 for the auto mixer
+// (volume x 32767.5). Both measured against retail (PROTOCOL.md, Levels).
+void mix_slot(int32_t* bus, const int32_t* src, int n, int32_t cur, int32_t tgt, int shift)
 {
 	if (cur == 0 && tgt == 0)
 		return;
 	for (int k = 0; k < n; k++) {
 		int32_t vol = cur + (tgt - cur) * (k + 1) / n;
-		bus[k] += (src[k] * vol) >> 15;
+		bus[k] += (int32_t)(((int64_t)src[k] * vol) >> shift);
 	}
 }
 
@@ -351,9 +356,10 @@ void render_voice(int vi, int n)
 			v.done = 1;
 		return;
 	}
-	if (!d.active)
+	if (!d.active) {
 		start(d, v);
-	else if (v.sourceType == kDirectPcm && v.remaining != d.written)
+		d.startTick = g.traceTick;
+	} else if (v.sourceType == kDirectPcm && v.remaining != d.written)
 		d.remaining = v.remaining;
 	d.written   = v.remaining; // the CPU rewrote the count (endless streams)
 	if (v.pause) {
@@ -372,10 +378,10 @@ void render_voice(int vi, int n)
 		double gl = cos(pan * M_PI / 2), gr = sin(pan * M_PI / 2);
 		int32_t lc = (int32_t)(cur * gl), lt = (int32_t)(tgt * gl);
 		int32_t rc = (int32_t)(cur * gr), rt = (int32_t)(tgt * gr);
-		mix_slot(g.bus[1], src, n, lc, lt);
-		mix_slot(g.bus[2], src, n, rc, rt);
-		mix_slot(g.bus[3], src, n, (int32_t)(lc * fx), (int32_t)(lt * fx));
-		mix_slot(g.bus[4], src, n, (int32_t)(rc * fx), (int32_t)(rt * fx));
+		mix_slot(g.bus[1], src, n, lc, lt, 15);
+		mix_slot(g.bus[2], src, n, rc, rt, 15);
+		mix_slot(g.bus[3], src, n, (int32_t)(lc * fx), (int32_t)(lt * fx), 15);
+		mix_slot(g.bus[4], src, n, (int32_t)(rc * fx), (int32_t)(rt * fx), 15);
 		v.amVolCurrent = (uint16_t)tgt;
 	} else {
 		for (int s = 0; s < 6; s++) {
@@ -383,7 +389,7 @@ void render_voice(int vi, int n)
 			int b       = bus_index(m.bus);
 			int32_t tgt = stopping ? 0 : (int16_t)m.target;
 			if (b)
-				mix_slot(g.bus[b], src, n, (int16_t)m.current, tgt);
+				mix_slot(g.bus[b], src, n, (int16_t)m.current, tgt, g.slotShift);
 			m.current = (uint16_t)tgt;
 		}
 	}
@@ -408,6 +414,9 @@ void render_voice(int vi, int n)
 	} else if (stopping) {
 		v.done = 1;
 	}
+	if (v.done && g.trace)
+		fprintf(stderr, "[audio] voice %2d end: %s after %u subframes at sample %u\n", vi,
+		        stopping ? "stop request" : "source end", g.traceTick - d.startTick, d.idx);
 }
 
 void run_fx(int n)
@@ -473,7 +482,9 @@ extern "C" void port_dspmix_setup(uint32_t nvoices, void* voices, const uint32_t
 	const char* e = getenv("SMS_AUDIO_FX");
 	g.fxOff       = e && strcmp(e, "0") == 0;
 	e             = getenv("SMS_AUDIO_MASTER_SHIFT");
-	g.masterShift = e && *e ? atoi(e) : 14;
+	g.masterShift = e && *e ? atoi(e) : 15;
+	e             = getenv("SMS_AUDIO_SLOT_SHIFT");
+	g.slotShift   = e && *e ? atoi(e) : 14;
 	e             = getenv("SMS_AUDIO_TRACE");
 	g.trace       = e && *e && strcmp(e, "0") != 0;
 }
@@ -498,7 +509,8 @@ extern "C" void port_dspmix_render(int16_t* outA, int16_t* outB, int n, uint16_t
 			render_voice((int)i, n);
 		}
 	}
-	if (g.trace && ++g.traceTick % 2000 == 0) { // every 5 s of 80-sample subframes
+	++g.traceTick;
+	if (g.trace && g.traceTick % 2000 == 0) { // every 5 s of 80-sample subframes
 		int en = 0, stop = 0, silent = 0;
 		for (uint32_t i = 0; g.voices && i < g.nvoices; i++) {
 			const Voice& v = g.voices[i];
