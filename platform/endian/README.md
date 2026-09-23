@@ -12,6 +12,7 @@ This directory holds those converters, the format inventory (`INVENTORY.md`), an
 | `endian_jpa.cpp` | JParticle `JEFFjpa1` resources. |
 | `endian_jaudio.cpp` | JAudio AAF init data and everything it embeds: sound tables, IBNK, WSYS, sequence-archive header, sound/FX scene tables. |
 | `endian_game.cpp` | SMS formats: `.col`, `.ral`, `.ymp`, `.pad`, `.bcr`, `.sb` (SPCB). |
+| `endian_seq.cpp` | Host-order copies of the s16 oscillator tables that sequence opcodes point at (cached by content). |
 | `endian_dispatch.cpp` | `port_endian_resource()`: recognition by magic, else by file name; `port_endian_fetched()` hook. |
 | `tests/` | Host tests against the real disc (`.cc`, so the port's `platform/*.cpp` glob skips them). |
 
@@ -53,6 +54,12 @@ This directory holds those converters, the format inventory (`INVENTORY.md`), an
 | `endian-05-ParamInst-prm-values` | `.prm`: `TParamT<T>::load`'s raw value read (a `TVec3<f32>` is three f32). |
 | `endian-06-spcinterp-be-immediates` | SPC byte code: `fetchF32`/`fetchS32`/`fetchU32` assemble big-endian. |
 | `endian-07-JAIGFrameStream-header` | Stream (`.afc`) header after it is copied into `StreamHeader`. |
+| `endian-08-raw-stream-reads` | Scene `.bin` object data: the raw `stream.read(&x, 4)` sites in `load()` functions (BeeHive, Bird, JDRViewport, wireTrap, MapObjBianco/Mare/Ricco, tobiPuku, hanasambo) use `readBE`. |
+| `endian-09-DrawUtil-dl-vertex-count` | Polygon counting reads a display list's vertex count big-endian. |
+| `endian-10-JASTrack-seq-tables` | Sequence opcodes 0xD7/0xF2 get host-order oscillator tables from `port_seq_s16_osc_table`; 0xED converts its 8 FIR coefficients as it copies them. |
+| `endian-11-card-save-be` | Memory card keeps retail's big-endian layout: `TFlagManager` save/option fields written and read big-endian; `TCardSector` write count and checksum stored big-endian, checksum summed over big-endian halfwords. Real GameCube saves stay compatible. |
+| `endian-12-THP-headers` | THP: header, component/video/audio info, frame-offset words, and each frame's size and component-size words after the disc read. Payloads stay big-endian. |
+| `endian-13-JSUInputStream-string-lengths` | The u16 length prefix of stream strings (`read(char*)`, `readString`), which bypasses 0013's typed reads. |
 
 5. **Debugging.**
    `SMS_ENDIAN_LOG=1` makes `port_endian_resource()` log each resource it is given and the format it was converted as.
@@ -69,3 +76,4 @@ The test decompresses Yaz0 and walks RARC archives itself (reading big-endian di
 It converts every J3D, JPA, BTI, BAS, AAF and SMS-format file in the boot, title, option, common, mario, particle, subtitle and four stage archives.
 It then checks the converted structures in host order: block walks, counts, offsets in range, keyframe tables within their value arrays, name-table hashes, float sanity, sound-table totals, instrument and wave parameters.
 It also checks that a second conversion is refused.
+Synthetic checks cover the sequence oscillator-table cache and TLUT headers, and a THP check walks real frames to confirm the frame header layout endian-12 converts.

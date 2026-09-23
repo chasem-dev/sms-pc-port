@@ -107,6 +107,22 @@ extern "C" int port_endian_bti(void* p, uint32_t size)
 	return 1;
 }
 
+// ResTLUT (J2D 'TLUT' resources, JUTPalette::storeTLUT): u8 format, u8
+// transparency, u16 numColors, pad to 0x20, then TLUT entries (stay
+// big-endian for GX). Byte 4 (pad, never read) marks a converted header.
+extern "C" int port_endian_tlut(void* p, uint32_t size)
+{
+	Buf b(p, size);
+	if (!b.has(0, 0x20) || b.base[4] == PE_NATIVE_MARK)
+		return 0;
+	u16 n = be16(b.at(2));
+	if (b.base[0] > 2 || n == 0 || 0x20 + n * 2u > size)
+		return 0;
+	b.sw16(2);
+	b.base[4] = PE_NATIVE_MARK;
+	return 1;
+}
+
 // --- J3D models -------------------------------------------------------------------
 
 // GXAttr / GXCompType values used by VTX1.

@@ -661,6 +661,62 @@ static void check_game(const std::string& name, Bytes d)
 	}
 }
 
+// --- Sequence oscillator tables, TLUT, THP frame layout ---------------------------------
+
+static void check_misc()
+{
+	g_ctx = "seq-osc";
+	// {mode, time, value} triplets, terminated by mode > 10 (here 0x000F).
+	static const u8 be[] = { 0, 0, 0, 10, 0x7F, 0xFF, 0, 1, 0, 20, 0x40, 0, 0, 0x0F, 0, 0, 0, 0, 0xAA, 0xBB };
+	int16_t* t = port_seq_s16_osc_table(be);
+	CHECK(t[0] == 0 && t[1] == 10 && t[2] == 0x7FFF && t[3] == 1 && t[5] == 0x4000 && t[6] == 15, "osc table");
+	CHECK(port_seq_s16_osc_table(be) == t, "osc table not cached by content");
+	u8 be2[sizeof(be)];
+	memcpy(be2, be, sizeof(be));
+	CHECK(port_seq_s16_osc_table(be2) == t, "same content, other address");
+	be2[3] = 11;
+	CHECK(port_seq_s16_osc_table(be2) != t && port_seq_s16_osc_table(be2)[1] == 11, "different content");
+
+	g_ctx = "tlut";
+	u8 tl[0x40] = { 1, 0, 0x00, 0x10 };
+	CHECK(port_endian_tlut(tl, sizeof(tl)) == 1 && ld16(tl + 2) == 16, "tlut header");
+	CHECK(port_endian_tlut(tl, sizeof(tl)) == 0, "tlut twice");
+
+	// THP: the frame header layout decomp-patches/endian-12 converts
+	// (next size, previous size, one size per component).
+	g_ctx = "thp";
+	Bytes f;
+	if (!read_file(g_disc + "/data/openingA.thp", f) && !read_file(g_disc + "/data/Entrance.thp", f)) {
+		fail("no THP file");
+		return;
+	}
+	CHECK(memcmp(f.data(), "THP", 4) == 0 && be32(&f[4]) == 0x11000, "THP header");
+	u32 frames = be32(&f[0x14]), first = be32(&f[0x18]), comp = be32(&f[0x20]), data = be32(&f[0x28]);
+	u32 ncomp = be32(&f[comp]);
+	CHECK(ncomp >= 1 && ncomp <= 2, "THP components %u", ncomp);
+	u32 pos = data, size = first, checked = 0;
+	for (u32 i = 0; i < frames && i < 50 && pos + size <= f.size(); i++, checked++) {
+		u32 next = be32(&f[pos]), sum = 8 + ncomp * 4;
+		// component info: types at comp+4; video info 3 words, audio info 4
+		// (channels, frequency, samples, tracks); audio data is per track.
+		u32 info = comp + 0x14;
+		for (u32 c = 0; c < ncomp; c++) {
+			u32 cs = be32(&f[pos + 8 + c * 4]);
+			if (f[comp + 4 + c] == 1) {
+				sum += cs * be32(&f[info + 12]);
+				info += 16;
+			} else {
+				sum += cs;
+				info += 12;
+			}
+		}
+		CHECK(sum <= size && size - sum < 64, "THP frame %u: components %u vs frame %u", i, sum, size);
+		pos += size;
+		size = next;
+	}
+	printf("  thp: %u frames x %u components, first %u frames walked\n", frames, ncomp, checked);
+}
+
 // --- Driver ---------------------------------------------------------------------------------
 
 static void run_archive(const char* rel)
@@ -707,6 +763,7 @@ int main(int argc, char** argv)
 	}
 	for (size_t i = 0; i < arcs.size(); i++)
 		run_archive(arcs[i]);
+	check_misc();
 	printf("j3d: %d models, %d anims, %d blocks, %d joints, %d shapes, %d materials, %d textures, %d key tables\n",
 	       g_j3d.models, g_j3d.anims, g_j3d.blocks, g_j3d.joints, g_j3d.shapes, g_j3d.materials, g_j3d.textures,
 	       g_j3d.anmtables);

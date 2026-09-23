@@ -76,6 +76,11 @@ static int resource(void* data, uint32_t size, const char* name)
 			return PE_FMT_ALREADY_NATIVE;
 		return port_endian_bti(data, size) ? PE_FMT_BTI : PE_FMT_UNKNOWN;
 	}
+	if (ext_is(ext, ".bpl") || ext_is(ext, ".tlut")) {
+		if (d[4] == PE_NATIVE_MARK)
+			return PE_FMT_ALREADY_NATIVE;
+		return port_endian_tlut(data, size) ? PE_FMT_BTI : PE_FMT_UNKNOWN;
+	}
 	if (ext_is(ext, ".aaf"))
 		return port_endian_aaf(data, size) ? PE_FMT_AAF : PE_FMT_ALREADY_NATIVE;
 	if (ext_is(ext, ".bas")) {

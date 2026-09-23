@@ -44,6 +44,7 @@ int port_endian_resource(void* data, uint32_t size, const char* name);
 int port_endian_j3d(void* data, uint32_t size);
 int port_endian_bti(void* data, uint32_t size);          /* one ResTIMG at data (sets a converted mark at 0x19) */
 int port_endian_timg_header(void* timg);                 /* 0x20-byte ResTIMG header */
+int port_endian_tlut(void* data, uint32_t size);          /* ResTLUT header (.bpl) */
 int port_endian_ntab(void* ntab, uint32_t size);          /* ResNTAB */
 int port_endian_jpa(void* data, uint32_t size);
 int port_endian_aaf(void* data, uint32_t size);
@@ -56,6 +57,10 @@ int port_endian_game(void* data, uint32_t size, const char* name); /* SMS format
  * name), falling back to port_res_to_native (platform/misc) for RARC/BFN and
  * the log of unconverted formats. */
 void port_endian_fetched(void* data, uint32_t size, const char* name);
+
+/* Host-order copy of a big-endian s16 oscillator table in sequence data
+ * (cached by content; decomp-patches/endian-10). */
+int16_t* port_seq_s16_osc_table(const void* be_table);
 
 /* Name of a PortEndianFormat, for logs. */
 const char* port_endian_format_name(int fmt);
