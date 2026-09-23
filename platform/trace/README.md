@@ -158,6 +158,40 @@ Heap objects should be reached through pointers, never absolute addresses, becau
 It was checked against `runs/play-r9`: retail's `TCardLoad` holds the old blockA/B/C addresses at those offsets.
 The oracle's `run_oracle.py` resolves `cardload` today, and skips the nested block lines until its Dolphin range format supports a pointer chain.
 
+## Deterministic runs (SMS_VI_DETERMINISTIC=1)
+
+With the lead's deterministic VI/OSTime mode, `SMS_AUDIO=0`, and a fresh card per run (`SMS_SAVE_DIR`), two runs of `play5.dtm` give identical traces.
+`trace_compare.py` finds no difference in 11,269 fields; the only byte differences are host pointer values.
+`build-trace-test/detrun.sh` is the command used.
+
+Findings against `runs/play-r9`, with `play-symbolic.txt` and the re-syncs `app+8:1=2@231,app+e:4=0x0f000000@456,app+e:4=0@1244,mdstate+0:1=4@5419`:
+
+1. **The opening movie stalls natively with `SMS_AUDIO=0`.**
+   `THPPlayer` only advances video while `curVideoNumber - curAudioNumber <= 1`, and the audio frame count advances in the AI DMA callback, which is idle.
+   Native sat in the movie from field 1244 to the end of the run.
+   `SMS_SKIP_MOVIES=1` avoids it.
+   Deterministic runs need AI DMA paced by the retrace clock (lead: platform/audio).
+2. **From the airstrip re-sync (retail field 5419) Mario's path matches retail.**
+   Position agrees within 0.01 through the walk and the first jump (y = 540.5 at retail 5736 on both), with native one field ahead: native field f = retail field f+1.
+   **First real divergence: native field 5773 / retail 5774**, Mario x/z 0.01 apart (755.455/1173.571 vs 755.445/1173.575).
+   It grows to about 12 units by 5800 and the paths separate completely by 6000.
+3. **Differences present from the re-sync on, which are candidate causes:**
+   - **`THitActor::mEntryRadius`** 215.8806 native vs 215.8703 retail.
+     `THitActor::calcEntryRadius` takes one `__frsqrte` estimate with no Newton step.
+     The port's `__frsqrte` (`src/port_compat.h`) is an exact `1/sqrt`, but Gekko's is a table estimate.
+     Every hit actor's entry radius differs slightly, and so do collision candidates.
+     Emulating the estimate is the lead's call (compat header).
+   - **Input phase.** SMS runs its logic at 30 Hz, and native's frames land on the opposite field parity from retail's after the re-sync.
+     Pad input keyed to retail field numbers therefore reaches native one field earlier relative to its frames.
+     For example, stick X 0xb8 at native 5714 vs retail 5715.
+     Presses held for 3 fields still line up in game frames here, but any 1-field press would not.
+   - **`TMario::mFlag` bit 0:** 9 native vs 8 retail from the re-sync on.
+   - **`mHeadMtx` (head look):** differs by about 1e-3.
+4. **`PADClamp` is a no-op in `platform/pad`.**
+   Retail clamps sticks and triggers (the SDK clamp is in `decomp/src/dolphin/pad/Padclamp.c`).
+   A trace-worktree build with it applied changed nothing up to 5773 for this movie, since it only uses full deflections.
+   It should still be linked for movie fidelity.
+
 ## Status (2026-09-23)
 
 What was checked: a native run (worktree build with the two hooks) traced against `dolphin-oracle/runs/play-r9` (`movies/play5.dtm`, 11500 fields).
