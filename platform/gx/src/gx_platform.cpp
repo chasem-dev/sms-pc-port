@@ -117,7 +117,9 @@ bool openHeadless(int scale) {
     auto getPlatformDisplay = reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(eglGetProcAddress("eglGetPlatformDisplayEXT"));
     auto queryDevices = reinterpret_cast<PFNEGLQUERYDEVICESEXTPROC>(eglGetProcAddress("eglQueryDevicesEXT"));
     bool ok = false;
-    if (getPlatformDisplay && queryDevices) {
+    // Mesa crashes initialising a hardware EGL device when software rendering
+    // is forced; go straight to the surfaceless platform then.
+    if (getPlatformDisplay && queryDevices && !envTrue("LIBGL_ALWAYS_SOFTWARE")) {
         EGLDeviceEXT devs[8];
         EGLint n = 0;
         if (queryDevices(8, devs, &n))
