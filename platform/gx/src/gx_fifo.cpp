@@ -153,6 +153,7 @@ void writeBP(uint32_t value) {
         onStateChange();
         g.bp[reg] = data;
     }
+    if (reg == BP_COPY_DST) g.copyDest = physToPtr(data << 5);
     if ((reg >= BP_TX_IMAGE3 && reg < BP_TX_IMAGE3 + 4) || (reg >= BP_TX_IMAGE3 + 0x20 && reg < BP_TX_IMAGE3 + 0x24)) {
         int map = (reg & 3) + ((reg & 0x20) ? 4 : 0);
         g.texImage[map] = static_cast<const uint8_t*>(physToPtr(data << 5));

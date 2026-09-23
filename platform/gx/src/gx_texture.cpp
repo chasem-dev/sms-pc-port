@@ -271,7 +271,7 @@ unsigned bindTextureMap(int map, float* outW, float* outH) {
     int cw, ch;
     if (GLuint ct = efbCopyLookup(ptr, &cw, &ch)) {
         glBindTexture(GL_TEXTURE_2D, ct);
-        applySampler(mode0 & ~(7u << 5) | ((mode0 & (1u << 7)) ? (4u << 5) : 0), 0, 1);
+        applySampler(mode0, 0, 1);
         return ct;
     }
     if (!ptr) {

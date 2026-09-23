@@ -75,6 +75,7 @@ struct State {
     uint32_t xfReg[XF_REG_COUNT];
     uint32_t xfMem[XF_MEM_WORDS];
     const uint8_t* texImage[8];   // host pointer for each texture map
+    void* copyDest;               // host pointer of the EFB copy destination (BP 0x4B)
     uint8_t tlutMem[TMEM_TLUT_SIZE];
     // manual texcoord scale (GXSetTexCoordScaleManually), per texcoord
     bool tcManual[8];
@@ -131,6 +132,8 @@ void addPrimitive(uint8_t opcode, const HostVertex* v, uint32_t count);
 void onStateChange();  // called before any register write that changes state
 void executeCopy(uint32_t execReg);
 void markXfMemDirty();
+uint32_t peekColor(int x, int y);  // A<<24|R<<16|G<<8|B
+uint32_t peekZ(int x, int y);      // 24-bit
 
 // ---------------------------------------------------------------- textures (gx_texture.cpp)
 struct TexKey;

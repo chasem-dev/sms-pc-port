@@ -515,7 +515,10 @@ void GXSetNumTexGens(u8 n) {
     apiXF1(XF_REG_BASE + XFR_NUMTEXGENS, n);
 }
 
+GXBool __GXinBegin;  // read by GXEnd when GXGeometry.h is built with DEBUG
+
 void GXBegin(GXPrimitive type, GXVtxFmt fmt, u16 nverts) {
+    __GXinBegin = GX_TRUE;
     GXPC_Write8(uint8_t(type | fmt));
     GXPC_Write16(nverts);
 }
@@ -1055,7 +1058,6 @@ void GXSetFog(GXFogType type, f32 startz, f32 endz, f32 nearz, f32 farz, GXColor
     uint32_t ah = fbits(a), ch = fbits(C);
     uint32_t f0 = ((ah >> 12) & 0x7FF) | ((ah >> 23) & 0xFF) << 11 | (ah >> 31) << 19;
     uint32_t f3 = ((ch >> 12) & 0x7FF) | ((ch >> 23) & 0xFF) << 11 | (ch >> 31) << 19 | (uint32_t(type) & 7) << 21;
-    f3 |= ((uint32_t(type) >> 3) & 1) << 20;  // orthographic fog types set the projection bit
     apiBP(BP_FOG0, f0);
     apiBP(BP_FOG1, bmant & 0xFFFFFF);
     apiBP(BP_FOG2, bshift & 31);
@@ -1116,6 +1118,8 @@ void GXPokeDstAlpha(GXBool, u8) {}
 void GXPokeDither(GXBool) {}
 void GXPokeZMode(GXBool, GXCompare, GXBool) {}
 void GXPokeARGB(u16, u16, u32) {}
+void GXPeekARGB(u16 x, u16 y, u32* color) { *color = peekColor(x, y); }
+void GXPeekZ(u16 x, u16 y, u32* z) { *z = peekZ(x, y); }
 void GXPokeZ(u16, u16, u32) {}
 u32 GXCompressZ16(u32 z24, GXZFmt16) { return z24 >> 8; }
 u32 GXDecompressZ16(u32 z16, GXZFmt16) { return z16 << 8; }
@@ -1185,6 +1189,7 @@ static void doCopy(void* dest, GXBool clear, bool disp) {
     if (disp) apiBP(BP_COPY_YSCALE, s_dispYScale);
     // the renderer needs the host pointer; commands carry a physical address
     apiBP(BP_COPY_DST, ptrToPhys(dest) >> 5);
+    if (!s_recording) g.copyDest = dest;  // keep the full host pointer (64-bit hosts)
     uint32_t ctrl = disp ? s_dispCtrl : s_texCtrl;
     ctrl = setField(ctrl, 1, 11, clear);
     ctrl = setField(ctrl, 1, 14, disp);
@@ -1506,9 +1511,6 @@ void GXInitXfRasMetric(void) {}
 void GXReadXfRasMetric(u32* a, u32* b, u32* c, u32* d) { *a = *b = *c = *d = 0; }
 u32 GXReadClksPerVtx(void) { return 0; }
 
-// ================================================================== GXVerify
-void GXSetVerifyLevel(GXWarningLevel) {}
-GXVerifyCallback GXSetVerifyCallback(GXVerifyCallback cb) { return cb; }
 
 // ================================================================== GXDraw (SDK helper shapes)
 static void drawWithPosNrm(void (*body)()) {
@@ -1586,3 +1588,7 @@ void GXDrawIcosahedron(void) {}
 u32 GXGenNormalTable(u8, f32*) { return 0; }
 
 }  // extern "C"
+
+// GXVerify.h declares these without extern "C", so they keep C++ linkage.
+void GXSetVerifyLevel(GXWarningLevel) {}
+GXVerifyCallback GXSetVerifyCallback(GXVerifyCallback cb) { return cb; }

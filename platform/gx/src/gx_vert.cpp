@@ -1,31 +1,18 @@
-// The write-gather pipe writers of GXVert.h as real functions.  The SDK
-// header defines them as static inlines storing to 0xCC008000; on PC either the
-// header declares them extern (its DEBUG branch) and these are linked, or it
-// maps GXWGFifo onto GXPC_WGPipe.  This file deliberately does not include the
-// dolphin headers so it can define the names the header makes static inline.
-#include "sms_gx/gx_pc.h"
-
-#include <stdint.h>
-
-typedef uint8_t u8;
-typedef uint16_t u16;
-typedef uint32_t u32;
-typedef int8_t s8;
-typedef int16_t s16;
-typedef int32_t s32;
-typedef float f32;
+// The write-gather pipe writers of GXVert.h as real functions, declared by
+// include/sms_gx/gxvert_pc.h (the TARGET_PC body of GXVert.h).
+#include <sms_gx/gxvert_pc.h>
 
 extern "C" {
 
 void GXCmd1u8(u8 x) { GXPC_Write8(x); }
 void GXCmd1u16(u16 x) { GXPC_Write16(x); }
-void GXCmd1u32(u32 x) { GXPC_Write32(x); }
+void GXCmd1u32(u32 x) { GXPC_Write32(uint32_t(x)); }
 void GXParam1u8(u8 x) { GXPC_Write8(x); }
 void GXParam1u16(u16 x) { GXPC_Write16(x); }
-void GXParam1u32(u32 x) { GXPC_Write32(x); }
+void GXParam1u32(u32 x) { GXPC_Write32(uint32_t(x)); }
 void GXParam1s8(s8 x) { GXPC_Write8(uint8_t(x)); }
 void GXParam1s16(s16 x) { GXPC_Write16(uint16_t(x)); }
-void GXParam1s32(s32 x) { GXPC_Write32(x); }
+void GXParam1s32(s32 x) { GXPC_Write32(uint32_t(x)); }
 void GXParam1f32(f32 x) { GXPC_WriteF32(x); }
 void GXParam3f32(f32 x, f32 y, f32 z) { GXPC_WriteF32(x); GXPC_WriteF32(y); GXPC_WriteF32(z); }
 void GXParam4f32(f32 x, f32 y, f32 z, f32 w) { GXPC_WriteF32(x); GXPC_WriteF32(y); GXPC_WriteF32(z); GXPC_WriteF32(w); }
@@ -47,7 +34,7 @@ void GXNormal3s8(s8 x, s8 y, s8 z) { GXPC_Write8(uint8_t(x)); GXPC_Write8(uint8_
 void GXNormal1x16(u16 x) { GXPC_Write16(x); }
 void GXNormal1x8(u8 x) { GXPC_Write8(x); }
 void GXColor4u8(u8 r, u8 gg, u8 b, u8 a) { GXPC_Write8(r); GXPC_Write8(gg); GXPC_Write8(b); GXPC_Write8(a); }
-void GXColor1u32(u32 x) { GXPC_Write32(x); }
+void GXColor1u32(u32 x) { GXPC_Write32(uint32_t(x)); }
 void GXColor3u8(u8 r, u8 gg, u8 b) { GXPC_Write8(r); GXPC_Write8(gg); GXPC_Write8(b); }
 void GXColor1u16(u16 x) { GXPC_Write16(x); }
 void GXColor1x16(u16 x) { GXPC_Write16(x); }

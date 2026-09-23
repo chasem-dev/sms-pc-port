@@ -42,7 +42,7 @@
     X(PFNGLGETUNIFORMBLOCKINDEXPROC, glGetUniformBlockIndex)                        \
     X(PFNGLUNIFORMBLOCKBINDINGPROC, glUniformBlockBinding)                          \
     X(PFNGLUNIFORM1IPROC, glUniform1i) X(PFNGLUNIFORM1IVPROC, glUniform1iv)         \
-    X(PFNGLUNIFORM4IVPROC, glUniform4iv) X(PFNGLUNIFORM2FVPROC, glUniform2fv)       \
+    X(PFNGLUNIFORM4IVPROC, glUniform4iv) X(PFNGLUNIFORM2IVPROC, glUniform2iv) X(PFNGLUNIFORM2FVPROC, glUniform2fv)       \
     X(PFNGLUNIFORM4FVPROC, glUniform4fv) X(PFNGLUNIFORM1FVPROC, glUniform1fv)       \
     X(PFNGLGENTEXTURESPROC, glGenTextures) X(PFNGLDELETETEXTURESPROC, glDeleteTextures) \
     X(PFNGLBINDTEXTUREPROC, glBindTexture) X(PFNGLACTIVETEXTUREPROC, glActiveTexture) \
@@ -126,6 +126,7 @@ SMS_GX_GL_FUNCS(SMS_GX_ALIAS)
 #define glUniform1i gx_glUniform1i
 #define glUniform1iv gx_glUniform1iv
 #define glUniform4iv gx_glUniform4iv
+#define glUniform2iv gx_glUniform2iv
 #define glUniform2fv gx_glUniform2fv
 #define glUniform4fv gx_glUniform4fv
 #define glUniform1fv gx_glUniform1fv
