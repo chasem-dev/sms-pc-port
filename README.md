@@ -16,7 +16,7 @@ Native PC port of Super Mario Sunshine (GMSE01), built from the matching decompi
   A decomp bug can show up only on PC (MWCC and g++ read the same wrong source differently), and it is still a decomp bug.
 - **PC-specific fixes go in `decomp-patches/`**: byte order (`endian-*`), host compiler leniency (`0001`–`0010`, `ret-*`), host services (`thp-*`, `audio-*`), port-only features (`port-*`, `SMS_*` switches). Each patch starts with a `Reason:` line saying why it cannot live in the decomp.
 - **Emulation of the hardware goes in `platform/`** (GX, DVD, OS, audio), never in game source.
-- `port-03` is a decomp bug (the Group 2D 2 ortho camera's width and height are swapped in `MarDirectorInitECT.cpp`) carried as a patch until the fix lands in `sms-english`.
+- Example: the sun-glass tint that stopped part-way down the screen was a decomp bug (`TOrthoProj`'s reconstructed constructor stored its last two edges swapped), so it was fixed in `sms-english` and verified against retail, not patched here.
 
 ## Build and run
 
@@ -138,7 +138,6 @@ Each file in `decomp-patches/` starts with a `Reason:` line; they are applied in
 | 0017 | Endian: `J3DTevStage::load` builds its `{reg, op, AB, CD}` BP command words big-endian. |
 | `endian-01..16` | Loader-site byte-order fixes (JPA, J2D BLO, BMG, JUTColor, PRM, SPC, streams, DL vertex counts, sequences, card saves, THP headers, J3DSkinDeform/J3DCluster display lists, the plaza shine-shadow sphere, the HUD/map 2D archive swap); see `platform/endian/README.md`. |
 | `port-02` | `SMS_WARP`: debug warp from a file-select load. |
-| `port-03` | The Screen 2D and Group 2D 2 ortho cameras take width then height, as in retail. |
 | `audio-01..02` | JAudio bitfield/byte-order fixes (`TChannel` mix config, BMS note-on flags); see `platform/audio/README.md`. |
 | `ret-01..03` | Explicit returns for the 42 functions that fall off the end of a non-void body. |
 | `thp-01..02` | Host THP decoder (portable bit reader and IDCT, big-endian audio header); see `platform/thp/README.md`. |
