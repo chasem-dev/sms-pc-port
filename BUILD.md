@@ -68,6 +68,7 @@ Edit `bindings.txt` to change them.
 | L / R | Q / E |
 | Start | Enter |
 | D-pad | 1 2 3 4 |
+| Debug overlay (FPS, stats, keys) | ` (backtick) |
 | Quit | Esc |
 
 A USB or Bluetooth game controller also works.
