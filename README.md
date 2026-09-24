@@ -14,12 +14,14 @@ Native PC port of Super Mario Sunshine (GMSE01), built from the matching decompi
 
 - **Decompilation bugs go in the decomp** (`sms-english`, the `decomp/` submodule): source that does not do what retail does (a wrong member, a swapped argument, a wrong constant) is fixed there, verified with `ninja changes_all` and the DOL hash, and picked up here by bumping the submodule.
   A decomp bug can show up only on PC (MWCC and g++ read the same wrong source differently), and it is still a decomp bug.
+- **Never patch around incomplete decompilation.**
+  A bug that comes from the decomp not doing what retail does (a non-matching function, a missing branch, a wrong reconstruction) is fixed only in the decomp, never in `decomp-patches/` or `platform/`, even as a stopgap.
 - **Decomp matching progress comes first.**
   A decomp fix lands in `sms-english` only when it keeps every function's match (no regression in `ninja changes_all`, and the DOL hash unchanged).
-  When the only correct spelling found so far costs match percentage, the decomp keeps its matching form with a `TODO` naming the behaviour difference, and the port carries the correction as a `decomp-patches/` patch whose `Reason:` line says it is pending a matching decomp spelling (today only `ret-01`, `TConductor::isBossDefeated`'s missing `default:` arm).
-  Once a spelling that matches as well is found, the fix moves to the decomp and the patch is deleted.
+  When the only correct form found so far costs match percentage, the decomp keeps its matching form with a `TODO` naming the behaviour difference, and the port lives with that difference until a matching form is found.
+  Example: `TConductor::isBossDefeated` (98.8%) lacks retail's `default:` arm, so maps other than 2 and 3 fall off the end; g++ then runs the Gesso check for them where retail runs the Hinokuri one.
 - **PC-specific fixes go in `decomp-patches/`**: byte order (`endian-*`), host compiler leniency (`0001`–`0010`, `0015`, `ret-02..03`), host services (`thp-*`, `audio-*`), port-only features (`port-*`, `SMS_*` switches). Each patch starts with a `Reason:` line saying why it cannot live in the decomp.
-  Apart from the pending decomp fixes above, a patch never corrects the decomp's behaviour; it only adapts retail's behaviour to the PC.
+  A patch never corrects the decomp's behaviour; it only adapts retail's behaviour to the PC.
 - **Emulation of the hardware goes in `platform/`** (GX, DVD, OS, audio), never in game source.
 - Example: the sun-glass tint that stopped part-way down the screen was a decomp bug (`TOrthoProj`'s reconstructed constructor stored its last two edges swapped), so it was fixed in `sms-english` and verified against retail, not patched here.
 
@@ -145,7 +147,6 @@ Each file in `decomp-patches/` starts with a `Reason:` line; they are applied in
 | `endian-01..16` | Loader-site byte-order fixes (JPA, J2D BLO, BMG, JUTColor, PRM, SPC, streams, DL vertex counts, sequences, card saves, THP headers, J3DSkinDeform/J3DCluster display lists, the plaza shine-shadow sphere, the HUD/map 2D archive swap); see `platform/endian/README.md`. |
 | `port-02` | `SMS_WARP` / `SMS_WARP_MOVIE`: debug warp or movie from a file-select load. |
 | `audio-01..02` | JAudio bitfield/byte-order fixes (`TChannel` mix config, BMS note-on flags); see `platform/audio/README.md`. |
-| `ret-01` | Pending decomp fix: `TConductor::isBossDefeated`'s `default:` arm, which retail has; every spelling with it tried so far lowers the decomp's match (98.8% to 95.6%), so it stays here until one matches (see *Where a fix goes*). |
 | `ret-02..03` | Explicit returns for the 37 functions that fall off the end of a non-void body and whose value nothing reads (undefined behaviour under g++, harmless under MWCC). |
 | `thp-01..02` | Host THP decoder (portable bit reader and IDCT, big-endian audio header); see `platform/thp/README.md`. |
 
@@ -160,10 +161,10 @@ Next: reach the controllable airstrip and test movement.
 Measured headless on this machine (Mesa llvmpipe software GL), 2026-09-23; details are in the commit that added this section.
 
 - **Returns fixed.**
-  All 42 fall-off-the-end functions (39 with no return statement, 3 with a path that falls off) now return the value retail's r3 carries.
+  41 of the 42 fall-off-the-end functions (39 with no return statement, 3 with a path that falls off) now return the value retail's r3 carries.
   Five of them are live and their callers read the result.
   Four (`DSPBuf::mixDSP`, `Dvd::openDvd`, `TMap::intersectLine`, `TLampTrapSpike::receiveMessage`) are fixed in the decomp, where the explicit return compiles to the same bytes.
-  `TConductor::isBossDefeated` is still `decomp-patches/ret-01`: the decomp's `switch` lacks retail's `default:` arm, and every spelling with it tried so far folds MWCC's compare tree (98.8% to 95.6%).
+  `TConductor::isBossDefeated` is not fixed: the decomp's `switch` lacks retail's `default:` arm, every form with it tried so far lowers its match (98.8% to 95.6%), and the port does not patch around the decomp (see *Where a fix goes*).
   The other 37 are `ret-02..03`: nothing reads their value, so only g++ needs the return.
   After the patches, `-Wreturn-type` reports nothing over all units, so the game library no longer depends on `-O0`.
 - **-O1/-O2 are safe as far as the port reaches.**
