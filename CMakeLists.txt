@@ -60,6 +60,9 @@ set(SMS_GAME_FLAGS
   # TMapObjTree::initMapObj passes snprintf a 0x100 size for a 64-byte buffer)
   # nor stack protectors.
   -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector
+  # SSE float math without contraction: closer to Gekko single/double results
+  # than x87 extended precision (measured on the play5 lockstep trace).
+  -msse2 -mfpmath=sse -ffp-contract=off
   # String literals are Shift-JIS on disc and in the MWCC build (sjiswrap).
   -finput-charset=UTF-8 -fexec-charset=CP932
   # decomp-patches/ret-* give the fall-off-the-end functions their returns;
