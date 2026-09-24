@@ -30,6 +30,13 @@
 #include <algorithm>
 #include <iterator>
 #include <utility>
+/* libc++ (macOS) defines nullptr as __nullptr in C++03 mode; the decomp's
+ * types.h expects it undefined so it becomes a plain 0, which the game assigns
+ * to integer fields (MActorAnmBck::unk28). */
+#if defined(_LIBCPP_VERSION) && __cplusplus < 201103L
+#undef nullptr
+#define nullptr 0
+#endif
 #endif
 
 #include <dolphin/types.h> /* the port override (see port_include/) */

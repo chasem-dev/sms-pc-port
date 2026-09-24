@@ -32,9 +32,10 @@ Native PC port of Super Mario Sunshine (GMSE01), built from the matching decompi
 | System | Build | Run with your GMSE01 Rev 0 disc image |
 | --- | --- | --- |
 | Linux | `./build_linux.sh` | `./run_linux.sh "/path/to/Super Mario Sunshine (US).iso"` |
+| macOS (x86_64 / Rosetta) | `./build_mac.sh` | `./run_mac.sh "/path/to/Super Mario Sunshine (US).iso"` |
 | Windows (MSYS2 MINGW32) | `./build_windows.sh` | `./run_windows.sh '/path/to/Super Mario Sunshine (US).iso'` |
 
-See [BUILD.md](BUILD.md) for dependencies, Windows `.cmd` launchers, and manual build commands.
+See [BUILD.md](BUILD.md) for dependencies (on macOS: Rosetta, Apple Clang x86_64, Homebrew `cmake`/`llvm`, universal SDL2.framework), Windows `.cmd` launchers, and manual build commands.
 On Linux, `SMS_HEADLESS=1 ./run_linux.sh "/path/to/Super Mario Sunshine (US).iso"` uses offscreen rendering.
 Each run script can also find a single image in its build directory's `rom/` folder.
 Passing the image to the build script (`./build_linux.sh GAME.iso`) also produces `build/sms-standalone`, an executable with the disc's files bundled in that runs with no image (see [BUILD.md](BUILD.md#standalone-executable)).

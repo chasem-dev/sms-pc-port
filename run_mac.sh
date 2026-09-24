@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
-# ./run_linux.sh [/path/to/GMSE01.iso] [--headless ...]
+# ./run_mac.sh [/path/to/GMSE01.iso] [--headless ...]
 # Without a disc image (argument, SMS_DISC_IMAGE or SMS_DISC_ROOT), runs
-# build/sms-standalone (build-64/ with SMS_ARCH=64) if it was built, else the single image in build/rom/.
+# build-mac/sms-standalone if it was built, else the single image in
+# build-mac/rom/.
 set -euo pipefail
 
 cd "$(dirname "$0")"
-if [[ "$(uname -s)" != Linux ]]; then
-  echo 'Run ./run_linux.sh on Linux. See BUILD.md for Windows instructions.' >&2
+if [[ "$(uname -s)" != Darwin ]]; then
+  echo 'Run ./run_mac.sh on macOS. See BUILD.md for Linux and Windows.' >&2
   exit 1
 fi
 
-if [[ "${SMS_ARCH:-32}" == 64 ]]; then bdir=build-64; else bdir=build; fi
+bdir=build-mac
 have_disc=0
 for arg in "$@"; do
   if [[ "$arg" != -* ]]; then
@@ -29,7 +30,7 @@ if (( have_disc == 0 )) && [[ -x "$bdir/sms-standalone" ]]; then
   exec "$bdir/sms-standalone" "$@"
 fi
 if [[ ! -x "$bdir/sms" ]]; then
-  echo 'Build the port with ./build_linux.sh first (SMS_ARCH=64 for the 64-bit build).' >&2
+  echo 'Build the port with ./build_mac.sh first.' >&2
   exit 1
 fi
 if (( have_disc == 0 )); then
@@ -37,7 +38,7 @@ if (( have_disc == 0 )); then
   images=($bdir/rom/*.{iso,gcm,ciso,ISO,GCM,CISO})
   if (( ${#images[@]} != 1 )); then
     echo "Pass a GMSE01 disc image, set SMS_DISC_IMAGE, place one ISO/GCM/CISO in $bdir/rom/," >&2
-    echo 'or build a standalone executable with ./build_linux.sh /path/to/GMSE01.iso.' >&2
+    echo 'or build a standalone executable with ./build_mac.sh /path/to/GMSE01.iso.' >&2
     exit 1
   fi
   set -- "${images[0]}" "$@"

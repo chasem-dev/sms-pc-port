@@ -44,11 +44,43 @@ add_library(sms_gx STATIC ${SMS_GX_SOURCES} ${SMS_GX_GD_SOURCES})
 target_include_directories(sms_gx
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/port_include ${SMS_GX_TYPES_INCLUDE} ${SMS_DECOMP_DIR}/include)
+# macOS has no system GL/glcorearb.h; ship Khronos headers under third_party/.
+if(APPLE)
+    target_include_directories(sms_gx PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
+endif()
 target_compile_features(sms_gx PRIVATE cxx_std_17)
 set_target_properties(sms_gx PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # Window (SDL2) and headless (EGL) context creation; both optional so the
 # library still builds where only a host-supplied context is used.
-find_package(SDL2 CONFIG QUIET)
+# On macOS x86_64, prefer a universal SDL2.framework — Homebrew's bottle is
+# often arm64-only and will not link into an x86_64 binary.
+set(SMS_SDL2_FRAMEWORK "" CACHE PATH "Path to SDL2.framework (universal)")
+if(APPLE)
+  set(_sms_sdl2_fw "")
+  foreach(_cand
+      "${SMS_SDL2_FRAMEWORK}"
+      "${CMAKE_BINARY_DIR}/SDL2.framework"
+      "${CMAKE_SOURCE_DIR}/third_party/SDL2.framework"
+      "/Library/Frameworks/SDL2.framework")
+    if(_cand AND EXISTS "${_cand}/SDL2")
+      set(_sms_sdl2_fw "${_cand}")
+      break()
+    endif()
+  endforeach()
+  if(_sms_sdl2_fw)
+    get_filename_component(_sms_sdl2_fw_dir "${_sms_sdl2_fw}" DIRECTORY)
+    add_library(SDL2::SDL2 INTERFACE IMPORTED GLOBAL)
+    # SDL.h includes <SDL2/SDL_main.h>, which resolves through -F.
+    target_include_directories(SDL2::SDL2 INTERFACE "${_sms_sdl2_fw}/Headers")
+    target_compile_options(SDL2::SDL2 INTERFACE "-F${_sms_sdl2_fw_dir}")
+    target_link_options(SDL2::SDL2 INTERFACE "LINKER:-F${_sms_sdl2_fw_dir}" "LINKER:-framework,SDL2")
+    message(STATUS "sms_gx: using SDL2.framework at ${_sms_sdl2_fw}")
+    set(SMS_SDL2_FRAMEWORK_DIR "${_sms_sdl2_fw_dir}" PARENT_SCOPE)
+  endif()
+endif()
+if(NOT TARGET SDL2::SDL2)
+  find_package(SDL2 CONFIG QUIET)
+endif()
 find_library(SMS_GX_EGL_LIB EGL)
 find_path(SMS_GX_EGL_INCLUDE EGL/egl.h)
 if(TARGET SDL2::SDL2)

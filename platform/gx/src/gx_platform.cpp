@@ -236,6 +236,7 @@ void GXPC_Present(const void* xfb) {
         GXPC_PresentXFB(xfb, w, h);
         GXPC_OverlayDraw(w, h);
         SDL_GL_SwapWindow(s_window);
+        GXPC_EndPresent();
         sms_gx_pump_events();
     }
 #else

@@ -20,6 +20,11 @@
 #include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <limits.h>
+#include <mach-o/dyld.h>
+#include <stdlib.h>
+#endif
 #include "port_host.h"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -250,6 +255,15 @@ extern "C" int gcdisc_self_path(char* buf, uint32_t bufsize)
 	DWORD n = GetModuleFileNameA(NULL, buf, bufsize);
 	if (n == 0 || n >= bufsize)
 		return 0;
+#elif defined(__APPLE__)
+	char raw[4096];
+	uint32_t rawsize = sizeof raw;
+	if (_NSGetExecutablePath(raw, &rawsize) != 0)
+		return 0;
+	char resolved[PATH_MAX];
+	if (!realpath(raw, resolved) || strlen(resolved) >= bufsize)
+		return 0;
+	strcpy(buf, resolved);
 #else
 	ssize_t n = readlink("/proc/self/exe", buf, bufsize - 1);
 	if (n <= 0)

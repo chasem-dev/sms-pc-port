@@ -60,27 +60,94 @@ set(SMS_GAME_FLAGS
   # TMapObjTree::initMapObj passes snprintf a 0x100 size for a 64-byte buffer)
   # nor stack protectors.
   -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector
-  # SSE float math without contraction: closer to Gekko single/double results
-  # than x87 extended precision (measured on the play5 lockstep trace).
-  -msse2 -mfpmath=sse -ffp-contract=off
-  # String literals are Shift-JIS on disc and in the MWCC build (sjiswrap).
-  -finput-charset=UTF-8 -fexec-charset=CP932
-  # decomp-patches/ret-* give the fall-off-the-end functions their returns;
-  # keep any future ones from trapping.
-  -fno-unreachable-traps
+  # Float math without contraction (Gekko-like). SSE is x86-only; arm64 uses NEON.
+  -ffp-contract=off
   $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++03 -fno-gnu-keywords -fpermissive -fno-threadsafe-statics>
   $<$<COMPILE_LANGUAGE:C>:-std=gnu99 -fcommon>
   -include ${SMS_PORT_SRC}/port_compat.h)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|i.86)$" OR CMAKE_OSX_ARCHITECTURES MATCHES "x86_64")
+  # Closer to Gekko single/double results than x87 extended precision
+  # (measured on the play5 lockstep trace).
+  list(APPEND SMS_GAME_FLAGS -msse2 -mfpmath=sse)
+endif()
+# String literals are Shift-JIS on disc and in the MWCC build (sjiswrap).
+# GCC: -fexec-charset=CP932. Apple Clang rejects CP932, so on macOS without
+# that flag we mirror sources as CP932 (tools/darwin_cp932_mirror.py).
+include(CheckCXXCompilerFlag)
+check_cxx_compiler_flag("-fexec-charset=CP932" SMS_HAVE_CP932)
+if(SMS_HAVE_CP932)
+  list(APPEND SMS_GAME_FLAGS -finput-charset=UTF-8 -fexec-charset=CP932)
+elseif(NOT APPLE)
+  message(FATAL_ERROR
+    "This compiler lacks -fexec-charset=CP932 (needed for Shift-JIS game string literals).")
+endif()
+check_cxx_compiler_flag("-fno-unreachable-traps" SMS_HAVE_NO_UNREACHABLE_TRAPS)
+if(SMS_HAVE_NO_UNREACHABLE_TRAPS)
+  list(APPEND SMS_GAME_FLAGS -fno-unreachable-traps)
+endif()
 if(SMS_ARCH STREQUAL "64")
-  # Keep static data below 4 GiB so pointer<->u32 round trips of globals survive.
   list(APPEND SMS_GAME_FLAGS -fno-pie)
+endif()
+# Clang rejects the game's pointer-to-int truncations ((int)ptr, (u32)ptr) as
+# hard errors in C++ where g++ -fpermissive only warns; -fms-extensions turns
+# them back into (silenced) warnings with the same truncating result. Game
+# memory stays below 4 GiB (port_low_alloc), so nothing is lost.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  list(APPEND SMS_GAME_FLAGS -fms-extensions)
+endif()
+
+# macOS: native arm64 reserves the low 4 GiB as PAGEZERO, so port_low_alloc
+# cannot satisfy pointer-in-u32. Build x86_64 (Rosetta) with a 4 KiB pagezero.
+if(APPLE)
+  if(NOT CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64")
+    message(FATAL_ERROR
+      "macOS builds must use CMAKE_OSX_ARCHITECTURES=x86_64 (Rosetta). "
+      "Native arm64 cannot mmap below 4 GiB. Use ./build_mac.sh.")
+  endif()
+endif()
+
+set(SMS_GAME_INCLUDE_DIR ${SMS_DECOMP}/include)
+if(APPLE AND NOT SMS_HAVE_CP932)
+  set(SMS_CP932_ROOT ${CMAKE_BINARY_DIR}/cp932)
+  execute_process(
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/darwin_cp932_mirror.py
+            --decomp ${SMS_DECOMP}
+            --patched ${SMS_PATCH_ROOT}
+            --out ${SMS_CP932_ROOT}
+    RESULT_VARIABLE _cp932_rc)
+  if(NOT _cp932_rc EQUAL 0)
+    message(FATAL_ERROR "tools/darwin_cp932_mirror.py failed")
+  endif()
+  set(SMS_GAME_INCLUDE_DIR ${SMS_CP932_ROOT}/include)
+  list(APPEND SMS_GAME_FLAGS -Wno-invalid-source-encoding)
+  foreach(lst SMS_DECOMP_CXX_SOURCES SMS_DECOMP_C_SOURCES SMS_DECOMP_PCH_SOURCES)
+    set(_retargeted "")
+    foreach(f ${${lst}})
+      file(RELATIVE_PATH _rel ${SMS_DECOMP} "${f}")
+      if(_rel MATCHES "^\\.\\.")
+        file(RELATIVE_PATH _rel ${SMS_PATCH_ROOT} "${f}")
+      endif()
+      if(EXISTS ${SMS_CP932_ROOT}/${_rel})
+        list(APPEND _retargeted ${SMS_CP932_ROOT}/${_rel})
+      else()
+        list(APPEND _retargeted ${f})
+      endif()
+    endforeach()
+    set(${lst} ${_retargeted})
+  endforeach()
+  message(STATUS "SMS port: compiling game sources from CP932 mirror (Apple Clang)")
 endif()
 
 set_source_files_properties(${SMS_DECOMP_CXX_SOURCES} PROPERTIES LANGUAGE CXX)
 set_source_files_properties(${SMS_DECOMP_CXX_SOURCES} ${SMS_DECOMP_C_SOURCES} PROPERTIES
   OBJECT_DEPENDS ${SMS_PATCH_HEADER_STAMP})
+if(EXISTS "${SMS_GAME_INCLUDE_DIR}/SMS.pch")
+  set(_sms_pch ${SMS_GAME_INCLUDE_DIR}/SMS.pch)
+else()
+  set(_sms_pch ${SMS_DECOMP}/include/SMS.pch)
+endif()
 set_source_files_properties(${SMS_DECOMP_PCH_SOURCES} PROPERTIES
-  COMPILE_OPTIONS "-include;${SMS_DECOMP}/include/SMS.pch")
+  COMPILE_OPTIONS "-include;${_sms_pch}")
 
 option(SMS_WITH_GX "Build and link platform/gx (the graphics layer)" ON)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND SMS_WITH_GX AND SMS_ARCH STREQUAL "32")
@@ -121,8 +188,16 @@ add_library(sms_game STATIC ${SMS_DECOMP_CXX_SOURCES} ${SMS_DECOMP_C_SOURCES})
 include(${CMAKE_CURRENT_SOURCE_DIR}/platform/thp/thp.cmake)
 # The SDK's PADClamp (dead zone / octagon), built from the decomp as C.
 target_sources(sms_game PRIVATE ${SMS_DECOMP}/src/dolphin/pad/Padclamp.c)
-target_include_directories(sms_game BEFORE PRIVATE
-  ${SMS_PORT_SRC}/port_include ${SMS_PATCHED_INCLUDE_DIR} ${SMS_DECOMP}/include)
+# port_include must stay ahead of the game headers: its dolphin/types.h
+# overrides the decomp's (LP64 integer widths, weak AT_ADDRESS globals).
+if(DEFINED SMS_CP932_ROOT)
+  # CP932 mirror already merges patched headers.
+  target_include_directories(sms_game BEFORE PRIVATE
+    ${SMS_PORT_SRC}/port_include ${SMS_GAME_INCLUDE_DIR})
+else()
+  target_include_directories(sms_game BEFORE PRIVATE
+    ${SMS_PORT_SRC}/port_include ${SMS_PATCHED_INCLUDE_DIR} ${SMS_GAME_INCLUDE_DIR})
+endif()
 if(TARGET sms_gx AND SMS_GX_OVERRIDE_INCLUDE_DIR)
   # GXVert.h vertex writers become functions implemented by sms_gx.
   target_include_directories(sms_game BEFORE PRIVATE ${SMS_GX_OVERRIDE_INCLUDE_DIR})
@@ -139,16 +214,31 @@ if(SMS_ARCH STREQUAL "32")
 else()
   set(_sz m)
 endif()
-if(WIN32)
+if(APPLE)
+  # Mach-O adds an extra leading underscore; GNU binutils objcopy does not
+  # rewrite Mach-O archives — use llvm-objcopy (Homebrew llvm).
+  set(_object_prefix "_")
+  find_program(SMS_OBJCOPY NAMES llvm-objcopy
+    PATHS /opt/homebrew/opt/llvm/bin /usr/local/opt/llvm/bin
+    NO_DEFAULT_PATH)
+  if(NOT SMS_OBJCOPY)
+    find_program(SMS_OBJCOPY NAMES llvm-objcopy)
+  endif()
+  if(NOT SMS_OBJCOPY)
+    message(FATAL_ERROR "llvm-objcopy required on macOS (brew install llvm)")
+  endif()
+elseif(WIN32)
   # COFF adds a leading underscore to each 32-bit C++ symbol.
   set(_object_prefix "_")
+  set(SMS_OBJCOPY objcopy)
 else()
   set(_object_prefix "")
+  set(SMS_OBJCOPY objcopy)
 endif()
 file(WRITE ${CMAKE_BINARY_DIR}/game_new_syms.txt
   "${_object_prefix}_Znw${_sz} __sms_game_new\n${_object_prefix}_Zna${_sz} __sms_game_new_array\n${_object_prefix}_ZdlPv __sms_game_delete\n${_object_prefix}_ZdaPv __sms_game_delete_array\n")
 add_custom_command(TARGET sms_game POST_BUILD
-  COMMAND objcopy --redefine-syms=${CMAKE_BINARY_DIR}/game_new_syms.txt $<TARGET_FILE:sms_game>
+  COMMAND ${SMS_OBJCOPY} --redefine-syms=${CMAKE_BINARY_DIR}/game_new_syms.txt $<TARGET_FILE:sms_game>
   COMMENT "Renaming the game's global operator new/delete")
 
 # --- Platform layer ---------------------------------------------------------
@@ -159,10 +249,15 @@ file(GLOB_RECURSE SMS_PLATFORM_SOURCES CONFIGURE_DEPENDS
 # platform/gx/CMakeLists.txt defining a library target `sms_gx`, it is linked
 # in and its strong GX* definitions replace the weak stubs.
 list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/gx/")
-if(WIN32)
+if(WIN32 OR APPLE)
   list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/trace/trace\\.cpp$")
 endif()
 add_executable(sms ${SMS_PORT_SRC}/port_main.cpp ${SMS_PLATFORM_SOURCES})
+if(APPLE AND SMS_SDL2_FRAMEWORK_DIR)
+  # @rpath/SDL2.framework: beside the executable (build_mac.sh copies it
+  # there), else where it was linked from.
+  set_target_properties(sms PROPERTIES BUILD_RPATH "@executable_path;${SMS_SDL2_FRAMEWORK_DIR}")
+endif()
 if(WIN32)
   set_target_properties(sms PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 endif()
@@ -175,17 +270,41 @@ target_compile_options(sms PRIVATE -fno-strict-aliasing -Wno-unused-parameter -U
 # dsptask.c points a DSP task at the fixed low-memory address 0x80004600.
 if(WIN32)
   target_link_options(sms PRIVATE -Wl,--large-address-aware -Wl,--defsym=_lbl_80004600=0x80004600)
+elseif(APPLE)
+  # Apple ld has no --defsym; provide a normal symbol (DSP HLE does not need the GC address).
+  target_sources(sms PRIVATE ${SMS_PORT_SRC}/lbl_80004600_darwin.c)
 else()
   target_link_options(sms PRIVATE -Wl,--defsym=lbl_80004600=0x80004600)
 endif()
 if(SMS_ARCH STREQUAL "64")
   target_compile_options(sms PRIVATE -fno-pie)
-  target_link_options(sms PRIVATE -no-pie)
+  if(NOT APPLE)
+    target_link_options(sms PRIVATE -no-pie)
+  endif()
+endif()
+if(APPLE)
+  # Shrink PAGEZERO so MAP_32BIT / low stacks work (x86_64 / Rosetta only).
+  target_link_options(sms PRIVATE "LINKER:-pagezero_size,0x1000")
 endif()
 find_package(Threads REQUIRED)
-target_link_libraries(sms PRIVATE -Wl,--whole-archive sms_game -Wl,--no-whole-archive Threads::Threads m ${CMAKE_DL_LIBS})
-if(TARGET sms_gx)
-  target_link_libraries(sms PRIVATE -Wl,--whole-archive sms_gx -Wl,--no-whole-archive)
+if(APPLE)
+  # Apple ld: -force_load pulls every member (like --whole-archive).
+  # force_load does not pull INTERFACE deps, so also link sms_gx normally for SDL2.
+  target_link_libraries(sms PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+  target_link_options(sms PRIVATE "LINKER:-force_load,$<TARGET_FILE:sms_game>")
+  add_dependencies(sms sms_game)
+  # A link option carries no file dependency: relink when the archives change.
+  set_property(TARGET sms APPEND PROPERTY LINK_DEPENDS $<TARGET_FILE:sms_game>)
+  if(TARGET sms_gx)
+    target_link_options(sms PRIVATE "LINKER:-force_load,$<TARGET_FILE:sms_gx>")
+    target_link_libraries(sms PRIVATE sms_gx)
+    add_dependencies(sms sms_gx)
+  endif()
+else()
+  target_link_libraries(sms PRIVATE -Wl,--whole-archive sms_game -Wl,--no-whole-archive Threads::Threads m ${CMAKE_DL_LIBS})
+  if(TARGET sms_gx)
+    target_link_libraries(sms PRIVATE -Wl,--whole-archive sms_gx -Wl,--no-whole-archive)
+  endif()
 endif()
 
 # --- Standalone executable ------------------------------------------------------

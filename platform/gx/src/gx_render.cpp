@@ -1132,9 +1132,16 @@ int GXPC_PresentXFB(const void* xfb, int winW, int winH) {
     glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, x.tex, 0);
     // XFB row 0 is the top of the picture; the window's row 0 is its bottom
     glBlitFramebuffer(0, 0, x.w, x.h, ox, oy + vh, ox + vw, oy, GL_COLOR_BUFFER_BIT, GL_LINEAR);
-    glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
+    // Framebuffer 0 stays bound through the swap: macOS presents nothing
+    // (a black window) if an FBO is bound at SDL_GL_SwapWindow.
+    // GXPC_EndPresent restores the EFB.
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
     memset(&s_stats, 0, sizeof(s_stats));
     return 1;
+}
+
+void GXPC_EndPresent(void) {
+    if (s_ready) glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
 }
 
 void GXPC_ReadEFB(uint8_t* rgba, int* w, int* h) {

@@ -20,6 +20,9 @@
 #include <unistd.h>
 #include <dlfcn.h>
 #include <sys/wait.h>
+#ifdef __APPLE__
+#include <sys/ucontext.h>
+#endif
 #endif
 
 // Default game source on this machine: the user's disc image, else the
@@ -128,16 +131,35 @@ static void crash_handler(int sig)
 	raise(sig);
 }
 #else
-static void crash_handler(int sig, siginfo_t* si, void*)
+static void crash_handler(int sig, siginfo_t* si, void* uc)
 {
 	port_log("\n[port] fatal signal %d (%s) at address %p\n", sig, strsignal(sig), si ? si->si_addr : nullptr);
+#if defined(__APPLE__) && defined(__x86_64__)
+	if (uc) {
+		// No gdb on macOS and lldb needs developer-mode approval: print the
+		// faulting registers so a bad pointer can be traced from the log.
+		const auto& r = ((ucontext_t*)uc)->uc_mcontext->__ss;
+		port_log("[port] rip=%llx rsp=%llx rbp=%llx\n"
+		         "[port] rax=%llx rbx=%llx rcx=%llx rdx=%llx rsi=%llx rdi=%llx\n"
+		         "[port] r8=%llx r9=%llx r10=%llx r11=%llx r12=%llx r13=%llx r14=%llx r15=%llx\n",
+		         r.__rip, r.__rsp, r.__rbp, r.__rax, r.__rbx, r.__rcx, r.__rdx, r.__rsi, r.__rdi,
+		         r.__r8, r.__r9, r.__r10, r.__r11, r.__r12, r.__r13, r.__r14, r.__r15);
+	}
+#endif
 	void* bt[64];
 	int n = backtrace(bt, 64);
 	backtrace_symbols_fd(bt, n, 2);
 	crash_symbolise(bt, n);
 	port_stub_report();
+#ifdef __APPLE__
+	// Under Rosetta, a translated process that dies from a re-raised fatal
+	// signal hangs in the kernel's exit path (state UE, unkillable). Exit
+	// with the shell's 128+signal status instead.
+	_exit(128 + sig);
+#else
 	signal(sig, SIG_DFL);
 	raise(sig);
+#endif
 }
 #endif
 
@@ -146,6 +168,27 @@ static void crash_handler(int sig, siginfo_t* si, void*)
 // few raw low-memory reads (e.g. *(OSModuleInfo**)0x800030C8) work unchanged.
 u8* port_mem1_base;
 u32 port_mem1_size;
+
+#ifndef _WIN32
+// mmap exactly at `want` without replacing an existing mapping. Linux has
+// MAP_FIXED_NOREPLACE; Darwin's MAP_FIXED silently replaces whatever is there
+// (dylibs, graphics driver memory: the low 4 GiB is shared with the system
+// once PAGEZERO is shrunk), so pass `want` as a hint and reject any other
+// placement.
+static void* map_exact(void* want, size_t size)
+{
+#ifdef MAP_FIXED_NOREPLACE
+	void* p = mmap(want, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+#else
+	void* p = mmap(want, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+#endif
+	if (p == want)
+		return p;
+	if (p != MAP_FAILED)
+		munmap(p, size);
+	return MAP_FAILED;
+}
+#endif
 
 static void map_mem1()
 {
@@ -165,12 +208,9 @@ static void map_mem1()
 		exit(1);
 	}
 #else
-	void* p = mmap(want, port_mem1_size, PROT_READ | PROT_WRITE,
-	               MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+	void* p = map_exact(want, port_mem1_size);
 	if (p != want) {
-		port_log("[port] cannot map MEM1 at 0x80000000 (got %p); falling back to a heap block\n", p);
-		if (p != MAP_FAILED)
-			munmap(p, port_mem1_size);
+		port_log("[port] cannot map MEM1 at 0x80000000; falling back to a heap block\n");
 		p = mmap(NULL, port_mem1_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 		if (p == MAP_FAILED) {
 			port_log("[port] out of memory for MEM1\n");
@@ -213,11 +253,9 @@ void* port_low_alloc(unsigned long size)
 	for (int tries = 0; tries < 4096 && next + size <= 0x80000000u; tries++) {
 		void* want = (void*)next;
 		next += (size + 0xFFFFu) & ~(uintptr_t)0xFFFFu;
-		void* q = mmap(want, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+		void* q = map_exact(want, size);
 		if (q == want)
 			return q;
-		if (q != MAP_FAILED)
-			munmap(q, size);
 	}
 	return NULL;
 #endif
@@ -233,7 +271,7 @@ static void map_hw_sink()
 #ifdef _WIN32
 	void* p = VirtualAlloc(want, 0x10000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 #else
-	void* p = mmap(want, 0x10000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+	void* p = map_exact(want, 0x10000);
 #endif
 	if (p != want)
 		port_log("[port] cannot map the hardware register sink at 0xCC000000 (%p)\n", p);

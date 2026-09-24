@@ -94,6 +94,7 @@ void GXPC_WriteF32(float v);
  * on retrace for the buffer given to VISetNextFrameBuffer, then swaps.
  * xfb == NULL presents the most recent display copy.  Returns 0 if unknown. */
 int GXPC_PresentXFB(const void* xfb, int winW, int winH);
+void GXPC_EndPresent(void);  /* after the swap: rebind the EFB (PresentXFB leaves framebuffer 0 bound) */
 
 /* Debug/test access: read back the EFB (RGBA8, top row first) or the XFB
  * texture at `xfb` (NULL = most recent).  Buffers are w*h*4 bytes; pass NULL to

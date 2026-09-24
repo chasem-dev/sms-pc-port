@@ -1,3 +1,4 @@
 build/
 build-*/
 build32/
+/third_party/SDL2.framework/
