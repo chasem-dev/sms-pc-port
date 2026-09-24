@@ -108,9 +108,9 @@ typedef struct GXPCStats {
 void GXPC_GetStats(GXPCStats* out);
 void GXPC_GetLastFrameStats(GXPCStats* out); /* the last completed display frame */
 double GXPC_GxSeconds(void);                   /* wall time spent inside sms_gx so far */
-/* Blit an RGBA image (row 0 = top) onto the window at (x, y) from its top-left,
+/* Blend an RGBA image (row 0 = top) onto the window at (x, y) from its top-left,
  * magnified by scale.  Call between GXPC_PresentXFB and the swap. */
-void GXPC_DrawOverlay(const uint8_t* rgba, int w, int h, int x, int y, int scale, int winH);
+void GXPC_DrawOverlay(const uint8_t* rgba, int w, int h, int x, int y, int scale, int winW, int winH);
 /* Debug overlay (backtick in the window): toggle, and draw it before a swap. */
 void GXPC_OverlayToggle(void);
 void GXPC_OverlayDraw(int winW, int winH);

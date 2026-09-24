@@ -27,6 +27,8 @@ static GLuint s_copyProg, s_copyVao;
 static GLint s_copyUMode, s_copyURect, s_copyUAlphaOne;
 static GLuint s_tmpFbo;
 static GLuint s_overlayTex;
+static GLuint s_overlayProg;
+static GLint s_overlayRect, s_overlayWindow;
 static GXPCStats s_lastFrameStats;
 static bool s_ready = false;
 static bool s_xfDirty = true;
@@ -679,6 +681,9 @@ void GXPC_Shutdown(void) {
     if (!s_ready) return;
     textureShutdown();
     shaderShutdown();
+    if (s_overlayTex) glDeleteTextures(1, &s_overlayTex);
+    if (s_overlayProg) glDeleteProgram(s_overlayProg);
+    s_overlayTex = s_overlayProg = 0;
     for (auto& kv : s_xfbs) glDeleteTextures(1, &kv.second.tex);
     s_xfbs.clear();
     s_ready = false;
@@ -773,16 +778,59 @@ void GXPC_GetLastFrameStats(GXPCStats* out) {
 
 double GXPC_GxSeconds(void) { return s_gxSeconds; }
 
-void GXPC_DrawOverlay(const uint8_t* rgba, int w, int h, int x, int y, int scale, int winH) {
+void GXPC_DrawOverlay(const uint8_t* rgba, int w, int h, int x, int y, int scale, int winW, int winH) {
     if (!s_ready || !rgba || w <= 0 || h <= 0) return;
     flushBatch();
-    // Blit instead of drawing: no program, VAO or blend state to disturb.
+    // glBlitFramebuffer ignores alpha, so draw the panel with source-alpha blending.
+    if (!s_overlayProg) {
+        static const char* vs = R"(#version 330 core
+uniform vec4 u_rect;
+uniform vec2 u_window;
+out vec2 v_uv;
+void main() {
+    vec2 p = vec2(float(gl_VertexID & 1), float(gl_VertexID >> 1));
+    v_uv = vec2(p.x, 1.0 - p.y);
+    gl_Position = vec4((u_rect.xy + p * u_rect.zw) / u_window * 2.0 - 1.0, 0.0, 1.0);
+}
+)";
+        static const char* fs = R"(#version 330 core
+uniform sampler2D u_color;
+in vec2 v_uv;
+out vec4 o_color;
+void main() { o_color = texture(u_color, v_uv); }
+)";
+        s_overlayProg = compileProgram(vs, fs);
+        s_overlayRect = glGetUniformLocation(s_overlayProg, "u_rect");
+        s_overlayWindow = glGetUniformLocation(s_overlayProg, "u_window");
+    }
     GLint activeUnit = 0, boundTex = 0, rowLength = 0, unpackAlign = 4;
+    GLint program = 0, vao = 0, drawFbo = 0, viewport[4], colorMask[4];
+    GLint blend = 0, depth = 0, stencil = 0, cull = 0, scissor = 0, logic = 0, clip0 = 0, clip1 = 0;
+    GLint srcRGB = 0, dstRGB = 0, srcAlpha = 0, dstAlpha = 0, eqRGB = 0, eqAlpha = 0;
     glGetIntegerv(GL_ACTIVE_TEXTURE, &activeUnit);
     glActiveTexture(GL_TEXTURE0);
     glGetIntegerv(GL_TEXTURE_BINDING_2D, &boundTex);
     glGetIntegerv(GL_UNPACK_ROW_LENGTH, &rowLength);
     glGetIntegerv(GL_UNPACK_ALIGNMENT, &unpackAlign);
+    glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &drawFbo);
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    glGetIntegerv(GL_COLOR_WRITEMASK, colorMask);
+    glGetIntegerv(GL_BLEND, &blend);
+    glGetIntegerv(GL_DEPTH_TEST, &depth);
+    glGetIntegerv(GL_STENCIL_TEST, &stencil);
+    glGetIntegerv(GL_CULL_FACE, &cull);
+    glGetIntegerv(GL_SCISSOR_TEST, &scissor);
+    glGetIntegerv(GL_COLOR_LOGIC_OP, &logic);
+    glGetIntegerv(GL_CLIP_DISTANCE0, &clip0);
+    glGetIntegerv(GL_CLIP_DISTANCE1, &clip1);
+    glGetIntegerv(GL_BLEND_SRC_RGB, &srcRGB);
+    glGetIntegerv(GL_BLEND_DST_RGB, &dstRGB);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &srcAlpha);
+    glGetIntegerv(GL_BLEND_DST_ALPHA, &dstAlpha);
+    glGetIntegerv(GL_BLEND_EQUATION_RGB, &eqRGB);
+    glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &eqAlpha);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     if (!s_overlayTex) glGenTextures(1, &s_overlayTex);
@@ -790,18 +838,46 @@ void GXPC_DrawOverlay(const uint8_t* rgba, int w, int h, int x, int y, int scale
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_COLOR_LOGIC_OP);
+    glDisable(GL_CLIP_DISTANCE0);
+    glDisable(GL_CLIP_DISTANCE1);
+    glEnable(GL_BLEND);
+    glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    glViewport(0, 0, winW, winH);
+    glUseProgram(s_overlayProg);
+    glUniform1i(glGetUniformLocation(s_overlayProg, "u_color"), 0);
+    glBindVertexArray(s_copyVao);
+    float rect[4] = {float(x), float(winH - y - h * scale), float(w * scale), float(h * scale)};
+    float window[2] = {float(winW), float(winH)};
+    glUniform4fv(s_overlayRect, 1, rect);
+    glUniform2fv(s_overlayWindow, 1, window);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glBindTexture(GL_TEXTURE_2D, GLuint(boundTex));
     glActiveTexture(GLenum(activeUnit));
     glPixelStorei(GL_UNPACK_ROW_LENGTH, rowLength);
     glPixelStorei(GL_UNPACK_ALIGNMENT, unpackAlign);
-    glDisable(GL_SCISSOR_TEST);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, s_tmpFbo);
-    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s_overlayTex, 0);
-    // rgba row 0 is the top; the window's row 0 is its bottom
-    int top = winH - y;
-    glBlitFramebuffer(0, 0, w, h, x, top, x + w * scale, top - h * scale, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-    glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
+    glBindVertexArray(GLuint(vao));
+    glUseProgram(GLuint(program));
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, GLuint(drawFbo));
+    glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+    glBlendFuncSeparate(GLenum(srcRGB), GLenum(dstRGB), GLenum(srcAlpha), GLenum(dstAlpha));
+    glBlendEquationSeparate(GLenum(eqRGB), GLenum(eqAlpha));
+    glColorMask(colorMask[0], colorMask[1], colorMask[2], colorMask[3]);
+    if (!blend) glDisable(GL_BLEND);
+    if (depth) glEnable(GL_DEPTH_TEST);
+    if (stencil) glEnable(GL_STENCIL_TEST);
+    if (cull) glEnable(GL_CULL_FACE);
+    if (scissor) glEnable(GL_SCISSOR_TEST);
+    if (logic) glEnable(GL_COLOR_LOGIC_OP);
+    if (clip0) glEnable(GL_CLIP_DISTANCE0);
+    if (clip1) glEnable(GL_CLIP_DISTANCE1);
 }
 
 void GXPC_GetStats(GXPCStats* out) {

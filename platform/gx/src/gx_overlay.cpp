@@ -1,6 +1,6 @@
 // Debug overlay: backtick (`) in the window toggles a panel with frame rate,
 // frame times, sms_gx counters, the GL renderer and the default key bindings.
-// Text is rasterised on the CPU with stb_easy_font and blitted on top of the
+// Text is rasterised on the CPU with stb_easy_font and blended on top of the
 // presented frame (GXPC_DrawOverlay), so it touches no game-visible GL state.
 #include "gx_internal.h"
 #include "gl_funcs.h"
@@ -141,7 +141,7 @@ void GXPC_OverlayDraw(int winW, int winH) {
     int w = stb_easy_font_width(text) + pad * 2;
     int h = stb_easy_font_height(text) + pad * 2;
     std::vector<uint8_t> px(size_t(w) * h * 4);
-    const uint8_t bg[4] = {16, 16, 24, 255};
+    const uint8_t bg[4] = {16, 16, 24, 128};
     const uint8_t fg[4] = {255, 255, 255, 255};
     const uint8_t hi[4] = {255, 220, 64, 255};
     fillRect(px, w, h, 0, 0, w, h, bg);
@@ -153,7 +153,7 @@ void GXPC_OverlayDraw(int winW, int winH) {
 
     int scale = winH >= 720 ? 3 : 2;
     while (scale > 1 && (w * scale > winW || h * scale > winH)) scale--;
-    GXPC_DrawOverlay(px.data(), w, h, 8, 8, scale, winH);
+    GXPC_DrawOverlay(px.data(), w, h, 8, 8, scale, winW, winH);
 }
 
 }  // extern "C"
