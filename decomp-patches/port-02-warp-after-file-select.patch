@@ -1,7 +1,7 @@
 Reason: port: SMS_WARP=stage,scenario[,shines] sends a file-select load to another area (debugging aid)
 --- a/src/GC2D/CardLoad.cpp
 +++ b/src/GC2D/CardLoad.cpp
-@@ -2251,6 +2251,27 @@
+@@ -2251,6 +2251,36 @@
  		setupScoreScreen();
  	}
  }
@@ -11,6 +11,15 @@ Reason: port: SMS_WARP=stage,scenario[,shines] sends a file-select load to anoth
 +static void port_warp_after_file_select()
 +{
 +	static bool done;
++	// SMS_WARP_MOVIE=n plays streaming movie n (TMarDirector::fireStreamingMovie)
++	if (const char* m = getenv("SMS_WARP_MOVIE")) {
++		if (!done) {
++			done = true;
++			OSReport("SMS_WARP_MOVIE: %d\n", atoi(m));
++			gpMarDirector->fireStreamingMovie((u8)atoi(m));
++		}
++		return;
++	}
 +	const char* warp = getenv("SMS_WARP");
 +	int stage = -1, scenario = 0, shines = -1;
 +	if (done || !warp || sscanf(warp, "%d,%d,%d", &stage, &scenario, &shines) < 1

@@ -172,7 +172,9 @@ void switch_to(OSThread* self, OSThread* next, bool exiting)
 	}
 	while (g_cur != self) {
 		pthread_cond_wait(&hs->cv, &g_cpu);
-		if (hs->cancelled && g_cur != self) {
+		// A cancelled host never runs again, even when its OSThread object
+		// has since been recreated and scheduled (it then has a new Host).
+		if (hs->cancelled && (g_cur != self || host_of(self) != hs)) {
 			pthread_mutex_unlock(&g_cpu);
 			pthread_exit(NULL);
 		}
@@ -246,8 +248,13 @@ void* host_entry(void* p)
 	OSThread* self = (OSThread*)p;
 	pthread_mutex_lock(&g_cpu);
 	Host* h = host_of(self);
-	while (g_cur != self)
+	while (g_cur != self || host_of(self) != h) {
 		pthread_cond_wait(&h->cv, &g_cpu);
+		if (h->cancelled) { // cancelled before it ever ran
+			pthread_mutex_unlock(&g_cpu);
+			return NULL;
+		}
+	}
 	g_irq_enabled = true;
 	void* ret = h->func(h->arg);
 	OSExitThread((OSThread*)ret);
@@ -382,6 +389,18 @@ extern "C" int OSCreateThread(OSThread* t, void* (*func)(void*), void* param, vo
 	Host* h      = host_of(t);
 	if (h && h->started && !wasDead) {
 		port_log("[os] OSCreateThread reusing a live thread object %p\n", t);
+	}
+	if (h && h->started) {
+		// The previous incarnation's host thread may still be parked on its
+		// condition variable (OSCancelThread only asks it to leave; it goes
+		// when it next wakes). Reusing its Host would clear `cancelled` and
+		// let it resume the old function alongside the new one: the THP
+		// decoder threads recreated for the next movie crashed that way.
+		// Retire it and give the new incarnation a Host of its own.
+		h->cancelled = true;
+		pthread_cond_signal(&h->cv);
+		h          = new_host();
+		g_hosts[t] = h;
 	}
 	if (!h) {
 		h          = new_host();
