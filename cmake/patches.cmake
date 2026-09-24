@@ -9,7 +9,7 @@
 set(SMS_PATCH_ROOT ${CMAKE_BINARY_DIR}/patched)
 set(SMS_PATCHED_INCLUDE_DIR ${SMS_PATCH_ROOT}/include)
 set(_scratch ${CMAKE_BINARY_DIR}/patched.new)
-file(GLOB SMS_PATCHES ${CMAKE_CURRENT_SOURCE_DIR}/decomp-patches/*.patch)
+file(GLOB SMS_PATCHES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/decomp-patches/*.patch)
 list(SORT SMS_PATCHES)
 file(REMOVE_RECURSE ${_scratch})
 file(MAKE_DIRECTORY ${_scratch}/include ${SMS_PATCHED_INCLUDE_DIR})

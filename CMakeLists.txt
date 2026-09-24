@@ -131,8 +131,14 @@ if(SMS_ARCH STREQUAL "32")
 else()
   set(_sz m)
 endif()
+if(WIN32)
+  # COFF adds a leading underscore to each 32-bit C++ symbol.
+  set(_object_prefix "_")
+else()
+  set(_object_prefix "")
+endif()
 file(WRITE ${CMAKE_BINARY_DIR}/game_new_syms.txt
-  "_Znw${_sz} __sms_game_new\n_Zna${_sz} __sms_game_new_array\n_ZdlPv __sms_game_delete\n_ZdaPv __sms_game_delete_array\n")
+  "${_object_prefix}_Znw${_sz} __sms_game_new\n${_object_prefix}_Zna${_sz} __sms_game_new_array\n${_object_prefix}_ZdlPv __sms_game_delete\n${_object_prefix}_ZdaPv __sms_game_delete_array\n")
 add_custom_command(TARGET sms_game POST_BUILD
   COMMAND objcopy --redefine-syms=${CMAKE_BINARY_DIR}/game_new_syms.txt $<TARGET_FILE:sms_game>
   COMMENT "Renaming the game's global operator new/delete")
@@ -145,7 +151,13 @@ file(GLOB_RECURSE SMS_PLATFORM_SOURCES CONFIGURE_DEPENDS
 # platform/gx/CMakeLists.txt defining a library target `sms_gx`, it is linked
 # in and its strong GX* definitions replace the weak stubs.
 list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/gx/")
+if(WIN32)
+  list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/trace/trace\\.cpp$")
+endif()
 add_executable(sms ${SMS_PORT_SRC}/port_main.cpp ${SMS_PLATFORM_SOURCES})
+if(WIN32)
+  set_target_properties(sms PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+endif()
 target_include_directories(sms PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/platform ${SMS_PORT_SRC}
   ${SMS_PORT_SRC}/port_include ${SMS_DECOMP}/include)
@@ -153,7 +165,11 @@ target_compile_definitions(sms PRIVATE ${SMS_COMMON_DEFS} SMS_AUDIO_DSP_HLE=1)
 target_compile_options(sms PRIVATE -fno-strict-aliasing -Wno-unused-parameter -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
   $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++11>)
 # dsptask.c points a DSP task at the fixed low-memory address 0x80004600.
-target_link_options(sms PRIVATE -Wl,--defsym=lbl_80004600=0x80004600)
+if(WIN32)
+  target_link_options(sms PRIVATE -Wl,--large-address-aware -Wl,--defsym=_lbl_80004600=0x80004600)
+else()
+  target_link_options(sms PRIVATE -Wl,--defsym=lbl_80004600=0x80004600)
+endif()
 if(SMS_ARCH STREQUAL "64")
   target_compile_options(sms PRIVATE -fno-pie)
   target_link_options(sms PRIVATE -no-pie)

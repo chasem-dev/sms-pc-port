@@ -20,6 +20,7 @@
 #include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "port_host.h"
 
 #include <string>
 #include <vector>
@@ -55,7 +56,7 @@ static bool pread_all(int fd, void* buf, size_t n, uint64_t off)
 {
 	uint8_t* b = (uint8_t*)buf;
 	while (n) {
-		ssize_t r = pread(fd, b, n, (off_t)off);
+		ssize_t r = port_pread(fd, b, n, off);
 		if (r < 0 && errno == EINTR)
 			continue;
 		if (r <= 0)
@@ -122,7 +123,13 @@ static bool setup_ciso(GCDisc* d)
 
 extern "C" GCDisc* gcdisc_open(const char* path, int verbose)
 {
-	int fd = open(path, O_RDONLY | O_CLOEXEC);
+	int fd = open(path, O_RDONLY
+#ifndef _WIN32
+	              | O_CLOEXEC
+#else
+	              | O_BINARY
+#endif
+	);
 	if (fd < 0) {
 		if (verbose)
 			fprintf(stderr, "[disc] cannot open %s: %s\n", path, strerror(errno));

@@ -36,8 +36,13 @@ extern "C" void port_os_init(void)
 	// OSTime counts from 2000-01-01 00:00:00 local time.
 	time_t now = time(NULL);
 	struct tm lt;
+#ifdef _WIN32
+	localtime_s(&lt, &now);
+	s64 local = (s64)_mkgmtime(&lt) - 946684800LL;
+#else
 	localtime_r(&now, &lt);
 	s64 local = (s64)now + lt.tm_gmtoff - 946684800LL;
+#endif
 	s_time_base = local * (s64)(__OSBusClock / 4);
 	// Deterministic runs start at a fixed date (2002-07-19, the game's release).
 	if (const char* d = getenv("SMS_VI_DETERMINISTIC"))
@@ -106,7 +111,11 @@ extern "C" void OSTicksToCalendarTime(OSTime ticks, OSCalendarTime* td)
 	}
 	time_t t = (time_t)(secs + 946684800LL);
 	struct tm g;
+#ifdef _WIN32
+	gmtime_s(&g, &t);
+#else
 	gmtime_r(&t, &g); // ticks are already local time
+#endif
 	td->sec  = g.tm_sec;
 	td->min  = g.tm_min;
 	td->hour = g.tm_hour;

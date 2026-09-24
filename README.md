@@ -13,6 +13,9 @@ PC-only changes to game source should eventually move into the decomp behind `#i
 
 ## Running
 
+For Windows, use the [MSYS2 MINGW32 build and run instructions](BUILD.md#windows-msys2-mingw32).
+The commands below are for Linux.
+
 ```sh
 cmake -B build -G "Unix Makefiles"
 nice -n 19 make -C build -j2 sms

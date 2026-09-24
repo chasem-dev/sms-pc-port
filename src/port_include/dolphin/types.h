@@ -34,7 +34,13 @@ typedef int BOOL;
  * are *defined* in SDK headers. On the host they become ordinary weak
  * globals, so the per-TU definitions merge at link time; the platform layer
  * initialises the ones that matter (bus clock, memory size, TV mode). */
+#ifdef _WIN32
+/* COFF has no ELF-style weak data. selectany puts header definitions in
+ * COMDAT sections so the linker keeps one copy shared by all game units. */
+#define AT_ADDRESS(addr) __attribute__((selectany))
+#else
 #define AT_ADDRESS(addr) __attribute__((weak))
+#endif
 
 #define ATTRIBUTE_ALIGN(num) __attribute__((aligned(num)))
 

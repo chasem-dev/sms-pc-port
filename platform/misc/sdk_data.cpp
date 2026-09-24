@@ -15,7 +15,11 @@ extern "C" __attribute__((weak)) void GDOverflowed(void)
 
 // Standard NTSC 640x480 interlaced render mode (values from the public SDK
 // documentation of GXNtsc480Int).
+#ifdef _WIN32
+GXRenderModeObj GXNtsc480Int = {
+#else
 __attribute__((weak)) GXRenderModeObj GXNtsc480Int = {
+#endif
 	VI_TVMODE_NTSC_INT, 640, 480, 480, 40, 0, 640, 480, VI_XFBMODE_DF, GX_FALSE, GX_FALSE,
 	{ { 6, 6 }, { 6, 6 }, { 6, 6 }, { 6, 6 }, { 6, 6 }, { 6, 6 }, { 6, 6 }, { 6, 6 }, { 6, 6 }, { 6, 6 }, { 6, 6 }, { 6, 6 } },
 	{ 0, 0, 21, 22, 21, 0, 0 },

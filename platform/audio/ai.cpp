@@ -22,6 +22,7 @@
 
 #include <atomic>
 #include <dlfcn.h>
+#include "port_host.h"
 #include <mutex>
 #include <pthread.h>
 #include <time.h>
@@ -158,7 +159,7 @@ void* null_clock(void*)
 			t.tv_nsec -= 1000000000;
 			t.tv_sec++;
 		}
-		clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t, NULL);
+		port_sleep_until(&t);
 		if (g.running) {
 			if (g.due.load() < 4) // a stalled game does not get a burst later
 				g.due.fetch_add(1);
@@ -170,7 +171,11 @@ void* null_clock(void*)
 
 bool open_sdl()
 {
+#ifdef _WIN32
+	void* h = dlopen("SDL2.dll", RTLD_NOW | RTLD_GLOBAL);
+#else
 	void* h = dlopen("libSDL2-2.0.so.0", RTLD_NOW | RTLD_GLOBAL);
+#endif
 	if (!h)
 		return false;
 	PFN_SDL_InitSubSystem init  = (PFN_SDL_InitSubSystem)dlsym(h, "SDL_InitSubSystem");
@@ -182,7 +187,7 @@ bool open_sdl()
 	// SDL turns SIGINT/SIGTERM into an SDL_QUIT event; nothing pumps events in
 	// a headless run, so the process would ignore them. (No effect if the GX
 	// layer initialised SDL first; the user's own setting wins.)
-	setenv("SDL_NO_SIGNAL_HANDLERS", "1", 0);
+	port_setenv("SDL_NO_SIGNAL_HANDLERS", "1", 0);
 	if (init(kSdlInitAudio) != 0) {
 		port_log("[audio] SDL audio init failed: %s\n", err());
 		return false;

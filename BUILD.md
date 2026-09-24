@@ -1,6 +1,61 @@
 # Building and running the native port
 
-## One-time setup
+## Windows (MSYS2 MINGW32)
+
+Install [MSYS2](https://www.msys2.org/) and open **MSYS2 MINGW32** from the Start menu.
+This port must be compiled as a 32-bit program because game code stores pointers in 32-bit fields.
+Install the compiler, SDL2, build tools, and the patch utility:
+
+```sh
+pacman -S --needed mingw-w64-i686-gcc mingw-w64-i686-cmake mingw-w64-i686-SDL2 mingw-w64-i686-ninja mingw-w64-i686-make mingw-w64-i686-python patch git
+```
+
+In the MINGW32 shell, enter this repository (for example,
+`cd /c/path/to/sms-pc-port`) and build:
+
+```sh
+./build_pc.sh
+```
+
+The build creates `build32/bin/sms.exe`.
+To play, pass the path to your North American Rev 0 image:
+
+```sh
+./run_pc.sh '../sms-english/Super Mario Sunshine (2002)(Nintendo)(US).iso'
+```
+
+Or place exactly one `.iso`, `.gcm`, or Dolphin `.ciso` image in `build32/bin/rom/` and run `./run_pc.sh` without an argument.
+Use single quotes around paths with spaces or parentheses.
+The executable contains game code, while the image supplies models, textures, levels, audio, and other game files at runtime.
+The build does not bundle these assets; `build32/bin/rom/` is only a convenient image search folder for `run_pc.sh`.
+The port reads the image in place; it does not copy or extract it.
+Keep the MINGW32 shell open when running so its SDL2 and compiler runtime DLLs are on `PATH`.
+Saves default to `%APPDATA%/sms-port/card-a`, or set `SMS_SAVE_DIR`.
+The Windows build uses the SDL2 window; the EGL headless mode is not available in this setup.
+See [Keys](#keys) below for keyboard and controller input.
+
+### Decompilation build on Windows
+
+The decompilation is a separate GameCube build and produces `mario.dol`, which runs in Dolphin or on GameCube hardware.
+Use **PowerShell** with native Windows Python and Ninja; see the decomp README for installation.
+In `sms-english` (or this repository's `decomp/` submodule), place your GMSE01 Rev 0 image in `orig/GMSE01/`, then run:
+
+```powershell
+python configure.py --version GMSE01
+ninja
+```
+
+If Ninja is installed through MSYS2 but is not on PowerShell's `PATH`, run
+`C:\msys64\mingw32\bin\ninja.exe` in place of `ninja`.
+The output is `build/GMSE01/mario.dol`; it should match the original disc's DOL byte for byte.
+To play the GameCube version on Windows, open your original disc image in Dolphin.
+The image supplies the game files that a standalone DOL does not contain.
+The decomp downloads its own GameCube toolchain; the MINGW32 GCC compiler is only for the PC port.
+The `sms-english` [README](https://github.com/chasem-dev/sms-english/blob/main/README.md) has the native Windows setup details.
+
+## Linux
+
+### One-time setup
 
 These are already installed on this machine; you only need them on a new one.
 

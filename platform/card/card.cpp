@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 #include <sys/stat.h>
+#include "port_host.h"
 #include <errno.h>
 
 namespace {
@@ -35,7 +36,7 @@ void mkdirs(const std::string& p)
 {
 	for (size_t i = 1; i <= p.size(); i++)
 		if (i == p.size() || p[i] == '/')
-			mkdir(p.substr(0, i).c_str(), 0755);
+			port_mkdir(p.substr(0, i).c_str(), 0755);
 }
 
 std::string card_dir()
@@ -46,6 +47,10 @@ std::string card_dir()
 		g_dir = d;
 	else if (const char* x = getenv("XDG_DATA_HOME"))
 		g_dir = std::string(x) + "/sms-port/card-a";
+#ifdef _WIN32
+	else if (const char* x = getenv("APPDATA"))
+		g_dir = std::string(x) + "/sms-port/card-a";
+#endif
 	else
 		g_dir = std::string(getenv("HOME") ? getenv("HOME") : ".") + "/.local/share/sms-port/card-a";
 	mkdirs(g_dir);

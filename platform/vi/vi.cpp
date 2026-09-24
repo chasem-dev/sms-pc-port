@@ -13,6 +13,7 @@
 #include <vector>
 #include <string>
 #include <sys/stat.h>
+#include "port_host.h"
 
 // Frame capture (SMS_SHOTS=field,field,... SMS_SHOT_DIR=dir): the XFB handed to
 // VISetNextFrameBuffer is read back through the GX layer at the first VIFlush
@@ -78,7 +79,7 @@ void shots_init()
 	std::sort(g_shots.begin(), g_shots.end());
 	const char* d = getenv("SMS_SHOT_DIR");
 	g_shot_dir    = d ? d : "shots";
-	mkdir(g_shot_dir.c_str(), 0777);
+	port_mkdir(g_shot_dir.c_str(), 0777);
 }
 
 void shots_poll(u32 field, void* xfb)
@@ -126,7 +127,7 @@ void* timer_thread(void*)
 			t.tv_nsec -= 1000000000;
 			t.tv_sec++;
 		}
-		clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t, NULL);
+		port_sleep_until(&t);
 		g_pending.fetch_add(1);
 		port_irq_kick();
 	}

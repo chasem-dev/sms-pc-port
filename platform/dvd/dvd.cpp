@@ -13,6 +13,7 @@
 #include <vector>
 #include <fcntl.h>
 #include <unistd.h>
+#include "port_host.h"
 #include <sys/stat.h>
 #include <dirent.h>
 #include <strings.h>
@@ -163,7 +164,11 @@ int file_fd(u32 entry)
 {
 	Entry& e = g_fst[entry];
 	if (e.fd < 0)
-		e.fd = open(e.host.c_str(), O_RDONLY);
+		e.fd = open(e.host.c_str(), O_RDONLY
+#ifdef _WIN32
+		            | O_BINARY
+#endif
+		);
 	return e.fd;
 }
 
@@ -189,7 +194,7 @@ s32 do_read(DVDFileInfo* fi, void* addr, s32 length, s32 offset)
 		return DVD_RESULT_FATAL_ERROR;
 	s32 done = 0;
 	while (done < length) {
-		ssize_t r = pread(fd, (u8*)addr + done, length - done, offset + done);
+		ssize_t r = port_pread(fd, (u8*)addr + done, length - done, offset + done);
 		if (r <= 0)
 			break;
 		done += (s32)r;

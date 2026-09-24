@@ -1,0 +1,2 @@
+*.sh text eol=lf
+decomp-patches/*.patch text eol=lf

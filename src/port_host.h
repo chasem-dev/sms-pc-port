@@ -1,0 +1,34 @@
+#ifndef SMS_PORT_HOST_H
+#define SMS_PORT_HOST_H
+
+#ifdef _WIN32
+#include <sys/types.h>
+#include <stddef.h>
+#include <time.h>
+ssize_t port_pread(int fd, void* buffer, size_t count, unsigned long long offset);
+int port_setenv(const char* name, const char* value, int overwrite);
+int port_mkdir(const char* path, int mode);
+void port_sleep_until(const struct timespec* deadline);
+#else
+#include <unistd.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+static inline ssize_t port_pread(int fd, void* buffer, size_t count, unsigned long long offset)
+{
+	return pread(fd, buffer, count, (off_t)offset);
+}
+static inline int port_setenv(const char* name, const char* value, int overwrite)
+{
+	return setenv(name, value, overwrite);
+}
+static inline int port_mkdir(const char* path, int mode)
+{
+	return mkdir(path, mode);
+}
+static inline void port_sleep_until(const struct timespec* deadline)
+{
+	clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, deadline, NULL);
+}
+#endif
+
+#endif

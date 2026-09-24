@@ -9,18 +9,29 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <sys/mman.h>
-#include <unistd.h>
 #include <signal.h>
 #include <execinfo.h>
+#include "port_host.h"
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
 #include <dlfcn.h>
 #include <sys/wait.h>
+#endif
 
 // Default game source on this machine: the user's disc image, else the
 // extracted folder. A bare argument, SMS_DISC_IMAGE or SMS_DISC_ROOT override it.
 static const char* const kDefaultImage = "/home/netflix/sms/Super Mario Sunshine (2002)(Nintendo)(US).iso";
 static const char* const kDefaultFolder = "/home/netflix/sms/orig/GMSE01/files";
-const char* port_disc_root = kDefaultFolder;
+const char* port_disc_root =
+#ifdef _WIN32
+    ".";
+#else
+    kDefaultFolder;
+#endif
 // SMS_SKIP_MOVIES=1 reports every THP movie as finished at once (patch 0016).
 extern "C" int port_skip_movies;
 int port_skip_movies = 0;
@@ -57,6 +68,7 @@ extern "C" void port_stub_report(void)
 // Symbolise the backtrace with addr2line so a crash report names functions
 // and source lines without the exact binary at hand (not async-signal-safe;
 // acceptable on the way down).
+#ifndef _WIN32
 static void crash_symbolise(void** bt, int n)
 {
 	char exe[512];
@@ -98,7 +110,20 @@ static void crash_symbolise(void** bt, int n)
 	if (pid > 0)
 		waitpid(pid, nullptr, 0);
 }
+#endif
 
+#ifdef _WIN32
+static void crash_handler(int sig)
+{
+	port_log("\n[port] fatal signal %d\n", sig);
+	void* bt[64];
+	int n = backtrace(bt, 64);
+	backtrace_symbols_fd(bt, n, 2);
+	port_stub_report();
+	signal(sig, SIG_DFL);
+	raise(sig);
+}
+#else
 static void crash_handler(int sig, siginfo_t* si, void*)
 {
 	port_log("\n[port] fatal signal %d (%s) at address %p\n", sig, strsignal(sig), si ? si->si_addr : nullptr);
@@ -110,6 +135,7 @@ static void crash_handler(int sig, siginfo_t* si, void*)
 	signal(sig, SIG_DFL);
 	raise(sig);
 }
+#endif
 
 // Emulated MEM1: the game's arena lives at the GameCube's own cached
 // addresses (0x80000000..), so OSPhysicalToCached/OSCachedToPhysical and the
@@ -124,6 +150,15 @@ static void map_mem1()
 		mb = (u32)atoi(e);
 	port_mem1_size = mb << 20;
 	void* want = (void*)(uintptr_t)0x80000000u;
+#ifdef _WIN32
+	void* p = VirtualAlloc(want, port_mem1_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	if (p != want) {
+		port_log("[port] cannot map MEM1 at 0x80000000 (got %p)\n", p);
+		if (p)
+			VirtualFree(p, 0, MEM_RELEASE);
+		exit(1);
+	}
+#else
 	void* p = mmap(want, port_mem1_size, PROT_READ | PROT_WRITE,
 	               MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
 	if (p != want) {
@@ -136,6 +171,7 @@ static void map_mem1()
 			exit(1);
 		}
 	}
+#endif
 	port_mem1_base = (u8*)p;
 	port_log("[port] MEM1: %u MiB at %p\n", mb, p);
 }
@@ -147,7 +183,11 @@ static void map_mem1()
 static void map_hw_sink()
 {
 	void* want = (void*)(uintptr_t)0xCC000000u;
-	void* p    = mmap(want, 0x10000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+#ifdef _WIN32
+	void* p = VirtualAlloc(want, 0x10000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+	void* p = mmap(want, 0x10000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+#endif
 	if (p != want)
 		port_log("[port] cannot map the hardware register sink at 0xCC000000 (%p)\n", p);
 	else
@@ -164,6 +204,7 @@ extern "C" __attribute__((weak)) void GXPC_SetHeadless(int headless);
 // window instead, unless the user chose a GLX vendor.
 static void pick_glx_vendor()
 {
+#ifndef _WIN32
 	if (sizeof(void*) != 4 || getenv("__GLX_VENDOR_LIBRARY_NAME"))
 		return;
 	FILE* f = fopen("/proc/driver/nvidia/version", "r");
@@ -182,6 +223,7 @@ static void pick_glx_vendor()
 		return;
 	setenv("__GLX_VENDOR_LIBRARY_NAME", "mesa", 1);
 	port_log("[port] no 32-bit NVIDIA GLX for kernel module %s; using Mesa for the window\n", ver);
+#endif
 }
 
 extern "C" void port_init(int argc, char** argv)
@@ -191,25 +233,32 @@ extern "C" void port_init(int argc, char** argv)
 		port_skip_movies = *m && strcmp(m, "0") != 0;
 	for (int i = 1; i < argc; i++)
 		if (strcmp(argv[i], "--headless") == 0) {
-			setenv("SMS_HEADLESS", "1", 1);
+			port_setenv("SMS_HEADLESS", "1", 1);
 			if (GXPC_SetHeadless)
 				GXPC_SetHeadless(1);
 		}
 	if (GXPC_ParseArgs)
 		GXPC_ParseArgs(&argc, argv);
+#ifndef _WIN32
 	if (access(kDefaultImage, R_OK) == 0)
 		port_disc_root = kDefaultImage;
+#endif
 	if (const char* d = getenv("SMS_DISC_ROOT"))
 		port_disc_root = d;
 	for (int i = 1; i < argc; i++)
 		if (argv[i][0] != '-')
 			port_disc_root = argv[i];
+#ifdef _WIN32
+	for (int sig : {SIGSEGV, SIGFPE, SIGILL, SIGABRT})
+		signal(sig, crash_handler);
+#else
 	struct sigaction sa;
 	memset(&sa, 0, sizeof sa);
 	sa.sa_sigaction = crash_handler;
 	sa.sa_flags = SA_SIGINFO;
 	for (int sig : {SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT})
 		sigaction(sig, &sa, nullptr);
+#endif
 	atexit(port_stub_report);
 	map_mem1();
 	if (sizeof(void*) == 4)
