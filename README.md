@@ -140,7 +140,8 @@ Each file in `decomp-patches/` starts with a `Reason:` line; they are applied in
 | `endian-01..16` | Loader-site byte-order fixes (JPA, J2D BLO, BMG, JUTColor, PRM, SPC, streams, DL vertex counts, sequences, card saves, THP headers, J3DSkinDeform/J3DCluster display lists, the plaza shine-shadow sphere, the HUD/map 2D archive swap); see `platform/endian/README.md`. |
 | `port-02` | `SMS_WARP` / `SMS_WARP_MOVIE`: debug warp or movie from a file-select load. |
 | `audio-01..02` | JAudio bitfield/byte-order fixes (`TChannel` mix config, BMS note-on flags); see `platform/audio/README.md`. |
-| `ret-01..03` | Explicit returns for the 42 functions that fall off the end of a non-void body. |
+| `ret-01` | `TConductor::isBossDefeated`: the `default:` arm retail has; waiting for a decomp spelling that keeps MWCC's compare tree (see below). |
+| `ret-02..03` | Explicit returns for the 37 functions that fall off the end of a non-void body and whose value nothing reads (undefined behaviour under g++, harmless under MWCC). |
 | `thp-01..02` | Host THP decoder (portable bit reader and IDCT, big-endian audio header); see `platform/thp/README.md`. |
 
 0001–0010 and 0015 are candidates for `#ifdef TARGET_PC` (or neutral) fixes in the decomp itself.
@@ -156,8 +157,11 @@ Next: reach the controllable airstrip and test movement.
 Measured headless on this machine (Mesa llvmpipe software GL), 2026-09-23; details are in the commit that added this section.
 
 - **Returns fixed.**
-  `decomp-patches/ret-01..03` give all 42 fall-off-the-end functions (39 with no return statement, 3 with a path that falls off) the value retail's r3 carries.
-  Five of them are live and their callers read the result: `DSPBuf::mixDSP`, `Dvd::openDvd`, `TMap::intersectLine`, `TLampTrapSpike::receiveMessage` and `TConductor::isBossDefeated`.
+  All 42 fall-off-the-end functions (39 with no return statement, 3 with a path that falls off) now return the value retail's r3 carries.
+  Five of them are live and their callers read the result.
+  Four (`DSPBuf::mixDSP`, `Dvd::openDvd`, `TMap::intersectLine`, `TLampTrapSpike::receiveMessage`) are fixed in the decomp, where the explicit return compiles to the same bytes.
+  `TConductor::isBossDefeated` is still `decomp-patches/ret-01`: the decomp's `switch` lacks retail's `default:` arm, and every spelling with it tried so far folds MWCC's compare tree (98.8% to 95.6%).
+  The other 37 are `ret-02..03`: nothing reads their value, so only g++ needs the return.
   After the patches, `-Wreturn-type` reports nothing over all units, so the game library no longer depends on `-O0`.
 - **-O1/-O2 are safe as far as the port reaches.**
   With the existing `-fno-strict-aliasing -fwrapv`, a game library built at -O1 or -O2 boots through the logo, the attract movies (THP) and the title to file select, with audio, and showed no crashes over about 10 runs of 60–100 s.

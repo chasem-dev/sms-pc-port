@@ -1,4 +1,4 @@
-Reason: Returns: five functions fall off the end where retail returns a value its callers use (DSPBuf::mixDSP and Dvd::openDvd and TMap::intersectLine and TLampTrapSpike::receiveMessage return their tail call's r3; TConductor::isBossDefeated sends every map but 3 to the hinokuri arm). Make the returns explicit on TARGET_PC so the game code can be optimised.
+Reason: Returns: TConductor::isBossDefeated sends every map but 3 to the hinokuri arm in retail (cmpwi 2 / cmpwi 4 tree); the decomp's switch falls off the end for them. Pending a decomp spelling: adding the default there folds MWCC's tree (98.8% -> 95.6%).
 --- a/src/Enemy/conductor.cpp
 +++ b/src/Enemy/conductor.cpp
 @@ -178,6 +178,11 @@
@@ -13,72 +13,3 @@ Reason: Returns: five functions fall off the end where retail returns a value it
  	case 2: {
  		TLiveManager* mgr = getManagerByName("ヒノクリ２マネージャー");
  		if (!mgr)
---- a/src/JSystem/JAudio/JASystem/JASDSPBuf.cpp
-+++ b/src/JSystem/JAudio/JASystem/JASDSPBuf.cpp
-@@ -33,7 +33,15 @@
- 	Kernel::probeFinish(3);
- }
- 
--s16* DSPBuf::mixDSP(s32 param) { process(DSPBUF_EVENTS_UNK2); }
-+s16* DSPBuf::mixDSP(s32 param)
-+{
-+#ifdef TARGET_PC
-+	// retail tail: r3 = process()'s result (Kernel::vframeWork reads it)
-+	return process(DSPBUF_EVENTS_UNK2);
-+#else
-+	process(DSPBUF_EVENTS_UNK2);
-+#endif
-+}
- 
- void DSPBuf::finishDSPFrame() { process(DSPBUF_EVENTS_UNK1); }
- 
---- a/src/JSystem/JAudio/JASystem/JASDvdThread.cpp
-+++ b/src/JSystem/JAudio/JASystem/JASDvdThread.cpp
-@@ -470,10 +470,17 @@
- s32 Dvd::openDvd(char* path, DVDFileInfo* fileInfo)
- {
- 	s32 entryNum = registerFastOpen(path);
-+#ifdef TARGET_PC
-+	// retail returns r3 = DVDOpen's / DVDFastOpen's BOOL (the callers test it)
-+	if (entryNum == -1)
-+		return DVDOpen(path, fileInfo);
-+	return DVDFastOpen(entryNum, fileInfo);
-+#else
- 	if (entryNum == -1)
- 		DVDOpen(path, fileInfo);
- 	else
- 		DVDFastOpen(entryNum, fileInfo);
-+#endif
- 	// TODO: is this a bug that they forgot to return entryNum
- 	// but the assembly HAPPENS to work out in such a way that
- 	// r3 still contains entryNum?
---- a/src/Map/Map.cpp
-+++ b/src/Map/Map.cpp
-@@ -346,7 +346,12 @@
-                                         bool param_3,
-                                         JGeometry::TVec3<f32>* param_4) const
- {
-+#ifdef TARGET_PC
-+	// retail tail: r3 = TMapCollisionData::intersectLine's result
-+	return mCollisionData->intersectLine(param_1, param_2, param_3, param_4);
-+#else
- 	mCollisionData->intersectLine(param_1, param_2, param_3, param_4);
-+#endif
- }
- 
- bool TMap::isTouchedOneWall(const JGeometry::TVec3<f32>& pos, f32 radius) const
---- a/src/MoveBG/MapObjTrap.cpp
-+++ b/src/MoveBG/MapObjTrap.cpp
-@@ -76,7 +76,12 @@
- 
- BOOL TLampTrapSpike::receiveMessage(THitActor* sender, u32 message)
- {
-+#ifdef TARGET_PC
-+	// retail tail: r3 = TMapObjBase::receiveMessage's result
-+	return TMapObjBase::receiveMessage(sender, message);
-+#else
- 	TMapObjBase::receiveMessage(sender, message);
-+#endif
- }
- 
- // TODO (closure batch 152): 99.5%, instruction-exact, frame exact (0x60). The
