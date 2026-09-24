@@ -20,6 +20,8 @@ Native PC port of Super Mario Sunshine (GMSE01), built from the matching decompi
   A decomp fix lands in `sms-english` only when it keeps every function's match (no regression in `ninja changes_all`, and the DOL hash unchanged).
   When the only correct form found so far costs match percentage, the decomp keeps its matching form with a `TODO` naming the behaviour difference, and the port lives with that difference until a matching form is found.
   Example: `TConductor::isBossDefeated` (98.8%) lacks retail's `default:` arm, so maps other than 2 and 3 fall off the end; g++ then runs the Gesso check for them where retail runs the Hinokuri one.
+- **Pointer-size neutral spellings go in the decomp** (the one kind of PC-motivated change the decomp takes): where the game keeps pointers in 4-byte slots, the decomp spells that so MWCC's output is unchanged and a 64-bit host keeps the layout: `PTR32(T)` (exactly `T*` in the decomp's `dolphin/types.h`) for pointer fields of structs laid over file data, `sizeof` instead of byte counts, and `u32` instead of signed ints in int-to-pointer casts.
+  Each such commit keeps the DOL hash and every function's match; one-off 64-bit adaptations that cannot be spelled neutrally are `ptr64-*` patches here (see `PLAN-64BIT.md`).
 - **PC-specific fixes go in `decomp-patches/`**: byte order (`endian-*`), host compiler leniency (`0001`–`0010`, `0015`, `ret-02..03`), host services (`thp-*`, `audio-*`), port-only features (`port-*`, `SMS_*` switches). Each patch starts with a `Reason:` line saying why it cannot live in the decomp.
   A patch never corrects the decomp's behaviour; it only adapts retail's behaviour to the PC.
 - **Emulation of the hardware goes in `platform/`** (GX, DVD, OS, audio), never in game source.

@@ -4,7 +4,22 @@ Goal: a native 64-bit build (`SMS_ARCH=64`) alongside the existing 32-bit one, w
 
 Why it is worth it: no multilib or i386 driver packages on Linux (the 32-bit NVIDIA userspace is a common failure point), macOS and ARM64 hosts only run 64-bit code, and distributions keep dropping i386.
 
-## Where things stand (measured on branch `port-64bit`, 2026-09-24)
+## Status (branch `port-64bit`, decomp branch `port-64bit` in sms-english)
+
+Decisions: option B (pointer-size neutral spellings in the decomp, byte-identical under MWCC) for the recurring patterns, `ptr64-*` port patches for one-off adaptations, and game memory stays at `0x80000000`.
+
+Done:
+
+1. **Links**: the two declaration/definition mismatches are fixed in the decomp.
+2. **Boots**: every host thread (and the boot thread running `SMS_main`) gets a stack below 2 GiB (`port_low_alloc`, `MAP_32BIT` on x86-64 Linux); `PTR32` in the port's `dolphin/types.h` is a 4-byte pointer slot on 64-bit hosts and traps on an address above 4 GiB; `sms_gx` now compiles against the port's `types.h`, so its `GXTexObj`/`GXTlutObj` overlays match the game's.
+3. **Heaps**: `ptr64-01-heap-sizes` doubles the heaps the game sizes with GameCube constants (`PORT_HEAP64`), and 64-bit MEM1 defaults to 64 MiB.
+4. **Decomp (all byte-identical, DOL unchanged)**: `PTR32` on the pointer fields of structs laid over file data (RARC file entries, JAudio init-data tables and sequence archive header, J3D loader blocks, vertex-colour animation index data, collision groups, pollution layer records) and on word-indexed runtime records (JAudio port args); `sizeof` instead of byte counts (JAudio DVD task records, message buffers, particle heap headers); `u32` instead of signed ints where an int becomes a pointer (script VM pops, `JSUConvertOffsetToPtr`, JKRDvdArchive, JUTTexture); the J3D material and material-packet ID flags spelled as bits 31/30 of a `u32`.
+5. **Result**: the 64-bit build boots, plays the opening movie (frames byte-identical to 32-bit), loads Delfino Plaza and renders it like the 32-bit build (the scripted plaza frames differ in at most 2 pixels, from x87 against SSE float rounding).
+   The 32-bit plaza and beach reference runs are byte-identical to before every step.
+
+Next: the movie sweep and the other stages in 64-bit, Windows 64-bit (LLP64), then making 64-bit a supported build.
+
+## Where things stood before the work (measured 2026-09-24)
 
 - `SMS_ARCH=64` already exists in `CMakeLists.txt` as a compile-only fallback (it adds `-fno-pie` so globals sit below 4 GiB); nothing claimed it ran.
 - **Compile:** every translation unit compiles 64-bit.

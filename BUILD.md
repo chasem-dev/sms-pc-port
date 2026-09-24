@@ -110,6 +110,17 @@ The first build compiles about 600 game files and takes a while; later builds on
 The result is `build/sms`.
 For a manual build, run `cmake -S . -B build -DSMS_ARCH=32` and `cmake --build build --target sms --parallel 4`.
 
+### 64-bit build (in progress)
+
+```sh
+SMS_ARCH=64 ./build_linux.sh
+SMS_ARCH=64 ./run_linux.sh "/path/to/Super Mario Sunshine (US).iso"
+```
+
+This builds a native x86-64 executable in `build-64/` (no multilib packages needed) and leaves the 32-bit `build/` alone.
+It boots, plays the movies and reaches Delfino Plaza, rendering like the 32-bit build; it is not yet tested through every stage, so the 32-bit build stays the default.
+See `PLAN-64BIT.md` for how it works and what is left.
+
 ## Run
 
 ```sh
