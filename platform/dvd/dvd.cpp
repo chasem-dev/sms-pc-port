@@ -205,11 +205,18 @@ s32 do_read(DVDFileInfo* fi, void* addr, s32 length, s32 offset)
 
 } // namespace
 
-// The disc source: SMS_DISC_IMAGE, or port_disc_root when it names an image
-// file (.iso/.gcm/.ciso), else port_disc_root as an extracted files/ folder.
+// The disc source: SMS_DISC_IMAGE; or port_disc_root when the command line or
+// SMS_DISC_ROOT names an image file (.iso/.gcm/.ciso); else the image bundled
+// into the executable, if any; else port_disc_root (the machine default) as an
+// image or as an extracted files/ folder.
 static bool open_image()
 {
 	const char* img = getenv("SMS_DISC_IMAGE");
+	if (!img && !port_disc_explicit) {
+		g_disc = gcdisc_open_embedded(1);
+		if (g_disc)
+			img = "embedded in the executable";
+	}
 	if (!img) {
 		struct stat st;
 		if (stat(port_disc_root, &st) == 0 && S_ISREG(st.st_mode))
@@ -217,7 +224,8 @@ static bool open_image()
 	}
 	if (!img)
 		return false;
-	g_disc = gcdisc_open(img, 1);
+	if (!g_disc)
+		g_disc = gcdisc_open(img, 1);
 	if (!g_disc) {
 		port_log("[dvd] %s is not a usable GameCube disc image\n", img);
 		exit(1);

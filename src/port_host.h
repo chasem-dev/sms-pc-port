@@ -16,7 +16,11 @@ void port_sleep_until(const struct timespec* deadline);
 #include <time.h>
 static inline ssize_t port_pread(int fd, void* buffer, size_t count, unsigned long long offset)
 {
+#ifdef __linux__
+	return pread64(fd, buffer, count, (off64_t)offset); // images past 2 GiB on 32-bit hosts
+#else
 	return pread(fd, buffer, count, (off_t)offset);
+#endif
 }
 static inline int port_setenv(const char* name, const char* value, int overwrite)
 {

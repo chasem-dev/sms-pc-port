@@ -37,6 +37,12 @@ enum GCDiscSystemFile {
 GCDisc* gcdisc_open(const char* path, int verbose);
 void gcdisc_close(GCDisc* d);
 
+/* The disc image bundled into the running executable by
+ * tools/bundle_disc.py, or NULL if there is none. */
+GCDisc* gcdisc_open_embedded(int verbose);
+/* Path of the running executable; 0 on failure. */
+int gcdisc_self_path(char* buf, uint32_t bufsize);
+
 /* True if `path` looks like a disc image (by content, not by name). */
 int gcdisc_probe(const char* path);
 

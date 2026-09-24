@@ -21,6 +21,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include "port_host.h"
+#ifdef _WIN32
+#include <io.h>
+#include <windows.h>
+#endif
 
 #include <string>
 #include <vector>
@@ -38,7 +42,8 @@ const uint64_t kGCDiscSize  = 1459978240; // full-size GameCube disc
 
 struct GCDisc {
 	int fd;
-	uint64_t file_size;
+	uint64_t base;      // offset of the image in the file (embedded: after the executable)
+	uint64_t file_size; // bytes of the image in the file
 	uint64_t size;
 	// CISO
 	bool ciso;
@@ -51,6 +56,18 @@ struct GCDisc {
 	std::vector<GCDiscEntry> entries;
 	std::vector<std::string> names;
 };
+
+static uint64_t file_length(int fd)
+{
+#ifdef _WIN32
+	__int64 n = _lseeki64(fd, 0, SEEK_END);
+#elif defined(__linux__)
+	off64_t n = lseek64(fd, 0, SEEK_END);
+#else
+	off_t n = lseek(fd, 0, SEEK_END);
+#endif
+	return n < 0 ? 0 : (uint64_t)n;
+}
 
 static bool pread_all(int fd, void* buf, size_t n, uint64_t off)
 {
@@ -75,7 +92,7 @@ extern "C" uint32_t gcdisc_read(GCDisc* d, uint64_t offset, void* buf, uint32_t 
 	if (size > d->size - offset)
 		size = (uint32_t)(d->size - offset);
 	if (!d->ciso)
-		return pread_all(d->fd, buf, size, offset) ? size : 0;
+		return pread_all(d->fd, buf, size, d->base + offset) ? size : 0;
 	uint8_t* out = (uint8_t*)buf;
 	uint32_t done = 0;
 	while (done < size) {
@@ -88,7 +105,7 @@ extern "C" uint32_t gcdisc_read(GCDisc* d, uint64_t offset, void* buf, uint32_t 
 		int64_t fpos = blk < d->block_pos.size() ? d->block_pos[blk] : -1;
 		if (fpos < 0)
 			memset(out + done, 0, n); // unstored blocks are zero
-		else if (!pread_all(d->fd, out + done, n, (uint64_t)fpos + in))
+		else if (!pread_all(d->fd, out + done, n, d->base + (uint64_t)fpos + in))
 			return done;
 		done += n;
 	}
@@ -98,7 +115,7 @@ extern "C" uint32_t gcdisc_read(GCDisc* d, uint64_t offset, void* buf, uint32_t 
 static bool setup_ciso(GCDisc* d)
 {
 	uint8_t hdr[kCisoHeader];
-	if (!pread_all(d->fd, hdr, sizeof hdr, 0) || memcmp(hdr, "CISO", 4) != 0)
+	if (!pread_all(d->fd, hdr, sizeof hdr, d->base) || memcmp(hdr, "CISO", 4) != 0)
 		return false;
 	d->ciso       = true;
 	d->block_size = le32(hdr + 4);
@@ -121,29 +138,30 @@ static bool setup_ciso(GCDisc* d)
 	return true;
 }
 
-extern "C" GCDisc* gcdisc_open(const char* path, int verbose)
+static int open_ro(const char* path)
 {
-	int fd = open(path, O_RDONLY
-#ifndef _WIN32
-	              | O_CLOEXEC
+	return open(path, O_RDONLY
+#ifdef __linux__
+	            | O_CLOEXEC | O_LARGEFILE
+#elif !defined(_WIN32)
+	            | O_CLOEXEC
 #else
-	              | O_BINARY
+	            | O_BINARY
 #endif
 	);
-	if (fd < 0) {
-		if (verbose)
-			fprintf(stderr, "[disc] cannot open %s: %s\n", path, strerror(errno));
-		return NULL;
-	}
-	GCDisc* d = new GCDisc();
-	d->fd     = fd;
-	d->ciso   = false;
-	struct stat st;
-	fstat(fd, &st);
-	d->file_size = (uint64_t)st.st_size;
+}
+
+// Opens the image stored in `fd` at [base, base + size); takes `fd`.
+static GCDisc* open_at(int fd, uint64_t base, uint64_t size, const char* path, int verbose)
+{
+	GCDisc* d    = new GCDisc();
+	d->fd        = fd;
+	d->base      = base;
+	d->ciso      = false;
+	d->file_size = size;
 	d->size      = d->file_size;
 	uint8_t magic[4] = { 0 };
-	pread_all(fd, magic, 4, 0);
+	pread_all(fd, magic, 4, base);
 	const char* why = NULL;
 	if (memcmp(magic, "CISO", 4) == 0 && !setup_ciso(d))
 		why = "bad CISO header";
@@ -202,6 +220,65 @@ extern "C" GCDisc* gcdisc_open(const char* path, int verbose)
 		return NULL;
 	}
 	return d;
+}
+
+extern "C" GCDisc* gcdisc_open(const char* path, int verbose)
+{
+	int fd = open_ro(path);
+	if (fd < 0) {
+		if (verbose)
+			fprintf(stderr, "[disc] cannot open %s: %s\n", path, strerror(errno));
+		return NULL;
+	}
+	return open_at(fd, 0, file_length(fd), path, verbose);
+}
+
+// Embedded image: tools/bundle_disc.py appends the image to the executable,
+// then a 32-byte trailer {"SMSDISC1", u64 LE image offset, u64 LE image
+// size, 8 reserved bytes} as the last bytes of the file.
+extern "C" int gcdisc_self_path(char* buf, uint32_t bufsize)
+{
+	if (!bufsize)
+		return 0;
+#ifdef _WIN32
+	DWORD n = GetModuleFileNameA(NULL, buf, bufsize);
+	if (n == 0 || n >= bufsize)
+		return 0;
+#else
+	ssize_t n = readlink("/proc/self/exe", buf, bufsize - 1);
+	if (n <= 0)
+		return 0;
+	buf[n] = 0;
+#endif
+	return 1;
+}
+
+extern "C" GCDisc* gcdisc_open_embedded(int verbose)
+{
+	char self[4096];
+	if (!gcdisc_self_path(self, sizeof self))
+		return NULL;
+	int fd = open_ro(self);
+	if (fd < 0)
+		return NULL;
+	uint64_t len = file_length(fd);
+	uint8_t t[32];
+	if (len < sizeof t || !pread_all(fd, t, sizeof t, len - sizeof t) || memcmp(t, "SMSDISC1", 8) != 0) {
+		close(fd);
+		return NULL;
+	}
+	uint64_t off = 0, size = 0;
+	for (int i = 7; i >= 0; i--) {
+		off  = off << 8 | t[8 + i];
+		size = size << 8 | t[16 + i];
+	}
+	if (off > len - sizeof t || size > len - sizeof t - off) {
+		if (verbose)
+			fprintf(stderr, "[disc] %s: embedded disc trailer out of range\n", self);
+		close(fd);
+		return NULL;
+	}
+	return open_at(fd, off, size, self, verbose);
 }
 
 extern "C" void gcdisc_close(GCDisc* d)

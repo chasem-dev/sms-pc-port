@@ -187,3 +187,27 @@ target_link_libraries(sms PRIVATE -Wl,--whole-archive sms_game -Wl,--no-whole-ar
 if(TARGET sms_gx)
   target_link_libraries(sms PRIVATE -Wl,--whole-archive sms_gx -Wl,--no-whole-archive)
 endif()
+
+# --- Standalone executable ------------------------------------------------------
+# -DSMS_BUNDLE_DISC=/path/GMSE01.iso adds the target sms_standalone: a copy of
+# sms with the disc's files packed after it (tools/bundle_disc.py), which runs
+# with no disc image or extracted folder beside it (platform/disc reads the
+# trailer at the end of its own executable).
+set(SMS_BUNDLE_DISC "" CACHE FILEPATH "GMSE01 disc image (.iso/.gcm/.ciso) to bundle into sms-standalone")
+if(SMS_BUNDLE_DISC)
+  if(NOT EXISTS "${SMS_BUNDLE_DISC}")
+    message(FATAL_ERROR "SMS_BUNDLE_DISC: ${SMS_BUNDLE_DISC} does not exist")
+  endif()
+  if(WIN32)
+    set(_standalone ${CMAKE_BINARY_DIR}/bin/sms-standalone${CMAKE_EXECUTABLE_SUFFIX})
+  else()
+    set(_standalone ${CMAKE_BINARY_DIR}/sms-standalone${CMAKE_EXECUTABLE_SUFFIX})
+  endif()
+  add_custom_command(OUTPUT ${_standalone}
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/bundle_disc.py
+            --exe $<TARGET_FILE:sms> --disc "${SMS_BUNDLE_DISC}" --out ${_standalone}
+    DEPENDS sms ${CMAKE_CURRENT_SOURCE_DIR}/tools/bundle_disc.py "${SMS_BUNDLE_DISC}"
+    COMMENT "Bundling ${SMS_BUNDLE_DISC} into sms-standalone"
+    VERBATIM)
+  add_custom_target(sms_standalone ALL DEPENDS ${_standalone})
+endif()

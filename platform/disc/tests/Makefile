@@ -6,7 +6,7 @@ CXXFLAGS ?= -O2 -g -std=gnu++11 -Wall -D_FILE_OFFSET_BITS=64
 WORK ?= $(abspath ../../..)/build-disc-test
 $(WORK)/disc_test: disc_test.cc ../gcdisc.cpp ../gcdisc.h
 	mkdir -p $(WORK)
-	$(CXX) $(ARCH) $(CXXFLAGS) -o $@ disc_test.cc ../gcdisc.cpp
+	$(CXX) $(ARCH) $(CXXFLAGS) -I../../../src -o $@ disc_test.cc ../gcdisc.cpp
 run: $(WORK)/disc_test
 	TMPDIR=$(WORK) $(WORK)/disc_test
 clean:

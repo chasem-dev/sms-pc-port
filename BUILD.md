@@ -4,6 +4,7 @@
 | --- | --- | --- |
 | [Linux](#linux) | `./build_linux.sh` | `./run_linux.sh /path/to/GMSE01.iso` |
 | [Windows (MSYS2 MINGW32)](#windows-msys2-mingw32) | `./build_windows.sh` or `build_windows.cmd` | `./run_windows.sh /path/to/GMSE01.iso` or `run_windows.cmd` |
+| [Standalone executable](#standalone-executable) | `./build_linux.sh /path/to/GMSE01.iso` (or `build_windows.sh`) | `./run_linux.sh`, or `build/sms-standalone` from anywhere |
 
 ## Windows (MSYS2 MINGW32)
 
@@ -32,7 +33,7 @@ To play, pass the path to your North American Rev 0 image:
 Or place exactly one `.iso`, `.gcm`, or Dolphin `.ciso` image in `build32/bin/rom/` and run `./run_windows.sh` without an argument.
 Use single quotes around paths with spaces or parentheses.
 The executable contains game code, while the image supplies models, textures, levels, audio, and other game files at runtime.
-The build does not bundle these assets; `build32/bin/rom/` is only a convenient image search folder for `run_windows.sh`.
+`build32/bin/rom/` is only a convenient image search folder for `run_windows.sh`; to put the assets inside the executable, see [Standalone executable](#standalone-executable).
 The port reads the image in place; it does not copy or extract it.
 Keep the MINGW32 shell open when running so its SDL2 and compiler runtime DLLs are on `PATH`.
 Saves default to `%APPDATA%/sms-port/card-a`, or set `SMS_SAVE_DIR`.
@@ -119,6 +120,25 @@ Or place exactly one `.iso`, `.gcm`, or Dolphin `.ciso` image in `build/rom/` an
 Set `SMS_DISC_IMAGE` to use another path without passing an argument.
 The game is read straight from your ISO; nothing is extracted or copied.
 Saves go to `~/.local/share/sms-port/card-a`.
+
+## Standalone executable
+
+Pass your disc image to the build script to get an executable with the game's files inside it:
+
+```sh
+./build_linux.sh "/path/to/Super Mario Sunshine (US).iso"      # -> build/sms-standalone
+./build_windows.sh '/path/to/Super Mario Sunshine (US).iso'    # -> build32/bin/sms-standalone.exe
+```
+
+The scripts also take the image from `SMS_DISC_IMAGE`, or from a single image in `build/rom/` (`build32/bin/rom/` on Windows).
+`tools/bundle_disc.py` reads the image (`.iso`, `.gcm` or Dolphin `.ciso`), checks that it is GMSE01, and packs the disc's files into a trimmed disc image with no padding (about 1.1 GiB).
+It appends that image to a copy of `sms`, followed by a small trailer that `platform/disc` finds when the program starts.
+`build/sms` itself is unchanged and still takes a disc image.
+The standalone executable needs no image, no `rom/` folder and no extracted files, so it can be copied and run on its own (on Windows its MinGW and SDL2 DLLs are still needed next to it or on `PATH`).
+`./run_linux.sh` and `./run_windows.sh` without a disc argument start it when it exists.
+A disc argument, `SMS_DISC_IMAGE` or `SMS_DISC_ROOT` still takes precedence over the bundled files.
+Keep the executable private: it contains the game.
+For a manual build, add `-DSMS_BUNDLE_DISC=/path/GMSE01.iso` to the `cmake -S` command and build the `sms_standalone` target.
 
 Useful options (put them before the command, e.g. `SMS_SKIP_MOVIES=1 ./run_linux.sh ...`):
 

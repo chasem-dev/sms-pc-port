@@ -4,6 +4,7 @@ Native PC port of Super Mario Sunshine (GMSE01), built from the matching decompi
 
 - `decomp/` — the decompilation (git submodule, branch `main` of [sms-english](https://github.com/chasem-dev/sms-english)).
   Game and JSystem source come from here; its GameCube build stays byte-identical to retail and is the reference.
+- `tools/bundle_disc.py` — packs the disc's files into a standalone executable (`build/sms-standalone`).
 - `platform/` — host replacements for the Dolphin SDK surface the game calls (see "Platform layer").
 - `src/` — port entry point (`port_main.cpp`), the force-included compat header (`port_compat.h`) and header overrides (`port_include/`).
 - `decomp-patches/` — the decomp source changes the port cannot avoid, applied to copies at configure time (never to `decomp/`).
@@ -21,6 +22,7 @@ PC-only changes to game source should eventually move into the decomp behind `#i
 See [BUILD.md](BUILD.md) for dependencies, Windows `.cmd` launchers, and manual build commands.
 On Linux, `SMS_HEADLESS=1 ./run_linux.sh "/path/to/Super Mario Sunshine (US).iso"` uses offscreen rendering.
 Each run script can also find a single image in its build directory's `rom/` folder.
+Passing the image to the build script (`./build_linux.sh GAME.iso`) also produces `build/sms-standalone`, an executable with the disc's files bundled in that runs with no image (see [BUILD.md](BUILD.md#standalone-executable)).
 
 - **The game comes from your disc image** (`.iso`/`.gcm`, or Dolphin `.ciso`), read in place through `platform/disc`.
   Pass an image path, set `SMS_DISC_IMAGE`, or place one image in `build/rom/` on Linux or `build32/bin/rom/` on Windows.
@@ -34,7 +36,7 @@ Each run script can also find a single image in its build directory's `rom/` fol
 
 | Variable | Effect |
 | --- | --- |
-| `SMS_DISC_IMAGE`, `SMS_DISC_ROOT` | game source (image file, or extracted `files/` folder) |
+| `SMS_DISC_IMAGE`, `SMS_DISC_ROOT` | game source (image file, or extracted `files/` folder); either, or a disc argument, overrides files bundled into the executable |
 | `SMS_SAVE_DIR` | memory card directory |
 | `SMS_HEADLESS=1` / `--headless` | no window (offscreen EGL) |
 | `SMS_BINDINGS` | key bindings file (default `./bindings.txt`, then `../bindings.txt`) |
@@ -72,7 +74,7 @@ Each run script can also find a single image in its build directory's `rom/` fol
 | `platform/port_runtime.cpp` | Boot: emulated MEM1 (24 MiB) mapped at `0x80000000`, game source selection, GLX vendor choice, crash handler. |
 | `platform/os/` | One emulated CPU: every `OSThread` is a host thread, only the CPU owner runs, strict priorities; message queues, mutexes, conds; interrupts delivered at OS-call check points and on idle; arena, clocks, OSAlloc, stopwatches, cache ops (→ `GXPC_InvalidateRange`). |
 | `platform/dvd/` | DVD over the disc image (`platform/disc`) or an extracted folder; the disc's own FST; async reads complete as interrupts. |
-| `platform/disc/` | GameCube `.iso`/`.gcm`/`.ciso` reader. |
+| `platform/disc/` | GameCube `.iso`/`.gcm`/`.ciso` reader; also reads the disc image bundled at the end of the executable. |
 | `platform/vi/` | 59.94 Hz retrace from a host timer (or the deterministic clock), callbacks, captures, trace hook. |
 | `platform/pad/` | Controller 1 from keyboard and SDL game controllers, bindings, scripted input, `.dtm` movie input hook. |
 | `platform/card/` | Memory card in slot A as host files. |

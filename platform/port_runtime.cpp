@@ -32,6 +32,10 @@ const char* port_disc_root =
 #else
     kDefaultFolder;
 #endif
+// Set when the command line or SMS_DISC_ROOT named the game source; otherwise
+// a disc image bundled into the executable (tools/bundle_disc.py) wins over
+// the machine defaults above.
+int port_disc_explicit = 0;
 // SMS_SKIP_MOVIES=1 reports every THP movie as finished at once (patch 0016).
 extern "C" int port_skip_movies;
 int port_skip_movies = 0;
@@ -243,11 +247,15 @@ extern "C" void port_init(int argc, char** argv)
 	if (access(kDefaultImage, R_OK) == 0)
 		port_disc_root = kDefaultImage;
 #endif
-	if (const char* d = getenv("SMS_DISC_ROOT"))
-		port_disc_root = d;
+	if (const char* d = getenv("SMS_DISC_ROOT")) {
+		port_disc_root     = d;
+		port_disc_explicit = 1;
+	}
 	for (int i = 1; i < argc; i++)
-		if (argv[i][0] != '-')
-			port_disc_root = argv[i];
+		if (argv[i][0] != '-') {
+			port_disc_root     = argv[i];
+			port_disc_explicit = 1;
+		}
 #ifdef _WIN32
 	for (int sig : {SIGSEGV, SIGFPE, SIGILL, SIGABRT})
 		signal(sig, crash_handler);

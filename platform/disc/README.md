@@ -10,6 +10,10 @@ The DVD layer can serve the game from the user's `.iso` this way, with no extrac
 | `.rvz`, `.wia`, `.gcz` | no: recognised and refused with a message to convert to `.iso` in Dolphin. RVZ would need zstd/LZMA and its own partition format. |
 
 The image is recognised by content (magic `0xC2339F3D` at `0x1C`, or `CISO`), not by extension.
+
+`gcdisc_open_embedded()` opens an image bundled into the running executable by `tools/bundle_disc.py`: the file ends with a 32-byte trailer `{"SMSDISC1", u64 LE image offset, u64 LE image size, 8 zero bytes}`, and the image (a trimmed but valid disc: system files, FST, then the files packed 32-byte aligned) sits at that offset.
+`platform/dvd` uses it when no disc argument, `SMS_DISC_IMAGE` or `SMS_DISC_ROOT` names another source.
+Offsets are 64-bit (`pread64`, `O_LARGEFILE`), so a 32-bit build reads bundles and images past 2 GiB.
 All on-disc fields are big-endian; the API returns host values.
 Reads use `pread` and may run on any thread.
 The image is only ever opened read-only.
@@ -70,3 +74,5 @@ Against `/home/netflix/sms/Super Mario Sunshine (2002)(Nintendo)(US).iso` and `/
   The default run compares eight: `nintendo.szs`, `mario.szs`, `scene/dolpic0.szs`, `openingA.thp`, `PerformLists.bin`, `stageArc.bin`, `mSound.asn`, `opening.bnr`.
 - **CISO:** a synthetic disc is written as `.iso` and as `.ciso` to a temporary directory (`build-disc-test/`) and deleted afterwards.
   Both read back identically, and an unstored block reads as zeros.
+
+A packed image from `tools/bundle_disc.py --image-only` passes the same test except `boot.bin` and `fst.bin`, which it rewrites with the new DOL, FST and file offsets; every file, `apploader.img` and `main.dol` stay byte-identical.
