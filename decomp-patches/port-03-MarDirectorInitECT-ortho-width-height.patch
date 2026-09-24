@@ -1,0 +1,35 @@
+Reason: the Screen 2D and Group 2D 2 ortho cameras pass (height, width) as the right/bottom edges; retail stores width then height, so the sun-glass tint stopped 448/640 of the way down the screen
+--- a/src/System/MarDirectorInitECT.cpp
++++ b/src/System/MarDirectorInitECT.cpp
+@@ -209,8 +209,15 @@
+ 	}
+ 
+ 	JDrama::TOrthoProj* ortho2 = new JDrama::TOrthoProj(
++#ifdef TARGET_PC
++	    // Retail stores the width in mField[2] (right) and the height in
++	    // mField[3] (bottom); the decomp's order swaps them.
++	    10.0f, 300000.0f, 0.0f, 0.0f, (u16)SMSGetGameRenderWidth(),
++	    (u16)SMSGetGameRenderHeight());
++#else
+ 	    10.0f, 300000.0f, 0.0f, 0.0f, (u16)SMSGetGameRenderHeight(),
+ 	    (u16)SMSGetGameRenderWidth());
++#endif
+ 
+ 	param_1->push_back(stageDisp, CUE_DRAW_INIT);
+ 	param_1->push_back(
+@@ -266,8 +273,15 @@
+ 	param_1->push_back(drawBufChrXlu, CUE_DRAW);
+ 
+ 	JDrama::TOrthoProj* ortho3 = new JDrama::TOrthoProj(
++#ifdef TARGET_PC
++	    // Retail stores the width in mField[2] (right) and the height in
++	    // mField[3] (bottom); the decomp's order swaps them.
++	    -1.0f, 1.0f, 0.0f, 0.0f, (u16)SMSGetGameRenderWidth(),
++	    (u16)SMSGetGameRenderHeight());
++#else
+ 	    -1.0f, 1.0f, 0.0f, 0.0f, (u16)SMSGetGameRenderHeight(),
+ 	    (u16)SMSGetGameRenderWidth());
++#endif
+ 	param_1->push_back(ortho3, CUE_SET_PROJECTION);
+ 
+ 	JDrama::TViewObj* group2D2

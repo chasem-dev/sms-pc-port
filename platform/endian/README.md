@@ -61,6 +61,8 @@ This directory holds those converters, the format inventory (`INVENTORY.md`), an
 | `endian-12-THP-headers` | THP: header, component/video/audio info, frame-offset words, and each frame's size and component-size words after the disc read. Payloads stay big-endian. |
 | `endian-13-JSUInputStream-string-lengths` | The u16 length prefix of stream strings (`read(char*)`, `readString`), which bypasses 0013's typed reads. |
 | `endian-14-J3DSkinDeform-dl-be` | `J3DSkinDeform::initMtxIndexArray` parses display lists on the CPU: it now reads the vertex count and the position/normal indices big-endian. Read natively they overflowed `useMtxIdxBuf`, a stack smash on the airstrip that the trace work found. |
+| `endian-15-ModelWaterManager-shine-shadow-sphere-be` | `tmp_data`, the sphere display list and s16 positions of Delfino Plaza's shine-shadow volumes, is retail's bytes in the source: it is registered with `GXPC_AddBigEndianRange`. Read natively the spheres were not closed, so the alpha counting darkened most of the plaza with hard-edged grey shapes. |
+| `endian-16-Application-2d-archive-swap` | `SMSMountAramArchive` swaps the HUD (`game_6`) and pause-map (`guide`) archives into one buffer from ARAM, and the screens built from each keep pointers into it. Every file is converted again after the remount; before, opening the map (Z) drew big-endian `ResTIMG`s and crashed. |
 
 5. **Debugging.**
    `SMS_ENDIAN_LOG=1` makes `port_endian_resource()` log each resource it is given and the format it was converted as.

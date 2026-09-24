@@ -127,7 +127,8 @@ Each file in `decomp-patches/` starts with a `Reason:` line; they are applied in
 | 0015 | `TVec2`/`TVec3` `operator+`/`-` (and two TU-local helpers) return a reference to a local, which g++ compiles to a NULL return: return by value on the port. |
 | 0016 | `SMS_SKIP_MOVIES`. |
 | 0017 | Endian: `J3DTevStage::load` builds its `{reg, op, AB, CD}` BP command words big-endian. |
-| `endian-01..14` | Loader-site byte-order fixes (JPA, J2D BLO, BMG, JUTColor, PRM, SPC, streams, DL vertex counts, sequences, card saves, THP headers, J3DSkinDeform/J3DCluster display lists); see `platform/endian/README.md`. |
+| `endian-01..16` | Loader-site byte-order fixes (JPA, J2D BLO, BMG, JUTColor, PRM, SPC, streams, DL vertex counts, sequences, card saves, THP headers, J3DSkinDeform/J3DCluster display lists, the plaza shine-shadow sphere, the HUD/map 2D archive swap); see `platform/endian/README.md`. |
+| `port-03` | The Screen 2D and Group 2D 2 ortho cameras take width then height, as in retail. |
 | `audio-01..02` | JAudio bitfield/byte-order fixes (`TChannel` mix config, BMS note-on flags); see `platform/audio/README.md`. |
 | `ret-01..03` | Explicit returns for the 42 functions that fall off the end of a non-void body. |
 | `thp-01..02` | Host THP decoder (portable bit reader and IDCT, big-endian audio header); see `platform/thp/README.md`. |
