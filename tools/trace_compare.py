@@ -133,6 +133,7 @@ def main():
     ap.add_argument('native')
     ap.add_argument('--names', help='resolver JSON (TRACE_OUT.json) for member names')
     ap.add_argument('--align', choices=['field', 'polls'], default='field')
+    ap.add_argument('--shift', type=int, default=0, help='pair native field f with retail field f+SHIFT')
     ap.add_argument('--resync', help='LABEL+HEXOFF:WIDTH=VALUE: shift native fields so that the first field where '
                     'this holds lines up in both traces (e.g. app+0xe:4=0x0f000000, the title scene)')
     ap.add_argument('--ignore', help='regex of labels to skip')
@@ -159,7 +160,7 @@ def main():
             labels[name] = Label(name, layouts.get(name), names.get(name))
         return labels[name]
 
-    shift = 0
+    shift = args.shift
     if args.resync:
         m = re.match(r'^([^+]+)\+(\w+):(\d+)=(\w+)$', args.resync)
         if not m:

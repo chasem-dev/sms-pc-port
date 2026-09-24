@@ -192,6 +192,25 @@ Findings against `runs/play-r9`, with `play-symbolic.txt` and the re-syncs `app+
    A trace-worktree build with it applied changed nothing up to 5773 for this movie, since it only uses full deflections.
    It should still be linked for movie fidelity.
 
+## Floating-point fidelity (2026-09-23)
+
+- **Estimates:** `__frsqrte` and `__fres` now reproduce Gekko's table estimates bit-exactly (`src/port_fpu.h`).
+  They were measured with `tools/fpprobe`: a probe DOL run in the oracle, checked on 106,497 values, and `TMario::mEntryRadius` = 0x4357e16c as in retail.
+- **Metric:** on the airstrip window after the re-sync (native fields 5421–5740 vs retail +1), the share of Mario/camera float members that are bit-exact with retail:
+  - baseline 83.79%;
+  - with the estimates 84.07%;
+  - estimates plus `-msse2 -mfpmath=sse -ffp-contract=off` 86.04% (x87 extended precision removed).
+  - An `-mfma -ffp-contract=fast` variant was built but not yet run.
+- **First divergence is unchanged by these:** native 5773 / retail 5774 (Mario x/z 0.01).
+  - Camera `mYaw` starts to differ at 5751, and Mario's intended yaw follows it.
+  - Retail has `MARIO_FLAG_OCCLUDED` set throughout the airstrip, native does not.
+    The flag comes from `TMario::drawSyncCallback`, which peeks EFB alpha (`GXPeekARGB`) and is read by `CameraNormal`.
+    The oracle traces with Dolphin's Null video backend, where EFB peeks return 0, so the retail trace always reports "occluded".
+  - The retail reference for gameplay lockstep must therefore come from a real-video oracle run: `movies/play5gl.dtm`, identical input, `--video OGL`, running as `runs/play-gl1`.
+  - Two further timing differences remain.
+    The `TMarioGamePad` stick-scaling ramp (`_E4`) is one update out of phase, and `mRepeatCount` is +1: native reaches the airstrip after a different number of pad updates, because `SMS_SKIP_MOVIES` skips the opening.
+    Running the movie (needs audio DMA paced in deterministic mode) and fixing the 30 Hz field parity should remove both.
+
 ## Status (2026-09-23)
 
 What was checked: a native run (worktree build with the two hooks) traced against `dolphin-oracle/runs/play-r9` (`movies/play5.dtm`, 11500 fields).

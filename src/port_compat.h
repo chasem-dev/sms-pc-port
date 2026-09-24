@@ -66,17 +66,19 @@ void sms_msl_srand(unsigned int seed);
 /* The game's entry point is `void main(void)`. */
 #define main SMS_main
 
-/* Gekko intrinsics. The hardware estimates are ~12-bit; these are exact. */
+/* Gekko intrinsics. frsqrte and fres are the hardware's table estimates,
+ * reproduced bit-exactly (src/port_fpu.h, measured with tools/fpprobe): the
+ * game uses some of them without refinement (THitActor::calcEntryRadius), so
+ * exact results would change collision radii. */
+#include "port_fpu.h"
 #ifdef __cplusplus
 extern "C++" {
+#endif
 static inline u32 __cntlzw(u32 x) { return x ? (u32)__builtin_clz(x) : 32u; }
-static inline double __frsqrte(double x) { return 1.0 / ::sqrt(x); }
-static inline float __fres(float x) { return 1.0f / x; }
+static inline double __frsqrte(double x) { return port_gekko_frsqrte(x); }
+static inline float __fres(float x) { return port_gekko_fres(x); }
+#ifdef __cplusplus
 }
-#else
-static inline u32 __cntlzw(u32 x) { return x ? (u32)__builtin_clz(x) : 32u; }
-static inline double __frsqrte(double x) { return 1.0 / sqrt(x); }
-static inline float __fres(float x) { return 1.0f / x; }
 #endif
 
 /* Non-standard names MSL's math.h provides. MSL spells M_PI as a float. */
