@@ -34,10 +34,16 @@ if(NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     set(SMS_GX_OVERRIDE_INCLUDE_DIR "${SMS_GX_OVERRIDE_INCLUDE_DIR}" PARENT_SCOPE)
 endif()
 
+# The port's dolphin/types.h override (u32 stays 32 bits on LP64 hosts), so the
+# GX objects this library lays over GXTexObj etc. match the game's layout.
+if(DEFINED SMS_PORT_SRC)
+    set(SMS_GX_TYPES_INCLUDE ${SMS_PORT_SRC}/port_include)
+endif()
+
 add_library(sms_gx STATIC ${SMS_GX_SOURCES} ${SMS_GX_GD_SOURCES})
 target_include_directories(sms_gx
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/port_include ${SMS_DECOMP_DIR}/include)
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/port_include ${SMS_GX_TYPES_INCLUDE} ${SMS_DECOMP_DIR}/include)
 target_compile_features(sms_gx PRIVATE cxx_std_17)
 set_target_properties(sms_gx PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # Window (SDL2) and headless (EGL) context creation; both optional so the

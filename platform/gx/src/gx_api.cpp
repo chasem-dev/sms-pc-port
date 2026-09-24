@@ -78,12 +78,13 @@ namespace {
 struct TexObjInt {
     uint32_t mode0, mode1, image0, tlutName;
     uint8_t fmt, mipmap, isCI, pad;
-    const void* image;
-    void* user;
+    // 4-byte slots on 64-bit hosts (PTR32), so the object fits GXTexObj
+    PTR32(const void) image;
+    PTR32(void) user;
 };
 struct TlutObjInt {
     uint32_t fmt;
-    const void* data;
+    PTR32(const void) data;
     uint16_t entries;
 };
 struct TlutRegionInt {
@@ -1356,7 +1357,7 @@ void GXLoadTexObjPreLoaded(GXTexObj* obj, GXTexRegion*, GXTexMapID id) {
         uint32_t fmt = idx < 20 ? s_tlutLoaded[idx].fmt : 0;
         apiBP(bpTexReg(BP_TX_TLUT, map), ((r->tmemAddr - TMEM_TLUT_BASE) >> 9) | fmt << 10);
     }
-    if (!s_recording) g.texImage[map] = static_cast<const uint8_t*>(t->image);
+    if (!s_recording) g.texImage[map] = static_cast<const uint8_t*>(static_cast<const void*>(t->image));
 }
 void GXLoadTexObj(GXTexObj* obj, GXTexMapID id) {
     if (s_texRegionCb) s_texRegionCb(obj, id);
@@ -1446,7 +1447,7 @@ u16 GXGetTexObjWidth(const GXTexObj* o) { return u16(getField(reinterpret_cast<c
 u16 GXGetTexObjHeight(const GXTexObj* o) { return u16(getField(reinterpret_cast<const TexObjInt*>(o)->image0, 10, 10) + 1); }
 GXTexWrapMode GXGetTexObjWrapS(const GXTexObj* o) { return GXTexWrapMode(getField(reinterpret_cast<const TexObjInt*>(o)->mode0, 2, 0)); }
 GXTexWrapMode GXGetTexObjWrapT(const GXTexObj* o) { return GXTexWrapMode(getField(reinterpret_cast<const TexObjInt*>(o)->mode0, 2, 2)); }
-void* GXGetTexObjData(const GXTexObj* o) { return const_cast<void*>(reinterpret_cast<const TexObjInt*>(o)->image); }
+void* GXGetTexObjData(const GXTexObj* o) { return const_cast<void*>(static_cast<const void*>(reinterpret_cast<const TexObjInt*>(o)->image)); }
 void GXGetTexObjAll(const GXTexObj* o, void** image, u16* w, u16* h, GXTexFmt* fmt, GXTexWrapMode* ws, GXTexWrapMode* wt, u8* mip) {
     *image = GXGetTexObjData(o);
     *w = GXGetTexObjWidth(o);
@@ -1478,11 +1479,11 @@ void GXGetTexObjLODAll(const GXTexObj* o, GXTexFilter* minF, GXTexFilter* magF, 
 }
 void GXGetTlutObjAll(const GXTlutObj* o, void** data, GXTlutFmt* fmt, u16* n) {
     const TlutObjInt* t = reinterpret_cast<const TlutObjInt*>(o);
-    *data = const_cast<void*>(t->data);
+    *data = const_cast<void*>(static_cast<const void*>(t->data));
     *fmt = GXTlutFmt(t->fmt);
     *n = t->entries;
 }
-void* GXGetTlutObjData(const GXTlutObj* o) { return const_cast<void*>(reinterpret_cast<const TlutObjInt*>(o)->data); }
+void* GXGetTlutObjData(const GXTlutObj* o) { return const_cast<void*>(static_cast<const void*>(reinterpret_cast<const TlutObjInt*>(o)->data)); }
 GXTlutFmt GXGetTlutObjFmt(const GXTlutObj* o) { return GXTlutFmt(reinterpret_cast<const TlutObjInt*>(o)->fmt); }
 u16 GXGetTlutObjNumEntries(const GXTlutObj* o) { return reinterpret_cast<const TlutObjInt*>(o)->entries; }
 void GXGetTexRegionAll(const GXTexRegion* region, u8* cached, u8* is32b, u32* even, u32* sizeEven, u32* odd, u32* sizeOdd) {

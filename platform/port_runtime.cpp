@@ -149,7 +149,9 @@ u32 port_mem1_size;
 
 static void map_mem1()
 {
-	u32 mb = 24;
+	// 64-bit hosts: objects holding pointers are larger, and the fixed-size
+	// heaps grow with them (PORT_HEAP64), so give the game more MEM1.
+	u32 mb = sizeof(void*) == 8 ? 64 : 24;
 	if (const char* e = getenv("SMS_MEM_MB"))
 		mb = (u32)atoi(e);
 	port_mem1_size = mb << 20;
@@ -178,6 +180,47 @@ static void map_mem1()
 #endif
 	port_mem1_base = (u8*)p;
 	port_log("[port] MEM1: %u MiB at %p\n", mb, p);
+}
+
+// A PTR32 field (4-byte pointer slot in a struct laid over file data) was
+// given an address above 4 GiB: something the game can reach was allocated
+// high. Fatal, since the pointer would be silently truncated.
+extern "C" void port_ptr32_trap(const void* p)
+{
+	port_log("[port] PTR32: address %p does not fit a 32-bit slot\n", p);
+	abort();
+}
+
+void* port_low_alloc(unsigned long size)
+{
+#if UINTPTR_MAX <= 0xFFFFFFFFu
+	return malloc(size);
+#elif defined(_WIN32)
+	// Walk hint addresses from 256 MiB up to 2 GiB (64 KiB allocation grain).
+	for (uintptr_t at = 0x10000000u; at + size <= 0x80000000u; at += 0x10000u) {
+		void* p = VirtualAlloc((void*)at, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+		if (p)
+			return p;
+	}
+	return NULL;
+#else
+#ifdef MAP_32BIT
+	void* p = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_32BIT, -1, 0);
+	if (p != MAP_FAILED)
+		return p;
+#endif
+	static uintptr_t next = 0x40000000u;
+	for (int tries = 0; tries < 4096 && next + size <= 0x80000000u; tries++) {
+		void* want = (void*)next;
+		next += (size + 0xFFFFu) & ~(uintptr_t)0xFFFFu;
+		void* q = mmap(want, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+		if (q == want)
+			return q;
+		if (q != MAP_FAILED)
+			munmap(q, size);
+	}
+	return NULL;
+#endif
 }
 
 // Hardware register window. The only direct access left in game code is the

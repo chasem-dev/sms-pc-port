@@ -139,6 +139,39 @@ void* host_entry(void* p);
 
 void deliver_irqs();
 
+#if UINTPTR_MAX > 0xFFFFFFFFu
+// 64-bit hosts: game code keeps pointers to its locals in u32 slots, so every
+// host thread runs on a stack below 2 GiB (port_low_alloc). The threads are
+// joinable so a stack is reused only once its last thread has fully exited.
+enum { kLowStackSize = 1 << 20 };
+struct LowStack {
+	void* base;
+	pthread_t th;
+	bool used;
+};
+std::vector<LowStack*> g_low_stacks;
+
+LowStack* low_stack()
+{
+	for (LowStack* ls : g_low_stacks) {
+		if (!ls->used)
+			return ls->used = true, ls;
+#ifdef __GLIBC__
+		if (pthread_tryjoin_np(ls->th, NULL) == 0)
+			return ls;
+#endif
+	}
+	void* p = port_low_alloc(kLowStackSize);
+	if (!p) {
+		port_log("[os] no memory below 2 GiB for a thread stack\n");
+		abort();
+	}
+	LowStack* ls = new LowStack{p, pthread_t(), true};
+	g_low_stacks.push_back(ls);
+	return ls;
+}
+#endif
+
 // Hand the CPU to `next` (already chosen). Returns once `self` owns the CPU
 // again, or never if `self` is exiting.
 void switch_to(OSThread* self, OSThread* next, bool exiting)
@@ -156,12 +189,20 @@ void switch_to(OSThread* self, OSThread* next, bool exiting)
 		hn->started = true;
 		pthread_attr_t a;
 		pthread_attr_init(&a);
+#if UINTPTR_MAX > 0xFFFFFFFFu
+		LowStack* ls = low_stack();
+		pthread_attr_setstack(&a, ls->base, kLowStackSize);
+#else
 		pthread_attr_setstacksize(&a, 1 << 20);
 		pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
+#endif
 		if (pthread_create(&hn->th, &a, host_entry, next) != 0) {
 			port_log("[os] pthread_create failed\n");
 			abort();
 		}
+#if UINTPTR_MAX > 0xFFFFFFFFu
+		ls->th = hn->th;
+#endif
 		pthread_attr_destroy(&a);
 	} else {
 		pthread_cond_signal(&hn->cv);

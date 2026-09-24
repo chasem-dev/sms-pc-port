@@ -115,6 +115,15 @@ using std::fmod;
 using std::pow;
 #endif
 
+/* Heaps the game sizes with fixed GameCube constants (decomp-patches/ptr64-*):
+ * with 8-byte pointers objects are up to twice as large, so 64-bit hosts
+ * double them; 32-bit hosts keep retail's sizes. */
+#if defined(__SIZEOF_POINTER__) && __SIZEOF_POINTER__ == 8
+#define PORT_HEAP64(n) ((n) * 2)
+#else
+#define PORT_HEAP64(n) (n)
+#endif
+
 /* Endianness: game data on disc is big-endian. Loaders that the port has
  * patched call these (decomp-patches/). */
 static inline u16 port_bswap16(u16 v) { return (u16)((v >> 8) | (v << 8)); }
