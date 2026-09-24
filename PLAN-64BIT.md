@@ -16,6 +16,7 @@ Done:
 4. **Decomp (all byte-identical, DOL unchanged)**: `PTR32` on the pointer fields of structs laid over file data (RARC file entries, JAudio init-data tables and sequence archive header, J3D loader blocks, vertex-colour animation index data, collision groups, pollution layer records) and on word-indexed runtime records (JAudio port args); `sizeof` instead of byte counts (JAudio DVD task records, message buffers, particle heap headers); `u32` instead of signed ints where an int becomes a pointer (script VM pops, `JSUConvertOffsetToPtr`, JKRDvdArchive, JUTTexture); the J3D material and material-packet ID flags spelled as bits 31/30 of a `u32`.
 5. **Result**: the 64-bit build boots, plays the opening movie (frames byte-identical to 32-bit), loads Delfino Plaza and renders it like the 32-bit build (the scripted plaza frames differ in at most 2 pixels, from x87 against SSE float rounding).
    The 32-bit plaza and beach reference runs are byte-identical to before every step.
+6. **Coverage**: all 19 movies of the `SMS_WARP_MOVIE` sweep play in 64-bit with no fault (69 of their 76 captured frames byte-identical to 32-bit, the rest within 3 pixels), and the scripted beach run matches the 32-bit one within 9 pixels per frame, with gameplay in step.
 
 Next: the movie sweep and the other stages in 64-bit, Windows 64-bit (LLP64), then making 64-bit a supported build.
 
