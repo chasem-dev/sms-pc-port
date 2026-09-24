@@ -1,4 +1,4 @@
 [submodule "decomp"]
 	path = decomp
-	url = /home/netflix/sms
+	url = https://github.com/chasem-dev/sms-english.git
 	branch = local/decomp-progress
