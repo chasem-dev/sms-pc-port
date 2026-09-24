@@ -207,6 +207,8 @@ struct CopyEntry {
 };
 static std::unordered_map<const void*, CopyEntry> s_copies;
 
+static void drainDeletedCopies();
+
 void textureInvalidateAll() { s_gen++; }
 
 void textureInvalidateRange(const void* p, uint32_t size) {
@@ -223,6 +225,7 @@ void textureShutdown() {
     s_cache.clear();
     for (auto& kv : s_copies) glDeleteTextures(1, &kv.second.tex);
     s_copies.clear();
+    drainDeletedCopies();
 }
 
 unsigned efbCopyLookup(const void* addr, int* w, int* h) {
@@ -234,6 +237,7 @@ unsigned efbCopyLookup(const void* addr, int* w, int* h) {
 }
 
 void efbCopyRegister(const void* addr, unsigned tex, int w, int h, uint32_t fmt) {
+    drainDeletedCopies();
     auto it = s_copies.find(addr);
     if (it != s_copies.end() && it->second.tex != tex) glDeleteTextures(1, &it->second.tex);
     s_copies[addr] = CopyEntry{tex, w, h, fmt, 0};
@@ -247,6 +251,17 @@ void efbCopySetBytes(const void* addr, uint32_t bytes) {
 // The CPU wrote [p, p + size) (DCFlushRange/DCStoreRange): RAM is the truth
 // again, so cached decodes are re-checked and EFB copies that were written
 // back into that memory stop shadowing it.
+// Called from any game thread (loaders flush their buffers too), and only the
+// thread that owns the GL context may call GL: dropped copies' textures are
+// queued and deleted by that thread later (drainDeletedCopies).
+static std::vector<GLuint> s_deadCopyTex;
+
+static void drainDeletedCopies() {
+    if (s_deadCopyTex.empty()) return;
+    glDeleteTextures(GLsizei(s_deadCopyTex.size()), s_deadCopyTex.data());
+    s_deadCopyTex.clear();
+}
+
 void textureCpuWrote(const void* p, uint32_t size) {
     textureInvalidateRange(p, size);
     const uint8_t* lo = static_cast<const uint8_t*>(p);
@@ -254,7 +269,7 @@ void textureCpuWrote(const void* p, uint32_t size) {
     for (auto it = s_copies.begin(); it != s_copies.end();) {
         const uint8_t* a = static_cast<const uint8_t*>(it->first);
         if (it->second.bytes && a < hi && a + it->second.bytes > lo) {
-            glDeleteTextures(1, &it->second.tex);
+            s_deadCopyTex.push_back(it->second.tex);
             it = s_copies.erase(it);
         } else {
             ++it;
@@ -368,6 +383,7 @@ static void applySampler(uint32_t mode0, uint32_t mode1, uint32_t levels) {
 static GLuint s_whiteTex = 0;
 
 unsigned bindTextureMap(int map, float* outW, float* outH) {
+    drainDeletedCopies();
     uint32_t mode0 = g.bp[bpTexReg(BP_TX_MODE0, map)];
     uint32_t mode1 = g.bp[bpTexReg(BP_TX_MODE1, map)];
     uint32_t img0 = g.bp[bpTexReg(BP_TX_IMAGE0, map)];
