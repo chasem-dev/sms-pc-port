@@ -2,7 +2,7 @@
 
 Native PC port of Super Mario Sunshine (GMSE01), built from the matching decompilation.
 
-- `decomp/` — the decompilation (git submodule, branch `local/decomp-progress`).
+- `decomp/` — the decompilation (git submodule, branch `main` of [sms-english](https://github.com/chasem-dev/sms-english)).
   Game and JSystem source come from here; its GameCube build stays byte-identical to retail and is the reference.
 - `platform/` — host replacements for the Dolphin SDK surface the game calls (see "Platform layer").
 - `src/` — port entry point (`port_main.cpp`), the force-included compat header (`port_compat.h`) and header overrides (`port_include/`).
