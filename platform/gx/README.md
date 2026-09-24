@@ -95,6 +95,9 @@ The renderer reads its state only from that register file, so API calls, GD disp
   EFB copies and `GXPeekZ` calls appear in order.
 - `SMS_GX_TRACE_PROBE=x,y;x,y` adds, after each traced draw, the EFB colour/alpha and depth at those points, which finds the draw that breaks a pixel.
 - `SMS_GX_DUMP_EVERY=n` writes every n-th XFB as a PPM (see above).
+- `SMS_GX_DUMP_SHADERS=dir` writes every generated program as `dir/prog<id>.vs/.fs`; traces name the program each draw used.
+- `SMS_GX_STATS=n` logs, every n display frames, draws/vertices per frame, shader compiles, texture uploads and the milliseconds per frame spent in sms_gx (split into texture decode, GL draw, EFB copies and peeks).
+  On this machine the 32-bit build renders with Mesa llvmpipe (no 32-bit NVIDIA GL is installed), so GPU work shows up as CPU time at the first sync point, usually the EFB copy.
 
 ## Coverage against `api-surface.tsv`
 

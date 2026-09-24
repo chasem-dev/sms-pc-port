@@ -11,6 +11,7 @@
 namespace gx {
 
 State g;
+extern uint32_t g_traceLastVat;
 void (*drawSyncCallback)(uint16_t) = nullptr;
 
 // ------------------------------------------------------------------ utilities
@@ -517,6 +518,7 @@ static uint32_t parse(const uint8_t* p, uint32_t n, uint32_t* need) {
             uint32_t cnt = be16(p + 1);
             len = 3 + cnt * L.size;
             if (avail < len) break;
+            g_traceLastVat = op & 7;
             decodeVertices(op & 0xF8, p + 3, cnt, L);
         } else {
             logmsg("unknown FIFO opcode 0x%02X, skipping byte", op);

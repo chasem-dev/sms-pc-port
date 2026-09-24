@@ -7,6 +7,8 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
 #include <string.h>
 #include <unordered_map>
 
@@ -135,6 +137,8 @@ void main() {
 
 void rendererInit(int efbScale) {
     s_scale = efbScale < 1 ? 1 : efbScale;
+    logmsg("OpenGL %s, renderer %s (%s)", (const char*)glGetString(GL_VERSION), (const char*)glGetString(GL_RENDERER),
+           (const char*)glGetString(GL_VENDOR));
     int W = EFB_W * s_scale, H = EFB_H * s_scale;
     glGenTextures(1, &s_efbColor);
     glBindTexture(GL_TEXTURE_2D, s_efbColor);
@@ -451,12 +455,59 @@ static void uploadUniforms(const ShaderProgram* sp, float texW[8], float texH[8]
     glUniform4fv(sp->uAmbMat, 4, ch);
 }
 
+// SMS_GX_STATS=n: every n display frames, log draws, uploads and the wall time
+// spent inside sms_gx (flushes, texture decode, copies) against the frame time.
+static double s_gxSeconds = 0, s_texSeconds = 0, s_drawSeconds = 0, s_copySeconds = 0, s_peekSeconds = 0;
+static double nowSeconds() {
+    timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return double(ts.tv_sec) + double(ts.tv_nsec) * 1e-9;
+}
+struct GxTimer {
+    double* acc;
+    double t0 = nowSeconds();
+    explicit GxTimer(double* a = &s_gxSeconds) : acc(a) {}
+    ~GxTimer() { *acc += nowSeconds() - t0; }
+};
+static void statsFrame() {
+    static int every = -1;
+    static uint32_t frames = 0, draws = 0, verts = 0, compiles0 = 0, uploads0 = 0;
+    static double t0 = 0, gx0 = 0, tex0 = 0, draw0 = 0, copy0 = 0, peek0 = 0;
+    if (every < 0) {
+        const char* e = getenv("SMS_GX_STATS");
+        every = e ? atoi(e) : 0;
+        t0 = nowSeconds();
+    }
+    if (every <= 0) return;
+    frames++;
+    draws += s_stats.draws;
+    verts += s_stats.vertices;
+    if (frames < uint32_t(every)) return;
+    double t = nowSeconds();
+    logmsg("stats: %u frames, %.1f draws/frame, %.0f vertices/frame, %u shader compiles, %u texture uploads, "
+           "%.1f ms/frame total, %.1f ms/frame in sms_gx (textures %.1f, GL draw %.1f, copies %.1f, peeks %.1f)",
+           frames, double(draws) / frames, double(verts) / frames, g_statShaderCompiles - compiles0,
+           g_statTexUploads - uploads0, (t - t0) * 1000.0 / frames, (s_gxSeconds - gx0) * 1000.0 / frames,
+           (s_texSeconds - tex0) * 1000.0 / frames, (s_drawSeconds - draw0) * 1000.0 / frames,
+           (s_copySeconds - copy0) * 1000.0 / frames, (s_peekSeconds - peek0) * 1000.0 / frames);
+    tex0 = s_texSeconds;
+    draw0 = s_drawSeconds;
+    copy0 = s_copySeconds;
+    peek0 = s_peekSeconds;
+    frames = draws = verts = 0;
+    compiles0 = g_statShaderCompiles;
+    uploads0 = g_statTexUploads;
+    t0 = t;
+    gx0 = s_gxSeconds;
+}
+
 void flushBatch() {
     if (s_bidx.empty() || !s_ready) {
         s_bidx.clear();
         s_bverts.clear();
         return;
     }
+    GxTimer timer;
     const ShaderProgram* sp = shaderForCurrentState();
     glUseProgram(sp->prog);
     applyGlState();
@@ -474,6 +525,7 @@ void flushBatch() {
     for (int m = 0; m < 8; m++) {
         if (!(used & (1u << m))) continue;
         glActiveTexture(GL_TEXTURE0 + m);
+        GxTimer tt(&s_texSeconds);
         bindTextureMap(m, &texW[m], &texH[m]);
     }
     glActiveTexture(GL_TEXTURE0);
@@ -496,7 +548,10 @@ void flushBatch() {
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_ibo);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, GLsizeiptr(s_bidx.size() * 4), s_bidx.data(), GL_STREAM_DRAW);
     GLenum mode = s_bclass == PRIM_TRIS ? GL_TRIANGLES : s_bclass == PRIM_LINES ? GL_LINES : GL_POINTS;
-    glDrawElements(mode, GLsizei(s_bidx.size()), GL_UNSIGNED_INT, nullptr);
+    {
+        GxTimer td(&s_drawSeconds);
+        glDrawElements(mode, GLsizei(s_bidx.size()), GL_UNSIGNED_INT, nullptr);
+    }
     s_stats.draws++;
     if (traceFile()) traceDraw(int(s_bclass), uint32_t(s_bverts.size()), uint32_t(s_bidx.size()), s_bverts.data(), sp->id);
     s_bidx.clear();
@@ -522,6 +577,8 @@ static void clearRect(int x, int y, int w, int h) {
 void executeCopy(uint32_t ctrl) {
     if (!s_ready) return;
     flushBatch();
+    GxTimer timer;
+    GxTimer tc(&s_copySeconds);
     uint32_t src = g.bp[BP_COPY_SRC_TL], size = g.bp[BP_COPY_SRC_WH];
     int x = int(src & 0x3FF), y = int((src >> 10) & 0x3FF);
     int w = int(size & 0x3FF) + 1, h = int((size >> 10) & 0x3FF) + 1;
@@ -594,7 +651,11 @@ void executeCopy(uint32_t ctrl) {
     }
     if (clear) clearRect(x, y, w, h);
     glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
-    if (disp) traceFrameAdvance();
+    if (disp) {
+        traceFrameAdvance();
+        statsFrame();
+        s_stats.draws = s_stats.vertices = 0;
+    }
     if (disp && g_displayCopyHook) g_displayCopyHook(dest);
 }
 
@@ -627,6 +688,7 @@ void GXPC_InvalidateRange(const void* p, uint32_t size) { textureInvalidateRange
 namespace gx {
 uint32_t peekColor(int x, int y) {
     flushBatch();
+    GxTimer tp(&s_peekSeconds);
     uint8_t px[4] = {0, 0, 0, 0};
     glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
@@ -637,6 +699,7 @@ uint32_t peekColor(int x, int y) {
 }
 uint32_t peekZ(int x, int y) {
     flushBatch();
+    GxTimer tp(&s_peekSeconds);
     uint32_t v = 0;
     glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
     glPixelStorei(GL_PACK_ALIGNMENT, 4);

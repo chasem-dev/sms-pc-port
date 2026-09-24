@@ -15,6 +15,7 @@ static int s_first = -2, s_last = -2;
 static uint32_t s_curFrame = 0;
 static FILE* s_file = nullptr;
 static uint32_t s_drawNo = 0;
+uint32_t g_traceLastVat = 0;
 
 static void traceInit() {
     s_first = s_last = -1;
@@ -199,8 +200,18 @@ void traceDraw(int prim, uint32_t nverts, uint32_t nidx, const HostVertex* v, in
                 (m0 >> 2) & 3, (m0 >> 4) & 1, (m0 >> 5) & 7, m1 & 0xFF, (m1 >> 8) & 0xFF, int(int8_t((m0 >> 9) & 0xFF)),
                 tl2 & 0x3FF, (tl2 >> 10) & 3, copy ? " [EFB copy]" : "");
     }
-    fprintf(f, "  vcd: lo=%05X hi=%04X  matidx A=%08X B=%08X\n", g.cpVcdLo, g.cpVcdHi, g.xfReg[XFR_MATIDX_A],
-            g.xfReg[XFR_MATIDX_B]);
+    fprintf(f, "  vcd: lo=%05X hi=%04X  matidx A=%08X B=%08X  vat%u: %08X %08X %08X\n", g.cpVcdLo, g.cpVcdHi,
+            g.xfReg[XFR_MATIDX_A], g.xfReg[XFR_MATIDX_B], g_traceLastVat, g.cpVatA[g_traceLastVat],
+            g.cpVatB[g_traceLastVat], g.cpVatC[g_traceLastVat]);
+    for (int a = 0; a < 12; a++) {
+        if (!g.arrayBase[a]) continue;
+        uint32_t mode = a == 0 ? (g.cpVcdLo >> 9) & 3 : a == 1 ? (g.cpVcdLo >> 11) & 3 : a < 4 ? (g.cpVcdLo >> (13 + 2 * (a - 2))) & 3
+                                                                                    : (g.cpVcdHi >> (2 * (a - 4))) & 3;
+        if (mode < 2) continue;
+        const uint8_t* b = g.arrayBase[a];
+        fprintf(f, "  array%d: %p stride %u %s bytes %02X %02X %02X %02X %02X %02X %02X %02X\n", a, (const void*)b,
+                g.arrayStride[a], g.arrayBigEndian[a] ? "BE" : "host", b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]);
+    }
     for (uint32_t i = 0; i < nverts && i < 3; i++) {
         const HostVertex& hv = v[i];
         fprintf(f, "  v%u: pos(%.3f %.3f %.3f) nrm(%.2f %.2f %.2f) c0(%u %u %u %u) t0(%.3f %.3f) t1(%.3f %.3f) mtx %u/%u\n", i,
