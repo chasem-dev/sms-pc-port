@@ -13,6 +13,8 @@
 #include <unistd.h>
 #include <signal.h>
 #include <execinfo.h>
+#include <dlfcn.h>
+#include <sys/wait.h>
 
 // Default game source on this machine: the user's disc image, else the
 // extracted folder. A bare argument, SMS_DISC_IMAGE or SMS_DISC_ROOT override it.
@@ -52,12 +54,58 @@ extern "C" void port_stub_report(void)
 		port_log("[stub]   %-32s %lu\n", r->name, r->count);
 }
 
-static void crash_handler(int sig)
+// Symbolise the backtrace with addr2line so a crash report names functions
+// and source lines without the exact binary at hand (not async-signal-safe;
+// acceptable on the way down).
+static void crash_symbolise(void** bt, int n)
 {
-	port_log("\n[port] fatal signal %d (%s)\n", sig, strsignal(sig));
+	char exe[512];
+	ssize_t len = readlink("/proc/self/exe", exe, sizeof exe - 1);
+	if (len <= 0)
+		return;
+	exe[len] = 0;
+	static char addrs[64][24];
+	char* argv[64 + 8];
+	int argc = 0;
+	argv[argc++] = (char*)"addr2line";
+	argv[argc++] = (char*)"-f";
+	argv[argc++] = (char*)"-C";
+	argv[argc++] = (char*)"-p";
+	argv[argc++] = (char*)"-e";
+	argv[argc++] = exe;
+	for (int i = 0; i < n && argc < 64 + 7; i++) {
+		Dl_info info;
+		if (!dladdr(bt[i], &info) || !info.dli_fname || !info.dli_fbase)
+			continue;
+		char self[512];
+		if (!realpath(info.dli_fname, self) || strcmp(self, exe) != 0)
+			continue;
+		// return addresses point after the call; step back into it
+		snprintf(addrs[i], sizeof addrs[i], "0x%lx",
+		         (unsigned long)((char*)bt[i] - (char*)info.dli_fbase - 1));
+		argv[argc++] = addrs[i];
+	}
+	argv[argc] = nullptr;
+	if (argc == 6)
+		return;
+	port_log("[port] backtrace:\n");
+	pid_t pid = fork();
+	if (pid == 0) {
+		dup2(2, 1);
+		execvp("addr2line", argv);
+		_exit(127);
+	}
+	if (pid > 0)
+		waitpid(pid, nullptr, 0);
+}
+
+static void crash_handler(int sig, siginfo_t* si, void*)
+{
+	port_log("\n[port] fatal signal %d (%s) at address %p\n", sig, strsignal(sig), si ? si->si_addr : nullptr);
 	void* bt[64];
 	int n = backtrace(bt, 64);
 	backtrace_symbols_fd(bt, n, 2);
+	crash_symbolise(bt, n);
 	port_stub_report();
 	signal(sig, SIG_DFL);
 	raise(sig);
@@ -156,11 +204,12 @@ extern "C" void port_init(int argc, char** argv)
 	for (int i = 1; i < argc; i++)
 		if (argv[i][0] != '-')
 			port_disc_root = argv[i];
-	signal(SIGSEGV, crash_handler);
-	signal(SIGBUS, crash_handler);
-	signal(SIGFPE, crash_handler);
-	signal(SIGILL, crash_handler);
-	signal(SIGABRT, crash_handler);
+	struct sigaction sa;
+	memset(&sa, 0, sizeof sa);
+	sa.sa_sigaction = crash_handler;
+	sa.sa_flags = SA_SIGINFO;
+	for (int sig : {SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT})
+		sigaction(sig, &sa, nullptr);
 	atexit(port_stub_report);
 	map_mem1();
 	if (sizeof(void*) == 4)
