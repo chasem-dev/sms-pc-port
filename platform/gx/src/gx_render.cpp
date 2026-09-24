@@ -26,6 +26,8 @@ static GLuint s_vao, s_vbo, s_ibo, s_ubo;
 static GLuint s_copyProg, s_copyVao;
 static GLint s_copyUMode, s_copyURect, s_copyUAlphaOne;
 static GLuint s_tmpFbo;
+static GLuint s_overlayTex;
+static GXPCStats s_lastFrameStats;
 static bool s_ready = false;
 static bool s_xfDirty = true;
 
@@ -654,6 +656,7 @@ void executeCopy(uint32_t ctrl) {
     if (disp) {
         traceFrameAdvance();
         statsFrame();
+        s_lastFrameStats = s_stats;
         s_stats.draws = s_stats.vertices = 0;
     }
     if (disp && g_displayCopyHook) g_displayCopyHook(dest);
@@ -760,6 +763,45 @@ int GXPC_ReadXFB(const void* xfb, uint8_t* rgba, int* w, int* h) {
     glReadPixels(0, 0, *w, *h, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
     glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
     return 1;
+}
+
+void GXPC_GetLastFrameStats(GXPCStats* out) {
+    *out = s_lastFrameStats;
+    out->shaderCompiles = g_statShaderCompiles;
+    out->textureUploads = g_statTexUploads;
+}
+
+double GXPC_GxSeconds(void) { return s_gxSeconds; }
+
+void GXPC_DrawOverlay(const uint8_t* rgba, int w, int h, int x, int y, int scale, int winH) {
+    if (!s_ready || !rgba || w <= 0 || h <= 0) return;
+    flushBatch();
+    // Blit instead of drawing: no program, VAO or blend state to disturb.
+    GLint activeUnit = 0, boundTex = 0, rowLength = 0, unpackAlign = 4;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &activeUnit);
+    glActiveTexture(GL_TEXTURE0);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &boundTex);
+    glGetIntegerv(GL_UNPACK_ROW_LENGTH, &rowLength);
+    glGetIntegerv(GL_UNPACK_ALIGNMENT, &unpackAlign);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    if (!s_overlayTex) glGenTextures(1, &s_overlayTex);
+    glBindTexture(GL_TEXTURE_2D, s_overlayTex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    glBindTexture(GL_TEXTURE_2D, GLuint(boundTex));
+    glActiveTexture(GLenum(activeUnit));
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, rowLength);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, unpackAlign);
+    glDisable(GL_SCISSOR_TEST);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, s_tmpFbo);
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s_overlayTex, 0);
+    // rgba row 0 is the top; the window's row 0 is its bottom
+    int top = winH - y;
+    glBlitFramebuffer(0, 0, w, h, x, top, x + w * scale, top - h * scale, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
 }
 
 void GXPC_GetStats(GXPCStats* out) {

@@ -234,6 +234,7 @@ void GXPC_Present(const void* xfb) {
         int w = 0, h = 0;
         SDL_GL_GetDrawableSize(s_window, &w, &h);
         GXPC_PresentXFB(xfb, w, h);
+        GXPC_OverlayDraw(w, h);
         SDL_GL_SwapWindow(s_window);
         sms_gx_pump_events();
     }
@@ -271,6 +272,11 @@ void sms_gx_pump_events(void) {
             break;
         default:
             break;
+        }
+        // backtick toggles the debug overlay and is kept from the pad layer
+        if ((ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) && ev.key.keysym.scancode == SDL_SCANCODE_GRAVE) {
+            if (ev.type == SDL_KEYDOWN && !ev.key.repeat) GXPC_OverlayToggle();
+            continue;
         }
         if (s_eventCb) s_eventCb(&ev);
         if (ev.type == SDL_QUIT ||
