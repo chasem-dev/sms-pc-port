@@ -93,6 +93,7 @@ The renderer reads its state only from that register file, so API calls, GD disp
 - `SMS_GX_TRACE_FRAME=n` (or `a-b`) writes every draw of display frame n (the draws after the n-th `GXCopyDisp`) to `$SMS_GX_DUMP_DIR/gx_trace_frame<n>.txt`, or to `$SMS_GX_TRACE_FILE` for a single frame.
   Each draw lists primitive and vertex counts, projection/viewport/scissor, z/blend/alpha-compare/fog state, lighting channels and the lights they use, texgens, every TEV stage decoded (`PREV = (ZERO + lerp(ZERO,TEXC,RASC))*1 clamp`), TEV/konst registers, swap tables, bound texture maps (address, format, size, wrap/filter/LOD, TLUT, whether it is an EFB copy) and the first vertices.
   EFB copies and `GXPeekZ` calls appear in order.
+- `SMS_GX_TRACE_BT=1` adds to each traced draw the host call stack of its last `GXBegin`, and logs every projection load with its caller (`module(+offset)`; resolve with `addr2line -f -C -e build/sms`).
 - `SMS_GX_TRACE_PROBE=x,y;x,y` adds, after each traced draw, the EFB colour/alpha and depth at those points, which finds the draw that breaks a pixel.
 - `SMS_GX_DUMP_EVERY=n` writes every n-th XFB as a PPM (see above).
 - `SMS_GX_DUMP_SHADERS=dir` writes every generated program as `dir/prog<id>.vs/.fs`; traces name the program each draw used.

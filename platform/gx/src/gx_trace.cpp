@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <execinfo.h>
 
 namespace gx {
 
@@ -91,11 +92,51 @@ static float xfregf(int r) {
     return f;
 }
 
+// SMS_GX_TRACE_BT=1: each traced draw also lists the host call stack of the
+// last GXBegin before it (module+offset; resolve with addr2line -e sms).
+static void* s_beginBt[12];
+static int s_beginBtN = 0;
+void traceNoteBegin() {
+    static int on = -1;
+    if (on < 0) on = getenv("SMS_GX_TRACE_BT") != nullptr;
+    if (!on || !s_file) return;
+    s_beginBtN = backtrace(s_beginBt, 12);
+}
+
+// With SMS_GX_TRACE_BT, projection loads are logged with their caller too.
+void traceNoteProjection(const float* p) {
+    static int on = -1;
+    if (on < 0) on = getenv("SMS_GX_TRACE_BT") != nullptr;
+    if (!on || !s_file) return;
+    void* bt[8];
+    int n = backtrace(bt, 8);
+    char** names = backtrace_symbols(bt, n);
+    fprintf(s_file, "\n== projection %s %g %g %g %g %g %g caller:", p[0] != 0.0f ? "ORTHO" : "PERSP", p[1], p[2], p[3],
+            p[4], p[5], p[6]);
+    for (int i = 1; names && i < n; i++) {
+        const char* nm = strrchr(names[i], '/');
+        fprintf(s_file, " %s", nm ? nm + 1 : names[i]);
+    }
+    fprintf(s_file, "\n");
+    free(names);
+}
+
 void traceDraw(int prim, uint32_t nverts, uint32_t nidx, const HostVertex* v, int progId) {
     FILE* f = s_file;
     if (!f) return;
     static const char* kPrim[3] = {"TRIS", "LINES", "POINTS"};
     fprintf(f, "\n== draw %u: %s, %u vertices, %u indices, program %d\n", s_drawNo++, kPrim[prim], nverts, nidx, progId);
+    if (s_beginBtN > 0) {
+        char** names = backtrace_symbols(s_beginBt, s_beginBtN);
+        fprintf(f, "  caller:");
+        for (int i = 1; names && i < s_beginBtN; i++) {
+            const char* n = strrchr(names[i], '/');
+            fprintf(f, " %s", n ? n + 1 : names[i]);
+        }
+        fprintf(f, "\n");
+        free(names);
+        s_beginBtN = 0;
+    }
     uint32_t gen = g.bp[BP_GENMODE];
     uint32_t nst = ((gen >> 10) & 15) + 1, nind = (gen >> 16) & 7;
     fprintf(f, "  genmode: texgens=%u chans=%u tevstages=%u indstages=%u cull=%u | xf texgens=%u chans=%u\n", gen & 15,

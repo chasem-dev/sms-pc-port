@@ -101,8 +101,8 @@ void shots_poll(u32 field, void* xfb)
 		for (int i = 0; i < w * h; i++)
 			fwrite(&px[(size_t)i * 4], 1, 3, f);
 		fclose(f);
-		port_log("[vi] captured field %u (game field %u, retrace %u) -> %s\n", g_shots[g_next_shot], field,
-		         g_retrace_count, path);
+		port_log("[vi] captured field %u (game field %u, retrace %u, gx frame %u) -> %s\n", g_shots[g_next_shot],
+		         field, g_retrace_count, GXPC_FrameCount ? GXPC_FrameCount() : 0, path);
 	}
 	while (g_next_shot < g_shots.size() && g_shots[g_next_shot] <= field)
 		g_next_shot++;
@@ -201,8 +201,14 @@ extern "C" int port_vi_deterministic(void) { return g_det; }
 extern "C" s64 port_vi_virtual_ticks(void)
 {
 	s64 step = (s64)(g_det_time_calls++) * 64;
-	if (step >= kTicksPerField)
+	if (step >= kTicksPerField) {
 		step = kTicksPerField - 1;
+		// A thread spinning on the clock (TMarDirector::thpInit waits half a
+		// second in an OSGetTick/OSYieldThread loop) would never let the game
+		// idle: once the field's time is used up, the next retrace is due.
+		if (g_pending.load() == 0)
+			g_pending.fetch_add(1);
+	}
 	return (s64)g_retrace_count * kTicksPerField + step;
 }
 

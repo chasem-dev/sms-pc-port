@@ -13,6 +13,8 @@
 using namespace gx;
 
 namespace gx {
+void traceNoteBegin();  // gx_trace.cpp (SMS_GX_TRACE_BT)
+void traceNoteProjection(const float* p);
 extern void (*drawSyncCallback)(uint16_t);
 bool rendererReady();
 }
@@ -523,6 +525,7 @@ GXBool __GXinBegin;  // read by GXEnd when GXGeometry.h is built with DEBUG
 
 void GXBegin(GXPrimitive type, GXVtxFmt fmt, u16 nverts) {
     __GXinBegin = GX_TRUE;
+    traceNoteBegin();
     GXPC_Write8(uint8_t(type | fmt));
     GXPC_Write16(nverts);
 }
@@ -575,6 +578,7 @@ void GXSetProjection(f32 mtx[4][4], GXProjectionType type) {
     GXSetProjectionv(p);
 }
 void GXSetProjectionv(f32* ptr) {
+    traceNoteProjection(ptr);
     memcpy(g.projection, ptr, sizeof(g.projection));
     uint32_t w[7];
     for (int i = 0; i < 6; i++) w[i] = fbits(ptr[1 + i]);
