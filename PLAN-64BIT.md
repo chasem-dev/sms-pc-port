@@ -17,6 +17,8 @@ Done:
 5. **Result**: the 64-bit build boots, plays the opening movie (frames byte-identical to 32-bit), loads Delfino Plaza and renders it like the 32-bit build (the scripted plaza frames differ in at most 2 pixels, from x87 against SSE float rounding).
    The 32-bit plaza and beach reference runs are byte-identical to before every step.
 6. **Coverage**: all 19 movies of the `SMS_WARP_MOVIE` sweep play in 64-bit with no fault (69 of their 76 captured frames byte-identical to 32-bit, the rest within 3 pixels), and the scripted beach run matches the 32-bit one within 9 pixels per frame, with gameplay in step.
+7. **Stages**: warping to episode 0 of the airstrip, Bianco Hills, Ricco Harbor, Gelato Beach, Pinna Park, Sirena Beach, the Delfino Hotel, Noki Bay and Pianta Village runs in 64-bit with frames matching 32-bit (under 15 differing pixels, except Ricco and Gelato at 100-300 scattered edge pixels).
+   Pinna Park needed `ptr64-02-atan-table-wrap`: a NaN ratio makes `GetAtanTable` index `atntable[INT_MIN]`, which 32-bit addresses wrap back to entry 0 and a 64-bit host does not.
 
 Next: the movie sweep and the other stages in 64-bit, Windows 64-bit (LLP64), then making 64-bit a supported build.
 
