@@ -13,6 +13,7 @@ void port_sleep_until(const struct timespec* deadline);
 #include <unistd.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <time.h>
 static inline ssize_t port_pread(int fd, void* buffer, size_t count, unsigned long long offset)
 {
 	return pread(fd, buffer, count, (off_t)offset);

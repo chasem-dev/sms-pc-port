@@ -83,16 +83,24 @@ set_source_files_properties(${SMS_DECOMP_PCH_SOURCES} PROPERTIES
   COMPILE_OPTIONS "-include;${SMS_DECOMP}/include/SMS.pch")
 
 option(SMS_WITH_GX "Build and link platform/gx (the graphics layer)" ON)
-if(SMS_WITH_GX AND SMS_ARCH STREQUAL "32")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND SMS_WITH_GX AND SMS_ARCH STREQUAL "32")
   # Only the i386 runtime libraries are installed (no :i386 -dev packages):
   # compile against the amd64 SDL2/EGL headers and link the .so files directly.
   set(_i386 /usr/lib/i386-linux-gnu)
   if(EXISTS ${_i386}/libSDL2-2.0.so.0 AND NOT TARGET SDL2::SDL2)
     set(_shim ${CMAKE_BINARY_DIR}/sdl2-m32)
-    file(WRITE ${_shim}/SDL2/_real_SDL_config.h
+    set(_shim_config
       "/* 32-bit build against the amd64 SDL2 headers. */\n"
       "#include \"/usr/include/x86_64-linux-gnu/SDL2/_real_SDL_config.h\"\n"
       "#undef SIZEOF_VOIDP\n#define SIZEOF_VOIDP 4\n")
+    string(CONCAT _shim_config ${_shim_config})
+    set(_old_shim_config "")
+    if(EXISTS ${_shim}/SDL2/_real_SDL_config.h)
+      file(READ ${_shim}/SDL2/_real_SDL_config.h _old_shim_config)
+    endif()
+    if(NOT _shim_config STREQUAL _old_shim_config)
+      file(WRITE ${_shim}/SDL2/_real_SDL_config.h "${_shim_config}")
+    endif()
     add_library(SDL2::SDL2 SHARED IMPORTED GLOBAL)
     set_target_properties(SDL2::SDL2 PROPERTIES
       IMPORTED_LOCATION ${_i386}/libSDL2-2.0.so.0

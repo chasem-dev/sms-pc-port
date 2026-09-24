@@ -1,5 +1,10 @@
 # Building and running the native port
 
+| System | Build | Run |
+| --- | --- | --- |
+| [Linux](#linux) | `./build_linux.sh` | `./run_linux.sh /path/to/GMSE01.iso` |
+| [Windows (MSYS2 MINGW32)](#windows-msys2-mingw32) | `./build_windows.sh` or `build_windows.cmd` | `./run_windows.sh /path/to/GMSE01.iso` or `run_windows.cmd` |
+
 ## Windows (MSYS2 MINGW32)
 
 Install [MSYS2](https://www.msys2.org/) and open **MSYS2 MINGW32** from the Start menu.
@@ -71,12 +76,12 @@ The `sms-english` [README](https://github.com/chasem-dev/sms-english/blob/main/R
 
 ### One-time setup
 
-These are already installed on this machine; you only need them on a new one.
+These commands are for Ubuntu or Debian and are already satisfied on this machine.
 
 ```sh
-sudo apt install cmake make gcc-multilib g++-multilib
 sudo dpkg --add-architecture i386
 sudo apt update
+sudo apt install git cmake make python3 patch binutils gcc-multilib g++-multilib libsdl2-dev libegl-dev libgl-dev
 sudo apt install libsdl2-2.0-0:i386 libgl1:i386 libegl1:i386 libgl1-mesa-dri:i386 libegl-mesa0:i386
 ```
 
@@ -84,43 +89,44 @@ The port is a 32-bit program (the game code assumes 4-byte pointers), so it need
 
 ## Get the game source
 
+Run the commands below from the repository root.
 The decomp is a git submodule in `decomp/`.
-After pulling new decomp commits, update it:
+Check out the version pinned by this port commit:
 
 ```sh
-cd ~/sms-port
-git submodule update --init --remote decomp
+git submodule update --init decomp
 ```
 
 ## Build
 
 ```sh
-cd ~/sms-port
-cmake -B build
-nice -n 19 make -C build -j4 sms
+./build_linux.sh
 ```
 
+The script configures a 32-bit build in `build/`, updates the pinned decomp submodule, and compiles `sms`.
+Set `JOBS=2` to limit parallel compiler jobs.
 The first build compiles about 600 game files and takes a while; later builds only rebuild what changed.
 The result is `build/sms`.
-If the build acts strangely after big changes, delete the `build` folder and run both commands again.
+For a manual build, run `cmake -S . -B build -DSMS_ARCH=32` and `cmake --build build --target sms --parallel 4`.
 
 ## Run
 
 ```sh
-cd ~/sms-port
-build/sms "/home/netflix/sms/Super Mario Sunshine (2002)(Nintendo)(US).iso"
+./run_linux.sh "/path/to/Super Mario Sunshine (US).iso"
 ```
 
+Or place exactly one `.iso`, `.gcm`, or Dolphin `.ciso` image in `build/rom/` and run `./run_linux.sh` without an argument.
+Set `SMS_DISC_IMAGE` to use another path without passing an argument.
 The game is read straight from your ISO; nothing is extracted or copied.
 Saves go to `~/.local/share/sms-port/card-a`.
 
-Useful options (put them before the command, e.g. `SMS_SKIP_MOVIES=1 build/sms ...`):
+Useful options (put them before the command, e.g. `SMS_SKIP_MOVIES=1 ./run_linux.sh ...`):
 
 | Option | Effect |
 | --- | --- |
 | `SMS_SKIP_MOVIES=1` | skip the intro and opening movies |
 | `SMS_AUDIO=0` | no sound |
-| `--headless` (after `build/sms`) | no window, for testing |
+| `SMS_HEADLESS=1` or `--headless` (after the image path) | no window, for testing |
 
 ## Keys
 

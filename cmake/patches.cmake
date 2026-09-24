@@ -36,6 +36,10 @@ endforeach()
 # Sync the scratch tree into patched/: copy changed files, drop stale ones.
 file(GLOB_RECURSE _old RELATIVE ${SMS_PATCH_ROOT} ${SMS_PATCH_ROOT}/*)
 foreach(f ${_old})
+  # Managed below; dropping it here would rebuild every game unit.
+  if(f STREQUAL "headers.stamp")
+    continue()
+  endif()
   list(FIND _touched ${f} idx)
   if(idx EQUAL -1)
     file(REMOVE ${SMS_PATCH_ROOT}/${f})

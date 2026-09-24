@@ -11,20 +11,19 @@ Native PC port of Super Mario Sunshine (GMSE01), built from the matching decompi
 
 PC-only changes to game source should eventually move into the decomp behind `#ifdef TARGET_PC` (or compile identically under MWCC), verified there by `ninja changes_all` and the DOL hash.
 
-## Running
+## Build and run
 
-For Windows, use the [MSYS2 MINGW32 build and run instructions](BUILD.md#windows-msys2-mingw32).
-The commands below are for Linux.
+| System | Build | Run with your GMSE01 Rev 0 disc image |
+| --- | --- | --- |
+| Linux | `./build_linux.sh` | `./run_linux.sh "/path/to/Super Mario Sunshine (US).iso"` |
+| Windows (MSYS2 MINGW32) | `./build_windows.sh` | `./run_windows.sh '/path/to/Super Mario Sunshine (US).iso'` |
 
-```sh
-cmake -B build -G "Unix Makefiles"
-nice -n 19 make -C build -j2 sms
-build/sms "/path/to/Super Mario Sunshine (US).iso"   # a window; add --headless for no window
-```
+See [BUILD.md](BUILD.md) for dependencies, Windows `.cmd` launchers, and manual build commands.
+On Linux, `SMS_HEADLESS=1 ./run_linux.sh "/path/to/Super Mario Sunshine (US).iso"` uses offscreen rendering.
+Each run script can also find a single image in its build directory's `rom/` folder.
 
 - **The game comes from your disc image** (`.iso`/`.gcm`, or Dolphin `.ciso`), read in place through `platform/disc`.
-  Pass it as the argument or set `SMS_DISC_IMAGE`.
-  On this machine the default is `/home/netflix/sms/Super Mario Sunshine (2002)(Nintendo)(US).iso`.
+  Pass an image path, set `SMS_DISC_IMAGE`, or place one image in `build/rom/` on Linux or `build32/bin/rom/` on Windows.
   An extracted disc still works: pass its `files/` directory (the disc's `sys/fst.bin` next to it keeps entry numbers exact).
 - Saves go to a host-file memory card in slot A: `$SMS_SAVE_DIR`, default `~/.local/share/sms-port/card-a`.
 - Sound plays through SDL2 (`platform/audio`); `SMS_AUDIO=0` mutes it and `SMS_AUDIO_WAV=out.wav` records it.
