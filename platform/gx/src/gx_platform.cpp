@@ -278,6 +278,11 @@ void sms_gx_pump_events(void) {
             if (ev.type == SDL_KEYDOWN && !ev.key.repeat) GXPC_OverlayToggle();
             continue;
         }
+        // F7 with the overlay open cycles the game speed
+        if (ev.type == SDL_KEYDOWN && ev.key.keysym.scancode == SDL_SCANCODE_F7 && GXPC_OverlayVisible()) {
+            if (!ev.key.repeat) GXPC_CycleSpeed();
+            continue;
+        }
         if (s_eventCb) s_eventCb(&ev);
         if (ev.type == SDL_QUIT ||
             (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_CLOSE)) {

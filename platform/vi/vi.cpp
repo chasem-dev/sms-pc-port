@@ -107,6 +107,9 @@ void shots_poll(u32 field, void* xfb)
 		g_next_shot++;
 }
 
+// The debug overlay's speed multiplier (sms_gx; absent in builds without it).
+extern "C" int GXPC_GetSpeed(void) __attribute__((weak));
+
 void* timer_thread(void*)
 {
 	// SMS_VI_HZ=<rate> overrides the 59.94 Hz retrace (benchmarking).
@@ -117,7 +120,8 @@ void* timer_thread(void*)
 	struct timespec t;
 	clock_gettime(CLOCK_MONOTONIC, &t);
 	for (;;) {
-		t.tv_nsec += period_ns;
+		int speed = GXPC_GetSpeed ? GXPC_GetSpeed() : 1;
+		t.tv_nsec += period_ns / (speed > 0 ? speed : 1);
 		while (t.tv_nsec >= 1000000000) {
 			t.tv_nsec -= 1000000000;
 			t.tv_sec++;

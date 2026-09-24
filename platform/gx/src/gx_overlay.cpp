@@ -17,6 +17,8 @@
 namespace {
 
 bool s_visible = false;
+const int kSpeeds[] = {1, 2, 4, 10};
+int s_speedIndex = 0;
 
 double nowSeconds() {
     timespec ts;
@@ -95,6 +97,10 @@ void drawText(std::vector<uint8_t>& px, int w, int h, int x, int y, const char* 
 extern "C" {
 
 void GXPC_OverlayToggle(void) { s_visible = !s_visible; }
+int GXPC_OverlayVisible(void) { return s_visible; }
+
+void GXPC_CycleSpeed(void) { s_speedIndex = (s_speedIndex + 1) % int(sizeof kSpeeds / sizeof kSpeeds[0]); }
+int GXPC_GetSpeed(void) { return kSpeeds[s_speedIndex]; }
 
 void GXPC_OverlayDraw(int winW, int winH) {
     s_clock.tick();
@@ -110,7 +116,7 @@ void GXPC_OverlayDraw(int winW, int winH) {
 
     char text[2048];
     snprintf(text, sizeof text,
-             "FPS %.1f   frame %.1f ms avg, %.1f ms worst\n"
+             "FPS %.1f   frame %.1f ms avg, %.1f ms worst   speed x%d\n"
              "sms_gx %.1f ms/frame\n"
              "draws %u   vertices %u   EFB copies %u\n"
              "texture uploads %u   shader compiles %u\n"
@@ -125,8 +131,9 @@ void GXPC_OverlayDraw(int winW, int winH) {
              "X: V     Y: F     Z: Z\n"
              "L: Q     R: E     Start: Enter\n"
              "D-pad: 1 2 3 4\n"
-             "`: this overlay     Esc: quit",
-             s_clock.fps, s_clock.avgMs, s_clock.maxMs, s_clock.gxMs, st.draws, st.vertices, st.efbCopies,
+             "`: this overlay     F7: speed x1/x2/x4/x10\n"
+             "Esc: quit",
+             s_clock.fps, s_clock.avgMs, s_clock.maxMs, GXPC_GetSpeed(), s_clock.gxMs, st.draws, st.vertices, st.efbCopies,
              st.textureUploads, st.shaderCompiles, s_clock.total, int(up) / 60, int(up) % 60, winW, winH,
              s_renderer.c_str());
 
