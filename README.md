@@ -14,7 +14,12 @@ Native PC port of Super Mario Sunshine (GMSE01), built from the matching decompi
 
 - **Decompilation bugs go in the decomp** (`sms-english`, the `decomp/` submodule): source that does not do what retail does (a wrong member, a swapped argument, a wrong constant) is fixed there, verified with `ninja changes_all` and the DOL hash, and picked up here by bumping the submodule.
   A decomp bug can show up only on PC (MWCC and g++ read the same wrong source differently), and it is still a decomp bug.
-- **PC-specific fixes go in `decomp-patches/`**: byte order (`endian-*`), host compiler leniency (`0001`–`0010`, `ret-*`), host services (`thp-*`, `audio-*`), port-only features (`port-*`, `SMS_*` switches). Each patch starts with a `Reason:` line saying why it cannot live in the decomp.
+- **Decomp matching progress comes first.**
+  A decomp fix lands in `sms-english` only when it keeps every function's match (no regression in `ninja changes_all`, and the DOL hash unchanged).
+  When the only correct spelling found so far costs match percentage, the decomp keeps its matching form with a `TODO` naming the behaviour difference, and the port carries the correction as a `decomp-patches/` patch whose `Reason:` line says it is pending a matching decomp spelling (today only `ret-01`, `TConductor::isBossDefeated`'s missing `default:` arm).
+  Once a spelling that matches as well is found, the fix moves to the decomp and the patch is deleted.
+- **PC-specific fixes go in `decomp-patches/`**: byte order (`endian-*`), host compiler leniency (`0001`–`0010`, `0015`, `ret-02..03`), host services (`thp-*`, `audio-*`), port-only features (`port-*`, `SMS_*` switches). Each patch starts with a `Reason:` line saying why it cannot live in the decomp.
+  Apart from the pending decomp fixes above, a patch never corrects the decomp's behaviour; it only adapts retail's behaviour to the PC.
 - **Emulation of the hardware goes in `platform/`** (GX, DVD, OS, audio), never in game source.
 - Example: the sun-glass tint that stopped part-way down the screen was a decomp bug (`TOrthoProj`'s reconstructed constructor stored its last two edges swapped), so it was fixed in `sms-english` and verified against retail, not patched here.
 
@@ -140,11 +145,9 @@ Each file in `decomp-patches/` starts with a `Reason:` line; they are applied in
 | `endian-01..16` | Loader-site byte-order fixes (JPA, J2D BLO, BMG, JUTColor, PRM, SPC, streams, DL vertex counts, sequences, card saves, THP headers, J3DSkinDeform/J3DCluster display lists, the plaza shine-shadow sphere, the HUD/map 2D archive swap); see `platform/endian/README.md`. |
 | `port-02` | `SMS_WARP` / `SMS_WARP_MOVIE`: debug warp or movie from a file-select load. |
 | `audio-01..02` | JAudio bitfield/byte-order fixes (`TChannel` mix config, BMS note-on flags); see `platform/audio/README.md`. |
-| `ret-01` | `TConductor::isBossDefeated`: the `default:` arm retail has; waiting for a decomp spelling that keeps MWCC's compare tree (see below). |
+| `ret-01` | Pending decomp fix: `TConductor::isBossDefeated`'s `default:` arm, which retail has; every spelling with it tried so far lowers the decomp's match (98.8% to 95.6%), so it stays here until one matches (see *Where a fix goes*). |
 | `ret-02..03` | Explicit returns for the 37 functions that fall off the end of a non-void body and whose value nothing reads (undefined behaviour under g++, harmless under MWCC). |
 | `thp-01..02` | Host THP decoder (portable bit reader and IDCT, big-endian audio header); see `platform/thp/README.md`. |
-
-0001–0010 and 0015 are candidates for `#ifdef TARGET_PC` (or neutral) fixes in the decomp itself.
 
 ## Boot status
 
