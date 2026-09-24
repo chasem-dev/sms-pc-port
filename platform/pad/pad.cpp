@@ -210,7 +210,7 @@ bool held(int c)
 	return false;
 }
 
-s8 axis8(s16 v, int range)
+s8 axis8(int v, int range)
 {
 	int x = v * range / 32767;
 	if (x > -8 && x < 8)
@@ -411,11 +411,11 @@ extern "C" u32 PADRead(PADStatus* status)
 		y = y * 7 / 10;
 	}
 	s.stickX    = (s8)(x ? x : axis8(g_axis[0], 100));
-	s.stickY    = (s8)(y ? y : axis8((s16)-g_axis[1], 100));
+	s.stickY    = (s8)(y ? y : axis8(-g_axis[1], 100));
 	int cx      = held(C_CRIGHT) * 100 - held(C_CLEFT) * 100;
 	int cy      = held(C_CUP) * 100 - held(C_CDOWN) * 100;
 	s.substickX = (s8)(cx ? cx : axis8(g_axis[2], 100));
-	s.substickY = (s8)(cy ? cy : axis8((s16)-g_axis[3], 100));
+	s.substickY = (s8)(cy ? cy : axis8(-g_axis[3], 100));
 	return PAD_CHAN0_BIT;
 }
 
