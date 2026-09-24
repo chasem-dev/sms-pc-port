@@ -136,6 +136,8 @@ void executeCopy(uint32_t execReg);
 void markXfMemDirty();
 uint32_t peekColor(int x, int y);  // A<<24|R<<16|G<<8|B
 uint32_t peekZ(int x, int y);      // 24-bit
+void pixMetricClear();
+uint32_t pixMetricRead();
 
 // ---------------------------------------------------------------- textures (gx_texture.cpp)
 struct TexKey;
@@ -145,6 +147,11 @@ void textureInvalidateRange(const void* p, uint32_t size);
 void textureShutdown();
 unsigned efbCopyLookup(const void* addr, int* w, int* h);
 void efbCopyRegister(const void* addr, unsigned tex, int w, int h, uint32_t fmt);
+void efbCopySetBytes(const void* addr, uint32_t bytes);
+void textureCpuWrote(const void* p, uint32_t size);
+uint32_t copyLayout(uint32_t copyFmt, bool z);
+uint32_t encodeTexture(const uint8_t* rgba, uint32_t fmt, uint32_t w, uint32_t h, uint8_t* dst);
+uint32_t texLevelBytes(uint32_t fmt, uint32_t w, uint32_t h);
 
 // ---------------------------------------------------------------- shaders (gx_shader.cpp)
 struct ShaderProgram {

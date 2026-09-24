@@ -54,7 +54,9 @@
     X(PFNGLCHECKFRAMEBUFFERSTATUSPROC, glCheckFramebufferStatus)                    \
     X(PFNGLDELETEFRAMEBUFFERSPROC, glDeleteFramebuffers)                            \
     X(PFNGLBLITFRAMEBUFFERPROC, glBlitFramebuffer) X(PFNGLREADPIXELSPROC, glReadPixels) \
-    X(PFNGLPIXELSTOREIPROC, glPixelStorei)
+    X(PFNGLPIXELSTOREIPROC, glPixelStorei)                                          \
+    X(PFNGLGENQUERIESPROC, glGenQueries) X(PFNGLBEGINQUERYPROC, glBeginQuery)       \
+    X(PFNGLENDQUERYPROC, glEndQuery) X(PFNGLGETQUERYOBJECTUIVPROC, glGetQueryObjectuiv)
 
 #define SMS_GX_DECLARE(type, name) extern type gx_##name;
 extern "C++" {
@@ -146,5 +148,9 @@ SMS_GX_GL_FUNCS(SMS_GX_ALIAS)
 #define glBlitFramebuffer gx_glBlitFramebuffer
 #define glReadPixels gx_glReadPixels
 #define glPixelStorei gx_glPixelStorei
+#define glGenQueries gx_glGenQueries
+#define glBeginQuery gx_glBeginQuery
+#define glEndQuery gx_glEndQuery
+#define glGetQueryObjectuiv gx_glGetQueryObjectuiv
 
 #endif

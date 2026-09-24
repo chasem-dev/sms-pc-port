@@ -113,7 +113,6 @@ The following are accepted, and their state is stored, but they have no or only 
 | --- | --- |
 | `GXSetMisc` | no-op |
 | `GXEnableBreakPt`, `GXDisableBreakPt` | no-op |
-| `GXReadPixMetric`, `GXClearPixMetric` | return zeros |
 | `GXPokeAlphaRead` | no-op |
 | `GXSetDither` | dithering is not emulated |
 | `GXSetCopyFilter`, `GXSetDispCopyGamma` | stored, not applied to the XFB |
@@ -163,8 +162,9 @@ Without them it still compiles, but only a host-supplied context (`GXPC_Init(get
   Emboss texgen passes the source coordinate through.
 - **Early-Z.**
   With `GXSetZCompLoc(GX_TRUE)` and alpha test, the hardware writes depth for pixels that fail the alpha test; GL does not.
-- **EFB copies stay on the GPU.**
-  They are not written back to RAM, so CPU reads of copied textures see stale bytes.
+- **EFB copies are also written back to RAM.**
+  Every texture copy is read back and stored in its GX tile layout (the GL copy stays as the sampling fast path), because the game reads some on the CPU: Delfino's goop map (`TPollutionLayer::isPolluted`) is updated only by EFB copies. A `DCFlushRange`/`DCStoreRange` over a copy drops the GL copy so RAM wins again. `SMS_GX_COPY_WRITEBACK=0` turns write-back off; `SMS_GX_COPY_LOG=n` logs the first n write-backs.
+- **Pixel metrics** (`GXClearPixMetric`/`GXReadPixMetric`) count samples that pass (a GL occlusion query) plus 4 per triangle, which the pollution counters subtract again; copy passes are not counted.
   `GXPeekARGB` and `GXPeekZ` read back one pixel synchronously, which is slow.
 - **Textures written by the CPU as 16-bit words** in host byte order would decode with swapped bytes.
   Formats made of bytes (I4, I8, IA4, C8, RGBA8) are unaffected.

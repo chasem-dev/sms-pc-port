@@ -10,7 +10,13 @@ Native PC port of Super Mario Sunshine (GMSE01), built from the matching decompi
 - `decomp-patches/` — the decomp source changes the port cannot avoid, applied to copies at configure time (never to `decomp/`).
 - Assets are never stored here: the port reads the user's own disc image (or extracted disc) at run time.
 
-PC-only changes to game source should eventually move into the decomp behind `#ifdef TARGET_PC` (or compile identically under MWCC), verified there by `ninja changes_all` and the DOL hash.
+### Where a fix goes
+
+- **Decompilation bugs go in the decomp** (`sms-english`, the `decomp/` submodule): source that does not do what retail does (a wrong member, a swapped argument, a wrong constant) is fixed there, verified with `ninja changes_all` and the DOL hash, and picked up here by bumping the submodule.
+  A decomp bug can show up only on PC (MWCC and g++ read the same wrong source differently), and it is still a decomp bug.
+- **PC-specific fixes go in `decomp-patches/`**: byte order (`endian-*`), host compiler leniency (`0001`–`0010`, `ret-*`), host services (`thp-*`, `audio-*`), port-only features (`port-*`, `SMS_*` switches). Each patch starts with a `Reason:` line saying why it cannot live in the decomp.
+- **Emulation of the hardware goes in `platform/`** (GX, DVD, OS, audio), never in game source.
+- `port-03` is a decomp bug (the Group 2D 2 ortho camera's width and height are swapped in `MarDirectorInitECT.cpp`) carried as a patch until the fix lands in `sms-english`.
 
 ## Build and run
 

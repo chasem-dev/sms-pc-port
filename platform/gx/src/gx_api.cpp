@@ -1510,8 +1510,14 @@ void GXReadMemMetric(u32* a, u32* b, u32* c, u32* d, u32* e, u32* f, u32* gg, u3
     *a = *b = *c = *d = *e = *f = *gg = *h = *i = *j = 0;
 }
 void GXClearMemMetric(void) {}
-void GXReadPixMetric(u32* a, u32* b, u32* c, u32* d, u32* e, u32* f) { *a = *b = *c = *d = *e = *f = 0; }
-void GXClearPixMetric(void) {}
+// top/bottom pixels in and colour pixels in all report the pixels that
+// passed (plus 4 per triangle, see gx_render.cpp); the rest read zero.
+void GXReadPixMetric(u32* topIn, u32* topOut, u32* botIn, u32* botOut, u32* clrIn, u32* copyClks) {
+    u32 n = pixMetricRead();
+    *topIn = *botIn = *clrIn = n;
+    *topOut = *botOut = *copyClks = 0;
+}
+void GXClearPixMetric(void) { pixMetricClear(); }
 void GXSetVCacheMetric(GXVCachePerf) {}
 void GXReadVCacheMetric(u32* a, u32* b, u32* c) { *a = *b = *c = 0; }
 void GXClearVCacheMetric(void) {}

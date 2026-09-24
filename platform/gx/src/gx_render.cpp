@@ -505,6 +505,51 @@ static void statsFrame() {
     gx0 = s_gxSeconds;
 }
 
+// Pixel metrics (GXClearPixMetric/GXReadPixMetric). Delfino's pollution
+// counters draw each goop layer with an alpha test and read how many pixels
+// reached the colour unit; the game subtracts 4 per polygon of what it drew,
+// so the count is the samples that passed plus 4 per triangle. Copy passes
+// in between are left out.
+static GLuint s_pixQuery = 0;
+static bool s_pixActive = false;
+static uint32_t s_pixTris = 0;
+static uint64_t s_pixSamples = 0;
+
+static void pixQueryEnd() {
+    glEndQuery(GL_SAMPLES_PASSED);
+    GLuint n = 0;
+    glGetQueryObjectuiv(s_pixQuery, GL_QUERY_RESULT, &n);
+    s_pixSamples += n;
+}
+
+void pixMetricClear() {
+    flushBatch();
+    if (!s_ready) return;
+    if (!s_pixQuery) glGenQueries(1, &s_pixQuery);
+    if (s_pixActive) glEndQuery(GL_SAMPLES_PASSED);
+    s_pixSamples = 0;
+    s_pixTris = 0;
+    glBeginQuery(GL_SAMPLES_PASSED, s_pixQuery);
+    s_pixActive = true;
+}
+
+uint32_t pixMetricRead() {
+    flushBatch();
+    if (!s_ready || !s_pixActive) return 0;
+    pixQueryEnd();  // reading does not reset the hardware counter: keep counting
+    glBeginQuery(GL_SAMPLES_PASSED, s_pixQuery);
+    uint64_t S2 = uint64_t(s_scale) * uint64_t(s_scale);
+    uint64_t v = s_pixSamples / S2 + uint64_t(s_pixTris) * 4;
+    return v > 0xFFFFFFFFu ? 0xFFFFFFFFu : uint32_t(v);
+}
+
+static void pixMetricPause() {
+    if (s_pixActive) pixQueryEnd();
+}
+static void pixMetricResume() {
+    if (s_pixActive) glBeginQuery(GL_SAMPLES_PASSED, s_pixQuery);
+}
+
 void flushBatch() {
     if (s_bidx.empty() || !s_ready) {
         s_bidx.clear();
@@ -557,6 +602,7 @@ void flushBatch() {
         glDrawElements(mode, GLsizei(s_bidx.size()), GL_UNSIGNED_INT, nullptr);
     }
     s_stats.draws++;
+    if (s_pixActive && s_bclass == PRIM_TRIS) s_pixTris += uint32_t(s_bidx.size() / 3);
     if (traceFile()) traceDraw(int(s_bclass), uint32_t(s_bverts.size()), uint32_t(s_bidx.size()), s_bverts.data(), sp->id);
     s_bidx.clear();
     s_bverts.clear();
@@ -578,9 +624,59 @@ static void clearRect(int x, int y, int w, int h) {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
 
+// GXCopyTex stores into main memory on the hardware, and the game reads some
+// copies back on the CPU: Delfino's goop is cleaned by drawing into the EFB
+// and copying into the pollution texture, whose bytes TPollutionLayer::
+// isPolluted then reads. So every texture copy is also read back and stored
+// in RAM in its GX layout (the GL copy stays as the fast path for sampling).
+// SMS_GX_COPY_WRITEBACK=0 turns this off.
+static bool copyWriteBackEnabled() {
+    static int on = -1;
+    if (on < 0) {
+        const char* e = getenv("SMS_GX_COPY_WRITEBACK");
+        on = !(e && e[0] == '0');
+    }
+    return on != 0;
+}
+
+static void writeBackCopy(const void* dest, GLuint tex, int ow, int oh, uint32_t layout) {
+    if (!dest || !copyWriteBackEnabled()) return;
+    static std::vector<uint8_t> px, texels, enc;
+    int S = s_scale, tw = ow / S, th = oh / S;
+    if (tw < 1 || th < 1) return;
+    px.resize(size_t(ow) * oh * 4);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, s_tmpFbo);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, ow, oh, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+    const uint8_t* src = px.data();
+    if (S != 1) {
+        texels.resize(size_t(tw) * th * 4);
+        for (int y = 0; y < th; y++)
+            for (int x = 0; x < tw; x++)
+                memcpy(&texels[(size_t(y) * tw + x) * 4], &px[(size_t(y * S) * ow + x * S) * 4], 4);
+        src = texels.data();
+    }
+    enc.resize(texLevelBytes(layout, tw, th));
+    uint32_t n = encodeTexture(src, layout, tw, th, enc.data());
+    static int logCopies = -1;
+    if (logCopies < 0) logCopies = getenv("SMS_GX_COPY_LOG") ? atoi(getenv("SMS_GX_COPY_LOG")) : 0;
+    if (logCopies > 0) {
+        uint32_t changed = 0;
+        for (uint32_t i = 0; i < n; i++) changed += enc[i] != static_cast<const uint8_t*>(dest)[i];
+        logmsg("copy write-back %p layout %u %dx%d: %u bytes, %u changed", dest, layout, tw, th, n, changed);
+        logCopies--;
+    }
+    memcpy(const_cast<void*>(dest), enc.data(), n);
+    textureInvalidateRange(dest, n);
+    efbCopySetBytes(dest, n);
+    (void)tex;
+}
+
 void executeCopy(uint32_t ctrl) {
     if (!s_ready) return;
     flushBatch();
+    pixMetricPause();
+    struct Resume { ~Resume() { pixMetricResume(); } } resume;
     GxTimer timer;
     GxTimer tc(&s_copySeconds);
     uint32_t src = g.bp[BP_COPY_SRC_TL], size = g.bp[BP_COPY_SRC_WH];
@@ -652,6 +748,7 @@ void executeCopy(uint32_t ctrl) {
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         glBindVertexArray(s_vao);
         s_stats.efbCopies++;
+        writeBackCopy(dest, tex, ow, oh, copyLayout(fmt, zcopy));
     }
     if (clear) clearRect(x, y, w, h);
     glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
@@ -689,7 +786,10 @@ void GXPC_Shutdown(void) {
     s_ready = false;
 }
 
-void GXPC_InvalidateRange(const void* p, uint32_t size) { textureInvalidateRange(p, size); }
+void GXPC_InvalidateRange(const void* p, uint32_t size) {
+    if (copyWriteBackEnabled()) textureCpuWrote(p, size);
+    else textureInvalidateRange(p, size);
+}
 
 }  // extern "C"
 
