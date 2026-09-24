@@ -3,6 +3,7 @@
 #include "gl_funcs.h"
 
 #include <string.h>
+#include <algorithm>
 #include <unordered_map>
 
 namespace gx {
@@ -196,6 +197,12 @@ struct TexEntry {
 };
 
 static std::unordered_map<TexKey, TexEntry, TexKeyHash> s_cache;
+// The cache's entries by address (sorted lazily), so a cache flush finds the
+// textures it overlaps without walking the whole cache. Entries are never
+// erased before shutdown, so the pointers stay valid.
+static std::vector<std::pair<uintptr_t, TexEntry*>> s_ranges;
+static bool s_rangesSorted = true;
+static uint32_t s_maxBytes = 0;
 static uint32_t s_gen = 1;
 static std::vector<uint8_t> s_decodeBuf;
 
@@ -212,17 +219,27 @@ static void drainDeletedCopies();
 void textureInvalidateAll() { s_gen++; }
 
 void textureInvalidateRange(const void* p, uint32_t size) {
-    const uint8_t* lo = static_cast<const uint8_t*>(p);
-    const uint8_t* hi = lo + size;
-    for (auto& kv : s_cache) {
-        const uint8_t* a = static_cast<const uint8_t*>(kv.first.ptr);
-        if (a < hi && a + kv.second.bytes > lo) kv.second.checkedGen = 0;
+    if (!s_rangesSorted) {
+        std::sort(s_ranges.begin(), s_ranges.end(),
+                  [](const std::pair<uintptr_t, TexEntry*>& a, const std::pair<uintptr_t, TexEntry*>& b) {
+                      return a.first < b.first;
+                  });
+        s_rangesSorted = true;
     }
+    uintptr_t lo = reinterpret_cast<uintptr_t>(p), hi = lo + size;
+    uintptr_t from = lo > s_maxBytes ? lo - s_maxBytes : 0;
+    auto it = std::lower_bound(s_ranges.begin(), s_ranges.end(), from,
+                               [](const std::pair<uintptr_t, TexEntry*>& a, uintptr_t v) { return a.first < v; });
+    for (; it != s_ranges.end() && it->first < hi; ++it)
+        if (it->first + it->second->bytes > lo) it->second->checkedGen = 0;
 }
 
 void textureShutdown() {
     for (auto& kv : s_cache) glDeleteTextures(1, &kv.second.tex);
     s_cache.clear();
+    s_ranges.clear();
+    s_rangesSorted = true;
+    s_maxBytes = 0;
     for (auto& kv : s_copies) glDeleteTextures(1, &kv.second.tex);
     s_copies.clear();
     drainDeletedCopies();
@@ -438,6 +455,9 @@ unsigned bindTextureMap(int map, float* outW, float* outH) {
     if (!e.tex) {
         glGenTextures(1, &e.tex);
         upload = true;
+        s_ranges.emplace_back(reinterpret_cast<uintptr_t>(ptr), &e);
+        s_rangesSorted = false;
+        if (total > s_maxBytes) s_maxBytes = total;
     }
     if (e.checkedGen != s_gen || upload) {
         uint64_t dh = hashBytes(ptr, total);

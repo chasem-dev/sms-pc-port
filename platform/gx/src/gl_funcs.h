@@ -56,7 +56,13 @@
     X(PFNGLBLITFRAMEBUFFERPROC, glBlitFramebuffer) X(PFNGLREADPIXELSPROC, glReadPixels) \
     X(PFNGLPIXELSTOREIPROC, glPixelStorei)                                          \
     X(PFNGLGENQUERIESPROC, glGenQueries) X(PFNGLBEGINQUERYPROC, glBeginQuery)       \
-    X(PFNGLENDQUERYPROC, glEndQuery) X(PFNGLGETQUERYOBJECTUIVPROC, glGetQueryObjectuiv)
+    X(PFNGLENDQUERYPROC, glEndQuery) X(PFNGLGETQUERYOBJECTUIVPROC, glGetQueryObjectuiv) \
+    X(PFNGLDELETEQUERIESPROC, glDeleteQueries) X(PFNGLDELETEBUFFERSPROC, glDeleteBuffers) \
+    X(PFNGLMAPBUFFERRANGEPROC, glMapBufferRange) X(PFNGLUNMAPBUFFERPROC, glUnmapBuffer) \
+    X(PFNGLFENCESYNCPROC, glFenceSync) X(PFNGLCLIENTWAITSYNCPROC, glClientWaitSync) X(PFNGLDELETESYNCPROC, glDeleteSync) \
+    X(PFNGLGENRENDERBUFFERSPROC, glGenRenderbuffers) X(PFNGLBINDRENDERBUFFERPROC, glBindRenderbuffer) \
+    X(PFNGLRENDERBUFFERSTORAGEPROC, glRenderbufferStorage)                          \
+    X(PFNGLFRAMEBUFFERRENDERBUFFERPROC, glFramebufferRenderbuffer)
 
 #define SMS_GX_DECLARE(type, name) extern type gx_##name;
 extern "C++" {
@@ -152,5 +158,16 @@ SMS_GX_GL_FUNCS(SMS_GX_ALIAS)
 #define glBeginQuery gx_glBeginQuery
 #define glEndQuery gx_glEndQuery
 #define glGetQueryObjectuiv gx_glGetQueryObjectuiv
+#define glDeleteQueries gx_glDeleteQueries
+#define glDeleteBuffers gx_glDeleteBuffers
+#define glMapBufferRange gx_glMapBufferRange
+#define glUnmapBuffer gx_glUnmapBuffer
+#define glFenceSync gx_glFenceSync
+#define glClientWaitSync gx_glClientWaitSync
+#define glDeleteSync gx_glDeleteSync
+#define glGenRenderbuffers gx_glGenRenderbuffers
+#define glBindRenderbuffer gx_glBindRenderbuffer
+#define glRenderbufferStorage gx_glRenderbufferStorage
+#define glFramebufferRenderbuffer gx_glFramebufferRenderbuffer
 
 #endif

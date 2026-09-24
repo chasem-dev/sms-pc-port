@@ -122,6 +122,7 @@ struct HostVertex {
     uint8_t clr[2][4];
     float tex[8][2];
     uint8_t mtx[12];  // pos matrix index, tex0..7 matrix index, 3 pad
+    HostVertex() {}   // left uninitialised: the loader writes every field
 };
 
 enum PrimClass { PRIM_TRIS, PRIM_LINES, PRIM_POINTS };
@@ -130,7 +131,11 @@ enum PrimClass { PRIM_TRIS, PRIM_LINES, PRIM_POINTS };
 void rendererInit(int efbScale);
 void flushBatch();
 // adds a primitive; vertices already decoded
-void addPrimitive(uint8_t opcode, const HostVertex* v, uint32_t count);
+// The loader decodes a primitive's vertices straight into the batch:
+// primitiveBegin returns room for `count` vertices (after flushing when the
+// primitive class changes), primitiveEnd adds the primitive's indices.
+HostVertex* primitiveBegin(uint8_t opcode, uint32_t count);
+void primitiveEnd(uint8_t opcode, uint32_t count);
 void onStateChange();  // called before any register write that changes state
 void executeCopy(uint32_t execReg);
 void markXfMemDirty();

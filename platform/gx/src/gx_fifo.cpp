@@ -284,6 +284,28 @@ static void buildLayout(int vat, VtxLayout& L) {
     L.size = s;
 }
 
+// buildLayout for the current registers, rebuilt only when they change
+static const VtxLayout& layoutFor(int vat) {
+    struct Cached {
+        uint32_t lo, hi, A, B, C;
+        bool valid;
+        VtxLayout L;
+    };
+    static Cached cache[8];
+    Cached& c = cache[vat];
+    if (!c.valid || c.lo != g.cpVcdLo || c.hi != g.cpVcdHi || c.A != g.cpVatA[vat] || c.B != g.cpVatB[vat] ||
+        c.C != g.cpVatC[vat]) {
+        c.lo = g.cpVcdLo;
+        c.hi = g.cpVcdHi;
+        c.A = g.cpVatA[vat];
+        c.B = g.cpVatB[vat];
+        c.C = g.cpVatC[vat];
+        c.valid = true;
+        buildLayout(vat, c.L);
+    }
+    return c.L;
+}
+
 // reads one component from p in the given byte order
 static inline float readComp(const uint8_t* p, uint8_t type, float scale, bool be) {
     switch (type) {
@@ -352,98 +374,118 @@ static const uint8_t* arrayElem(int slot, uint32_t idx) {
     return base + size_t(idx) * g.arrayStride[slot];
 }
 
-static std::vector<HostVertex> s_verts;
 static uint32_t s_vertsLoaded = 0;
 
+// Where one attribute comes from: inline in the command stream (base null)
+// or an array element picked by an 8/16-bit index.
+struct AttrSrc {
+    const uint8_t* base;
+    uint32_t stride;
+    uint32_t cs;   // component size
+    float scale;
+    uint8_t mode, type, n;
+    bool be;
+};
+
+static inline void attrSrc(AttrSrc& s, const AttrFmt& a, int slot, int n, float scale) {
+    s.mode = a.mode;
+    s.type = a.type;
+    s.n = uint8_t(n);
+    s.cs = a.type < 5 ? kCompSize[a.type] : 4;
+    s.scale = scale;
+    s.base = a.mode >= 2 ? g.arrayBase[slot] : nullptr;
+    s.stride = g.arrayStride[slot];
+    s.be = a.mode >= 2 ? g.arrayBigEndian[slot] : true;
+}
+
 static const uint8_t* decodeVertices(uint8_t opcode, const uint8_t* p, uint32_t count, const VtxLayout& L) {
-    s_verts.resize(count);
+    s_vertsLoaded += count;
+    // every field of a vertex starts from this, then the attributes it has
+    HostVertex tmpl;
+    memset(static_cast<void*>(&tmpl), 0, sizeof(tmpl));
+    tmpl.nrm[2] = 1.0f;
+    memset(tmpl.clr, 255, sizeof(tmpl.clr));
     uint32_t matA = g.xfReg[XFR_MATIDX_A], matB = g.xfReg[XFR_MATIDX_B];
-    uint8_t defMtx[9] = {
+    const uint8_t defMtx[9] = {
         uint8_t(matA & 63), uint8_t((matA >> 6) & 63), uint8_t((matA >> 12) & 63), uint8_t((matA >> 18) & 63),
         uint8_t((matA >> 24) & 63), uint8_t(matB & 63), uint8_t((matB >> 6) & 63), uint8_t((matB >> 12) & 63),
         uint8_t((matB >> 18) & 63),
     };
-    auto readIndex = [&](uint8_t mode) -> uint32_t {
+    memcpy(tmpl.mtx, defMtx, 9);
+
+    AttrSrc pos{}, nrm{}, clr[2]{}, tex[8]{};
+    if (L.pos.mode) attrSrc(pos, L.pos, ARR_POS, L.pos.cnt ? 3 : 2, 1.0f / float(1u << L.pos.frac));
+    if (L.nrm.mode) {
+        uint8_t t = L.nrm.type;
+        float sc = t == 1 ? 1.0f / 64 : t == 3 ? 1.0f / 16384 : t == 0 ? 1.0f / 128 : t == 2 ? 1.0f / 32768 : 1.0f;
+        attrSrc(nrm, L.nrm, ARR_NRM, L.nbt ? 3 : 1, sc);  // n counts vectors
+    }
+    for (int c = 0; c < 2; c++)
+        if (L.clr[c].mode) {
+            attrSrc(clr[c], L.clr[c], ARR_CLR0 + c, 1, 1.0f);
+            clr[c].cs = L.clr[c].type < 6 ? kColorSize[L.clr[c].type] : 4;
+        }
+    int texList[8], nTex = 0;
+    for (int t = 0; t < 8; t++)
+        if (L.tex[t].mode) {
+            attrSrc(tex[t], L.tex[t], ARR_TEX0 + t, L.tex[t].cnt ? 2 : 1, 1.0f / float(1u << L.tex[t].frac));
+            texList[nTex++] = t;
+        }
+    bool anyMtxIdx = L.pnmtx.mode != 0;
+    for (int i = 0; i < 8; i++) anyMtxIdx |= L.texmtx[i].mode != 0;
+
+    // the element an attribute reads: inline data (advancing p) or an array element
+    auto elem = [&](const AttrSrc& a, uint32_t inlineBytes) -> const uint8_t* {
+        if (a.mode == 1) {
+            const uint8_t* src = p;
+            p += inlineBytes;
+            return src;
+        }
         uint32_t idx;
-        if (mode == 2) { idx = p[0]; p += 1; }
-        else { idx = be16(p); p += 2; }
-        return idx;
+        if (a.mode == 2) idx = *p++;
+        else {
+            idx = be16(p);
+            p += 2;
+        }
+        return a.base ? a.base + size_t(idx) * a.stride : nullptr;
     };
+
+    HostVertex* out = primitiveBegin(opcode, count);
     for (uint32_t v = 0; v < count; v++) {
-        HostVertex& hv = s_verts[v];
-        memset(&hv, 0, sizeof(hv));
-        hv.nrm[2] = 1.0f;
-        hv.clr[0][0] = hv.clr[0][1] = hv.clr[0][2] = hv.clr[0][3] = 255;
-        hv.clr[1][0] = hv.clr[1][1] = hv.clr[1][2] = hv.clr[1][3] = 255;
-        memcpy(hv.mtx, defMtx, 9);
-        if (L.pnmtx.mode) hv.mtx[0] = *p++ & 63;
-        for (int i = 0; i < 8; i++)
-            if (L.texmtx[i].mode) hv.mtx[1 + i] = *p++ & 63;
-        // position
-        if (L.pos.mode) {
-            const uint8_t* src = p;
-            bool be = true;
-            int n = L.pos.cnt ? 3 : 2;
-            uint32_t cs = L.pos.type < 5 ? kCompSize[L.pos.type] : 4;
-            if (L.pos.mode == 1) p += cs * n;
-            else { src = arrayElem(ARR_POS, readIndex(L.pos.mode)); be = g.arrayBigEndian[ARR_POS]; }
-            if (src) {
-                float sc = 1.0f / float(1u << L.pos.frac);
-                for (int i = 0; i < n; i++) hv.pos[i] = readComp(src + i * cs, L.pos.type, sc, be);
-            }
+        HostVertex& hv = out[v];
+        memcpy(&hv, &tmpl, sizeof(hv));
+        if (anyMtxIdx) {
+            if (L.pnmtx.mode) hv.mtx[0] = *p++ & 63;
+            for (int i = 0; i < 8; i++)
+                if (L.texmtx[i].mode) hv.mtx[1 + i] = *p++ & 63;
         }
-        // normal / NBT
-        if (L.nrm.mode) {
-            uint32_t cs = L.nrm.type < 5 ? kCompSize[L.nrm.type] : 4;
-            float sc = L.nrm.type == 1 ? 1.0f / 64 : L.nrm.type == 3 ? 1.0f / 16384 : L.nrm.type == 0 ? 1.0f / 128 : L.nrm.type == 2 ? 1.0f / 32768 : 1.0f;
+        if (pos.mode) {
+            if (const uint8_t* src = elem(pos, pos.cs * pos.n))
+                for (int i = 0; i < pos.n; i++) hv.pos[i] = readComp(src + i * pos.cs, pos.type, pos.scale, pos.be);
+        }
+        if (nrm.mode) {
             float* dst[3] = {hv.nrm, hv.bin, hv.tan};
-            int nvec = L.nbt ? 3 : 1;
-            if (L.nrm.mode == 1) {
-                for (int k = 0; k < nvec; k++)
-                    for (int i = 0; i < 3; i++) dst[k][i] = readComp(p + (k * 3 + i) * cs, L.nrm.type, sc, true);
-                p += cs * 3 * nvec;
-            } else if (L.nbt3) {
-                for (int k = 0; k < 3; k++) {
-                    const uint8_t* src = arrayElem(ARR_NRM, readIndex(L.nrm.mode));
-                    if (src)
-                        for (int i = 0; i < 3; i++)
-                            dst[k][i] = readComp(src + i * cs, L.nrm.type, sc, g.arrayBigEndian[ARR_NRM]);
-                }
-            } else {
-                const uint8_t* src = arrayElem(ARR_NRM, readIndex(L.nrm.mode));
-                if (src)
-                    for (int k = 0; k < nvec; k++)
-                        for (int i = 0; i < 3; i++)
-                            dst[k][i] = readComp(src + (k * 3 + i) * cs, L.nrm.type, sc, g.arrayBigEndian[ARR_NRM]);
+            if (L.nbt3 && nrm.mode != 1) {
+                for (int k = 0; k < 3; k++)
+                    if (const uint8_t* src = elem(nrm, 0))
+                        for (int i = 0; i < 3; i++) dst[k][i] = readComp(src + i * nrm.cs, nrm.type, nrm.scale, nrm.be);
+            } else if (const uint8_t* src = elem(nrm, nrm.cs * 3 * nrm.n)) {
+                for (int k = 0; k < nrm.n; k++)
+                    for (int i = 0; i < 3; i++)
+                        dst[k][i] = readComp(src + (k * 3 + i) * nrm.cs, nrm.type, nrm.scale, nrm.be);
             }
         }
-        for (int c = 0; c < 2; c++) {
-            if (!L.clr[c].mode) continue;
-            if (L.clr[c].mode == 1) {
-                readColor(p, L.clr[c].type, true, hv.clr[c]);
-                p += L.clr[c].type < 6 ? kColorSize[L.clr[c].type] : 4;
-            } else {
-                const uint8_t* src = arrayElem(ARR_CLR0 + c, readIndex(L.clr[c].mode));
-                if (src) readColor(src, L.clr[c].type, g.arrayBigEndian[ARR_CLR0 + c], hv.clr[c]);
-            }
-        }
-        for (int t = 0; t < 8; t++) {
-            const AttrFmt& a = L.tex[t];
-            if (!a.mode) continue;
-            int n = a.cnt ? 2 : 1;
-            uint32_t cs = a.type < 5 ? kCompSize[a.type] : 4;
-            const uint8_t* src = p;
-            bool be = true;
-            if (a.mode == 1) p += cs * n;
-            else { src = arrayElem(ARR_TEX0 + t, readIndex(a.mode)); be = g.arrayBigEndian[ARR_TEX0 + t]; }
-            if (src) {
-                float sc = 1.0f / float(1u << a.frac);
-                for (int i = 0; i < n; i++) hv.tex[t][i] = readComp(src + i * cs, a.type, sc, be);
-            }
+        for (int c = 0; c < 2; c++)
+            if (clr[c].mode)
+                if (const uint8_t* src = elem(clr[c], clr[c].cs)) readColor(src, clr[c].type, clr[c].be, hv.clr[c]);
+        for (int k = 0; k < nTex; k++) {
+            int t = texList[k];
+            const AttrSrc& a = tex[t];
+            if (const uint8_t* src = elem(a, a.cs * a.n))
+                for (int i = 0; i < a.n; i++) hv.tex[t][i] = readComp(src + i * a.cs, a.type, a.scale, a.be);
         }
     }
-    s_vertsLoaded += count;
-    addPrimitive(opcode, s_verts.data(), count);
+    primitiveEnd(opcode, count);
     return p;
 }
 
@@ -513,8 +555,7 @@ static uint32_t parse(const uint8_t* p, uint32_t n, uint32_t* need) {
             writeBP(be32(p + 1));
         } else if (op >= 0x80 && op < 0xC0) {
             if (avail < 3) { len = 3; break; }
-            VtxLayout L;
-            buildLayout(op & 7, L);
+            const VtxLayout& L = layoutFor(op & 7);
             uint32_t cnt = be16(p + 1);
             len = 3 + cnt * L.size;
             if (avail < len) break;
@@ -541,9 +582,7 @@ static uint32_t parse(const uint8_t* p, uint32_t n, uint32_t* need) {
         else if (op >= 0x80 && op < 0xC0) {
             if (avail < 3) len = 3;
             else {
-                VtxLayout L;
-                buildLayout(op & 7, L);
-                len = 3 + be16(p + 1) * L.size;
+                len = 3 + be16(p + 1) * layoutFor(op & 7).size;
             }
         }
         *need = len;

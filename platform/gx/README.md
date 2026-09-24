@@ -97,7 +97,7 @@ The renderer reads its state only from that register file, so API calls, GD disp
 - `SMS_GX_TRACE_PROBE=x,y;x,y` adds, after each traced draw, the EFB colour/alpha and depth at those points, which finds the draw that breaks a pixel.
 - `SMS_GX_DUMP_EVERY=n` writes every n-th XFB as a PPM (see above).
 - `SMS_GX_DUMP_SHADERS=dir` writes every generated program as `dir/prog<id>.vs/.fs`; traces name the program each draw used.
-- `SMS_GX_STATS=n` logs, every n display frames, draws/vertices per frame, shader compiles, texture uploads and the milliseconds per frame spent in sms_gx (split into texture decode, GL draw, EFB copies and peeks).
+- `SMS_GX_STATS=n` logs, every n display frames, draws/vertices per frame, shader compiles, texture uploads, the milliseconds per frame spent in sms_gx (split into texture decode, GL draw, EFB copies and peeks) and how many reads per frame made the CPU wait for the GPU.
   On this machine the 32-bit build renders with Mesa llvmpipe (no 32-bit NVIDIA GL is installed), so GPU work shows up as CPU time at the first sync point, usually the EFB copy.
 
 ## Coverage against `api-surface.tsv`
@@ -165,7 +165,12 @@ Without them it still compiles, but only a host-supplied context (`GXPC_Init(get
 - **EFB copies are also written back to RAM.**
   Every texture copy is read back and stored in its GX tile layout (the GL copy stays as the sampling fast path), because the game reads some on the CPU: Delfino's goop map (`TPollutionLayer::isPolluted`) is updated only by EFB copies. A `DCFlushRange`/`DCStoreRange` over a copy drops the GL copy so RAM wins again. `SMS_GX_COPY_WRITEBACK=0` turns write-back off; `SMS_GX_COPY_LOG=n` logs the first n write-backs.
 - **Pixel metrics** (`GXClearPixMetric`/`GXReadPixMetric`) count samples that pass (a GL occlusion query) plus 4 per triangle, which the pollution counters subtract again; copy passes are not counted.
-  `GXPeekARGB` and `GXPeekZ` read back one pixel synchronously, which is slow.
+- **GPU reads arrive one frame late.**
+  A synchronous read makes the CPU wait until the GPU has drawn everything queued, so the two stop overlapping (the plaza made 30–85 such reads a frame).
+  As in Dolphin, the reads the game repeats every frame are answered from the same read one frame earlier: copy write-backs are stored a frame later (a pixel buffer and a fence), a pixel-metric pair is answered from the previous frame's query when it drew the same number of triangles, and each group of `GXPeekARGB`/`GXPeekZ` calls with no drawing in between is answered from the previous frame's 1× snapshot of the EFB.
+  A read with no previous frame to use is still synchronous.
+  Rendering is unchanged, but the game sees the goop map and pollution counts a frame later, so scripted runs can drift slightly from the synchronous ones.
+  `SMS_GX_SYNC_READS=1` goes back to synchronous reads.
 - **Textures written by the CPU as 16-bit words** in host byte order would decode with swapped bytes.
   Formats made of bytes (I4, I8, IA4, C8, RGBA8) are unaffected.
 - **Pixel formats.**

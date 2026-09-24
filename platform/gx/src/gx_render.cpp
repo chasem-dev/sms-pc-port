@@ -208,13 +208,21 @@ void onStateChange() {
     if (!s_bidx.empty()) flushBatch();
 }
 
-void addPrimitive(uint8_t op, const HostVertex* v, uint32_t n) {
-    if (!s_ready || n == 0) return;
+HostVertex* primitiveBegin(uint8_t op, uint32_t n) {
     PrimClass cls = op >= 0xB8 ? PRIM_POINTS : op >= 0xA8 ? PRIM_LINES : PRIM_TRIS;
     if (!s_bidx.empty() && cls != s_bclass) flushBatch();
     s_bclass = cls;
-    uint32_t base = uint32_t(s_bverts.size());
-    s_bverts.insert(s_bverts.end(), v, v + n);
+    size_t at = s_bverts.size();
+    s_bverts.resize(at + n);
+    return s_bverts.data() + at;
+}
+
+void primitiveEnd(uint8_t op, uint32_t n) {
+    if (!s_ready || n == 0) {
+        s_bverts.resize(s_bverts.size() - n);
+        return;
+    }
+    uint32_t base = uint32_t(s_bverts.size() - n);
     auto tri = [&](uint32_t a, uint32_t b, uint32_t c) {
         s_bidx.push_back(base + a);
         s_bidx.push_back(base + b);
@@ -473,9 +481,10 @@ struct GxTimer {
     explicit GxTimer(double* a = &s_gxSeconds) : acc(a) {}
     ~GxTimer() { *acc += nowSeconds() - t0; }
 };
+static uint32_t s_syncReads = 0;  // reads that made the CPU wait for the GPU
 static void statsFrame() {
     static int every = -1;
-    static uint32_t frames = 0, draws = 0, verts = 0, compiles0 = 0, uploads0 = 0;
+    static uint32_t frames = 0, draws = 0, verts = 0, compiles0 = 0, uploads0 = 0, sync0 = 0;
     static double t0 = 0, gx0 = 0, tex0 = 0, draw0 = 0, copy0 = 0, peek0 = 0;
     if (every < 0) {
         const char* e = getenv("SMS_GX_STATS");
@@ -489,11 +498,14 @@ static void statsFrame() {
     if (frames < uint32_t(every)) return;
     double t = nowSeconds();
     logmsg("stats: %u frames, %.1f draws/frame, %.0f vertices/frame, %u shader compiles, %u texture uploads, "
-           "%.1f ms/frame total, %.1f ms/frame in sms_gx (textures %.1f, GL draw %.1f, copies %.1f, peeks %.1f)",
+           "%.1f ms/frame total, %.1f ms/frame in sms_gx (textures %.1f, GL draw %.1f, copies %.1f, peeks %.1f), "
+           "%.1f synchronous GPU reads/frame",
            frames, double(draws) / frames, double(verts) / frames, g_statShaderCompiles - compiles0,
            g_statTexUploads - uploads0, (t - t0) * 1000.0 / frames, (s_gxSeconds - gx0) * 1000.0 / frames,
            (s_texSeconds - tex0) * 1000.0 / frames, (s_drawSeconds - draw0) * 1000.0 / frames,
-           (s_copySeconds - copy0) * 1000.0 / frames, (s_peekSeconds - peek0) * 1000.0 / frames);
+           (s_copySeconds - copy0) * 1000.0 / frames, (s_peekSeconds - peek0) * 1000.0 / frames,
+           double(s_syncReads - sync0) / frames);
+    sync0 = s_syncReads;
     tex0 = s_texSeconds;
     draw0 = s_drawSeconds;
     copy0 = s_copySeconds;
@@ -505,49 +517,143 @@ static void statsFrame() {
     gx0 = s_gxSeconds;
 }
 
+// Asynchronous GPU reads. Every synchronous read (glReadPixels into client
+// memory, a query result) makes the CPU wait for all queued GPU work, which on
+// a real GPU serialises the two. Reads the game makes every frame are answered
+// from the same read one frame earlier instead (as Dolphin does), which the
+// game cannot tell apart; SMS_GX_SYNC_READS=1 goes back to synchronous reads.
+static uint32_t s_frameNo = 0;   // display copies so far
+static uint32_t s_drawGen = 0;   // bumped by anything that changes the EFB
+static bool asyncReads() {
+    static int on = -1;
+    if (on < 0) {
+        const char* e = getenv("SMS_GX_SYNC_READS");
+        on = !(e && e[0] == '1');
+    }
+    return on != 0;
+}
+
 // Pixel metrics (GXClearPixMetric/GXReadPixMetric). Delfino's pollution
 // counters draw each goop layer with an alpha test and read how many pixels
 // reached the colour unit; the game subtracts 4 per polygon of what it drew,
 // so the count is the samples that passed plus 4 per triangle. Copy passes
-// in between are left out.
-static GLuint s_pixQuery = 0;
-static bool s_pixActive = false;
+// in between are left out: they end the running query, which is summed at
+// the read. Each clear/read pair of a frame is a slot; a slot that drew the
+// same number of triangles one frame earlier, in one query, is answered from
+// that frame's query, otherwise the queries are waited for.
+enum { kMetricSlots = 32 };
+static GLuint s_mq[2][kMetricSlots];
+static uint32_t s_mqTris[2][kMetricSlots], s_mqFrame[2][kMetricSlots];
+static bool s_mqUsed[2][kMetricSlots];
+static int s_mqSlot = -1;
+static uint32_t s_mqSlotFrame = ~0u;
+static bool s_pixActive = false, s_pixTaint = false;
 static uint32_t s_pixTris = 0;
-static uint64_t s_pixSamples = 0;
+static uint64_t s_pixSamples = 0;  // counted before the pending queries
+static GLuint s_pixCur = 0;
+static bool s_pixCurPooled = false;
+static std::vector<GLuint> s_queryPool;
+static std::vector<std::pair<GLuint, bool>> s_pixPending;  // ended queries of this count, pooled?
 
-static void pixQueryEnd() {
-    glEndQuery(GL_SAMPLES_PASSED);
+static GLuint poolQuery() {
+    if (s_queryPool.empty()) {
+        GLuint q;
+        glGenQueries(1, &q);
+        return q;
+    }
+    GLuint q = s_queryPool.back();
+    s_queryPool.pop_back();
+    return q;
+}
+static void pixReleasePending() {
+    for (auto& q : s_pixPending)
+        if (q.second) s_queryPool.push_back(q.first);
+    s_pixPending.clear();
+}
+static uint64_t queryResult(GLuint q) {
     GLuint n = 0;
-    glGetQueryObjectuiv(s_pixQuery, GL_QUERY_RESULT, &n);
-    s_pixSamples += n;
+    glGetQueryObjectuiv(q, GL_QUERY_RESULT, &n);
+    return n;
 }
 
 void pixMetricClear() {
     flushBatch();
     if (!s_ready) return;
-    if (!s_pixQuery) glGenQueries(1, &s_pixQuery);
-    if (s_pixActive) glEndQuery(GL_SAMPLES_PASSED);
+    if (s_pixActive) {
+        glEndQuery(GL_SAMPLES_PASSED);
+        if (s_pixCurPooled) s_queryPool.push_back(s_pixCur);
+    }
+    pixReleasePending();
+    if (s_mqSlotFrame != s_frameNo) {
+        s_mqSlotFrame = s_frameNo;
+        s_mqSlot = -1;
+    }
+    s_mqSlot++;
+    int cur = s_frameNo & 1;
+    if (s_mqSlot < kMetricSlots) {
+        if (!s_mq[cur][s_mqSlot]) glGenQueries(1, &s_mq[cur][s_mqSlot]);
+        s_pixCur = s_mq[cur][s_mqSlot];
+        s_pixCurPooled = false;
+    } else {
+        s_pixCur = poolQuery();
+        s_pixCurPooled = true;
+    }
     s_pixSamples = 0;
     s_pixTris = 0;
-    glBeginQuery(GL_SAMPLES_PASSED, s_pixQuery);
+    s_pixTaint = !asyncReads() || s_mqSlot >= kMetricSlots;
+    glBeginQuery(GL_SAMPLES_PASSED, s_pixCur);
     s_pixActive = true;
 }
 
 uint32_t pixMetricRead() {
     flushBatch();
     if (!s_ready || !s_pixActive) return 0;
-    pixQueryEnd();  // reading does not reset the hardware counter: keep counting
-    glBeginQuery(GL_SAMPLES_PASSED, s_pixQuery);
+    glEndQuery(GL_SAMPLES_PASSED);
+    uint64_t samples = 0;
+    int cur = s_frameNo & 1, slot = s_mqSlot;
+    bool fromPrev = false;
+    if (!s_pixTaint) {
+        s_mqUsed[cur][slot] = true;
+        s_mqTris[cur][slot] = s_pixTris;
+        s_mqFrame[cur][slot] = s_frameNo;
+        int prev = cur ^ 1;
+        if (s_mqUsed[prev][slot] && s_mqFrame[prev][slot] + 1 == s_frameNo && s_mqTris[prev][slot] == s_pixTris) {
+            samples = queryResult(s_mq[prev][slot]);
+            fromPrev = true;
+        }
+    }
+    if (!fromPrev) {
+        s_syncReads++;
+        samples = s_pixSamples + queryResult(s_pixCur);
+        for (auto& q : s_pixPending) samples += queryResult(q.first);
+    }
+    pixReleasePending();
+    if (s_pixCurPooled) s_queryPool.push_back(s_pixCur);
+    // reading does not reset the hardware counter: keep counting (a second
+    // read before the next clear waits for its queries)
+    s_pixSamples = samples;
+    s_pixTaint = true;
+    s_pixCur = poolQuery();
+    s_pixCurPooled = true;
+    glBeginQuery(GL_SAMPLES_PASSED, s_pixCur);
     uint64_t S2 = uint64_t(s_scale) * uint64_t(s_scale);
-    uint64_t v = s_pixSamples / S2 + uint64_t(s_pixTris) * 4;
+    uint64_t v = samples / S2 + uint64_t(s_pixTris) * 4;
     return v > 0xFFFFFFFFu ? 0xFFFFFFFFu : uint32_t(v);
 }
 
 static void pixMetricPause() {
-    if (s_pixActive) pixQueryEnd();
+    if (s_pixActive) {
+        glEndQuery(GL_SAMPLES_PASSED);
+        s_pixPending.emplace_back(s_pixCur, s_pixCurPooled);
+        s_pixTaint = true;  // this count now spans several queries
+    }
 }
 static void pixMetricResume() {
-    if (s_pixActive) glBeginQuery(GL_SAMPLES_PASSED, s_pixQuery);
+    if (s_pixActive) {
+        s_pixCur = poolQuery();
+        s_pixCurPooled = true;
+        glBeginQuery(GL_SAMPLES_PASSED, s_pixCur);
+    }
 }
 
 void flushBatch() {
@@ -602,6 +708,7 @@ void flushBatch() {
         glDrawElements(mode, GLsizei(s_bidx.size()), GL_UNSIGNED_INT, nullptr);
     }
     s_stats.draws++;
+    s_drawGen++;
     if (s_pixActive && s_bclass == PRIM_TRIS) s_pixTris += uint32_t(s_bidx.size() / 3);
     if (traceFile()) traceDraw(int(s_bclass), uint32_t(s_bverts.size()), uint32_t(s_bidx.size()), s_bverts.data(), sp->id);
     s_bidx.clear();
@@ -639,16 +746,10 @@ static bool copyWriteBackEnabled() {
     return on != 0;
 }
 
-static void writeBackCopy(const void* dest, GLuint tex, int ow, int oh, uint32_t layout) {
-    if (!dest || !copyWriteBackEnabled()) return;
-    static std::vector<uint8_t> px, texels, enc;
+static void encodeAndStore(const uint8_t* px, const void* dest, int ow, int oh, uint32_t layout) {
+    static std::vector<uint8_t> texels, enc;
     int S = s_scale, tw = ow / S, th = oh / S;
-    if (tw < 1 || th < 1) return;
-    px.resize(size_t(ow) * oh * 4);
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, s_tmpFbo);
-    glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glReadPixels(0, 0, ow, oh, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
-    const uint8_t* src = px.data();
+    const uint8_t* src = px;
     if (S != 1) {
         texels.resize(size_t(tw) * th * 4);
         for (int y = 0; y < th; y++)
@@ -668,7 +769,96 @@ static void writeBackCopy(const void* dest, GLuint tex, int ow, int oh, uint32_t
     }
     memcpy(const_cast<void*>(dest), enc.data(), n);
     textureInvalidateRange(dest, n);
-    efbCopySetBytes(dest, n);
+}
+
+// A texture copy's write-back is read into a pixel buffer and stored one
+// frame later, when the GPU has long finished it (or earlier, when the next
+// copy to the same place comes). It is dropped when a newer copy of the same
+// frame supersedes it or when the destination's bytes
+// changed in the meantime (the CPU wrote them, or a stage load reused the
+// memory). A cache flush of the range alone does not drop it: games flush
+// copy destinations without writing them.
+struct PendingWriteBack {
+    const void* dest;
+    uint32_t bytes;
+    uint64_t hash;
+    GLuint pbo;
+    GLsync fence;
+    int ow, oh;
+    uint32_t layout, frame;
+    bool cancelled;
+};
+static std::vector<PendingWriteBack> s_writeBacks;
+static std::vector<GLuint> s_freePbos;
+
+static void resolveWriteBack(PendingWriteBack& w) {
+    if (!w.cancelled && hashBytes(w.dest, w.bytes) == w.hash) {
+        glClientWaitSync(w.fence, GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, w.pbo);
+        const void* px = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, GLsizeiptr(w.ow) * w.oh * 4, GL_MAP_READ_BIT);
+        if (px) encodeAndStore(static_cast<const uint8_t*>(px), w.dest, w.ow, w.oh, w.layout);
+        glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    }
+    glDeleteSync(w.fence);
+    s_freePbos.push_back(w.pbo);
+}
+
+// Stores the write-backs issued before this frame (all of them with `all`).
+static void resolveWriteBacks(bool all) {
+    size_t keep = 0;
+    for (size_t i = 0; i < s_writeBacks.size(); i++) {
+        PendingWriteBack& w = s_writeBacks[i];
+        if (!all && !w.cancelled && w.frame >= s_frameNo) s_writeBacks[keep++] = w;
+        else resolveWriteBack(w);
+    }
+    s_writeBacks.resize(keep);
+}
+
+static void writeBackCopy(const void* dest, GLuint tex, int ow, int oh, uint32_t layout) {
+    if (!dest || !copyWriteBackEnabled()) return;
+    int S = s_scale, tw = ow / S, th = oh / S;
+    if (tw < 1 || th < 1) return;
+    uint32_t bytes = texLevelBytes(layout, tw, th);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, s_tmpFbo);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    efbCopySetBytes(dest, bytes);
+    if (!asyncReads()) {
+        s_syncReads++;
+        static std::vector<uint8_t> px;
+        px.resize(size_t(ow) * oh * 4);
+        glReadPixels(0, 0, ow, oh, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+        encodeAndStore(px.data(), dest, ow, oh, layout);
+        return;
+    }
+    // A copy to the same place supersedes one of this frame; one from an
+    // earlier frame (most games copy to the same buffer every frame) is
+    // stored first, as the CPU may have read it in between.
+    size_t keep = 0;
+    for (size_t i = 0; i < s_writeBacks.size(); i++) {
+        PendingWriteBack& w = s_writeBacks[i];
+        if (w.dest != dest) s_writeBacks[keep++] = w;
+        else if (w.frame < s_frameNo) resolveWriteBack(w);
+        else {
+            w.cancelled = true;
+            resolveWriteBack(w);
+        }
+    }
+    s_writeBacks.resize(keep);
+    GLuint pbo;
+    if (!s_freePbos.empty()) {
+        pbo = s_freePbos.back();
+        s_freePbos.pop_back();
+    } else {
+        glGenBuffers(1, &pbo);
+    }
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo);
+    glBufferData(GL_PIXEL_PACK_BUFFER, GLsizeiptr(ow) * oh * 4, nullptr, GL_STREAM_READ);
+    glReadPixels(0, 0, ow, oh, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    PendingWriteBack w{dest, bytes, hashBytes(dest, bytes), pbo, glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0),
+                       ow, oh, layout, s_frameNo, false};
+    s_writeBacks.push_back(w);
     (void)tex;
 }
 
@@ -752,7 +942,10 @@ void executeCopy(uint32_t ctrl) {
     }
     if (clear) clearRect(x, y, w, h);
     glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
+    if (clear) s_drawGen++;
     if (disp) {
+        resolveWriteBacks(false);
+        s_frameNo++;
         traceFrameAdvance();
         statsFrame();
         s_lastFrameStats = s_stats;
@@ -794,24 +987,124 @@ void GXPC_InvalidateRange(const void* p, uint32_t size) {
 }  // extern "C"
 
 namespace gx {
-uint32_t peekColor(int x, int y) {
-    flushBatch();
-    GxTimer tp(&s_peekSeconds);
+// GXPeekARGB/GXPeekZ: the sun's lens-flare test peeks 17 depths a frame and
+// Mario's occlusion test one colour. Peeks with no drawing in between form a
+// group; the first peek of a group starts an asynchronous read of the whole
+// buffer, and the group is answered from the same group's read one frame
+// earlier (synchronously the first time a group appears).
+enum { kPeekGroups = 8 };
+struct PeekSnap {
+    GLuint pbo = 0;
+    GLsync fence = 0;
+    uint32_t frame = ~0u;
+    const uint8_t* map = nullptr;
+};
+static PeekSnap s_peek[2][kPeekGroups][2];  // [frame parity][group][colour, depth]
+static uint32_t s_peekDrawGen = ~0u, s_peekFrame = ~0u, s_peekIssued = 0;
+static int s_peekGroup = -1;
+
+static uint32_t peekSync(int x, int y, bool depth) {
+    s_syncReads++;
+    uint32_t v = 0;
     uint8_t px[4] = {0, 0, 0, 0};
     glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
+    if (depth) {
+        glPixelStorei(GL_PACK_ALIGNMENT, 4);
+        glReadPixels(x * s_scale, y * s_scale, 1, 1, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, &v);
+        return v;
+    }
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(x * s_scale, y * s_scale, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
-    uint32_t c = uint32_t(px[3]) << 24 | uint32_t(px[0]) << 16 | uint32_t(px[1]) << 8 | px[2];
+    return uint32_t(px[0]) | uint32_t(px[1]) << 8 | uint32_t(px[2]) << 16 | uint32_t(px[3]) << 24;
+}
+
+// A frame's peek snapshot is read at 1x: with a larger EFB scale the EFB is
+// first blitted (nearest) into this buffer, so a read stays 1.3 MiB.
+static GLuint s_peekFbo, s_peekColor, s_peekDepth;
+
+static GLuint peekSource() {
+    if (s_scale == 1) return s_efbFbo;
+    if (!s_peekFbo) {
+        glGenRenderbuffers(1, &s_peekColor);
+        glBindRenderbuffer(GL_RENDERBUFFER, s_peekColor);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, EFB_W, EFB_H);
+        glGenRenderbuffers(1, &s_peekDepth);
+        glBindRenderbuffer(GL_RENDERBUFFER, s_peekDepth);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, EFB_W, EFB_H);
+        glBindRenderbuffer(GL_RENDERBUFFER, 0);
+        glGenFramebuffers(1, &s_peekFbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, s_peekFbo);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, s_peekColor);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, s_peekDepth);
+    }
+    glDisable(GL_SCISSOR_TEST);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, s_efbFbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s_peekFbo);
+    glBlitFramebuffer(0, 0, EFB_W * s_scale, EFB_H * s_scale, 0, 0, EFB_W, EFB_H,
+                      GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+    return s_peekFbo;
+}
+
+// Returns the raw texel: RGBA bytes packed little-endian, or the 32-bit depth.
+static uint32_t peekRaw(int x, int y, bool depth) {
+    flushBatch();
+    GxTimer tp(&s_peekSeconds);
+    if (!asyncReads() || x < 0 || y < 0 || x >= EFB_W || y >= EFB_H) return peekSync(x, y, depth);
+    if (s_peekDrawGen != s_drawGen || s_peekFrame != s_frameNo) {
+        if (s_peekFrame != s_frameNo) s_peekGroup = -1;
+        s_peekGroup++;
+        s_peekDrawGen = s_drawGen;
+        s_peekFrame = s_frameNo;
+        s_peekIssued = 0;
+    }
+    if (s_peekGroup >= kPeekGroups) return peekSync(x, y, depth);
+    const GLsizeiptr bytes = GLsizeiptr(EFB_W) * EFB_H * 4;
+    int cur = s_frameNo & 1, t = depth ? 1 : 0;
+    if (!(s_peekIssued & (1u << t))) {
+        s_peekIssued |= 1u << t;
+        PeekSnap& now = s_peek[cur][s_peekGroup][t];
+        if (!now.pbo) glGenBuffers(1, &now.pbo);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, now.pbo);
+        if (now.map) {
+            glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+            now.map = nullptr;
+        }
+        if (now.fence) glDeleteSync(now.fence);
+        glBufferData(GL_PIXEL_PACK_BUFFER, bytes, nullptr, GL_STREAM_READ);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, peekSource());
+        glPixelStorei(GL_PACK_ALIGNMENT, 4);
+        if (depth) glReadPixels(0, 0, EFB_W, EFB_H, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+        else glReadPixels(0, 0, EFB_W, EFB_H, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
+        now.fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        now.frame = s_frameNo;
+    }
+    PeekSnap& prev = s_peek[cur ^ 1][s_peekGroup][t];
+    if (prev.pbo && prev.frame + 1 == s_frameNo) {
+        if (!prev.map) {
+            glClientWaitSync(prev.fence, GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
+            glBindBuffer(GL_PIXEL_PACK_BUFFER, prev.pbo);
+            prev.map = static_cast<const uint8_t*>(glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, bytes, GL_MAP_READ_BIT));
+            glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+        }
+        if (prev.map) {
+            uint32_t v;
+            memcpy(&v, prev.map + (size_t(y) * EFB_W + x) * 4, 4);
+            return v;
+        }
+    }
+    return peekSync(x, y, depth);
+}
+
+uint32_t peekColor(int x, int y) {
+    uint32_t p = peekRaw(x, y, false);
+    uint32_t c = (p >> 24) << 24 | (p & 0xFF) << 16 | ((p >> 8) & 0xFF) << 8 | ((p >> 16) & 0xFF);
     if (FILE* f = traceFile()) fprintf(f, "  GXPeekARGB(%d,%d) = %08X\n", x, y, c);
     return c;
 }
 uint32_t peekZ(int x, int y) {
-    flushBatch();
-    GxTimer tp(&s_peekSeconds);
-    uint32_t v = 0;
-    glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
-    glPixelStorei(GL_PACK_ALIGNMENT, 4);
-    glReadPixels(x * s_scale, y * s_scale, 1, 1, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, &v);
+    uint32_t v = peekRaw(x, y, true);
     if (FILE* f = traceFile()) fprintf(f, "  GXPeekZ(%d,%d) = %06X\n", x, y, v >> 8);
     return v >> 8;
 }
