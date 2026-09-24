@@ -116,7 +116,7 @@ void GXPC_OverlayToggle(void);
 void GXPC_OverlayDraw(int winW, int winH);
 int GXPC_OverlayVisible(void);
 /* Game speed multiplier (F7 while the overlay is open cycles 1, 2, 4, 10);
- * the VI retrace timer divides its period by it. */
+ * VI retraces and host audio advance at this rate, including THP movies. */
 void GXPC_CycleSpeed(void);
 int GXPC_GetSpeed(void);
 

@@ -14,25 +14,39 @@ In the MINGW32 shell, enter this repository (for example,
 `cd /c/path/to/sms-pc-port`) and build:
 
 ```sh
-./build_pc.sh
+./build_windows.sh
 ```
 
 The build creates `build32/bin/sms.exe`.
 To play, pass the path to your North American Rev 0 image:
 
 ```sh
-./run_pc.sh '../sms-english/Super Mario Sunshine (2002)(Nintendo)(US).iso'
+./run_windows.sh '../sms-english/Super Mario Sunshine (2002)(Nintendo)(US).iso'
 ```
 
-Or place exactly one `.iso`, `.gcm`, or Dolphin `.ciso` image in `build32/bin/rom/` and run `./run_pc.sh` without an argument.
+Or place exactly one `.iso`, `.gcm`, or Dolphin `.ciso` image in `build32/bin/rom/` and run `./run_windows.sh` without an argument.
 Use single quotes around paths with spaces or parentheses.
 The executable contains game code, while the image supplies models, textures, levels, audio, and other game files at runtime.
-The build does not bundle these assets; `build32/bin/rom/` is only a convenient image search folder for `run_pc.sh`.
+The build does not bundle these assets; `build32/bin/rom/` is only a convenient image search folder for `run_windows.sh`.
 The port reads the image in place; it does not copy or extract it.
 Keep the MINGW32 shell open when running so its SDL2 and compiler runtime DLLs are on `PATH`.
 Saves default to `%APPDATA%/sms-port/card-a`, or set `SMS_SAVE_DIR`.
 The Windows build uses the SDL2 window; the EGL headless mode is not available in this setup.
 See [Keys](#keys) below for keyboard and controller input.
+
+### From PowerShell or Command Prompt
+
+The `.sh` files are Bash scripts, so do not open them through Windows file associations or Git for Windows.
+If MSYS2 is installed at `C:\msys64`, open PowerShell in this repository and run:
+
+```powershell
+.\build_windows.cmd
+.\run_windows.cmd '..\sms-english\Super Mario Sunshine (2002)(Nintendo)(US).iso'
+```
+
+If you placed one image in `build32\bin\rom\`, run `.\run_windows.cmd` without an argument.
+The `.cmd` launchers start MSYS2's MINGW32 Bash and put its 32-bit DLLs on `PATH` for you.
+If MSYS2 is installed elsewhere, set `MSYS2_ROOT` to its installation folder first.
 
 ### Decompilation build on Windows
 
@@ -124,7 +138,7 @@ Edit `bindings.txt` to change them.
 | Start | Enter |
 | D-pad | 1 2 3 4 |
 | Debug overlay (FPS, stats, keys) | ` (backtick) |
-| Game speed x1 / x2 / x4 / x10 (overlay open) | F7 |
+| Game and movie speed x1 / x2 / x4 / x10 (overlay open) | F7 |
 | Quit | Esc |
 
 A USB or Bluetooth game controller also works.

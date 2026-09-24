@@ -3,11 +3,11 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 if [[ "${MSYSTEM:-}" != MINGW32 ]]; then
-  echo 'Open the MSYS2 MINGW32 shell before running ./run_pc.sh' >&2
+  echo 'Open the MSYS2 MINGW32 shell before running ./run_windows.sh' >&2
   exit 1
 fi
 if [[ ! -f build32/bin/sms.exe ]]; then
-  echo 'Build the port with ./build_pc.sh first.' >&2
+  echo 'Build the port with ./build_windows.sh first.' >&2
   exit 1
 fi
 if (( $# == 0 )); then
@@ -18,5 +18,9 @@ if (( $# == 0 )); then
     exit 1
   fi
   set -- "${images[0]}"
+fi
+if [[ ! -f "$1" && ! -d "$1" ]]; then
+  echo "Disc image or extracted disc folder not found: $1" >&2
+  exit 1
 fi
 exec build32/bin/sms.exe "$@"

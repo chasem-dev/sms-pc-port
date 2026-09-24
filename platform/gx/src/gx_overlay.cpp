@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <atomic>
 #include <string>
 #include <vector>
 
@@ -18,7 +19,7 @@ namespace {
 
 bool s_visible = false;
 const int kSpeeds[] = {1, 2, 4, 10};
-int s_speedIndex = 0;
+std::atomic<int> s_speedIndex(0);
 
 double nowSeconds() {
     timespec ts;
@@ -99,8 +100,8 @@ extern "C" {
 void GXPC_OverlayToggle(void) { s_visible = !s_visible; }
 int GXPC_OverlayVisible(void) { return s_visible; }
 
-void GXPC_CycleSpeed(void) { s_speedIndex = (s_speedIndex + 1) % int(sizeof kSpeeds / sizeof kSpeeds[0]); }
-int GXPC_GetSpeed(void) { return kSpeeds[s_speedIndex]; }
+void GXPC_CycleSpeed(void) { s_speedIndex.store((s_speedIndex.load() + 1) % int(sizeof kSpeeds / sizeof kSpeeds[0])); }
+int GXPC_GetSpeed(void) { return kSpeeds[s_speedIndex.load()]; }
 
 void GXPC_OverlayDraw(int winW, int winH) {
     s_clock.tick();

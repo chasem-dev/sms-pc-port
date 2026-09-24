@@ -21,6 +21,7 @@
 #include <dolphin/ai.h>
 
 #include <atomic>
+#include <algorithm>
 #include <dlfcn.h>
 #include "port_host.h"
 #include <mutex>
@@ -29,6 +30,7 @@
 #include <vector>
 
 extern "C" int port_audio_dsp_frame_pending(void) __attribute__((weak));
+extern "C" int GXPC_GetSpeed(void) __attribute__((weak));
 
 namespace {
 
@@ -68,7 +70,6 @@ struct Ai {
 	std::mutex mu;
 	std::vector<int16_t> fifo;
 	size_t head, count;
-	size_t target; // frames the FIFO is kept filled to
 	bool sdl;
 	s16 lastL, lastR;
 	// Null clock
@@ -79,6 +80,14 @@ struct Ai {
 } g;
 
 size_t fifo_cap() { return g.fifo.size() / 2; }
+
+int playback_speed()
+{
+	int speed = GXPC_GetSpeed ? GXPC_GetSpeed() : 1;
+	return speed > 0 ? speed : 1;
+}
+
+size_t fifo_target(int speed) { return 3 * 560 * (size_t)speed; }
 
 void wav_header(FILE* f, u32 bytes)
 {
@@ -121,27 +130,23 @@ void sdl_callback(void*, uint8_t* stream, int len)
 {
 	int16_t* out = (int16_t*)stream;
 	size_t frames = (size_t)len / 4;
+	int speed = playback_speed();
 	bool low;
 	{
 		std::lock_guard<std::mutex> lk(g.mu);
 		size_t cap = fifo_cap();
-		size_t n   = frames < g.count ? frames : g.count;
-		for (size_t i = 0; i < n; i++) {
-			size_t p   = (g.head + i) % cap;
-			out[i * 2]     = g.fifo[p * 2];
-			out[i * 2 + 1] = g.fifo[p * 2 + 1];
-		}
-		if (n) {
-			g.lastL = out[n * 2 - 2];
-			g.lastR = out[n * 2 - 1];
-		}
-		for (size_t i = n; i < frames; i++) { // underrun: hold the last sample
+		for (size_t i = 0; i < frames; i++) {
+			if (g.count) {
+				g.lastL = g.fifo[g.head * 2];
+				g.lastR = g.fifo[g.head * 2 + 1];
+				size_t consumed = std::min(g.count, (size_t)speed);
+				g.head = (g.head + consumed) % cap;
+				g.count -= consumed;
+			}
 			out[i * 2]     = g.lastL;
 			out[i * 2 + 1] = g.lastR;
 		}
-		g.head = (g.head + n) % cap;
-		g.count -= n;
-		low = g.count < g.target;
+		low = g.count < fifo_target(speed);
 	}
 	if (low)
 		port_irq_kick();
@@ -153,7 +158,7 @@ void* null_clock(void*)
 	clock_gettime(CLOCK_MONOTONIC, &t);
 	for (;;) {
 		u32 len = g.latchedLen ? g.latchedLen : 0x460 * 2;
-		long ns = (long)((u64)(len / 4) * 1000000000ull / kRate);
+		long ns = (long)((u64)(len / 4) * 1000000000ull / kRate / playback_speed());
 		t.tv_nsec += ns;
 		while (t.tv_nsec >= 1000000000) {
 			t.tv_nsec -= 1000000000;
@@ -215,9 +220,8 @@ void init_output()
 	g.enabled     = !(e && strcmp(e, "0") == 0) && !port_no_audio;
 	e             = getenv("SMS_AUDIO_SWAP");
 	g.swap        = !(e && strcmp(e, "0") == 0);
-	g.fifo.assign(8192 * 2, 0);
+	g.fifo.assign(32768 * 2, 0);
 	g.head = g.count = 0;
-	g.target         = 3 * 560;
 	if (!g.enabled) {
 		port_log("[audio] SMS_AUDIO=0: AI DMA idle (no mixing, no output)\n");
 		return;
@@ -298,14 +302,15 @@ void ai_poll()
 	}
 	if (g.sdl) {
 		size_t level;
+		size_t target = fifo_target(playback_speed());
 		{
 			std::lock_guard<std::mutex> lk(g.mu);
 			level = g.count;
 		}
-		if (level < g.target) {
+		if (level < target) {
 			dma_block(); // one block per delivery: the audio thread must run
 			std::lock_guard<std::mutex> lk(g.mu);
-			if (g.count < g.target)
+			if (g.count < target)
 				port_irq_kick();
 		}
 	} else if (g.due.load() > 0) {
