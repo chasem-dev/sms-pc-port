@@ -3,10 +3,22 @@
 Optional additions to the game, each switched on by putting it here.
 Nothing in this folder is needed to play, and git ignores everything in it but this file.
 
+## Installing with get.py
+
+`tools/mods/get.py` downloads a mod from where its authors publish it and installs it here, removing that mod's previous install first:
+
+```sh
+python3 tools/mods/get.py textures    # the UHD texture pack, into mods/textures/GMS
+```
+
+It needs 7-Zip (`7z`, `7zz` or `7za`) to unpack the downloads, and checks the download against the release it expects.
+The texture pack is about 1 GB to download and 3 GB installed.
+`--keep-download` keeps the downloaded archive in `mods/.downloads/`.
+
 ## textures/: HD texture packs
 
 Texture packs made for Dolphin's "Load Custom Textures" work unchanged.
-Unpack one into `mods/textures/`, for example the [Super Mario Sunshine UHD Texture Pack](https://github.com/qashto/Super_Mario_Sunshine_UHD_Texture_Pack) (from its `GMS.7z` release, `GMS/Textures/GMS` goes to `mods/textures/GMS`).
+Unpack one into `mods/textures/` (or let `get.py textures` install the UHD pack), for example the [Super Mario Sunshine UHD Texture Pack](https://github.com/qashto/Super_Mario_Sunshine_UHD_Texture_Pack) (from its `GMS.7z` release, `GMS/Textures/GMS` goes to `mods/textures/GMS`).
 Every `tex1_*.png` and `tex1_*.dds` below `mods/textures/` is used, in any sub-folder; several packs can sit side by side.
 DDS files can hold BC1–BC3 or BC7 blocks or plain RGBA; a GPU that cannot sample BC7 (macOS) gets them decoded.
 
@@ -28,4 +40,4 @@ Each file there takes the place of the disc's file at the same path, or is added
 The log names each mod and how many files it replaced and added.
 
 This covers mods that only change data.
-Mods that also change the game's code, such as Super Mario Eclipse, need that code ported too; see [docs/ECLIPSE.md](../docs/ECLIPSE.md).
+Mods that also change the game's code need that code ported too.

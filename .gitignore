@@ -11,3 +11,4 @@
 # Optional mods (texture packs and the like), see mods/README.md.
 /mods/*
 !/mods/README.md
+__pycache__/
