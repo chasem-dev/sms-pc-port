@@ -1,6 +1,7 @@
-# 64-bit build plan
+# 64-bit build
 
 Goal: a native 64-bit build (`SMS_ARCH=64`) alongside the existing 32-bit one, which must keep behaving exactly as it does today.
+Build and run it with `SMS_ARCH=64 ./build.sh` and `SMS_ARCH=64 ./run.sh` (output in `build/linux-64/`); the macOS build (`build/macos-64/`) is always this 64-bit build.
 
 Why it is worth it: no multilib or i386 driver packages on Linux (the 32-bit NVIDIA userspace is a common failure point), macOS and ARM64 hosts only run 64-bit code, and distributions keep dropping i386.
 
@@ -61,7 +62,7 @@ Instead, keep every address the game can see below 4 GiB, so a pointer that goes
 
 ## Where each change goes
 
-The rules in `README.md` ("Where a fix goes") decide this.
+The rules in [DEVELOPMENT.md](DEVELOPMENT.md#where-a-fix-goes) decide this.
 
 - **Decomp (`sms-english`):**
   The two declaration/definition mismatches are decomp inaccuracies (the declaration should spell the definition's type), invisible to MWCC, so they are fixed there and verified with `ninja changes_all` and the DOL hash.
@@ -75,7 +76,7 @@ The rules in `README.md` ("Where a fix goes") decide this.
   Recommendation: B for the recurring patterns (script VM slots, `JSUConvertOffsetToPtr`, loader block structs, heap/archive arithmetic), A for one-off sites.
 - **Platform (`platform/`, port-owned):**
   Low-address stacks and allocations (step 1), the 4 GiB check, and any 64-bit handling in `platform/gx`, `platform/os`, `platform/dvd`, `platform/ar` and `platform/endian`.
-- **Build:** CMake keeps `-m32` as the default where multilib exists and selects 64-bit with `SMS_ARCH=64`; `build_linux.sh`/`build_windows.sh` gain a 64-bit option; nothing changes for existing 32-bit builds.
+- **Build:** CMake keeps `-m32` as the default where multilib exists and selects 64-bit with `SMS_ARCH=64`; `build.sh` and `run.sh` take `SMS_ARCH=64` and keep each word size in its own folder (`build/linux-32/`, `build/linux-64/`); nothing changes for existing 32-bit builds.
 
 ## Keeping 32-bit unchanged
 

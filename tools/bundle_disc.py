@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bundle the game's disc assets into the port executable.
 
-usage: tools/bundle_disc.py --exe build/sms --disc GAME.iso --out build/sms-standalone
+usage: tools/bundle_disc.py --exe build/linux-32/sms --disc GAME.iso --out build/linux-32/sms-standalone
 
 Reads a GMSE01 disc image (.iso/.gcm, or Dolphin .ciso), packs it into a
 trimmed GameCube image (boot.bin, bi2.bin, apploader, main.dol, then the FST

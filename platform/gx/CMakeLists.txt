@@ -60,7 +60,7 @@ if(APPLE)
   foreach(_cand
       "${SMS_SDL2_FRAMEWORK}"
       "${CMAKE_BINARY_DIR}/SDL2.framework"
-      "${CMAKE_SOURCE_DIR}/third_party/SDL2.framework"
+      "${CMAKE_SOURCE_DIR}/build/deps/SDL2.framework"
       "/Library/Frameworks/SDL2.framework")
     if(_cand AND EXISTS "${_cand}/SDL2")
       set(_sms_sdl2_fw "${_cand}")

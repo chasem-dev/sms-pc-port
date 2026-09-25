@@ -3,7 +3,7 @@
 # Runs inside gdb (static, the program is not started):
 #
 #   TRACE_RANGES=$DOLPHIN_ORACLE/ranges/play.txt TRACE_OUT=build/trace.ranges \
-#       gdb -batch -x tools/trace_resolve.py build/sms
+#       gdb -batch -x tools/trace_resolve.py build/linux-32/sms
 #
 # Several range files: TRACE_RANGES=a.txt:b.txt. Writes TRACE_OUT (read by
 # platform/trace, SMS_TRACE_RANGES) and TRACE_OUT.json (field names per label,

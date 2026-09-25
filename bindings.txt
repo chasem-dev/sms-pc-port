@@ -6,7 +6,8 @@
 # Keys: letters, digits, ENTER ESC SPACE TAB BACKSPACE UP DOWN LEFT RIGHT
 #       LSHIFT RSHIFT LCTRL RCTRL LALT RALT KP_0..KP_9 KP_ENTER F1..F4
 #       COMMA PERIOD SLASH SEMICOLON ... or #<SDL scancode>
-# Loaded from ./bindings.txt (or ../bindings.txt when run from build/),
+# Loaded from ./bindings.txt (run.sh starts the game in this folder; or
+# ../../bindings.txt when started from build/<os>-<arch>/),
 # or from the path in SMS_BINDINGS. These are the built-in defaults:
 A = SPACE X
 B = LSHIFT RSHIFT C

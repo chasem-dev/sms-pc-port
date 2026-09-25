@@ -1,152 +1,111 @@
-# Building and running the native port
+# Building and running
 
-| System | Build | Run |
-| --- | --- | --- |
-| [Linux](#linux) | `./build_linux.sh` | `./run_linux.sh /path/to/GMSE01.iso` |
-| [macOS](#macos) | `./build_mac.sh` | `./run_mac.sh /path/to/GMSE01.iso` |
-| [Windows (MSYS2 MINGW32)](#windows-msys2-mingw32) | `./build_windows.sh` or `build_windows.cmd` | `./run_windows.sh /path/to/GMSE01.iso` or `run_windows.cmd` |
-| [Standalone executable](#standalone-executable) | `./build_linux.sh /path/to/GMSE01.iso` (or `build_mac.sh` / `build_windows.sh`) | `./run_linux.sh` / `./run_mac.sh`, or `build/sms-standalone` (`build-mac/SMS.app` on macOS) from anywhere |
-
-## Windows (MSYS2 MINGW32)
-
-Install [MSYS2](https://www.msys2.org/) and open **MSYS2 MINGW32** from the Start menu.
-This port must be compiled as a 32-bit program because game code stores pointers in 32-bit fields.
-Install the compiler, SDL2, build tools, and the patch utility:
+Every system uses the same two scripts from the repository root:
 
 ```sh
-pacman -S --needed mingw-w64-i686-gcc mingw-w64-i686-cmake mingw-w64-i686-SDL2 mingw-w64-i686-ninja mingw-w64-i686-make mingw-w64-i686-python patch git
+./build.sh [IMAGE]     # build for this computer
+./run.sh   [IMAGE]     # play
 ```
 
-In the MINGW32 shell, enter this repository (for example,
-`cd /c/path/to/sms-pc-port`) and build:
+| System | Shell | Output folder | Executable | Standalone (built when an image is given) |
+| --- | --- | --- | --- | --- |
+| [Linux](#linux), 32-bit (default) | any | `build/linux-32/` | `sms` | `sms-standalone` |
+| [Linux](#linux), 64-bit (`SMS_ARCH=64`) | any | `build/linux-64/` | `sms` | `sms-standalone` |
+| [macOS](#macos) | any (Terminal) | `build/macos-64/` | `sms` | [`SMS.app`](#macos-app) |
+| [Windows](#windows-msys2-mingw32) | MSYS2 MINGW32, or PowerShell with `build.cmd` / `run.cmd` | `build/windows-32/` | `sms.exe` | `sms-standalone.exe` |
+
+- **The game comes from your disc image**: Super Mario Sunshine, North America (GMSE01), Rev 0, as `.iso`, `.gcm` or Dolphin `.ciso`.
+  Put it in [`rom/`](rom/), pass its path, or set `SMS_DISC_IMAGE`.
+  The port reads it in place; nothing is extracted or copied.
+- **`./build.sh`** updates the pinned `decomp/` submodule, configures `build/<os>-<arch>/` with CMake and compiles `sms`.
+  With an image (the argument, `SMS_DISC_IMAGE`, or the one image in `rom/`) it also builds the [standalone executable](#standalone-executable).
+  `JOBS=n` limits parallel compiler jobs (default: all cores).
+  The first build compiles about 600 game files; later builds only rebuild what changed.
+- **`./run.sh`** runs `build/<os>-<arch>/`.
+  The game source is, in order: an image or extracted `files/` folder passed as argument, `SMS_DISC_IMAGE` or `SMS_DISC_ROOT`; else the standalone executable if it was built; else the image in `rom/`.
+  Anything starting with `-` (such as `--headless`) goes to the game.
+- **`SMS_ARCH=32` or `64`** picks the word size for both scripts.
+  Linux builds either (32-bit is the default); macOS builds only 64-bit and Windows only 32-bit so far.
+  When both Linux builds exist, `./run.sh` takes 32-bit unless `SMS_ARCH=64` is set; when only one exists, it takes that one.
+- Everything generated lives under `build/` (including downloaded dependencies in `build/deps/`), so `rm -rf build` returns the checkout to a clean state without touching `rom/`.
+
+## Linux
+
+Ubuntu or Debian packages; other distributions need the same tools and libraries.
+
+For the **32-bit build** (the default), add the i386 architecture and install the multilib compiler and the 32-bit runtime libraries:
 
 ```sh
-./build_windows.sh
+sudo dpkg --add-architecture i386
+sudo apt update
+sudo apt install git cmake make python3 patch binutils gcc-multilib g++-multilib libsdl2-dev libegl-dev libgl-dev
+sudo apt install libsdl2-2.0-0:i386 libgl1:i386 libegl1:i386 libgl1-mesa-dri:i386 libegl-mesa0:i386
 ```
 
-The build creates `build32/bin/sms.exe`.
-To play, pass the path to your North American Rev 0 image:
+The build compiles against the (architecture-independent) headers of the 64-bit `-dev` packages and links the `:i386` runtime libraries directly, so no `:i386` `-dev` packages are needed.
+
+For the **64-bit build**, the first `apt install` line without `gcc-multilib g++-multilib` is enough:
 
 ```sh
-./run_windows.sh '../sms-english/Super Mario Sunshine (2002)(Nintendo)(US).iso'
+sudo apt install git cmake make python3 patch binutils g++ libsdl2-dev libegl-dev libgl-dev
+SMS_ARCH=64 ./build.sh
+SMS_ARCH=64 ./run.sh
 ```
 
-Or place exactly one `.iso`, `.gcm`, or Dolphin `.ciso` image in `build32/bin/rom/` and run `./run_windows.sh` without an argument.
-Use single quotes around paths with spaces or parentheses.
-The executable contains game code, while the image supplies models, textures, levels, audio, and other game files at runtime.
-`build32/bin/rom/` is only a convenient image search folder for `run_windows.sh`; to put the assets inside the executable, see [Standalone executable](#standalone-executable).
-The port reads the image in place; it does not copy or extract it.
-Keep the MINGW32 shell open when running so its SDL2 and compiler runtime DLLs are on `PATH`.
-Saves default to `%APPDATA%/sms-port/card-a`, or set `SMS_SAVE_DIR`.
-The Windows build uses the SDL2 window; the EGL headless mode is not available in this setup.
-See [Keys](#keys) below for keyboard and controller input.
+Then build and run:
 
-### From PowerShell or Command Prompt
-
-The `.sh` files are Bash scripts, so do not open them through Windows file associations or Git for Windows.
-If MSYS2 is installed at `C:\msys64`, open PowerShell in this repository and run:
-
-```powershell
-.\build_windows.cmd
-.\run_windows.cmd '..\sms-english\Super Mario Sunshine (2002)(Nintendo)(US).iso'
+```sh
+./build.sh
+./run.sh
 ```
 
-If you placed one image in `build32\bin\rom\`, run `.\run_windows.cmd` without an argument.
-The `.cmd` launchers start MSYS2's MINGW32 Bash and put its 32-bit DLLs on `PATH` for you.
-If MSYS2 is installed elsewhere, set `MSYS2_ROOT` to its installation folder first.
-
-### Decompilation build on Windows
-
-The decompilation is a separate GameCube build and produces `mario.dol`, which runs in Dolphin or on GameCube hardware.
-Use **PowerShell** with native Windows Python and Ninja; see the decomp README for installation.
-In `sms-english` (or this repository's `decomp/` submodule), place your GMSE01 Rev 0 image in `orig/GMSE01/`, then run:
-
-```powershell
-python configure.py --version GMSE01
-ninja
-```
-
-If Ninja is installed through MSYS2 but is not on PowerShell's `PATH`, run
-`C:\msys64\mingw32\bin\ninja.exe` in place of `ninja`.
-The output is `build/GMSE01/mario.dol`; it should match the original disc's DOL byte for byte.
-To play the GameCube version on Windows, open your original disc image in Dolphin.
-The image supplies the game files that a standalone DOL does not contain.
-The decomp downloads its own GameCube toolchain; the MINGW32 GCC compiler is only for the PC port.
-The `sms-english` [README](https://github.com/chasem-dev/sms-english/blob/main/README.md) has the native Windows setup details.
+`./run.sh --headless` (or `SMS_HEADLESS=1`) renders offscreen through EGL with no window.
 
 ## macOS
 
-macOS builds an **x86_64** binary (runs under **Rosetta 2** on Apple Silicon).
-Native arm64 cannot `mmap` below 4 GiB (PAGEZERO), and the port needs stacks below 2 GiB for pointer-in-`u32` slots.
-Output goes to `build-mac/`.
-
-No Intel Homebrew is required. The script uses Apple Clang (`-arch x86_64`), normal Homebrew tools, and a universal `SDL2.framework`.
-
-### Requirements (explicit)
-
-| Requirement | Why |
-| --- | --- |
-| Xcode Command Line Tools | Apple Clang (`clang` / `clang++`), `make`, `patch`, system headers |
-| Rosetta 2 (Apple Silicon) | Run the x86_64 `build-mac/sms` binary |
-| Homebrew (`/opt/homebrew` on Apple Silicon is fine) | `cmake`, `python3`, `llvm` |
-| `llvm` (`brew install llvm`) | `llvm-objcopy` to rename the game's `operator new/delete` in Mach-O archives |
-| Universal `SDL2.framework` | Window/audio; `./build_mac.sh` downloads it into `third_party/` if missing (Homebrew’s `sdl2` bottle is often arm64-only). It is copied beside `build-mac/sms` and into `SMS.app`; the binary finds it only there (`@executable_path`, `@executable_path/../Frameworks`) |
-
-Apple Clang has no `-fexec-charset=CP932`; configure mirrors game sources as CP932 (`tools/darwin_cp932_mirror.py`) so disc Shift-JIS names still match.
+macOS builds an **x86_64** program, which runs natively on Intel Macs and under **Rosetta 2** on Apple Silicon.
+Native arm64 cannot `mmap` below 4 GiB (PAGEZERO), and the port needs game memory and stacks there for pointer-in-`u32` slots.
+No Intel Homebrew is required: the script uses Homebrew's LLVM `clang` targeting x86_64 (`-arch x86_64`), normal Homebrew tools, and a universal `SDL2.framework`.
 
 ### One-time setup
 
 ```sh
-xcode-select --install          # if needed
-softwareupdate --install-rosetta
+xcode-select --install              # if needed
+softwareupdate --install-rosetta    # Apple Silicon only
 brew install cmake python3 llvm
 ```
 
-### Get the game source
+| Requirement | Why |
+| --- | --- |
+| Xcode Command Line Tools | macOS SDK and system headers, `make`, `patch` |
+| Rosetta 2 (Apple Silicon) | runs the x86_64 program |
+| Homebrew (`/opt/homebrew` on Apple Silicon is fine) | `cmake`, `python3`, `llvm` |
+| `llvm` | the compiler (`clang` / `clang++` from `$(brew --prefix llvm)/bin`, the one the macOS build is tested with) and `llvm-objcopy`, which renames the game's `operator new/delete` in Mach-O archives |
+| Universal `SDL2.framework` | window, input and audio; `./build.sh` downloads it into `build/deps/` (Homebrew's `sdl2` bottle is arm64-only on Apple Silicon). It is copied beside `build/macos-64/sms` and into `SMS.app`; the program finds it only there (`@executable_path`, `@executable_path/../Frameworks`) |
 
-```sh
-git submodule update --init decomp
-```
+Clang has no `-fexec-charset=CP932`, so configuring mirrors the game sources as CP932 (`tools/darwin_cp932_mirror.py`) so the disc's Shift-JIS names still match.
+The linker uses `-Wl,-pagezero_size,0x1000` so low-memory `mmap` works on x86_64.
 
 ### Build and run
 
 ```sh
-./build_mac.sh
-./run_mac.sh "/path/to/Super Mario Sunshine (US).iso"
+./build.sh
+./run.sh
 ```
 
-Or place exactly one `.iso`, `.gcm`, or Dolphin `.ciso` in `build-mac/rom/` and run `./run_mac.sh` with no argument.
-Pass the image to the build script for `build-mac/SMS.app` (see [macOS app](#macos-app)).
-Set `JOBS=2` to limit parallel jobs (default is `hw.ncpu`).
-Saves default to `~/.local/share/sms-port/card-a`, or set `SMS_SAVE_DIR`.
-
-The linker uses `-Wl,-pagezero_size,0x1000` so low-memory `mmap` / `MAP_32BIT` works on x86_64.
+With the image in `rom/`, `./build.sh` also builds `build/macos-64/SMS.app` (see [macOS app](#macos-app)), and `./run.sh` runs it in the terminal so its log shows.
 
 ### Known gaps
 
 | Gap | Why it matters |
 | --- | --- |
-| Native arm64 | Not supported; PAGEZERO blocks low `mmap` |
-| Lockstep `platform/trace` | Linux ELF-only; macOS links empty stubs (same as Windows) |
-| EGL headless | Not wired on macOS; windowed SDL2/GL is the path |
-
-### Manual build (same idea as the script)
-
-```sh
-# SDL2.framework already in third_party/ (or pass -DSMS_SDL2_FRAMEWORK=...)
-cmake -S . -B build-mac \
-  -DCMAKE_OSX_ARCHITECTURES=x86_64 \
-  -DCMAKE_C_COMPILER="$(command -v clang)" \
-  -DCMAKE_CXX_COMPILER="$(command -v clang++)" \
-  -DSMS_SDL2_FRAMEWORK="$PWD/third_party/SDL2.framework" \
-  -DSMS_ARCH=64 -DSMS_GX_BUILD_TESTS=OFF
-cmake --build build-mac --target sms -j"$(sysctl -n hw.ncpu)"
-cp -R third_party/SDL2.framework build-mac/   # found via @rpath (@executable_path)
-```
+| Native arm64 | not supported: PAGEZERO blocks low `mmap` |
+| Lockstep `platform/trace` | Linux ELF only; macOS links empty stubs (as Windows does) |
+| Headless (EGL) | not wired on macOS; the SDL2 window is the only mode |
 
 ### macOS app
 
-`./build_mac.sh /path/to/GMSE01.iso` also builds `build-mac/SMS.app` (about 1.1 GiB):
+`./build.sh /path/to/GMSE01.iso` (or with the image in `rom/`) also builds `build/macos-64/SMS.app` (about 1.1 GiB):
 
 | Path in the bundle | Contents |
 | --- | --- |
@@ -157,12 +116,12 @@ cp -R third_party/SDL2.framework build-mac/   # found via @rpath (@executable_pa
 
 `tools/make_mac_app.sh` assembles it and signs it ad hoc.
 The image lives in `Resources` rather than after the executable (as `sms-standalone` does on Linux and Windows) because appended data would break the code signature.
-Double-click it in Finder, or `./run_mac.sh` with no disc argument runs it in the terminal so its log shows.
+Double-click it in Finder, or run `./run.sh` with no disc argument to run it in the terminal so its log shows.
 
 To move it to another Mac of yours, zip it with `ditto` (it keeps the framework's symlinks):
 
 ```sh
-ditto -c -k --keepParent build-mac/SMS.app SMS.zip
+ditto -c -k --keepParent build/macos-64/SMS.app SMS.zip
 ```
 
 The app has no Developer ID signature, so macOS blocks a downloaded copy ("SMS is damaged" or "cannot be verified").
@@ -176,84 +135,74 @@ On Apple Silicon, macOS offers to install Rosetta 2 on first launch if it is mis
 Saves go to `~/.local/share/sms-port/card-a`, the same place as the terminal build.
 Keep the app private: it contains the whole game and the icon art from your disc, so sharing it is sharing the game.
 
-## Linux
+## Windows (MSYS2 MINGW32)
 
-### One-time setup
-
-These commands are for Ubuntu or Debian and are already satisfied on this machine.
-
-```sh
-sudo dpkg --add-architecture i386
-sudo apt update
-sudo apt install git cmake make python3 patch binutils gcc-multilib g++-multilib libsdl2-dev libegl-dev libgl-dev
-sudo apt install libsdl2-2.0-0:i386 libgl1:i386 libegl1:i386 libgl1-mesa-dri:i386 libegl-mesa0:i386
-```
-
-The port is a 32-bit program (the game code assumes 4-byte pointers), so it needs the 32-bit (`:i386`) runtime libraries.
-
-## Get the game source
-
-Run the commands below from the repository root.
-The decomp is a git submodule in `decomp/`.
-Check out the version pinned by this port commit:
+Install [MSYS2](https://www.msys2.org/) and open **MSYS2 MINGW32** from the Start menu.
+The Windows build is 32-bit (64-bit Windows is LLP64 and still needs its own pass; see [docs/64-BIT.md](docs/64-BIT.md)).
+Install the compiler, SDL2, build tools and `patch`:
 
 ```sh
-git submodule update --init decomp
+pacman -S --needed mingw-w64-i686-gcc mingw-w64-i686-cmake mingw-w64-i686-SDL2 mingw-w64-i686-ninja mingw-w64-i686-make mingw-w64-i686-python patch git
 ```
 
-## Build
+In the MINGW32 shell, enter this repository (for example `cd /c/path/to/sms-pc-port`), then build and run:
 
 ```sh
-./build_linux.sh
+./build.sh
+./run.sh
 ```
 
-The script configures a 32-bit build in `build/`, updates the pinned decomp submodule, and compiles `sms`.
-Set `JOBS=2` to limit parallel compiler jobs.
-The first build compiles about 600 game files and takes a while; later builds only rebuild what changed.
-The result is `build/sms`.
-For a manual build, run `cmake -S . -B build -DSMS_ARCH=32` and `cmake --build build --target sms --parallel 4`.
+Use single quotes around paths with spaces or parentheses: `./run.sh '/c/Games/Super Mario Sunshine (US).iso'`.
+Keep the MINGW32 shell open while playing so its SDL2 and compiler runtime DLLs are on `PATH`.
+Saves go to `%APPDATA%\sms-port\card-a` (or `SMS_SAVE_DIR`).
+Headless mode (EGL) is not available on Windows; the SDL2 window is the only mode.
 
-### 64-bit build (in progress)
+### From PowerShell or Command Prompt
 
-```sh
-SMS_ARCH=64 ./build_linux.sh
-SMS_ARCH=64 ./run_linux.sh "/path/to/Super Mario Sunshine (US).iso"
+The `.sh` files are Bash scripts, so do not open them through Windows file associations or Git for Windows.
+`build.cmd` and `run.cmd` start MSYS2's MINGW32 Bash for you and put its 32-bit DLLs on `PATH`:
+
+```powershell
+.\build.cmd
+.\run.cmd
+.\run.cmd 'C:\Games\Super Mario Sunshine (US).iso'
 ```
 
-This builds a native x86-64 executable in `build-64/` (no multilib packages needed) and leaves the 32-bit `build/` alone.
-It boots, plays the movies and reaches Delfino Plaza, rendering like the 32-bit build; it is not yet tested through every stage, so the 32-bit build stays the default.
-See `PLAN-64BIT.md` for how it works and what is left.
+If MSYS2 is not installed at `C:\msys64`, set `MSYS2_ROOT` to its installation folder first.
 
-## Run
+### Decompilation build on Windows
 
-```sh
-./run_linux.sh "/path/to/Super Mario Sunshine (US).iso"
+The decompilation is a separate GameCube build that produces `mario.dol`, which runs in Dolphin or on GameCube hardware; the PC port does not need it.
+Use **PowerShell** with native Windows Python and Ninja; see the decomp README for installation.
+In `sms-english` (or this repository's `decomp/` submodule), place your GMSE01 Rev 0 image in `orig/GMSE01/`, then run:
+
+```powershell
+python configure.py --version GMSE01
+ninja
 ```
 
-Or place exactly one `.iso`, `.gcm`, or Dolphin `.ciso` image in `build/rom/` and run `./run_linux.sh` without an argument.
-Set `SMS_DISC_IMAGE` to use another path without passing an argument.
-The game is read straight from your ISO; nothing is extracted or copied.
-Saves go to `~/.local/share/sms-port/card-a`.
+If Ninja is installed through MSYS2 but is not on PowerShell's `PATH`, run `C:\msys64\mingw32\bin\ninja.exe` in place of `ninja`.
+The output is `build/GMSE01/mario.dol`; it should match the original disc's DOL byte for byte.
+The decomp downloads its own GameCube toolchain; the MINGW32 GCC compiler is only for the PC port.
+The `sms-english` [README](https://github.com/chasem-dev/sms-english/blob/main/README.md) has the native Windows setup details.
 
 ## Standalone executable
 
-Pass your disc image to the build script to get an executable with the game's files inside it:
+Give the build script your disc image (or leave it in `rom/`) to also get an executable with the game's files inside:
 
-```sh
-./build_linux.sh "/path/to/Super Mario Sunshine (US).iso"      # -> build/sms-standalone
-./build_mac.sh "/path/to/Super Mario Sunshine (US).iso"        # -> build-mac/SMS.app (see #macos-app)
-./build_windows.sh '/path/to/Super Mario Sunshine (US).iso'    # -> build32/bin/sms-standalone.exe
-```
+| System | Standalone |
+| --- | --- |
+| Linux | `build/linux-32/sms-standalone` (`build/linux-64/` with `SMS_ARCH=64`) |
+| macOS | `build/macos-64/SMS.app` (see [macOS app](#macos-app)) |
+| Windows | `build/windows-32/sms-standalone.exe` |
 
-The scripts also take the image from `SMS_DISC_IMAGE`, or from a single image in `build/rom/` (`build-mac/rom/` on macOS, `build32/bin/rom/` on Windows).
 `tools/bundle_disc.py` reads the image (`.iso`, `.gcm` or Dolphin `.ciso`), checks that it is GMSE01, and packs the disc's files into a trimmed disc image with no padding (about 1.1 GiB).
 It appends that image to a copy of `sms`, followed by a small trailer that `platform/disc` finds when the program starts.
-`build/sms` itself is unchanged and still takes a disc image.
-The standalone executable needs no image, no `rom/` folder and no extracted files.
+`sms` itself is unchanged and still takes a disc image.
+The standalone executable needs no image, no `rom/` folder and no extracted files, and runs from any folder.
 On Linux it still needs the system's SDL2 (`libsdl2`); on Windows its MinGW and SDL2 DLLs must be next to it or on `PATH`.
 On macOS the build produces [`SMS.app`](#macos-app) instead, with SDL2 and the packed image inside the bundle.
-`./run_linux.sh`, `./run_mac.sh` and `./run_windows.sh` without a disc argument start it when it exists.
-A disc argument, `SMS_DISC_IMAGE` or `SMS_DISC_ROOT` still takes precedence over the bundled files.
+`./run.sh` without a disc argument starts it when it exists; a disc argument, `SMS_DISC_IMAGE` or `SMS_DISC_ROOT` still takes precedence over the bundled files.
 Keep the executable private: it contains the game.
 
 ### Icons
@@ -267,37 +216,36 @@ The icon is the game's memory-card icon (the Mario head), always taken from your
 | `sms.exe` / `sms-standalone.exe` in Explorer | an icon resource from `tools/extract_icon.py --ico`, compiled in when the build script is given the disc image |
 
 Linux executables carry no icon of their own; the window icon is what the desktop shows.
-For a manual build, add `-DSMS_BUNDLE_DISC=/path/GMSE01.iso` to the `cmake -S` command and build the `sms_standalone` target (on macOS it builds `SMS.app`).
 
-Useful options (put them before the command, e.g. `SMS_SKIP_MOVIES=1 ./run_linux.sh ...`):
+## Manual CMake build
 
-| Option | Effect |
+`build.sh` is a thin wrapper around CMake; this is what it runs (Linux, 32-bit):
+
+```sh
+git submodule update --init decomp
+cmake -S . -B build/linux-32 -DSMS_ARCH=32 -DSMS_GX_BUILD_TESTS=OFF
+cmake --build build/linux-32 --target sms --parallel
+```
+
+| CMake option | Meaning |
 | --- | --- |
-| `SMS_SKIP_MOVIES=1` | skip the intro and opening movies |
-| `SMS_AUDIO=0` | no sound |
-| `SMS_HEADLESS=1` or `--headless` (after the image path) | no window, for testing |
+| `-DSMS_ARCH=32` / `64` | word size (`auto`, the default for a bare CMake build, picks 32 when `-m32` links) |
+| `-DSMS_BUNDLE_DISC=/path/GMSE01.iso` | adds the `sms_standalone` target (`SMS.app` on macOS) |
+| `-DSMS_GX_BUILD_TESTS=ON` | also builds `platform/gx`'s self-tests |
+| `-G Ninja` | used on Windows (MSYS2) |
+| macOS: `-DCMAKE_OSX_ARCHITECTURES=x86_64 -DSMS_SDL2_FRAMEWORK=$PWD/build/deps/SDL2.framework -DCMAKE_C_COMPILER=$(brew --prefix llvm)/bin/clang -DCMAKE_CXX_COMPILER=$(brew --prefix llvm)/bin/clang++` | required; then copy `SDL2.framework` beside `sms` (`@executable_path`) |
 
-## Keys
+## Troubleshooting
 
-Edit `bindings.txt` to change them.
-
-| GameCube | Keys |
+| Symptom | Fix |
 | --- | --- |
-| Control stick | arrow keys or WASD (hold Left Ctrl for half tilt) |
-| C-stick | I / J / K / L |
-| A | Space or X |
-| B | Shift or C |
-| X / Y | V / F |
-| Z | Z |
-| L / R | Q / E |
-| Start | Enter |
-| D-pad | 1 2 3 4 |
-| Debug overlay (FPS, stats, keys) | ` (backtick) |
-| Game and movie speed x1 / x2 / x4 / x10 (overlay open) | F7 |
-| Quit | Esc |
-
-A USB or Bluetooth game controller also works.
-
-On the file-select screen, walk Mario left under a block for about half a second and press A to jump into it.
-
-More detail (every option, the platform layer, the patches) is in `README.md`.
+| `g++ -m32 does not link` | install `gcc-multilib g++-multilib` ([Linux](#linux)), or build 64-bit with `SMS_ARCH=64` |
+| `No game: put your GMSE01 disc image ... in rom/` | put the image in `rom/`, or pass its path to `./run.sh` |
+| `rom/ holds more than one disc image` | keep one image in `rom/`, or pass the one you want |
+| Linux, 32-bit: the window is slow and the log names `llvmpipe` | the i386 GPU driver userspace (for example NVIDIA's) is missing or does not match the kernel driver, so rendering falls back to Mesa's software renderer; install the matching `:i386` driver libraries, or use the 64-bit build |
+| macOS: `Rosetta 2 is required` | `softwareupdate --install-rosetta` |
+| macOS: `Missing llvm-objcopy` | `brew install llvm` |
+| macOS: "SMS is damaged" / "cannot be verified" on a copied `SMS.app` | `xattr -dr com.apple.quarantine /path/to/SMS.app` |
+| Windows: `Use the MSYS2 MINGW32 shell` | open **MSYS2 MINGW32** (not MSYS or UCRT64), or use `build.cmd` / `run.cmd` |
+| Windows: missing DLL when starting `sms.exe` directly | start it from the MINGW32 shell or with `run.cmd` |
+| Stale build after pulling | `rm -rf build/<os>-<arch>` and `./build.sh` again (`build/deps/` and `rom/` are kept) |

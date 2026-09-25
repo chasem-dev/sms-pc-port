@@ -35,7 +35,7 @@ int main(int argc, char** argv)
 		std::fprintf(stderr, "[port] no memory below 2 GiB for the game's stack\n");
 #ifdef __APPLE__
 		std::fprintf(stderr,
-			"[port] on Apple Silicon, build the x86_64 (Rosetta) binary with ./build_mac.sh;\n"
+			"[port] on Apple Silicon, build the x86_64 (Rosetta) binary with ./build.sh;\n"
 			"[port] native arm64 reserves the low 4 GiB as PAGEZERO and cannot mmap there.\n");
 #endif
 		return 1;

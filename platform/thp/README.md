@@ -30,7 +30,7 @@ cmake -S . -B build -DCMAKE_PROJECT_INCLUDE=$PWD/platform/thp/thp.cmake
 ```
 
 Configure prints `SMS port: host THP decoders linked`.
-`nm build/sms | grep THPVideoDecode` then shows `T`, not `W`.
+`nm build/linux-32/sms | grep THPVideoDecode` then shows `T`, not `W`.
 The patches are applied by `cmake/patches.cmake` like every other patch.
 The platform glob must not pick up `platform/thp/tests`: the test keeps its patched copies in `build-thp-test/`, and its only source is a `.cc`.
 

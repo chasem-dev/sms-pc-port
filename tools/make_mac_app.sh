@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tools/make_mac_app.sh APP EXE SDL2_FRAMEWORK
 #
-# Fills in the app bundle APP (e.g. build-mac/SMS.app) around the files
+# Fills in the app bundle APP (e.g. build/macos-64/SMS.app) around the files
 # already in APP/Contents/Resources: disc.gcm (tools/bundle_disc.py
 # --image-only) and SMS.icns (tools/extract_icon.py).
 #   Contents/MacOS/sms                  EXE (finds SDL2 via @executable_path/../Frameworks)

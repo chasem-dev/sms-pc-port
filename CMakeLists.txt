@@ -102,7 +102,7 @@ if(APPLE)
   if(NOT CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64")
     message(FATAL_ERROR
       "macOS builds must use CMAKE_OSX_ARCHITECTURES=x86_64 (Rosetta). "
-      "Native arm64 cannot mmap below 4 GiB. Use ./build_mac.sh.")
+      "Native arm64 cannot mmap below 4 GiB. Use ./build.sh.")
   endif()
 endif()
 
@@ -254,13 +254,10 @@ if(WIN32 OR APPLE)
 endif()
 add_executable(sms ${SMS_PORT_SRC}/port_main.cpp ${SMS_PLATFORM_SOURCES})
 if(APPLE AND SMS_SDL2_FRAMEWORK_DIR)
-  # @rpath/SDL2.framework: beside the executable (build_mac.sh copies it
+  # @rpath/SDL2.framework: beside the executable (build.sh copies it
   # there) or in SMS.app/Contents/Frameworks. No absolute path, so a copy
   # that lacks the framework fails here as it would on another Mac.
   set_target_properties(sms PROPERTIES BUILD_RPATH "@executable_path;@executable_path/../Frameworks")
-endif()
-if(WIN32)
-  set_target_properties(sms PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 endif()
 target_include_directories(sms PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/platform ${SMS_PORT_SRC}
@@ -369,10 +366,8 @@ elseif(SMS_BUNDLE_DISC)
     file(CONFIGURE OUTPUT ${_rc} CONTENT "1 ICON \"${_ico}\"\n")
     set_source_files_properties(${_rc} PROPERTIES OBJECT_DEPENDS ${_ico})
     target_sources(sms PRIVATE ${_rc})
-    set(_standalone ${CMAKE_BINARY_DIR}/bin/sms-standalone${CMAKE_EXECUTABLE_SUFFIX})
-  else()
-    set(_standalone ${CMAKE_BINARY_DIR}/sms-standalone${CMAKE_EXECUTABLE_SUFFIX})
   endif()
+  set(_standalone ${CMAKE_BINARY_DIR}/sms-standalone${CMAKE_EXECUTABLE_SUFFIX})
   add_custom_command(OUTPUT ${_standalone}
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/bundle_disc.py
             --exe $<TARGET_FILE:sms> --disc "${SMS_BUNDLE_DISC}" --out ${_standalone}

@@ -34,13 +34,13 @@ They are 32-bit only: native pointer members must be 4 bytes for the layouts to 
 ```sh
 # 1. resolve the oracle's range file against this binary (repeat after every relink)
 TRACE_RANGES=$DOLPHIN_ORACLE/ranges/play.txt TRACE_OUT=build/play.ranges \
-    gdb -batch -x tools/trace_resolve.py build/sms
+    gdb -batch -x tools/trace_resolve.py build/linux-32/sms
 
 # 2. native run: same movie as the retail run, poll timing taken from the retail trace
 SMS_MOVIE=$DOLPHIN_ORACLE/movies/play5.dtm \
 SMS_MOVIE_POLLMAP=$DOLPHIN_ORACLE/runs/play-r9/trace.txt \
 SMS_TRACE_RANGES=build/play.ranges SMS_TRACE_OUT=build/play-native.txt SMS_TRACE_FRAMES=11500 \
-    build/sms --headless
+    build/linux-32/sms --headless
 
 # 3. compare
 tools/trace_compare.py $DOLPHIN_ORACLE/runs/play-r9/trace.txt build/play-native.txt \

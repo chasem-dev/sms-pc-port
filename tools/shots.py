@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Convert captured frames (build/shots-raw/field*.ppm, from SMS_SHOTS with
-SMS_SHOT_DIR=build/shots-raw) to PNG in shots/ and build side-by-side
+SMS_SHOT_DIR=build/shots-raw) to PNG in build/shots/ and build side-by-side
 comparisons with the retail captures of the same field.
 
 usage: tools/shots.py [raw_dir] [out_dir] [retail_dir]
@@ -11,7 +11,7 @@ from PIL import Image, ImageChops, ImageStat
 
 here = os.path.dirname(os.path.abspath(__file__))
 raw = sys.argv[1] if len(sys.argv) > 1 else os.path.join(here, '..', 'build', 'shots-raw')
-shots = sys.argv[2] if len(sys.argv) > 2 else os.path.join(here, '..', 'shots')
+shots = sys.argv[2] if len(sys.argv) > 2 else os.path.join(here, '..', 'build', 'shots')
 retail = sys.argv[3] if len(sys.argv) > 3 else os.path.join(os.environ.get('DOLPHIN_ORACLE', ''), 'shots')
 if not os.path.isdir(retail):
     sys.exit('retail shots not found at %r: pass the folder or set DOLPHIN_ORACLE' % retail)

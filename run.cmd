@@ -9,7 +9,7 @@ set "MSYSTEM=MINGW32"
 set "CHERE_INVOKING=1"
 set "PATH=%MSYS2_ROOT%\mingw32\bin;%MSYS2_ROOT%\usr\bin;%PATH%"
 pushd "%~dp0"
-"%MSYS2_ROOT%\usr\bin\bash.exe" ./run_windows.sh %*
+"%MSYS2_ROOT%\usr\bin\bash.exe" ./run.sh %*
 set "result=%ERRORLEVEL%"
 popd
 exit /b %result%
