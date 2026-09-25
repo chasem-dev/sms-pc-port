@@ -131,10 +131,27 @@ enum PrimClass { PRIM_TRIS, PRIM_LINES, PRIM_POINTS };
 void rendererInit(int efbScale);
 void flushBatch();
 // adds a primitive; vertices already decoded
+// Packed vertex formats: a vertex holds only the attributes its GX vertex
+// descriptor enables (position always); see vtxFmtLayout in gx_fifo.cpp.
+enum VtxFmtBits : uint32_t {
+    VF_NRM = 1u << 0,
+    VF_NBT = 1u << 1,   // with VF_NRM: binormal and tangent follow the normal
+    VF_CLR0 = 1u << 2,  // VF_CLR1 = VF_CLR0 << 1
+    VF_TEX0 = 1u << 4,  // texcoord t: VF_TEX0 << t
+    VF_MTX = 1u << 12,  // per-vertex matrix indices
+};
+struct VtxFmtLayout {
+    uint16_t stride, nrm, clr[2], tex[8], mtx;  // byte offsets; position is at 0
+};
+const VtxFmtLayout& vtxFmtLayout(uint32_t fmt);
+// Expands a packed vertex (for traces).
+void unpackVertex(uint32_t fmt, const uint8_t* src, const uint8_t defMtx[9], HostVertex& out);
+
 // The loader decodes a primitive's vertices straight into the batch:
-// primitiveBegin returns room for `count` vertices (after flushing when the
-// primitive class changes), primitiveEnd adds the primitive's indices.
-HostVertex* primitiveBegin(uint8_t opcode, uint32_t count);
+// primitiveBegin returns room for `count` vertices of format `fmt` (after
+// flushing when the primitive class or format changes), primitiveEnd adds
+// the primitive's indices.
+uint8_t* primitiveBegin(uint8_t opcode, uint32_t count, uint32_t fmt, uint32_t stride);
 void primitiveEnd(uint8_t opcode, uint32_t count);
 void onStateChange();  // called before any register write that changes state
 void executeCopy(uint32_t execReg);

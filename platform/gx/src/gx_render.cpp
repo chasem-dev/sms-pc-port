@@ -107,7 +107,42 @@ struct StreamBuffer {
 static StreamBuffer s_vstream, s_istream, s_ustream;
 static GLint s_uboAlign = 256;
 
-static std::vector<HostVertex> s_bverts;
+// One VAO per packed vertex format: attribute pointers into the vertex stream
+// for the attributes the format holds; the others read the constant values
+// set in rendererInit (matrix indices: set per batch in flushBatch).
+static std::unordered_map<uint32_t, GLuint> s_fmtVaos;
+
+static GLuint vaoForFormat(uint32_t fmt) {
+    GLuint& vao = s_fmtVaos[fmt];
+    if (vao) return vao;
+    const VtxFmtLayout& l = vtxFmtLayout(fmt);
+    glGenVertexArrays(1, &vao);
+    glcBindVertexArray(vao);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_istream.buf);
+    glcBindArrayBuffer(s_vstream.buf);
+    const GLsizei st = l.stride;
+    auto off = [](size_t o) { return reinterpret_cast<const void*>(o); };
+    auto attr = [&](GLuint i, bool on, GLint n, GLenum type, GLboolean norm, size_t o) {
+        if (!on) return;
+        glVertexAttribPointer(i, n, type, norm, st, off(o));
+        glEnableVertexAttribArray(i);
+    };
+    attr(0, true, 3, GL_FLOAT, GL_FALSE, 0);
+    attr(1, fmt & VF_NRM, 3, GL_FLOAT, GL_FALSE, l.nrm);
+    attr(2, (fmt & VF_NRM) && (fmt & VF_NBT), 3, GL_FLOAT, GL_FALSE, l.nrm + 12);
+    attr(3, (fmt & VF_NRM) && (fmt & VF_NBT), 3, GL_FLOAT, GL_FALSE, l.nrm + 24);
+    attr(4, fmt & VF_CLR0, 4, GL_UNSIGNED_BYTE, GL_TRUE, l.clr[0]);
+    attr(5, fmt & (VF_CLR0 << 1), 4, GL_UNSIGNED_BYTE, GL_TRUE, l.clr[1]);
+    for (int t = 0; t < 8; t++) attr(GLuint(6 + t), fmt & (VF_TEX0 << t), 2, GL_FLOAT, GL_FALSE, l.tex[t]);
+    if (fmt & VF_MTX) {
+        glVertexAttribIPointer(14, 3, GL_UNSIGNED_INT, st, off(l.mtx));
+        glEnableVertexAttribArray(14);
+    }
+    return vao;
+}
+
+static std::vector<uint8_t> s_bdata;  // the batch's packed vertices
+static uint32_t s_bcount = 0, s_bfmt = 0, s_bstride = 12;
 static std::vector<uint32_t> s_bidx;
 static PrimClass s_bclass = PRIM_TRIS;
 
@@ -247,18 +282,14 @@ void rendererInit(int efbScale) {
     glcBindVertexArray(s_vao);
     s_vstream.init(GL_ARRAY_BUFFER, 96u << 20);
     s_istream.init(GL_ELEMENT_ARRAY_BUFFER, 16u << 20);
-    const GLsizei st = sizeof(HostVertex);
-    auto off = [](size_t o) { return reinterpret_cast<const void*>(o); };
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, st, off(offsetof(HostVertex, pos)));
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, st, off(offsetof(HostVertex, nrm)));
-    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, st, off(offsetof(HostVertex, bin)));
-    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, st, off(offsetof(HostVertex, tan)));
-    glVertexAttribPointer(4, 4, GL_UNSIGNED_BYTE, GL_TRUE, st, off(offsetof(HostVertex, clr)));
-    glVertexAttribPointer(5, 4, GL_UNSIGNED_BYTE, GL_TRUE, st, off(offsetof(HostVertex, clr) + 4));
-    for (int i = 0; i < 8; i++)
-        glVertexAttribPointer(GLuint(6 + i), 2, GL_FLOAT, GL_FALSE, st, off(offsetof(HostVertex, tex) + 8 * i));
-    glVertexAttribIPointer(14, 3, GL_UNSIGNED_INT, st, off(offsetof(HostVertex, mtx)));
-    for (GLuint i = 0; i < 15; i++) glEnableVertexAttribArray(i);
+    // Values of the attributes a packed format leaves out (see vaoForFormat):
+    // the same defaults the loader used to write into every vertex.
+    glVertexAttrib4f(1, 0.0f, 0.0f, 1.0f, 1.0f);  // normal
+    glVertexAttrib4f(2, 0.0f, 0.0f, 0.0f, 1.0f);  // binormal
+    glVertexAttrib4f(3, 0.0f, 0.0f, 0.0f, 1.0f);  // tangent
+    glVertexAttrib4f(4, 1.0f, 1.0f, 1.0f, 1.0f);  // colour 0
+    glVertexAttrib4f(5, 1.0f, 1.0f, 1.0f, 1.0f);  // colour 1
+    for (GLuint i = 6; i < 14; i++) glVertexAttrib4f(i, 0.0f, 0.0f, 0.0f, 1.0f);  // texcoords
 
     glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, &s_uboAlign);
     if (s_uboAlign < 16) s_uboAlign = 16;
@@ -281,21 +312,24 @@ void onStateChange() {
     if (!s_bidx.empty()) flushBatch();
 }
 
-HostVertex* primitiveBegin(uint8_t op, uint32_t n) {
+uint8_t* primitiveBegin(uint8_t op, uint32_t n, uint32_t fmt, uint32_t stride) {
     PrimClass cls = op >= 0xB8 ? PRIM_POINTS : op >= 0xA8 ? PRIM_LINES : PRIM_TRIS;
-    if (!s_bidx.empty() && cls != s_bclass) flushBatch();
+    if (s_bcount && (cls != s_bclass || fmt != s_bfmt)) flushBatch();
     s_bclass = cls;
-    size_t at = s_bverts.size();
-    s_bverts.resize(at + n);
-    return s_bverts.data() + at;
+    s_bfmt = fmt;
+    s_bstride = stride;
+    size_t at = size_t(s_bcount) * stride;
+    s_bdata.resize(at + size_t(n) * stride);
+    return s_bdata.data() + at;
 }
 
 void primitiveEnd(uint8_t op, uint32_t n) {
     if (!s_ready || n == 0) {
-        s_bverts.resize(s_bverts.size() - n);
+        s_bdata.resize(size_t(s_bcount) * s_bstride);
         return;
     }
-    uint32_t base = uint32_t(s_bverts.size() - n);
+    uint32_t base = s_bcount;
+    s_bcount += n;
     auto tri = [&](uint32_t a, uint32_t b, uint32_t c) {
         s_bidx.push_back(base + a);
         s_bidx.push_back(base + b);
@@ -831,7 +865,8 @@ static void pixMetricResume() {
 void flushBatch() {
     if (s_bidx.empty() || !s_ready) {
         s_bidx.clear();
-        s_bverts.clear();
+        s_bdata.clear();
+        s_bcount = 0;
         return;
     }
     GxTimer timer;
@@ -871,22 +906,43 @@ void flushBatch() {
     }
     uploadUniforms(sp, texW, texH);
 
-    glcBindVertexArray(s_vao);
-    size_t vOff = s_vstream.append(s_bverts.data(), s_bverts.size() * sizeof(HostVertex), sizeof(HostVertex));
+    glcBindVertexArray(vaoForFormat(s_bfmt));
+    uint32_t matA = g.xfReg[XFR_MATIDX_A], matB = g.xfReg[XFR_MATIDX_B];
+    uint8_t defMtx[12] = {
+        uint8_t(matA & 63), uint8_t((matA >> 6) & 63), uint8_t((matA >> 12) & 63), uint8_t((matA >> 18) & 63),
+        uint8_t((matA >> 24) & 63), uint8_t(matB & 63), uint8_t((matB >> 6) & 63), uint8_t((matB >> 12) & 63),
+        uint8_t((matB >> 18) & 63), 0, 0, 0,
+    };
+    if (!(s_bfmt & VF_MTX)) {  // the batch's default matrix indices, as a constant attribute
+        static uint32_t cur[3] = {~0u, ~0u, ~0u};
+        uint32_t m[3];
+        memcpy(m, defMtx, 12);  // the shader unpacks the bytes little-endian
+        if (memcmp(m, cur, 12) != 0) {
+            memcpy(cur, m, 12);
+            glVertexAttribI4ui(14, m[0], m[1], m[2], 0);
+        }
+    }
+    size_t vOff = s_vstream.append(s_bdata.data(), size_t(s_bcount) * s_bstride, s_bstride);
     size_t iOff = s_istream.append(s_bidx.data(), s_bidx.size() * 4, 4);
     GLenum mode = s_bclass == PRIM_TRIS ? GL_TRIANGLES : s_bclass == PRIM_LINES ? GL_LINES : GL_POINTS;
     {
         GxTimer td(&s_drawSeconds);
         glDrawElementsBaseVertex(mode, GLsizei(s_bidx.size()), GL_UNSIGNED_INT, reinterpret_cast<const void*>(iOff),
-                                 GLint(vOff / sizeof(HostVertex)));
+                                 GLint(vOff / s_bstride));
     }
     s_stats.draws++;
     s_flushes++;
     s_drawGen++;
     if (s_pixActive && s_bclass == PRIM_TRIS) s_pixTris += uint32_t(s_bidx.size() / 3);
-    if (traceFile()) traceDraw(int(s_bclass), uint32_t(s_bverts.size()), uint32_t(s_bidx.size()), s_bverts.data(), sp->id);
+    if (traceFile()) {
+        static std::vector<HostVertex> hv;
+        hv.resize(s_bcount);
+        for (uint32_t i = 0; i < s_bcount; i++) unpackVertex(s_bfmt, s_bdata.data() + size_t(i) * s_bstride, defMtx, hv[i]);
+        traceDraw(int(s_bclass), s_bcount, uint32_t(s_bidx.size()), hv.data(), sp->id);
+    }
     s_bidx.clear();
-    s_bverts.clear();
+    s_bdata.clear();
+    s_bcount = 0;
     if (traceFile()) {
         traceProbe();
         glcInvalidate();

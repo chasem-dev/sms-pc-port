@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <map>
+#include <unordered_map>
 
 namespace gx {
 
@@ -378,115 +379,303 @@ static const uint8_t* arrayElem(int slot, uint32_t idx) {
 static uint32_t s_vertsLoaded = 0;
 double g_decodeSeconds = 0;  // SMS_GX_STATS: time in the vertex loader
 
-// Where one attribute comes from: inline in the command stream (base null)
-// or an array element picked by an 8/16-bit index.
-struct AttrSrc {
-    const uint8_t* base;
-    uint32_t stride;
-    uint32_t cs;   // component size
-    float scale;
-    uint8_t mode, type, n;
-    bool be;
+// ------------------------------------------------------------------ packed vertex formats
+// A batch's vertices carry only the attributes the GX vertex descriptor
+// enables (position always); the renderer feeds the others as constant
+// vertex attributes. Layout: pos f32x3 | nrm f32x3 | bin, tan f32x3 (NBT) |
+// clr0 u8x4 | clr1 u8x4 | tex0..7 f32x2 | matrix indices u8x12.
+const VtxFmtLayout& vtxFmtLayout(uint32_t fmt) {
+    static std::unordered_map<uint32_t, VtxFmtLayout> cache;
+    auto it = cache.find(fmt);
+    if (it != cache.end()) return it->second;
+    VtxFmtLayout l;
+    memset(&l, 0, sizeof(l));
+    uint16_t o = 12;
+    if (fmt & VF_NRM) {
+        l.nrm = o;
+        o += (fmt & VF_NBT) ? 36 : 12;
+    }
+    for (int c = 0; c < 2; c++)
+        if (fmt & (VF_CLR0 << c)) {
+            l.clr[c] = o;
+            o += 4;
+        }
+    for (int t = 0; t < 8; t++)
+        if (fmt & (VF_TEX0 << t)) {
+            l.tex[t] = o;
+            o += 8;
+        }
+    if (fmt & VF_MTX) {
+        l.mtx = o;
+        o += 12;
+    }
+    l.stride = o;
+    return cache.emplace(fmt, l).first->second;
+}
+
+void unpackVertex(uint32_t fmt, const uint8_t* src, const uint8_t defMtx[9], HostVertex& hv) {
+    const VtxFmtLayout& l = vtxFmtLayout(fmt);
+    memset(static_cast<void*>(&hv), 0, sizeof(hv));
+    hv.nrm[2] = 1.0f;
+    memset(hv.clr, 255, sizeof(hv.clr));
+    memcpy(hv.mtx, defMtx, 9);
+    memcpy(hv.pos, src, 12);
+    if (fmt & VF_NRM) memcpy(hv.nrm, src + l.nrm, 12);
+    if (fmt & VF_NBT) {
+        memcpy(hv.bin, src + l.nrm + 12, 12);
+        memcpy(hv.tan, src + l.nrm + 24, 12);
+    }
+    for (int c = 0; c < 2; c++)
+        if (fmt & (VF_CLR0 << c)) memcpy(hv.clr[c], src + l.clr[c], 4);
+    for (int t = 0; t < 8; t++)
+        if (fmt & (VF_TEX0 << t)) memcpy(hv.tex[t], src + l.tex[t], 8);
+    if (fmt & VF_MTX) memcpy(hv.mtx, src + l.mtx, 12);
+}
+
+// ------------------------------------------------------------------ attribute readers
+// One reader per attribute, chosen once per primitive: MODE is 1 (inline),
+// 2 (8-bit index) or 3 (16-bit index), T the component type, N the components
+// in the data, NOUT the floats written (extra ones get the op's defaults), BE
+// whether the data is big-endian (inline data always is).
+struct DecOp;
+typedef void (*DecFn)(const DecOp& o, const uint8_t*& p, uint8_t* out);
+struct DecOp {
+    DecFn fn;
+    const uint8_t* base;  // array base (indexed modes)
+    uint32_t stride;      // array stride
+    float scale;          // 1 / 2^frac for integer components
+    uint16_t dst;         // byte offset in the packed vertex
+    float def[9];         // written when an indexed element has no array
 };
 
-static inline void attrSrc(AttrSrc& s, const AttrFmt& a, int slot, int n, float scale) {
-    s.mode = a.mode;
-    s.type = a.type;
-    s.n = uint8_t(n);
-    s.cs = a.type < 5 ? kCompSize[a.type] : 4;
-    s.scale = scale;
-    s.base = a.mode >= 2 ? g.arrayBase[slot] : nullptr;
-    s.stride = g.arrayStride[slot];
-    s.be = a.mode >= 2 ? g.arrayBigEndian[slot] : true;
+template <typename T, bool BE> static inline float loadComp(const uint8_t* p, float scale);
+template <> inline float loadComp<uint8_t, true>(const uint8_t* p, float s) { return float(p[0]) * s; }
+template <> inline float loadComp<uint8_t, false>(const uint8_t* p, float s) { return float(p[0]) * s; }
+template <> inline float loadComp<int8_t, true>(const uint8_t* p, float s) { return float(int8_t(p[0])) * s; }
+template <> inline float loadComp<int8_t, false>(const uint8_t* p, float s) { return float(int8_t(p[0])) * s; }
+template <> inline float loadComp<uint16_t, true>(const uint8_t* p, float s) { return float(uint16_t(p[0] << 8 | p[1])) * s; }
+template <> inline float loadComp<uint16_t, false>(const uint8_t* p, float s) { return float(uint16_t(p[1] << 8 | p[0])) * s; }
+template <> inline float loadComp<int16_t, true>(const uint8_t* p, float s) { return float(int16_t(p[0] << 8 | p[1])) * s; }
+template <> inline float loadComp<int16_t, false>(const uint8_t* p, float s) { return float(int16_t(p[1] << 8 | p[0])) * s; }
+template <> inline float loadComp<float, true>(const uint8_t* p, float) {
+    uint32_t v = be32(p);
+    float f;
+    memcpy(&f, &v, 4);
+    return f;
+}
+template <> inline float loadComp<float, false>(const uint8_t* p, float) {
+    float f;
+    memcpy(&f, p, 4);
+    return f;
+}
+
+template <int MODE> static inline const uint8_t* fetch(const DecOp& o, const uint8_t*& p, uint32_t inlineBytes) {
+    if (MODE == 1) {
+        const uint8_t* src = p;
+        p += inlineBytes;
+        return src;
+    }
+    uint32_t idx;
+    if (MODE == 2) idx = *p++;
+    else {
+        idx = uint32_t(p[0]) << 8 | p[1];
+        p += 2;
+    }
+    return o.base ? o.base + size_t(idx) * o.stride : nullptr;
+}
+
+template <int MODE, typename T, int N, int NOUT, bool BE>
+static void readVec(const DecOp& o, const uint8_t*& p, uint8_t* out) {
+    float* d = reinterpret_cast<float*>(out + o.dst);
+    const uint8_t* src = fetch<MODE>(o, p, uint32_t(sizeof(T) * N));
+    if (!src) {
+        for (int i = 0; i < NOUT; i++) d[i] = o.def[i];
+        return;
+    }
+    for (int i = 0; i < N; i++) d[i] = loadComp<T, BE>(src + i * sizeof(T), o.scale);
+    for (int i = N; i < NOUT; i++) d[i] = o.def[i];
+}
+
+template <int MODE, int TYPE, bool BE> static void readClr(const DecOp& o, const uint8_t*& p, uint8_t* out) {
+    static const uint8_t kBytes[6] = {2, 3, 4, 2, 3, 4};
+    uint8_t* c = out + o.dst;
+    const uint8_t* src = fetch<MODE>(o, p, kBytes[TYPE]);
+    if (!src) {
+        c[0] = c[1] = c[2] = c[3] = 255;
+        return;
+    }
+    switch (TYPE) {
+    case 0: {  // RGB565
+        uint16_t v = BE ? uint16_t(src[0] << 8 | src[1]) : uint16_t(src[1] << 8 | src[0]);
+        c[0] = uint8_t(((v >> 11) & 31) * 255 / 31);
+        c[1] = uint8_t(((v >> 5) & 63) * 255 / 63);
+        c[2] = uint8_t((v & 31) * 255 / 31);
+        c[3] = 255;
+        break;
+    }
+    case 1:  // RGB8
+    case 2:  // RGBX8
+        c[0] = src[0];
+        c[1] = src[1];
+        c[2] = src[2];
+        c[3] = 255;
+        break;
+    case 3: {  // RGBA4
+        uint16_t v = BE ? uint16_t(src[0] << 8 | src[1]) : uint16_t(src[1] << 8 | src[0]);
+        c[0] = uint8_t(((v >> 12) & 15) * 17);
+        c[1] = uint8_t(((v >> 8) & 15) * 17);
+        c[2] = uint8_t(((v >> 4) & 15) * 17);
+        c[3] = uint8_t((v & 15) * 17);
+        break;
+    }
+    case 4: {  // RGBA6
+        uint32_t v = BE ? uint32_t(src[0]) << 16 | uint32_t(src[1]) << 8 | src[2]
+                        : uint32_t(src[2]) << 16 | uint32_t(src[1]) << 8 | src[0];
+        c[0] = uint8_t(((v >> 18) & 63) * 255 / 63);
+        c[1] = uint8_t(((v >> 12) & 63) * 255 / 63);
+        c[2] = uint8_t(((v >> 6) & 63) * 255 / 63);
+        c[3] = uint8_t((v & 63) * 255 / 63);
+        break;
+    }
+    default:  // RGBA8: bytes are R,G,B,A in memory order either way
+        memcpy(c, src, 4);
+        break;
+    }
+}
+
+// Picks readVec<MODE, T, N, NOUT, BE> for the runtime values.
+template <int N, int NOUT> static DecFn pickVecN(uint8_t mode, uint8_t type, bool be) {
+#define SMS_GX_VEC_T(M, B)                                                                         \
+    switch (type) {                                                                                \
+    case 0: return &readVec<M, uint8_t, N, NOUT, B>;                                               \
+    case 1: return &readVec<M, int8_t, N, NOUT, B>;                                                \
+    case 2: return &readVec<M, uint16_t, N, NOUT, B>;                                              \
+    case 3: return &readVec<M, int16_t, N, NOUT, B>;                                               \
+    default: return &readVec<M, float, N, NOUT, B>;                                                \
+    }
+    if (mode == 1) { SMS_GX_VEC_T(1, true) }
+    if (mode == 2) {
+        if (be) { SMS_GX_VEC_T(2, true) }
+        SMS_GX_VEC_T(2, false)
+    }
+    if (be) { SMS_GX_VEC_T(3, true) }
+    SMS_GX_VEC_T(3, false)
+#undef SMS_GX_VEC_T
+}
+
+static DecFn pickClr(uint8_t mode, uint8_t type, bool be) {
+#define SMS_GX_CLR_T(M, B)                                                                         \
+    switch (type) {                                                                                \
+    case 0: return &readClr<M, 0, B>;                                                              \
+    case 1: return &readClr<M, 1, B>;                                                              \
+    case 2: return &readClr<M, 2, B>;                                                              \
+    case 3: return &readClr<M, 3, B>;                                                              \
+    case 4: return &readClr<M, 4, B>;                                                              \
+    default: return &readClr<M, 5, B>;                                                             \
+    }
+    if (mode == 1) { SMS_GX_CLR_T(1, true) }
+    if (mode == 2) {
+        if (be) { SMS_GX_CLR_T(2, true) }
+        SMS_GX_CLR_T(2, false)
+    }
+    if (be) { SMS_GX_CLR_T(3, true) }
+    SMS_GX_CLR_T(3, false)
+#undef SMS_GX_CLR_T
+}
+
+// Per-vertex matrix indices (position/normal and texture matrices, inline
+// u8 each): the defaults from the XF registers, overwritten by the present ones.
+static uint8_t s_mtxDefault[12];
+static uint16_t s_mtxPresent;  // bit k: slot k is in the stream
+static void readMtx(const DecOp& o, const uint8_t*& p, uint8_t* out) {
+    uint8_t* m = out + o.dst;
+    memcpy(m, s_mtxDefault, 12);
+    for (int k = 0; k < 9; k++)
+        if (s_mtxPresent & (1u << k)) m[k] = *p++ & 63;
+}
+
+static void attrOp(DecOp& op, int slot, uint8_t mode, float scale, uint16_t dst) {
+    op.base = mode >= 2 ? g.arrayBase[slot] : nullptr;
+    op.stride = g.arrayStride[slot];
+    op.scale = scale;
+    op.dst = dst;
+    memset(op.def, 0, sizeof(op.def));
 }
 
 static const uint8_t* decodeVertices(uint8_t opcode, const uint8_t* p, uint32_t count, const VtxLayout& L) {
     s_vertsLoaded += count;
-    // every field of a vertex starts from this, then the attributes it has
-    HostVertex tmpl;
-    memset(static_cast<void*>(&tmpl), 0, sizeof(tmpl));
-    tmpl.nrm[2] = 1.0f;
-    memset(tmpl.clr, 255, sizeof(tmpl.clr));
     uint32_t matA = g.xfReg[XFR_MATIDX_A], matB = g.xfReg[XFR_MATIDX_B];
     const uint8_t defMtx[9] = {
         uint8_t(matA & 63), uint8_t((matA >> 6) & 63), uint8_t((matA >> 12) & 63), uint8_t((matA >> 18) & 63),
         uint8_t((matA >> 24) & 63), uint8_t(matB & 63), uint8_t((matB >> 6) & 63), uint8_t((matB >> 12) & 63),
         uint8_t((matB >> 18) & 63),
     };
-    memcpy(tmpl.mtx, defMtx, 9);
 
-    AttrSrc pos{}, nrm{}, clr[2]{}, tex[8]{};
-    if (L.pos.mode) attrSrc(pos, L.pos, ARR_POS, L.pos.cnt ? 3 : 2, 1.0f / float(1u << L.pos.frac));
+    uint32_t fmt = 0;
+    s_mtxPresent = L.pnmtx.mode ? 1 : 0;
+    for (int i = 0; i < 8; i++)
+        if (L.texmtx[i].mode) s_mtxPresent |= uint16_t(2u << i);
+    if (s_mtxPresent) fmt |= VF_MTX;
+    if (L.nrm.mode) fmt |= VF_NRM | (L.nbt ? VF_NBT : 0);
+    for (int c = 0; c < 2; c++)
+        if (L.clr[c].mode) fmt |= VF_CLR0 << c;
+    for (int t = 0; t < 8; t++)
+        if (L.tex[t].mode) fmt |= VF_TEX0 << t;
+    const VtxFmtLayout& lay = vtxFmtLayout(fmt);
+
+    // ops in stream order: matrix indices, position, normal/NBT, colours, texcoords
+    DecOp ops[16];
+    int nops = 0;
+    if (fmt & VF_MTX) {
+        memcpy(s_mtxDefault, defMtx, 9);
+        s_mtxDefault[9] = s_mtxDefault[10] = s_mtxDefault[11] = 0;
+        ops[nops].fn = &readMtx;
+        ops[nops].dst = lay.mtx;
+        nops++;
+    }
+    if (L.pos.mode) {
+        DecOp& op = ops[nops++];
+        attrOp(op, ARR_POS, L.pos.mode, 1.0f / float(1u << L.pos.frac), 0);
+        bool be = L.pos.mode == 1 || g.arrayBigEndian[ARR_POS];
+        op.fn = L.pos.cnt ? pickVecN<3, 3>(L.pos.mode, L.pos.type, be) : pickVecN<2, 3>(L.pos.mode, L.pos.type, be);
+    }
     if (L.nrm.mode) {
         uint8_t t = L.nrm.type;
         float sc = t == 1 ? 1.0f / 64 : t == 3 ? 1.0f / 16384 : t == 0 ? 1.0f / 128 : t == 2 ? 1.0f / 32768 : 1.0f;
-        attrSrc(nrm, L.nrm, ARR_NRM, L.nbt ? 3 : 1, sc);  // n counts vectors
+        bool be = L.nrm.mode == 1 || g.arrayBigEndian[ARR_NRM];
+        if (L.nbt3 && L.nrm.mode != 1) {  // three indices, one per vector
+            for (int k = 0; k < 3; k++) {
+                DecOp& op = ops[nops++];
+                attrOp(op, ARR_NRM, L.nrm.mode, sc, uint16_t(lay.nrm + 12 * k));
+                if (k == 0) op.def[2] = 1.0f;
+                op.fn = pickVecN<3, 3>(L.nrm.mode, t, be);
+            }
+        } else {
+            DecOp& op = ops[nops++];
+            attrOp(op, ARR_NRM, L.nrm.mode, sc, lay.nrm);
+            op.def[2] = 1.0f;
+            op.fn = L.nbt ? pickVecN<9, 9>(L.nrm.mode, t, be) : pickVecN<3, 3>(L.nrm.mode, t, be);
+        }
     }
     for (int c = 0; c < 2; c++)
         if (L.clr[c].mode) {
-            attrSrc(clr[c], L.clr[c], ARR_CLR0 + c, 1, 1.0f);
-            clr[c].cs = L.clr[c].type < 6 ? kColorSize[L.clr[c].type] : 4;
+            DecOp& op = ops[nops++];
+            attrOp(op, ARR_CLR0 + c, L.clr[c].mode, 1.0f, lay.clr[c]);
+            op.fn = pickClr(L.clr[c].mode, L.clr[c].type, L.clr[c].mode == 1 || g.arrayBigEndian[ARR_CLR0 + c]);
         }
-    int texList[8], nTex = 0;
     for (int t = 0; t < 8; t++)
         if (L.tex[t].mode) {
-            attrSrc(tex[t], L.tex[t], ARR_TEX0 + t, L.tex[t].cnt ? 2 : 1, 1.0f / float(1u << L.tex[t].frac));
-            texList[nTex++] = t;
+            const AttrFmt& a = L.tex[t];
+            DecOp& op = ops[nops++];
+            attrOp(op, ARR_TEX0 + t, a.mode, 1.0f / float(1u << a.frac), lay.tex[t]);
+            bool be = a.mode == 1 || g.arrayBigEndian[ARR_TEX0 + t];
+            op.fn = a.cnt ? pickVecN<2, 2>(a.mode, a.type, be) : pickVecN<1, 2>(a.mode, a.type, be);
         }
-    bool anyMtxIdx = L.pnmtx.mode != 0;
-    for (int i = 0; i < 8; i++) anyMtxIdx |= L.texmtx[i].mode != 0;
 
-    // the element an attribute reads: inline data (advancing p) or an array element
-    auto elem = [&](const AttrSrc& a, uint32_t inlineBytes) -> const uint8_t* {
-        if (a.mode == 1) {
-            const uint8_t* src = p;
-            p += inlineBytes;
-            return src;
-        }
-        uint32_t idx;
-        if (a.mode == 2) idx = *p++;
-        else {
-            idx = be16(p);
-            p += 2;
-        }
-        return a.base ? a.base + size_t(idx) * a.stride : nullptr;
-    };
-
-    HostVertex* out = primitiveBegin(opcode, count);
-    for (uint32_t v = 0; v < count; v++) {
-        HostVertex& hv = out[v];
-        memcpy(&hv, &tmpl, sizeof(hv));
-        if (anyMtxIdx) {
-            if (L.pnmtx.mode) hv.mtx[0] = *p++ & 63;
-            for (int i = 0; i < 8; i++)
-                if (L.texmtx[i].mode) hv.mtx[1 + i] = *p++ & 63;
-        }
-        if (pos.mode) {
-            if (const uint8_t* src = elem(pos, pos.cs * pos.n))
-                for (int i = 0; i < pos.n; i++) hv.pos[i] = readComp(src + i * pos.cs, pos.type, pos.scale, pos.be);
-        }
-        if (nrm.mode) {
-            float* dst[3] = {hv.nrm, hv.bin, hv.tan};
-            if (L.nbt3 && nrm.mode != 1) {
-                for (int k = 0; k < 3; k++)
-                    if (const uint8_t* src = elem(nrm, 0))
-                        for (int i = 0; i < 3; i++) dst[k][i] = readComp(src + i * nrm.cs, nrm.type, nrm.scale, nrm.be);
-            } else if (const uint8_t* src = elem(nrm, nrm.cs * 3 * nrm.n)) {
-                for (int k = 0; k < nrm.n; k++)
-                    for (int i = 0; i < 3; i++)
-                        dst[k][i] = readComp(src + (k * 3 + i) * nrm.cs, nrm.type, nrm.scale, nrm.be);
-            }
-        }
-        for (int c = 0; c < 2; c++)
-            if (clr[c].mode)
-                if (const uint8_t* src = elem(clr[c], clr[c].cs)) readColor(src, clr[c].type, clr[c].be, hv.clr[c]);
-        for (int k = 0; k < nTex; k++) {
-            int t = texList[k];
-            const AttrSrc& a = tex[t];
-            if (const uint8_t* src = elem(a, a.cs * a.n))
-                for (int i = 0; i < a.n; i++) hv.tex[t][i] = readComp(src + i * a.cs, a.type, a.scale, a.be);
-        }
-    }
+    uint8_t* out = primitiveBegin(opcode, count, fmt, lay.stride);
+    if (!L.pos.mode) memset(out, 0, size_t(count) * lay.stride);  // no position: keep the slot defined
+    for (uint32_t v = 0; v < count; v++, out += lay.stride)
+        for (int k = 0; k < nops; k++) ops[k].fn(ops[k], p, out);
     primitiveEnd(opcode, count);
     return p;
 }
