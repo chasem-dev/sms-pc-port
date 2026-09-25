@@ -42,6 +42,10 @@
 #define BCDEC_STATIC
 #define BCDEC_IMPLEMENTATION
 #include "third_party/bcdec.h"
+#define STB_IMAGE_WRITE_STATIC
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "third_party/stb_image_write.h"
+#include <unordered_set>
 
 namespace gx {
 
@@ -110,7 +114,8 @@ struct PackFile {
     std::vector<std::string> mips;  // explicit levels 1.. (_mip<n>), may have gaps
     bool arbitrary = false;
 };
-static std::unordered_map<std::string, PackFile> s_index;  // key: the texture name
+static std::unordered_map<std::string, PackFile>& s_index =
+    *new std::unordered_map<std::string, PackFile>;  // key: the texture name (read by the worker; never destroyed)
 static int s_state = -1;                                   // -1 not scanned, 0 off, 1 on
 static uint32_t s_uploaded = 0;                            // replacements in GL
 
@@ -194,6 +199,33 @@ bool hiresLog() {
     static int on = -1;
     if (on < 0) on = getenv("SMS_TEXTURE_PACK_LOG") && atoi(getenv("SMS_TEXTURE_PACK_LOG")) != 0;
     return on != 0;
+}
+
+// SMS_TEXTURE_DUMP=dir: every texture the game loads is written there once,
+// as tex1_<...>.png under its pack name (level 0, decoded), the way packs are
+// made: dump, edit or upscale, keep the name.
+const char* hiresDumpDir() {
+    static const char* dir = nullptr;
+    static bool checked = false;
+    if (!checked) {
+        checked = true;
+        const char* e = getenv("SMS_TEXTURE_DUMP");
+        if (e && *e && strcmp(e, "0") != 0) {
+            dir = e;
+            std::error_code ec;
+            std::filesystem::create_directories(dir, ec);
+        }
+    }
+    return dir;
+}
+
+void hiresDump(const std::string& name, const uint8_t* rgba, uint32_t w, uint32_t h) {
+    static std::unordered_set<std::string> done;
+    const char* dir = hiresDumpDir();
+    if (!dir || !done.insert(name).second) return;
+    std::string path = std::string(dir) + "/" + name + ".png";
+    if (!stbi_write_png(path.c_str(), int(w), int(h), 4, rgba, int(w) * 4))
+        logmsg("texture dump: cannot write %s", path.c_str());
 }
 
 // ------------------------------------------------------------------ names
@@ -377,10 +409,13 @@ struct Replacement {
 static size_t s_bytes = 0;     // all READY replacements
 static uint32_t s_frame = 0;   // display frames (hiresEndFrame)
 static std::unordered_map<std::string, Replacement> s_repl;  // render thread only
-static std::mutex s_mu;
-static std::condition_variable s_cv;
-static std::deque<std::string> s_queue;                        // to decode
-static std::vector<std::pair<std::string, Loaded*>> s_decoded;  // decoded, to upload
+// Never destroyed: the worker is still waiting on s_cv when the process
+// exits, and destroying a condition variable with a waiter blocks forever.
+static std::mutex& s_mu = *new std::mutex;
+static std::condition_variable& s_cv = *new std::condition_variable;
+static std::deque<std::string>& s_queue = *new std::deque<std::string>;  // to decode
+static std::vector<std::pair<std::string, Loaded*>>& s_decoded =
+    *new std::vector<std::pair<std::string, Loaded*>>;  // decoded, to upload
 static bool s_workerStarted = false;
 
 // Completes an RGBA mip chain down to 1x1 with 2x2 box filtering, so every

@@ -514,6 +514,11 @@ unsigned bindTextureMap(int map, float* outW, float* outH) {
     glcBindTexture(map, e.tex);
     // the pack names' _m: mipmap filtering with a maximum LOD above 0
     bool mipmapped = ((mode0 >> 5) & 3) != 0 && ((mode1 >> 8) & 0xFF) != 0;
+    if (upload && hiresDumpDir()) {  // the pack name, and the image, for making a pack
+        std::vector<uint8_t> rgba(size_t(w) * h * 4);
+        decodeTexture(ptr, fmt, w, h, tlut, (tlutReg >> 10) & 3, rgba.data());
+        hiresDump(hiresName(ptr, fmt, w, h, mipmapped, tlut, tlutBytes, false), rgba.data(), w, h);
+    }
     if (upload && hiresEnabled()) {  // a texture pack's replacement for the new data
         e.hires = hiresName(ptr, fmt, w, h, mipmapped, tlut, tlutBytes, true);
         // the same image dumped from a use with the other mipmap setting

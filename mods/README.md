@@ -15,6 +15,9 @@ Replacements load in the background: a texture shows its original until its repl
 They look best with a larger internal resolution, for example `SMS_GX_SCALE=2`.
 
 Switches: `SMS_TEXTURE_PACKS=dir;dir` uses those folders instead of `mods/textures/`, `SMS_TEXTURE_PACKS=0` turns packs off, and `SMS_TEXTURE_PACK_LOG=1` logs the pack name of every texture the game loads and whether it was replaced (for checking a pack or making one).
+
+To make a pack, run with `SMS_TEXTURE_DUMP=dir`: every texture the game loads is written there once as a PNG under its pack name.
+Edit or upscale the images, keep the names, and put them under `mods/textures/`.
 Replacements take more video memory than the original textures: the UHD pack's plaza textures are about 16 times the size of the originals.
 Past `SMS_TEXTURE_PACK_MB` (1536 by default), the replacements unused for longest are freed, and read again when needed.
 
