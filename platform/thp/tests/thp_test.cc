@@ -3,7 +3,7 @@
 // untiles and converts to RGB PNGs, and decodes all audio with
 // THPAudioDecode into a WAV whose length must match the header.
 //
-//   make -C platform/thp/tests run [DISC=...] [MOVIE=data/openingA.thp]
+//   make -C platform/thp/tests run DISC=.../files [MOVIE=data/openingA.thp]
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -111,7 +111,11 @@ static u8 clamp8(float v) { return v < 0 ? 0 : v > 255 ? 255 : (u8)lrintf(v); }
 int main(int argc, char** argv)
 {
 	std::string out  = argc > 1 ? argv[1] : "out";
-	std::string disc = getenv("DISC") ? getenv("DISC") : "/home/netflix/sms/orig/GMSE01/files";
+	if (!getenv("DISC")) {
+		fprintf(stderr, "set DISC=<the disc's extracted files/ folder>\n");
+		return 2;
+	}
+	std::string disc = getenv("DISC");
 	std::string mov  = getenv("MOVIE") ? getenv("MOVIE") : "data/openingA.thp";
 	FILE* f          = fopen((disc + "/" + mov).c_str(), "rb");
 	if (!f) {

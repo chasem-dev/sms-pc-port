@@ -1,5 +1,5 @@
 # Host test for the THP decoders (decomp THPDec.c/THPAudio.c + thp-0*.patch).
-#   make run [DISC=/path/to/GMSE01/files] [MOVIE=data/openingA.thp] [FRAMES=...]
+#   make run DISC=/path/to/GMSE01/files [MOVIE=data/openingA.thp] [FRAMES=...]
 PORT   := $(abspath ../../..)
 DECOMP := $(PORT)/decomp
 ARCH   ?= -m32

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ./run_mac.sh [/path/to/GMSE01.iso] [--headless ...]
 # Without a disc image (argument, SMS_DISC_IMAGE or SMS_DISC_ROOT), runs
-# build-mac/sms-standalone if it was built, else the single image in
-# build-mac/rom/.
+# build-mac/SMS.app if it was built (in this terminal, so its log shows),
+# else the single image in build-mac/rom/.
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -26,8 +26,8 @@ if [[ -n "${SMS_DISC_IMAGE:-}" || -n "${SMS_DISC_ROOT:-}" ]]; then
   have_disc=1
 fi
 
-if (( have_disc == 0 )) && [[ -x "$bdir/sms-standalone" ]]; then
-  exec "$bdir/sms-standalone" "$@"
+if (( have_disc == 0 )) && [[ -x "$bdir/SMS.app/Contents/MacOS/sms" ]]; then
+  exec "$bdir/SMS.app/Contents/MacOS/sms" "$@"
 fi
 if [[ ! -x "$bdir/sms" ]]; then
   echo 'Build the port with ./build_mac.sh first.' >&2
@@ -38,7 +38,7 @@ if (( have_disc == 0 )); then
   images=($bdir/rom/*.{iso,gcm,ciso,ISO,GCM,CISO})
   if (( ${#images[@]} != 1 )); then
     echo "Pass a GMSE01 disc image, set SMS_DISC_IMAGE, place one ISO/GCM/CISO in $bdir/rom/," >&2
-    echo 'or build a standalone executable with ./build_mac.sh /path/to/GMSE01.iso.' >&2
+    echo 'or build SMS.app with ./build_mac.sh /path/to/GMSE01.iso.' >&2
     exit 1
   fi
   set -- "${images[0]}" "$@"

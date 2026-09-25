@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ./build_mac.sh [/path/to/GMSE01.iso]
-# 64-bit x86_64 build → build-mac/ (runs under Rosetta on Apple Silicon).
+# 64-bit x86_64 build → build-mac/ (runs under Rosetta on Apple Silicon);
+# with a disc image, also build-mac/SMS.app.
 #
 # Uses the normal Apple Silicon Homebrew (/opt/homebrew) plus Apple Clang
 # targeting x86_64. Does not need Intel Homebrew. See BUILD.md#macos.
@@ -139,11 +140,13 @@ cp -R "$sdl2_fw" "$bdir/SDL2.framework"
 mkdir -p "$bdir/rom"
 echo "Built $bdir/sms (x86_64; runs under Rosetta on Apple Silicon)"
 file "$bdir/sms"
+# SMS.app replaced the appended-image sms-standalone on macOS.
+rm -f "$bdir/sms-standalone"
 if [[ -n "$disc" ]]; then
   cmake --build "$bdir" --target sms_standalone
-  echo "Built $bdir/sms-standalone with the assets of $disc bundled in"
-  echo 'Run: ./run_mac.sh   (or build-mac/sms-standalone directly; it needs no disc image)'
+  echo "Built $bdir/SMS.app with the assets of $disc and SDL2 inside"
+  echo 'Run: ./run_mac.sh, or open build-mac/SMS.app (it needs no disc image)'
 else
   echo 'Run: ./run_mac.sh /path/to/your/GMSE01.iso'
-  echo 'For a standalone executable: ./build_mac.sh /path/to/your/GMSE01.iso'
+  echo 'For a standalone SMS.app: ./build_mac.sh /path/to/your/GMSE01.iso'
 fi

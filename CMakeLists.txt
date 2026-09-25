@@ -255,8 +255,9 @@ endif()
 add_executable(sms ${SMS_PORT_SRC}/port_main.cpp ${SMS_PLATFORM_SOURCES})
 if(APPLE AND SMS_SDL2_FRAMEWORK_DIR)
   # @rpath/SDL2.framework: beside the executable (build_mac.sh copies it
-  # there), else where it was linked from.
-  set_target_properties(sms PROPERTIES BUILD_RPATH "@executable_path;${SMS_SDL2_FRAMEWORK_DIR}")
+  # there) or in SMS.app/Contents/Frameworks. No absolute path, so a copy
+  # that lacks the framework fails here as it would on another Mac.
+  set_target_properties(sms PROPERTIES BUILD_RPATH "@executable_path;@executable_path/../Frameworks")
 endif()
 if(WIN32)
   set_target_properties(sms PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -311,13 +312,63 @@ endif()
 # -DSMS_BUNDLE_DISC=/path/GMSE01.iso adds the target sms_standalone: a copy of
 # sms with the disc's files packed after it (tools/bundle_disc.py), which runs
 # with no disc image or extracted folder beside it (platform/disc reads the
-# trailer at the end of its own executable).
+# trailer at the end of its own executable). On macOS it is SMS.app instead,
+# with the packed image and an icon in Contents/Resources and SDL2.framework
+# inside.
 set(SMS_BUNDLE_DISC "" CACHE FILEPATH "GMSE01 disc image (.iso/.gcm/.ciso) to bundle into sms-standalone")
 if(SMS_BUNDLE_DISC)
   if(NOT EXISTS "${SMS_BUNDLE_DISC}")
     message(FATAL_ERROR "SMS_BUNDLE_DISC: ${SMS_BUNDLE_DISC} does not exist")
   endif()
+endif()
+if(SMS_BUNDLE_DISC AND APPLE)
+  if(NOT SMS_SDL2_FRAMEWORK_DIR)
+    message(FATAL_ERROR "SMS.app needs SDL2.framework (pass -DSMS_SDL2_FRAMEWORK=...)")
+  endif()
+  set(_app ${CMAKE_BINARY_DIR}/SMS.app)
+  set(_app_disc ${_app}/Contents/Resources/disc.gcm)
+  set(_app_icon ${_app}/Contents/Resources/SMS.icns)
+  add_custom_command(OUTPUT ${_app_disc}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${_app}/Contents/Resources
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/bundle_disc.py
+            --image-only --disc "${SMS_BUNDLE_DISC}" --out ${_app_disc}
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/bundle_disc.py "${SMS_BUNDLE_DISC}"
+    COMMENT "Packing ${SMS_BUNDLE_DISC} into SMS.app"
+    VERBATIM)
+  # The app icon is the game's memory-card icon, taken from the disc.
+  add_custom_command(OUTPUT ${_app_icon}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${_app}/Contents/Resources
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/extract_icon.py
+            --disc "${SMS_BUNDLE_DISC}" --icns ${_app_icon}
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/extract_icon.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/bundle_disc.py "${SMS_BUNDLE_DISC}"
+    COMMENT "Extracting the SMS.app icon"
+    VERBATIM)
+  add_custom_command(OUTPUT ${_app}/Contents/MacOS/sms
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tools/make_mac_app.sh
+            ${_app} $<TARGET_FILE:sms> ${SMS_SDL2_FRAMEWORK_DIR}/SDL2.framework
+    DEPENDS sms ${_app_disc} ${_app_icon} ${CMAKE_CURRENT_SOURCE_DIR}/tools/make_mac_app.sh
+            ${SMS_SDL2_FRAMEWORK_DIR}/SDL2.framework/SDL2
+    COMMENT "Assembling SMS.app"
+    VERBATIM)
+  add_custom_target(sms_standalone ALL DEPENDS ${_app}/Contents/MacOS/sms)
+elseif(SMS_BUNDLE_DISC)
   if(WIN32)
+    # Explorer's icon for sms.exe (and so sms-standalone.exe): the game's
+    # memory-card icon, taken from the disc into an icon resource.
+    enable_language(RC)
+    set(_ico ${CMAKE_BINARY_DIR}/sms.ico)
+    set(_rc ${CMAKE_BINARY_DIR}/sms_icon.rc)
+    add_custom_command(OUTPUT ${_ico}
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/extract_icon.py
+              --disc "${SMS_BUNDLE_DISC}" --ico ${_ico}
+      DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/extract_icon.py
+              ${CMAKE_CURRENT_SOURCE_DIR}/tools/bundle_disc.py "${SMS_BUNDLE_DISC}"
+      COMMENT "Extracting the sms.exe icon"
+      VERBATIM)
+    file(CONFIGURE OUTPUT ${_rc} CONTENT "1 ICON \"${_ico}\"\n")
+    set_source_files_properties(${_rc} PROPERTIES OBJECT_DEPENDS ${_ico})
+    target_sources(sms PRIVATE ${_rc})
     set(_standalone ${CMAKE_BINARY_DIR}/bin/sms-standalone${CMAKE_EXECUTABLE_SUFFIX})
   else()
     set(_standalone ${CMAKE_BINARY_DIR}/sms-standalone${CMAKE_EXECUTABLE_SUFFIX})

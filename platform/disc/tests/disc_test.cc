@@ -4,7 +4,7 @@
 //    image, sizes match the extracted files;
 //  - system files equal orig/<ID>/sys/*; chosen files are byte-identical;
 //  - a synthetic CISO of a synthetic disc reads back identically.
-//   make -C platform/disc/tests run [ISO=...] [FILES=.../files] [FULL=1]
+//   make -C platform/disc/tests run ISO=... FILES=.../files [FULL=1]
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -127,8 +127,12 @@ static void test_ciso(const char* tmpdir)
 
 int main()
 {
-	std::string iso   = getenv("ISO") ? getenv("ISO") : "/home/netflix/sms/Super Mario Sunshine (2002)(Nintendo)(US).iso";
-	std::string files = getenv("FILES") ? getenv("FILES") : "/home/netflix/sms/orig/GMSE01/files";
+	if (!getenv("ISO") || !getenv("FILES")) {
+		fprintf(stderr, "set ISO=<GMSE01 disc image> and FILES=<its extracted files/ folder>\n");
+		return 2;
+	}
+	std::string iso   = getenv("ISO");
+	std::string files = getenv("FILES");
 	bool full         = getenv("FULL") != NULL;
 	const char* tmp   = getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp";
 

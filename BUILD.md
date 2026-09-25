@@ -5,7 +5,7 @@
 | [Linux](#linux) | `./build_linux.sh` | `./run_linux.sh /path/to/GMSE01.iso` |
 | [macOS](#macos) | `./build_mac.sh` | `./run_mac.sh /path/to/GMSE01.iso` |
 | [Windows (MSYS2 MINGW32)](#windows-msys2-mingw32) | `./build_windows.sh` or `build_windows.cmd` | `./run_windows.sh /path/to/GMSE01.iso` or `run_windows.cmd` |
-| [Standalone executable](#standalone-executable) | `./build_linux.sh /path/to/GMSE01.iso` (or `build_mac.sh` / `build_windows.sh`) | `./run_linux.sh` / `./run_mac.sh`, or `build/sms-standalone` from anywhere |
+| [Standalone executable](#standalone-executable) | `./build_linux.sh /path/to/GMSE01.iso` (or `build_mac.sh` / `build_windows.sh`) | `./run_linux.sh` / `./run_mac.sh`, or `build/sms-standalone` (`build-mac/SMS.app` on macOS) from anywhere |
 
 ## Windows (MSYS2 MINGW32)
 
@@ -90,7 +90,7 @@ No Intel Homebrew is required. The script uses Apple Clang (`-arch x86_64`), nor
 | Rosetta 2 (Apple Silicon) | Run the x86_64 `build-mac/sms` binary |
 | Homebrew (`/opt/homebrew` on Apple Silicon is fine) | `cmake`, `python3`, `llvm` |
 | `llvm` (`brew install llvm`) | `llvm-objcopy` to rename the game's `operator new/delete` in Mach-O archives |
-| Universal `SDL2.framework` | Window/audio; `./build_mac.sh` downloads it into `third_party/` if missing (Homebrew’s `sdl2` bottle is often arm64-only) |
+| Universal `SDL2.framework` | Window/audio; `./build_mac.sh` downloads it into `third_party/` if missing (Homebrew’s `sdl2` bottle is often arm64-only). It is copied beside `build-mac/sms` and into `SMS.app`; the binary finds it only there (`@executable_path`, `@executable_path/../Frameworks`) |
 
 Apple Clang has no `-fexec-charset=CP932`; configure mirrors game sources as CP932 (`tools/darwin_cp932_mirror.py`) so disc Shift-JIS names still match.
 
@@ -116,7 +116,7 @@ git submodule update --init decomp
 ```
 
 Or place exactly one `.iso`, `.gcm`, or Dolphin `.ciso` in `build-mac/rom/` and run `./run_mac.sh` with no argument.
-Pass the image to the build script for `build-mac/sms-standalone`.
+Pass the image to the build script for `build-mac/SMS.app` (see [macOS app](#macos-app)).
 Set `JOBS=2` to limit parallel jobs (default is `hw.ncpu`).
 Saves default to `~/.local/share/sms-port/card-a`, or set `SMS_SAVE_DIR`.
 
@@ -143,6 +143,38 @@ cmake -S . -B build-mac \
 cmake --build build-mac --target sms -j"$(sysctl -n hw.ncpu)"
 cp -R third_party/SDL2.framework build-mac/   # found via @rpath (@executable_path)
 ```
+
+### macOS app
+
+`./build_mac.sh /path/to/GMSE01.iso` also builds `build-mac/SMS.app` (about 1.1 GiB):
+
+| Path in the bundle | Contents |
+| --- | --- |
+| `Contents/MacOS/sms` | the port executable |
+| `Contents/Frameworks/SDL2.framework` | SDL2, so the other Mac needs no SDL install |
+| `Contents/Resources/disc.gcm` | the game's files, packed by `tools/bundle_disc.py --image-only` |
+| `Contents/Resources/SMS.icns` | the icon: the game's memory-card Mario head, taken from the disc by `tools/extract_icon.py` |
+
+`tools/make_mac_app.sh` assembles it and signs it ad hoc.
+The image lives in `Resources` rather than after the executable (as `sms-standalone` does on Linux and Windows) because appended data would break the code signature.
+Double-click it in Finder, or `./run_mac.sh` with no disc argument runs it in the terminal so its log shows.
+
+To move it to another Mac of yours, zip it with `ditto` (it keeps the framework's symlinks):
+
+```sh
+ditto -c -k --keepParent build-mac/SMS.app SMS.zip
+```
+
+The app has no Developer ID signature, so macOS blocks a downloaded copy ("SMS is damaged" or "cannot be verified").
+After unzipping, run once:
+
+```sh
+xattr -dr com.apple.quarantine /path/to/SMS.app
+```
+
+On Apple Silicon, macOS offers to install Rosetta 2 on first launch if it is missing.
+Saves go to `~/.local/share/sms-port/card-a`, the same place as the terminal build.
+Keep the app private: it contains the whole game and the icon art from your disc, so sharing it is sharing the game.
 
 ## Linux
 
@@ -209,7 +241,7 @@ Pass your disc image to the build script to get an executable with the game's fi
 
 ```sh
 ./build_linux.sh "/path/to/Super Mario Sunshine (US).iso"      # -> build/sms-standalone
-./build_mac.sh "/path/to/Super Mario Sunshine (US).iso"        # -> build-mac/sms-standalone
+./build_mac.sh "/path/to/Super Mario Sunshine (US).iso"        # -> build-mac/SMS.app (see #macos-app)
 ./build_windows.sh '/path/to/Super Mario Sunshine (US).iso'    # -> build32/bin/sms-standalone.exe
 ```
 
@@ -217,11 +249,25 @@ The scripts also take the image from `SMS_DISC_IMAGE`, or from a single image in
 `tools/bundle_disc.py` reads the image (`.iso`, `.gcm` or Dolphin `.ciso`), checks that it is GMSE01, and packs the disc's files into a trimmed disc image with no padding (about 1.1 GiB).
 It appends that image to a copy of `sms`, followed by a small trailer that `platform/disc` finds when the program starts.
 `build/sms` itself is unchanged and still takes a disc image.
-The standalone executable needs no image, no `rom/` folder and no extracted files, so it can be copied and run on its own (on Windows its MinGW and SDL2 DLLs are still needed next to it or on `PATH`).
+The standalone executable needs no image, no `rom/` folder and no extracted files.
+On Linux it still needs the system's SDL2 (`libsdl2`); on Windows its MinGW and SDL2 DLLs must be next to it or on `PATH`.
+On macOS the build produces [`SMS.app`](#macos-app) instead, with SDL2 and the packed image inside the bundle.
 `./run_linux.sh`, `./run_mac.sh` and `./run_windows.sh` without a disc argument start it when it exists.
 A disc argument, `SMS_DISC_IMAGE` or `SMS_DISC_ROOT` still takes precedence over the bundled files.
 Keep the executable private: it contains the game.
-For a manual build, add `-DSMS_BUNDLE_DISC=/path/GMSE01.iso` to the `cmake -S` command and build the `sms_standalone` target.
+
+### Icons
+
+The icon is the game's memory-card icon (the Mario head), always taken from your disc, never stored in this repository:
+
+| Where | How |
+| --- | --- |
+| Window, taskbar and Dock, every platform | `platform/misc/window_icon.cpp` decodes it from the game source at startup and hands it to SDL |
+| `SMS.app` in Finder and the Dock | `Contents/Resources/SMS.icns`, written by `tools/extract_icon.py --icns` |
+| `sms.exe` / `sms-standalone.exe` in Explorer | an icon resource from `tools/extract_icon.py --ico`, compiled in when the build script is given the disc image |
+
+Linux executables carry no icon of their own; the window icon is what the desktop shows.
+For a manual build, add `-DSMS_BUNDLE_DISC=/path/GMSE01.iso` to the `cmake -S` command and build the `sms_standalone` target (on macOS it builds `SMS.app`).
 
 Useful options (put them before the command, e.g. `SMS_SKIP_MOVIES=1 ./run_linux.sh ...`):
 

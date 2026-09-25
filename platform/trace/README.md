@@ -1,7 +1,7 @@
 # platform/trace — native-vs-retail lockstep testing
 
 The goal is that the native port behaves like retail.
-Three pieces check that against the Dolphin oracle (`/home/netflix/dolphin-oracle`):
+Three pieces check that against the Dolphin oracle (its checkout is `$DOLPHIN_ORACLE` below):
 
 1. **Movie player** (`trace.cpp`): feeds the oracle's `.dtm` pad input into `PADRead`, so the native game gets the same inputs as the retail run.
 2. **Trace writer** (`trace.cpp`): writes the same named memory ranges every VI field, in the oracle's trace format.
@@ -33,17 +33,17 @@ They are 32-bit only: native pointer members must be 4 bytes for the layouts to 
 
 ```sh
 # 1. resolve the oracle's range file against this binary (repeat after every relink)
-TRACE_RANGES=/home/netflix/dolphin-oracle/ranges/play.txt TRACE_OUT=build/play.ranges \
+TRACE_RANGES=$DOLPHIN_ORACLE/ranges/play.txt TRACE_OUT=build/play.ranges \
     gdb -batch -x tools/trace_resolve.py build/sms
 
 # 2. native run: same movie as the retail run, poll timing taken from the retail trace
-SMS_MOVIE=/home/netflix/dolphin-oracle/movies/play5.dtm \
-SMS_MOVIE_POLLMAP=/home/netflix/dolphin-oracle/runs/play-r9/trace.txt \
+SMS_MOVIE=$DOLPHIN_ORACLE/movies/play5.dtm \
+SMS_MOVIE_POLLMAP=$DOLPHIN_ORACLE/runs/play-r9/trace.txt \
 SMS_TRACE_RANGES=build/play.ranges SMS_TRACE_OUT=build/play-native.txt SMS_TRACE_FRAMES=11500 \
     build/sms --headless
 
 # 3. compare
-tools/trace_compare.py /home/netflix/dolphin-oracle/runs/play-r9/trace.txt build/play-native.txt \
+tools/trace_compare.py $DOLPHIN_ORACLE/runs/play-r9/trace.txt build/play-native.txt \
     --names build/play.ranges.json
 ```
 
@@ -154,7 +154,7 @@ All offsets are GameCube offsets; each one is translated through the MWCC layout
 Native starts are written as `@0xSTATIC` (host symbol) or `0xMEM1`, followed by `/0xOFF` per dereference.
 
 Heap objects should be reached through pointers, never absolute addresses, because the native heap layout differs from retail's.
-`/home/netflix/dolphin-oracle/ranges/play-symbolic.txt` is `play.txt` with `cardload = *gpCardLoad` and the three blocks as `*(*gpCardLoad+0x298/0x29c/0x2a0)`.
+`ranges/play-symbolic.txt` in the oracle is `play.txt` with `cardload = *gpCardLoad` and the three blocks as `*(*gpCardLoad+0x298/0x29c/0x2a0)`.
 It was checked against `runs/play-r9`: retail's `TCardLoad` holds the old blockA/B/C addresses at those offsets.
 The oracle's `run_oracle.py` resolves `cardload` today, and skips the nested block lines until its Dolphin range format supports a pointer chain.
 

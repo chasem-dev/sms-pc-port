@@ -12,6 +12,7 @@ The DVD layer can serve the game from the user's `.iso` this way, with no extrac
 The image is recognised by content (magic `0xC2339F3D` at `0x1C`, or `CISO`), not by extension.
 
 `gcdisc_open_embedded()` opens an image bundled into the running executable by `tools/bundle_disc.py`: the file ends with a 32-byte trailer `{"SMSDISC1", u64 LE image offset, u64 LE image size, 8 zero bytes}`, and the image (a trimmed but valid disc: system files, FST, then the files packed 32-byte aligned) sits at that offset.
+On macOS it falls back to `Contents/Resources/disc.gcm` of the app bundle the executable runs in (`SMS.app`, built by `tools/make_mac_app.sh`), since appending to a signed executable would break its signature.
 `platform/dvd` uses it when no disc argument, `SMS_DISC_IMAGE` or `SMS_DISC_ROOT` names another source.
 Offsets are 64-bit (`pread64`, `O_LARGEFILE`), so a 32-bit build reads bundles and images past 2 GiB.
 All on-disc fields are big-endian; the API returns host values.
@@ -64,7 +65,7 @@ make -C platform/disc/tests run            # ISO=..., FILES=.../files; FULL=1 co
 ```
 
 The test reads the user's image in place and never copies it.
-Against `/home/netflix/sms/Super Mario Sunshine (2002)(Nintendo)(US).iso` and `/home/netflix/sms/orig/GMSE01/files`:
+Against the retail North American image (GMSE01) and its extracted `files/`:
 
 - **Header and FST:** `GMSE01` "Super Mario Sunshine", 1,459,978,240 bytes.
   All 181 FST entries resolve: 174 files (1117.3 MiB) and 6 directories.

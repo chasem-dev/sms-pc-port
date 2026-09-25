@@ -41,6 +41,8 @@ SDL_GLContext s_glctx = nullptr;
 void (*s_eventCb)(const SDL_Event*) = nullptr;
 std::vector<SDL_GameController*> s_pads;
 #endif
+std::vector<uint8_t> s_icon;  // GXPC_SetWindowIcon, RGBA8
+int s_iconW = 0, s_iconH = 0;
 
 bool envTrue(const char* name) {
     const char* v = getenv(name);
@@ -49,6 +51,15 @@ bool envTrue(const char* name) {
 
 #ifdef SMS_GX_HAVE_SDL2
 void* sdlGetProc(const char* name) { return SDL_GL_GetProcAddress(name); }
+
+void applyIcon() {
+    if (!s_window || s_icon.empty()) return;
+    SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(s_icon.data(), s_iconW, s_iconH, 32, s_iconW * 4,
+                                                        SDL_PIXELFORMAT_RGBA32);
+    if (!s) return;
+    SDL_SetWindowIcon(s_window, s);
+    SDL_FreeSurface(s);
+}
 
 bool openWindow(int scale) {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMECONTROLLER) != 0) {
@@ -68,6 +79,7 @@ bool openWindow(int scale) {
         SDL_Quit();
         return false;
     }
+    applyIcon();
     s_glctx = SDL_GL_CreateContext(s_window);
     if (!s_glctx) {
         logmsg("OpenGL 3.3 core context failed: %s", SDL_GetError());
@@ -187,6 +199,16 @@ int GXPC_ParseArgs(int* argc, char** argv) {
 }
 
 void GXPC_SetHeadless(int headless) { s_forceHeadless = headless ? 1 : 0; }
+
+void GXPC_SetWindowIcon(const uint8_t* rgba, int w, int h) {
+    if (!rgba || w <= 0 || h <= 0) return;
+    s_icon.assign(rgba, rgba + (size_t)w * h * 4);
+    s_iconW = w;
+    s_iconH = h;
+#ifdef SMS_GX_HAVE_SDL2
+    applyIcon();
+#endif
+}
 void GXPC_SetAutoPresent(int enable) { s_autoPresent = enable != 0; }
 int GXPC_IsHeadless(void) { return s_mode != MODE_WINDOW; }
 uint32_t GXPC_FrameCount(void) { return s_frame; }

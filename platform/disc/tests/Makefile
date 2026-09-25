@@ -1,5 +1,5 @@
 # Host test for platform/disc (reads the user's disc image read-only).
-#   make run [ISO=/path/game.iso] [FILES=/path/extracted/files] [FULL=1]
+#   make run ISO=/path/game.iso FILES=/path/extracted/files [FULL=1]
 ARCH ?= -m32
 CXX  ?= g++
 CXXFLAGS ?= -O2 -g -std=gnu++11 -Wall -D_FILE_OFFSET_BITS=64

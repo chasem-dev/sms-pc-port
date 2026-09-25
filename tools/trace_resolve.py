@@ -2,7 +2,7 @@
 # native port binary, with byte-order layouts taken from its DWARF types.
 # Runs inside gdb (static, the program is not started):
 #
-#   TRACE_RANGES=/home/netflix/dolphin-oracle/ranges/play.txt TRACE_OUT=build/trace.ranges \
+#   TRACE_RANGES=$DOLPHIN_ORACLE/ranges/play.txt TRACE_OUT=build/trace.ranges \
 #       gdb -batch -x tools/trace_resolve.py build/sms
 #
 # Several range files: TRACE_RANGES=a.txt:b.txt. Writes TRACE_OUT (read by
@@ -320,7 +320,9 @@ def resolve(line, types):
 
 
 def main():
-    paths = os.environ.get('TRACE_RANGES', '/home/netflix/dolphin-oracle/ranges/play.txt').split(':')
+    if not os.environ.get('TRACE_RANGES'):
+        raise SystemExit('set TRACE_RANGES to the oracle range file(s), e.g. $DOLPHIN_ORACLE/ranges/play.txt')
+    paths = os.environ['TRACE_RANGES'].split(':')
     out = os.environ.get('TRACE_OUT', 'trace.ranges')
     anchor = lookup('port_trace_anchor')
     lines, types = [], {}

@@ -273,6 +273,24 @@ extern "C" int gcdisc_self_path(char* buf, uint32_t bufsize)
 	return 1;
 }
 
+#ifdef __APPLE__
+// SMS.app (tools/make_mac_app.sh) keeps the image beside the executable in
+// Contents/Resources: data appended to the executable would break its code
+// signature.
+static GCDisc* open_app_resource(const char* self, int verbose)
+{
+	std::string path(self);
+	size_t slash = path.rfind('/');
+	if (slash == std::string::npos)
+		return NULL;
+	path.resize(slash);
+	path += "/../Resources/disc.gcm";
+	if (access(path.c_str(), R_OK) != 0)
+		return NULL;
+	return gcdisc_open(path.c_str(), verbose);
+}
+#endif
+
 extern "C" GCDisc* gcdisc_open_embedded(int verbose)
 {
 	char self[4096];
@@ -285,7 +303,11 @@ extern "C" GCDisc* gcdisc_open_embedded(int verbose)
 	uint8_t t[32];
 	if (len < sizeof t || !pread_all(fd, t, sizeof t, len - sizeof t) || memcmp(t, "SMSDISC1", 8) != 0) {
 		close(fd);
+#ifdef __APPLE__
+		return open_app_resource(self, verbose);
+#else
 		return NULL;
+#endif
 	}
 	uint64_t off = 0, size = 0;
 	for (int i = 7; i >= 0; i--) {

@@ -4,7 +4,8 @@ Native PC port of Super Mario Sunshine (GMSE01), built from the matching decompi
 
 - `decomp/` — the decompilation (git submodule, branch `main` of [sms-english](https://github.com/chasem-dev/sms-english)).
   Game and JSystem source come from here; its GameCube build stays byte-identical to retail and is the reference.
-- `tools/bundle_disc.py` — packs the disc's files into a standalone executable (`build/sms-standalone`).
+- `tools/bundle_disc.py` — packs the disc's files into a standalone executable (`build/sms-standalone`), or into `SMS.app` on macOS (`tools/make_mac_app.sh`).
+- `tools/extract_icon.py` — makes the app / `.exe` icon from the disc's memory-card icon (see [BUILD.md](BUILD.md#icons)).
 - `platform/` — host replacements for the Dolphin SDK surface the game calls (see "Platform layer").
 - `src/` — port entry point (`port_main.cpp`), the force-included compat header (`port_compat.h`) and header overrides (`port_include/`).
 - `decomp-patches/` — the decomp source changes the port cannot avoid, applied to copies at configure time (never to `decomp/`).
@@ -38,7 +39,7 @@ Native PC port of Super Mario Sunshine (GMSE01), built from the matching decompi
 See [BUILD.md](BUILD.md) for dependencies (on macOS: Rosetta, Apple Clang x86_64, Homebrew `cmake`/`llvm`, universal SDL2.framework), Windows `.cmd` launchers, and manual build commands.
 On Linux, `SMS_HEADLESS=1 ./run_linux.sh "/path/to/Super Mario Sunshine (US).iso"` uses offscreen rendering.
 Each run script can also find a single image in its build directory's `rom/` folder.
-Passing the image to the build script (`./build_linux.sh GAME.iso`) also produces `build/sms-standalone`, an executable with the disc's files bundled in that runs with no image (see [BUILD.md](BUILD.md#standalone-executable)).
+Passing the image to the build script (`./build_linux.sh GAME.iso`) also produces `build/sms-standalone` (`build-mac/SMS.app` on macOS), an executable with the disc's files bundled in that runs with no image (see [BUILD.md](BUILD.md#standalone-executable)).
 
 - **The game comes from your disc image** (`.iso`/`.gcm`, or Dolphin `.ciso`), read in place through `platform/disc`.
   Pass an image path, set `SMS_DISC_IMAGE`, or place one image in `build/rom/` on Linux or `build32/bin/rom/` on Windows.
@@ -46,7 +47,6 @@ Passing the image to the build script (`./build_linux.sh GAME.iso`) also produce
 - Saves go to a host-file memory card in slot A: `$SMS_SAVE_DIR`, default `~/.local/share/sms-port/card-a`.
 - Sound plays through SDL2 (`platform/audio`); `SMS_AUDIO=0` mutes it and `SMS_AUDIO_WAV=out.wav` records it.
 - The window uses OpenGL 3.3. The 32-bit build here falls back to Mesa's GLX when the i386 NVIDIA userspace does not match the kernel driver, so rendering is software (llvmpipe).
-- A ready-to-run copy with bindings lives in `/home/netflix/sms-demo/`.
 
 ### Environment
 

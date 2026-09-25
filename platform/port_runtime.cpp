@@ -25,19 +25,18 @@
 #endif
 #endif
 
-// Default game source on this machine: the user's disc image, else the
-// extracted folder. A bare argument, SMS_DISC_IMAGE or SMS_DISC_ROOT override it.
-static const char* const kDefaultImage = "/home/netflix/sms/Super Mario Sunshine (2002)(Nintendo)(US).iso";
-static const char* const kDefaultFolder = "/home/netflix/sms/orig/GMSE01/files";
+// Game source named by a bare argument or SMS_DISC_ROOT (a disc image or an
+// extracted files/ folder); SMS_DISC_IMAGE overrides it. With none of them,
+// the image bundled into the executable (tools/bundle_disc.py) is used, else
+// on Windows the working directory as an extracted folder.
 const char* port_disc_root =
 #ifdef _WIN32
     ".";
 #else
-    kDefaultFolder;
+    NULL;
 #endif
 // Set when the command line or SMS_DISC_ROOT named the game source; otherwise
-// a disc image bundled into the executable (tools/bundle_disc.py) wins over
-// the machine defaults above.
+// a disc image bundled into the executable wins over the default above.
 int port_disc_explicit = 0;
 // SMS_SKIP_MOVIES=1 reports every THP movie as finished at once (patch 0016).
 extern "C" int port_skip_movies;
@@ -324,10 +323,6 @@ extern "C" void port_init(int argc, char** argv)
 		}
 	if (GXPC_ParseArgs)
 		GXPC_ParseArgs(&argc, argv);
-#ifndef _WIN32
-	if (access(kDefaultImage, R_OK) == 0)
-		port_disc_root = kDefaultImage;
-#endif
 	if (const char* d = getenv("SMS_DISC_ROOT")) {
 		port_disc_root     = d;
 		port_disc_explicit = 1;
@@ -354,6 +349,7 @@ extern "C" void port_init(int argc, char** argv)
 		map_hw_sink();
 	port_os_init();
 	port_dvd_init();
+	port_window_icon_init();
 	port_noaudio_init();
 	port_vi_init();
 	port_log("[port] platform ready\n");

@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Build probe.dol: assembles probe.s (needs a powerpc-eabi binutils, default
-/home/netflix/sms/build/binutils) and appends 4096 random test inputs
+"""Build probe.dol: assembles probe.s (needs a powerpc-eabi binutils:
+$PPC_BINUTILS, default the decomp's build/binutils) and appends 4096 random test inputs
 (seeded, so inputs.bin is reproducible) as the DOL's data section at 0x80200000.
 
 Then run it in the dolphin-oracle emulator:
-  cd /home/netflix/dolphin-oracle && scripts/run_oracle.py --game <this dir>/probe.dol \
+  cd $DOLPHIN_ORACLE && scripts/run_oracle.py --game <this dir>/probe.dol \
       --out runs/fpprobe-interp --cpu interp --frames 90 --start 80 --no-memcard \
       --ranges <this dir>/ranges.txt
 and check src/port_fpu.h: fit.py <trace> prints the tables, fpu_test.c compares."""
 import os, random, struct, subprocess, sys
 
 here = os.path.dirname(os.path.abspath(__file__))
-B = os.environ.get('PPC_BINUTILS', '/home/netflix/sms/build/binutils')
+B = os.environ.get('PPC_BINUTILS', os.path.join(here, '..', '..', 'decomp', 'build', 'binutils'))
 out = sys.argv[1] if len(sys.argv) > 1 else here
 run = lambda *a: subprocess.check_call(list(a))
 run(B + '/powerpc-eabi-as', '-mgekko', '-o', out + '/probe.o', here + '/probe.s')

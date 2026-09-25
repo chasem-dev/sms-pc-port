@@ -1,5 +1,5 @@
 # Host tests for platform/endian. Reads the extracted disc (read-only).
-#   make run [DISC=/path/to/GMSE01/files] [ARCH=-m32]
+#   make run DISC=/path/to/GMSE01/files [ARCH=-m32]
 ARCH ?= -m32
 CXX ?= g++
 CXXFLAGS ?= -O1 -g -std=gnu++11 -Wall -Wno-multichar -Wno-unused-function

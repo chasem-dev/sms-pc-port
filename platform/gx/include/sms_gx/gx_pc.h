@@ -36,6 +36,9 @@ int GXPC_IsHeadless(void);
 void GXPC_SetAutoPresent(int enable);
 void GXPC_Present(const void* xfb);          /* window mode: draw XFB, swap, pump events */
 uint32_t GXPC_FrameCount(void);              /* display copies so far */
+/* Window (taskbar / Dock) icon: w x h RGBA8 pixels, copied. Applied to the
+ * SDL window now, or when it opens; ignored without a window. */
+void GXPC_SetWindowIcon(const uint8_t* rgba, int w, int h);
 
 /* Input hook for the PAD layer.  sms_gx_pump_events runs SDL_PollEvent (it is
  * also called after every present), opens game controllers as they appear and

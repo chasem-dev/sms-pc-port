@@ -1,7 +1,7 @@
 // Host tests for platform/endian: load real files from the user's extracted
 // disc (read-only), convert them and sanity-check the converted structures.
 //
-//   make -C platform/endian/tests run   [DISC=/path/to/GMSE01/files]
+//   make -C platform/endian/tests run   DISC=/path/to/GMSE01/files
 //
 // Files are .cc so the port's platform/*.cpp glob does not pick them up.
 #include <math.h>
@@ -114,7 +114,7 @@ static std::vector<Entry> rarc(const Bytes& d)
 	return out;
 }
 
-static std::string g_disc = "/home/netflix/sms/orig/GMSE01/files";
+static std::string g_disc;
 
 static std::vector<Entry> archive(const char* rel)
 {
@@ -748,8 +748,11 @@ static void run_archive(const char* rel)
 
 int main(int argc, char** argv)
 {
-	if (getenv("DISC"))
-		g_disc = getenv("DISC");
+	if (!getenv("DISC")) {
+		fprintf(stderr, "set DISC=<the disc's extracted files/ folder>\n");
+		return 2;
+	}
+	g_disc = getenv("DISC");
 	std::vector<const char*> arcs;
 	for (int i = 1; i < argc; i++)
 		arcs.push_back(argv[i]);
