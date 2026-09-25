@@ -11,7 +11,8 @@ Nothing of Eclipse is in this repository.
   BSE turns many of those into an API (stage, player and game callbacks, object registration, SunScript functions, THP and music, settings), which Eclipse uses; Eclipse adds its own patches besides.
 - **Game classes.** Both are written against [SunshineHeaderInterface](https://github.com/JoshuaMKW/SunshineHeaderInterface), their own declarations of the retail classes: the same memory layout as the decomp's, under other member names (`TMario::mState` there is `mStatus` here, `mSpeed` is `mVel`).
 - **Data.** Eclipse's stages, models, text and movies are files on its disc: its `build.py` assembles an extracted game folder and packs it into an ISO.
-- **Licence.** Eclipse, BSE and SunshineHeaderInterface are GPL-3.0.
+- **Release.** Players get Eclipse from [GameBanana](https://gamebanana.com/mods/536309) (v1.1.0): a 7z holding an xdelta patch that turns the North American ISO (MD5 `0c6d2edae9fdf40dfc410ff1623e4119`) into a `GMSE04` Super Mario Eclipse ISO, with its code already built into the disc's `main.dol`.
+- **Licence.** Eclipse's code, BSE and SunshineHeaderInterface are GPL-3.0; the released mod is CC BY-NC-ND 4.0, and its patcher script MIT.
 
 ## Size of the job
 
@@ -27,6 +28,10 @@ Much of BSE's own patching is features the port has or does not need (60 fps, 16
 
 ## What the port already has
 
+- `python3 tools/mods/get.py eclipse` downloads the GameBanana release, checks it and your ISO, and applies the patch (with its own VCDIFF decoder, [`tools/mods/vcdiff.py`](../tools/mods/vcdiff.py)) to `mods/eclipse/Super Mario Eclipse v1.1.0.iso`, which the installer checks against the expected result (MD5 `caa546309e0443f7b47632b040a250d7`).
+  It is byte-for-byte the image Eclipse's own patcher (xdelta3) makes, for Dolphin or a console.
+  Given to the port (`SMS_DISC_IMAGE`), it does not boot: the vanilla code reports `Seqs/JaiSeInf.bst` missing from Eclipse's disc and then crashes while setting up sound.
+  That is expected, since the disc's data is made for Eclipse's code, and nothing of Eclipse runs until that code is ported.
 - `SMS_MOD` / `mod = <name>` overlays `mods/<name>/files/` on the disc ([mods/README.md](../mods/README.md)), and `SMS_DISC_IMAGE` takes any GameCube image.
   That serves Eclipse's files, but not its code: the vanilla game cannot load stages that place Eclipse's custom objects, or reach its new menus.
 - Widescreen and texture packs, which BSE and Dolphin supply on the other platforms.
@@ -44,7 +49,7 @@ The route that reuses the most is to build BSE and Eclipse from their own source
    The inventory names the call each `bl` redirects, which pins the source line.
    `SMS_WRITE_32` patches (changed constants, removed branches) are translated by hand, each into a hook or a variable the mod sets.
    A switch keeps the vanilla game byte-for-byte unchanged in behaviour when no mod is on.
-5. **Data.** The player's Eclipse ISO, used as the disc (`SMS_DISC_IMAGE`), or its files as a mod overlay.
+5. **Data.** The Eclipse ISO that `get.py eclipse` builds, used as the disc; the port runs its own build of Eclipse's code in place of the one on that disc's `main.dol`.
 6. **Milestones.** BSE's callback and registration API working with an empty module; Eclipse compiling and linking; booting the Eclipse ISO to its title and character select; its first stage; then the rest of its hooks.
 
 ## Feasibility checks (2026-09-25)
