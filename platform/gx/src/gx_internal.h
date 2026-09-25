@@ -97,6 +97,8 @@ void* physToPtr(uint32_t phys);
 uint32_t ptrToPhys(const void* p);
 bool isBigEndianData(const void* p);
 extern bool g_defaultArrayBE;
+extern bool g_gxStats;  // SMS_GX_STATS: per-part timers run
+extern uint32_t g_arrayGen;  // bumped by every write to g.arrayBase/Stride/BigEndian
 
 // ---------------------------------------------------------------- register writes (gx_fifo.cpp)
 void writeBP(uint32_t value);

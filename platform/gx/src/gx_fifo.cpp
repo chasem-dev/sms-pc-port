@@ -38,8 +38,29 @@ void fatal(const char* fmt, ...) {
 
 uint64_t hashBytes(const void* data, size_t n, uint64_t seed) {
     // 64-bit multiply/xor-shift hash over 8-byte words; not cryptographic.
+    // Four independent lanes over 32-byte blocks, so the multiplies overlap
+    // instead of forming one dependency chain (textures are hashed each frame).
     const uint8_t* p = static_cast<const uint8_t*>(data);
     uint64_t h = seed ^ (0x9E3779B97F4A7C15ull * (n + 1));
+    if (n >= 32) {
+        uint64_t a = h, b = h ^ 0x2545F4914F6CDD1Dull, c = h ^ 0x632BE59BD9B4E019ull, d = h ^ 0x85EBCA77C2B2AE63ull;
+        do {
+            uint64_t w[4];
+            memcpy(w, p, 32);
+            a = (a ^ w[0] * 0xBF58476D1CE4E5B9ull);
+            b = (b ^ w[1] * 0xBF58476D1CE4E5B9ull);
+            c = (c ^ w[2] * 0xBF58476D1CE4E5B9ull);
+            d = (d ^ w[3] * 0xBF58476D1CE4E5B9ull);
+            a = (a << 27 | a >> 37) * 0x94D049BB133111EBull;
+            b = (b << 27 | b >> 37) * 0x94D049BB133111EBull;
+            c = (c << 27 | c >> 37) * 0x94D049BB133111EBull;
+            d = (d << 27 | d >> 37) * 0x94D049BB133111EBull;
+            p += 32;
+            n -= 32;
+        } while (n >= 32);
+        h = a ^ (b << 17 | b >> 47) ^ (c << 31 | c >> 33) ^ (d << 45 | d >> 19);
+        h *= 0x94D049BB133111EBull;
+    }
     while (n >= 8) {
         uint64_t w;
         memcpy(&w, p, 8);
@@ -95,6 +116,7 @@ static inline uint32_t be32(const uint8_t* p) {
 
 // ------------------------------------------------------------------ register writes
 bool g_defaultArrayBE = false;
+uint32_t g_arrayGen = 1;
 #define s_defaultArrayBE g_defaultArrayBE
 
 void resetState() {
@@ -102,6 +124,7 @@ void resetState() {
     memcpy(be, g.arrayBigEndian, sizeof(be));
     memset(&g, 0, sizeof(g));
     for (int i = 0; i < 16; i++) g.arrayBigEndian[i] = s_defaultArrayBE;
+    g_arrayGen++;
     g.bpMask = 0xFFFFFF;
     for (int i = 0; i < 256; i++) g.bp[i] = 0;
     // identity matrices where the SDK expects them: GX_IDENTITY (row 60) and
@@ -191,8 +214,12 @@ void writeCP(uint8_t reg, uint32_t value) {
     case CP_ARRAY_BASE:
         g.arrayBase[reg & 15] = static_cast<const uint8_t*>(physToPtr(value));
         g.arrayBigEndian[reg & 15] = s_defaultArrayBE || isBigEndianData(g.arrayBase[reg & 15]);
+        g_arrayGen++;
         break;
-    case CP_ARRAY_STRIDE: g.arrayStride[reg & 15] = value & 0xFF; break;
+    case CP_ARRAY_STRIDE:
+        g.arrayStride[reg & 15] = value & 0xFF;
+        g_arrayGen++;
+        break;
     default: break;
     }
 }
@@ -240,6 +267,7 @@ struct VtxLayout {
     AttrFmt pos, nrm, clr[2], tex[8];
     bool nbt, nbt3;
     uint32_t size;
+    uint32_t gen;  // unique per built layout (layoutFor)
 };
 
 static const uint8_t kCompSize[5] = {1, 1, 2, 2, 4};
@@ -294,6 +322,7 @@ static const VtxLayout& layoutFor(int vat) {
         VtxLayout L;
     };
     static Cached cache[8];
+    static uint32_t s_gen = 0;
     Cached& c = cache[vat];
     if (!c.valid || c.lo != g.cpVcdLo || c.hi != g.cpVcdHi || c.A != g.cpVatA[vat] || c.B != g.cpVatB[vat] ||
         c.C != g.cpVatC[vat]) {
@@ -304,6 +333,7 @@ static const VtxLayout& layoutFor(int vat) {
         c.C = g.cpVatC[vat];
         c.valid = true;
         buildLayout(vat, c.L);
+        c.L.gen = ++s_gen;
     }
     return c.L;
 }
@@ -602,33 +632,49 @@ static void attrOp(DecOp& op, int slot, uint8_t mode, float scale, uint16_t dst)
     memset(op.def, 0, sizeof(op.def));
 }
 
-static const uint8_t* decodeVertices(uint8_t opcode, const uint8_t* p, uint32_t count, const VtxLayout& L) {
-    s_vertsLoaded += count;
+// A VAT's readers, packed format and matrix-index defaults, rebuilt only when
+// its layout, the vertex arrays or the matrix-index registers change (a frame
+// loads thousands of primitives through a handful of setups).
+struct DecSetup {
+    uint32_t layoutGen = 0, arrayGen = 0, matA = 0, matB = 0;
+    uint32_t fmt, stride;
+    uint16_t mtxPresent;
+    uint8_t mtxDefault[12];
+    int nops;
+    DecOp ops[16];
+};
+
+static void buildSetup(DecSetup& S, const VtxLayout& L) {
     uint32_t matA = g.xfReg[XFR_MATIDX_A], matB = g.xfReg[XFR_MATIDX_B];
-    const uint8_t defMtx[9] = {
+    S.layoutGen = L.gen;
+    S.arrayGen = g_arrayGen;
+    S.matA = matA;
+    S.matB = matB;
+    const uint8_t defMtx[12] = {
         uint8_t(matA & 63), uint8_t((matA >> 6) & 63), uint8_t((matA >> 12) & 63), uint8_t((matA >> 18) & 63),
         uint8_t((matA >> 24) & 63), uint8_t(matB & 63), uint8_t((matB >> 6) & 63), uint8_t((matB >> 12) & 63),
-        uint8_t((matB >> 18) & 63),
+        uint8_t((matB >> 18) & 63), 0, 0, 0,
     };
+    memcpy(S.mtxDefault, defMtx, 12);
 
     uint32_t fmt = 0;
-    s_mtxPresent = L.pnmtx.mode ? 1 : 0;
+    S.mtxPresent = L.pnmtx.mode ? 1 : 0;
     for (int i = 0; i < 8; i++)
-        if (L.texmtx[i].mode) s_mtxPresent |= uint16_t(2u << i);
-    if (s_mtxPresent) fmt |= VF_MTX;
+        if (L.texmtx[i].mode) S.mtxPresent |= uint16_t(2u << i);
+    if (S.mtxPresent) fmt |= VF_MTX;
     if (L.nrm.mode) fmt |= VF_NRM | (L.nbt ? VF_NBT : 0);
     for (int c = 0; c < 2; c++)
         if (L.clr[c].mode) fmt |= VF_CLR0 << c;
     for (int t = 0; t < 8; t++)
         if (L.tex[t].mode) fmt |= VF_TEX0 << t;
     const VtxFmtLayout& lay = vtxFmtLayout(fmt);
+    S.fmt = fmt;
+    S.stride = lay.stride;
 
     // ops in stream order: matrix indices, position, normal/NBT, colours, texcoords
-    DecOp ops[16];
+    DecOp* ops = S.ops;
     int nops = 0;
     if (fmt & VF_MTX) {
-        memcpy(s_mtxDefault, defMtx, 9);
-        s_mtxDefault[9] = s_mtxDefault[10] = s_mtxDefault[11] = 0;
         ops[nops].fn = &readMtx;
         ops[nops].dst = lay.mtx;
         nops++;
@@ -671,10 +717,27 @@ static const uint8_t* decodeVertices(uint8_t opcode, const uint8_t* p, uint32_t 
             bool be = a.mode == 1 || g.arrayBigEndian[ARR_TEX0 + t];
             op.fn = a.cnt ? pickVecN<2, 2>(a.mode, a.type, be) : pickVecN<1, 2>(a.mode, a.type, be);
         }
+    S.nops = nops;
+}
 
-    uint8_t* out = primitiveBegin(opcode, count, fmt, lay.stride);
-    if (!L.pos.mode) memset(out, 0, size_t(count) * lay.stride);  // no position: keep the slot defined
-    for (uint32_t v = 0; v < count; v++, out += lay.stride)
+static const uint8_t* decodeVertices(uint8_t opcode, const uint8_t* p, uint32_t count, const VtxLayout& L, int vat) {
+    s_vertsLoaded += count;
+    static DecSetup s_setup[8];
+    DecSetup& S = s_setup[vat];
+    if (S.layoutGen != L.gen || S.arrayGen != g_arrayGen || S.matA != g.xfReg[XFR_MATIDX_A] ||
+        S.matB != g.xfReg[XFR_MATIDX_B])
+        buildSetup(S, L);
+    if (S.fmt & VF_MTX) {
+        memcpy(s_mtxDefault, S.mtxDefault, 12);
+        s_mtxPresent = S.mtxPresent;
+    }
+
+    const uint32_t stride = S.stride;
+    const int nops = S.nops;
+    const DecOp* ops = S.ops;
+    uint8_t* out = primitiveBegin(opcode, count, S.fmt, stride);
+    if (!L.pos.mode) memset(out, 0, size_t(count) * stride);  // no position: keep the slot defined
+    for (uint32_t v = 0; v < count; v++, out += stride)
         for (int k = 0; k < nops; k++) ops[k].fn(ops[k], p, out);
     primitiveEnd(opcode, count);
     return p;
@@ -751,12 +814,14 @@ static uint32_t parse(const uint8_t* p, uint32_t n, uint32_t* need) {
             len = 3 + cnt * L.size;
             if (avail < len) break;
             g_traceLastVat = op & 7;
-            {
+            if (g_gxStats) {
                 timespec t0, t1;
                 clock_gettime(CLOCK_MONOTONIC, &t0);
-                decodeVertices(op & 0xF8, p + 3, cnt, L);
+                decodeVertices(op & 0xF8, p + 3, cnt, L, op & 7);
                 clock_gettime(CLOCK_MONOTONIC, &t1);
                 g_decodeSeconds += double(t1.tv_sec - t0.tv_sec) + double(t1.tv_nsec - t0.tv_nsec) * 1e-9;
+            } else {
+                decodeVertices(op & 0xF8, p + 3, cnt, L, op & 7);
             }
         } else {
             logmsg("unknown FIFO opcode 0x%02X, skipping byte", op);
@@ -848,10 +913,12 @@ void GXPC_SetArrayBigEndian(int attr, int bigEndian) {
     else if (attr >= 9 && attr <= 24) slot = attr - 9;
     else return;
     g.arrayBigEndian[slot] = bigEndian != 0;
+    g_arrayGen++;
 }
 void GXPC_SetDefaultArrayBigEndian(int bigEndian) {
     s_defaultArrayBE = bigEndian != 0;
     for (int i = 0; i < 16; i++) g.arrayBigEndian[i] = s_defaultArrayBE;
+    g_arrayGen++;
 }
 
 void GXPC_Write8(uint8_t v) { pipeWrite(&v, 1); }

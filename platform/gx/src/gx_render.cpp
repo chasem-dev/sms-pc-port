@@ -141,9 +141,26 @@ static GLuint vaoForFormat(uint32_t fmt) {
     return vao;
 }
 
-static std::vector<uint8_t> s_bdata;  // the batch's packed vertices
+// The batch: packed vertices and their indices. Plain growable arrays rather
+// than vectors, so growing does not zero-fill and an index is one store.
+template <typename T> struct GrowBuf {
+    T* data = nullptr;
+    size_t size = 0, cap = 0;
+    T* reserve(size_t more) {  // room for `more` past size; returns the end
+        if (size + more > cap) {
+            size_t c = cap ? cap : 4096;
+            while (c < size + more) c *= 2;
+            T* d = static_cast<T*>(realloc(data, c * sizeof(T)));
+            if (!d) fatal("out of memory growing a draw batch");
+            data = d;
+            cap = c;
+        }
+        return data + size;
+    }
+};
+static GrowBuf<uint8_t> s_bdata;  // the batch's packed vertices
 static uint32_t s_bcount = 0, s_bfmt = 0, s_bstride = 12;
-static std::vector<uint32_t> s_bidx;
+static GrowBuf<uint32_t> s_bidx;
 static PrimClass s_bclass = PRIM_TRIS;
 
 struct Xfb {
@@ -309,7 +326,7 @@ void rendererInit(int efbScale) {
 
 // ------------------------------------------------------------------ batching
 void onStateChange() {
-    if (!s_bidx.empty()) flushBatch();
+    if (s_bidx.size) flushBatch();
 }
 
 uint8_t* primitiveBegin(uint8_t op, uint32_t n, uint32_t fmt, uint32_t stride) {
@@ -318,22 +335,22 @@ uint8_t* primitiveBegin(uint8_t op, uint32_t n, uint32_t fmt, uint32_t stride) {
     s_bclass = cls;
     s_bfmt = fmt;
     s_bstride = stride;
-    size_t at = size_t(s_bcount) * stride;
-    s_bdata.resize(at + size_t(n) * stride);
-    return s_bdata.data() + at;
+    s_bdata.size = size_t(s_bcount) * stride;
+    return s_bdata.reserve(size_t(n) * stride);
 }
 
 void primitiveEnd(uint8_t op, uint32_t n) {
-    if (!s_ready || n == 0) {
-        s_bdata.resize(size_t(s_bcount) * s_bstride);
-        return;
-    }
+    if (!s_ready || n == 0) return;
     uint32_t base = s_bcount;
     s_bcount += n;
+    s_bdata.size = size_t(s_bcount) * s_bstride;
+    uint32_t* w = s_bidx.reserve(size_t(n) * 3);  // no primitive makes more than 3 per vertex
+    uint32_t* const w0 = w;
     auto tri = [&](uint32_t a, uint32_t b, uint32_t c) {
-        s_bidx.push_back(base + a);
-        s_bidx.push_back(base + b);
-        s_bidx.push_back(base + c);
+        w[0] = base + a;
+        w[1] = base + b;
+        w[2] = base + c;
+        w += 3;
     };
     switch (op & 0xF8) {
     case 0x80:
@@ -357,20 +374,21 @@ void primitiveEnd(uint8_t op, uint32_t n) {
         break;
     case 0xA8:
         for (uint32_t i = 0; i + 1 < n; i += 2) {
-            s_bidx.push_back(base + i);
-            s_bidx.push_back(base + i + 1);
+            *w++ = base + i;
+            *w++ = base + i + 1;
         }
         break;
     case 0xB0:
         for (uint32_t i = 1; i < n; i++) {
-            s_bidx.push_back(base + i - 1);
-            s_bidx.push_back(base + i);
+            *w++ = base + i - 1;
+            *w++ = base + i;
         }
         break;
     default:
-        for (uint32_t i = 0; i < n; i++) s_bidx.push_back(base + i);
+        for (uint32_t i = 0; i < n; i++) *w++ = base + i;
         break;
     }
+    s_bidx.size += size_t(w - w0);
     s_stats.vertices += n;
 }
 
@@ -668,11 +686,22 @@ static double nowSeconds() {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return double(ts.tv_sec) + double(ts.tv_nsec) * 1e-9;
 }
+// SMS_GX_STATS is set: the breakdown timers (textures, draws, copies, peeks,
+// the vertex loader) run. Without it only the overall sms_gx time the overlay
+// shows is measured; the others cost a clock read per texture bind and per
+// primitive.
+bool g_gxStats = [] {
+    const char* e = getenv("SMS_GX_STATS");
+    return e && atoi(e) > 0;
+}();
 struct GxTimer {
     double* acc;
-    double t0 = nowSeconds();
-    explicit GxTimer(double* a = &s_gxSeconds) : acc(a) {}
-    ~GxTimer() { *acc += nowSeconds() - t0; }
+    double t0;
+    explicit GxTimer(double* a = &s_gxSeconds) : acc(a == &s_gxSeconds || g_gxStats ? a : nullptr),
+                                                 t0(acc ? nowSeconds() : 0) {}
+    ~GxTimer() {
+        if (acc) *acc += nowSeconds() - t0;
+    }
 };
 static uint32_t s_syncReads = 0;  // reads that made the CPU wait for the GPU
 static uint64_t s_flushes = 0;    // flushBatch calls that drew
@@ -863,9 +892,8 @@ static void pixMetricResume() {
 }
 
 void flushBatch() {
-    if (s_bidx.empty() || !s_ready) {
-        s_bidx.clear();
-        s_bdata.clear();
+    if (!s_bidx.size || !s_ready) {
+        s_bidx.size = s_bdata.size = 0;
         s_bcount = 0;
         return;
     }
@@ -922,26 +950,25 @@ void flushBatch() {
             glVertexAttribI4ui(14, m[0], m[1], m[2], 0);
         }
     }
-    size_t vOff = s_vstream.append(s_bdata.data(), size_t(s_bcount) * s_bstride, s_bstride);
-    size_t iOff = s_istream.append(s_bidx.data(), s_bidx.size() * 4, 4);
+    size_t vOff = s_vstream.append(s_bdata.data, s_bdata.size, s_bstride);
+    size_t iOff = s_istream.append(s_bidx.data, s_bidx.size * 4, 4);
     GLenum mode = s_bclass == PRIM_TRIS ? GL_TRIANGLES : s_bclass == PRIM_LINES ? GL_LINES : GL_POINTS;
     {
         GxTimer td(&s_drawSeconds);
-        glDrawElementsBaseVertex(mode, GLsizei(s_bidx.size()), GL_UNSIGNED_INT, reinterpret_cast<const void*>(iOff),
+        glDrawElementsBaseVertex(mode, GLsizei(s_bidx.size), GL_UNSIGNED_INT, reinterpret_cast<const void*>(iOff),
                                  GLint(vOff / s_bstride));
     }
     s_stats.draws++;
     s_flushes++;
     s_drawGen++;
-    if (s_pixActive && s_bclass == PRIM_TRIS) s_pixTris += uint32_t(s_bidx.size() / 3);
+    if (s_pixActive && s_bclass == PRIM_TRIS) s_pixTris += uint32_t(s_bidx.size / 3);
     if (traceFile()) {
         static std::vector<HostVertex> hv;
         hv.resize(s_bcount);
-        for (uint32_t i = 0; i < s_bcount; i++) unpackVertex(s_bfmt, s_bdata.data() + size_t(i) * s_bstride, defMtx, hv[i]);
-        traceDraw(int(s_bclass), s_bcount, uint32_t(s_bidx.size()), hv.data(), sp->id);
+        for (uint32_t i = 0; i < s_bcount; i++) unpackVertex(s_bfmt, s_bdata.data + size_t(i) * s_bstride, defMtx, hv[i]);
+        traceDraw(int(s_bclass), s_bcount, uint32_t(s_bidx.size), hv.data(), sp->id);
     }
-    s_bidx.clear();
-    s_bdata.clear();
+    s_bidx.size = s_bdata.size = 0;
     s_bcount = 0;
     if (traceFile()) {
         traceProbe();

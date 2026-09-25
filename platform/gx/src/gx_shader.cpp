@@ -504,16 +504,33 @@ static GLuint compile(GLenum type, const std::string& src) {
     return sh;
 }
 
-static std::unordered_map<std::string, ShaderProgram> s_programs;
+// The program cache key: the shader key plus the indirect scale factors,
+// which are baked into the code. Compared as bytes (buildKey zero-fills).
+struct ProgramKey {
+    ShaderKey k;
+    uint32_t indScale[2];
+    bool operator==(const ProgramKey& o) const { return memcmp(this, &o, sizeof(*this)) == 0; }
+};
+struct ProgramKeyHash {
+    size_t operator()(const ProgramKey& k) const { return size_t(hashBytes(&k, sizeof(k))); }
+};
+static std::unordered_map<ProgramKey, ShaderProgram, ProgramKeyHash> s_programs;
+static ProgramKey s_lastKey;
+static const ShaderProgram* s_lastProgram = nullptr;
 
 const ShaderProgram* shaderForCurrentState() {
-    ShaderKey k;
+    ProgramKey key;
+    ShaderKey& k = key.k;
     buildKey(k);
-    std::string key(reinterpret_cast<const char*>(&k), sizeof(k));
-    // indirect scale factors are baked into the code
-    if (k.numInd) key.append(reinterpret_cast<const char*>(&g.bp[BP_RAS1_SS0]), 8);
+    key.indScale[0] = k.numInd ? g.bp[BP_RAS1_SS0] : 0;
+    key.indScale[1] = k.numInd ? g.bp[BP_RAS1_SS0 + 1] : 0;
+    // consecutive batches mostly share a program
+    if (s_lastProgram && key == s_lastKey) return s_lastProgram;
     auto it = s_programs.find(key);
-    if (it != s_programs.end()) return &it->second;
+    if (it != s_programs.end()) {
+        s_lastKey = key;
+        return s_lastProgram = &it->second;
+    }
 
     g_statShaderCompiles++;
     std::string vs = genVS(k), fs = genFS(k);
@@ -566,12 +583,14 @@ const ShaderProgram* shaderForCurrentState() {
     sp.uViewport = glGetUniformLocation(p, "u_vp");
     sp.uAmbMat = glGetUniformLocation(p, "u_chan");
     sp.uDstAlpha = -1;
-    return &(s_programs[key] = sp);
+    s_lastKey = key;
+    return s_lastProgram = &(s_programs[key] = sp);
 }
 
 void shaderShutdown() {
     for (auto& kv : s_programs) glDeleteProgram(kv.second.prog);
     s_programs.clear();
+    s_lastProgram = nullptr;
 }
 
 }  // namespace gx
