@@ -78,6 +78,7 @@ struct XMap {
     float a = 1, b = 0, clip = 1;
 };
 static XMap s_xmap;
+static bool s_stretch2D = false;  // GXPC_SetStretch2D: the game's faders
 // the game camera's aspect (TMarDirector: video width 660 * 0.91346 / 448)
 static const float kCamAspect = 660.0f * 0.91346145f / 448.0f;
 static GLuint s_efbFbo, s_efbColor, s_efbDepth;
@@ -983,6 +984,10 @@ static bool orthoSpansWidth(float sx, float cx) {
 static XMap drawXMap() {
     XMap m;
     if (s_efbW == EFB_W) return m;
+    if (s_stretch2D && (g.xfReg[XFR_PROJ + 6] & 1)) {  // a fade or wipe: all of it across the frame
+        m.a = s_wide;
+        return m;
+    }
     float sx = xff(XFR_VIEWPORT), cx = xff(XFR_VIEWPORT + 3) - 342.0f;
     bool fullWidth = fabsf(fabsf(sx) * 2.0f - float(EFB_W)) < 2.0f && fabsf(cx - float(EFB_W) / 2) < 2.0f;
     if (!fullWidth) {
@@ -1286,6 +1291,10 @@ static void copyEfb(uint32_t ctrl) {
         if (x <= 0 && x + w >= EFB_W) {
             x = 0;
             w = s_efbW;
+        } else if (s_stretch2D) {  // a fader's pieces of the frame: stretched like its drawing
+            int r = int(float(x + w) * s_wide + 0.5f);
+            x = int(float(x) * s_wide + 0.5f);
+            w = r - x;
         } else {
             x += s_ox;
         }
@@ -1610,6 +1619,12 @@ void GXPC_GetLastFrameStats(GXPCStats* out) {
     *out = s_lastFrameStats;
     out->shaderCompiles = g_statShaderCompiles;
     out->textureUploads = g_statTexUploads;
+}
+
+void GXPC_SetStretch2D(int on) {
+    if (s_efbW == EFB_W || s_stretch2D == (on != 0)) return;
+    flushBatch();  // what was queued keeps its own mapping
+    s_stretch2D = on != 0;
 }
 
 void GXPC_SetWidescreen(float widthOver43) {

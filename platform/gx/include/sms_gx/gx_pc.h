@@ -45,6 +45,9 @@ void GXPC_SetWindowIcon(const uint8_t* rgba, int w, int h);
  * draws map the game's 640-wide coordinates into it (see gx_render.cpp). The
  * game camera itself must be widened by the same factor to fill it. */
 void GXPC_SetWidescreen(float widthOver43);
+/* With widescreen, draw the following 2D stretched across the whole frame
+ * (the game's faders call it around their drawing); 0 goes back. */
+void GXPC_SetStretch2D(int on);
 float GXPC_GetWidescreen(void);
 
 /* Input hook for the PAD layer.  sms_gx_pump_events runs SDL_PollEvent (it is
