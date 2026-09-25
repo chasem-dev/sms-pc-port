@@ -996,18 +996,23 @@ static XMap drawXMap() {
         if (aspect < kCamAspect * sqrtf(s_wide)) m.clip = 1.0f / s_wide;  // not widened by the game
         return m;
     }
-    // 2D across the whole width: stretched when it is a fade or mask (no
-    // texture) or draws screen copies back; artwork (menus, the map, movies)
-    // stays centred
+    // 2D across the whole width: artwork (menus, the map, movies: colour
+    // from an image) stays centred; fades, masks and passes over the frame
+    // (untextured, a tiny utility texture, alpha only, or drawing screen
+    // copies back) are stretched
     bool artwork = false;
+    bool colour = (g.bp[BP_CMODE0] >> 3) & 1;  // colour update
     uint32_t gen = g.bp[BP_GENMODE];
     uint32_t nst = ((gen >> 10) & 15) + 1;
-    for (uint32_t st = 0; st < nst && !artwork; st++) {
+    for (uint32_t st = 0; colour && st < nst && !artwork; st++) {
         uint32_t ord = (g.bp[BP_TREF + (st >> 1)] >> ((st & 1) * 12)) & 0x3FF;
         if (!((ord >> 6) & 1)) continue;
-        const uint8_t* ptr = g.texImage[ord & 7];
+        int map = int(ord & 7);
+        const uint8_t* ptr = g.texImage[map];
+        uint32_t img0 = g.bp[bpTexReg(BP_TX_IMAGE0, map)];
+        uint32_t tw = (img0 & 0x3FF) + 1, th = ((img0 >> 10) & 0x3FF) + 1;
         int cw, ch;
-        if (ptr && !efbCopyLookup(ptr, &cw, &ch)) artwork = true;
+        if (ptr && tw >= 32 && th >= 32 && !efbCopyLookup(ptr, &cw, &ch)) artwork = true;
     }
     if (!artwork && orthoSpansWidth(sx, cx)) m.a = s_wide;
     else m.b = float(s_ox);
