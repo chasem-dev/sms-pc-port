@@ -10,6 +10,7 @@
 #include <dolphin/vi.h>
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <fcntl.h>
 #include <unistd.h>
@@ -31,12 +32,16 @@ struct Entry {
 	u32 length;       // files: size
 	int fd;
 	const u8* mem;    // in-memory replacement (port_dvd_override)
+	bool from_host = false; // read from `host` even with a disc image (a mod's file)
 };
 
 std::vector<Entry> g_fst;
 GCDisc* g_disc; // disc image (platform/disc), or NULL for an extracted folder
 u32 g_cwd;
 DVDDiskID g_disk_id;
+// Files and folders mods add (not on the disc), by lower-case absolute path
+// without the leading '/'; their entries follow the disc's in g_fst.
+std::unordered_map<std::string, u32> g_added;
 
 u32 be32(const u8* p) { return (u32)p[0] << 24 | (u32)p[1] << 16 | (u32)p[2] << 8 | p[3]; }
 
@@ -120,7 +125,49 @@ void walk(const std::string& host, u32 parent)
 	}
 }
 
+static s32 lookup_disc(const char* path);
+
+// The absolute path (lower case, no leading '/') of `path` from the current
+// directory, for the entries mods add.
+static std::string absolute_lower(const char* path)
+{
+	std::vector<std::string> parts;
+	if (*path != '/')
+		for (u32 d = g_cwd; d != 0; d = g_fst[d].parent)
+			parts.insert(parts.begin(), g_fst[d].name);
+	std::string p = path;
+	size_t i = 0;
+	while (i <= p.size()) {
+		size_t j = p.find('/', i);
+		if (j == std::string::npos)
+			j = p.size();
+		std::string part = p.substr(i, j - i);
+		if (part == "..") {
+			if (!parts.empty())
+				parts.pop_back();
+		} else if (!part.empty() && part != ".") {
+			parts.push_back(part);
+		}
+		i = j + 1;
+	}
+	std::string out;
+	for (size_t k = 0; k < parts.size(); k++)
+		out += (k ? "/" : "") + parts[k];
+	for (char& c : out)
+		c = (char)tolower((unsigned char)c);
+	return out;
+}
+
 s32 lookup(const char* path)
+{
+	s32 e = lookup_disc(path);
+	if (e >= 0 || g_added.empty())
+		return e;
+	auto it = g_added.find(absolute_lower(path));
+	return it == g_added.end() ? -1 : (s32)it->second;
+}
+
+static s32 lookup_disc(const char* path)
 {
 	u32 dir = g_cwd;
 	if (*path == '/') {
@@ -177,7 +224,7 @@ s32 do_read(DVDFileInfo* fi, void* addr, s32 length, s32 offset)
 	u32 entry = fi->startAddr;
 	if (entry >= g_fst.size() || g_fst[entry].dir)
 		return DVD_RESULT_FATAL_ERROR;
-	if (g_disc && !g_fst[entry].mem) {
+	if (g_disc && !g_fst[entry].mem && !g_fst[entry].from_host) {
 		u32 n = gcdisc_read_file(g_disc, entry, (u32)offset, addr, (u32)length);
 		fi->cb.transferredSize = n;
 		return (s32)n;
@@ -249,10 +296,122 @@ static bool open_image()
 	return true;
 }
 
+// Mods (SMS_MOD=name;name, settings.txt `mod`): the files under each
+// mods/<name>/files/ (or <name>/files/ when <name> is a path) take the place
+// of the disc's file at the same path, or are added to the disc; a later mod
+// wins over an earlier one. Asset-only mods (models, stages, textures in
+// archives) need nothing else.
+static u32 add_entry(const std::string& abs, bool dir, const std::string& host, u32 size)
+{
+	std::string low = abs;
+	for (char& c : low)
+		c = (char)tolower((unsigned char)c);
+	auto it = g_added.find(low);
+	if (it != g_added.end()) {
+		Entry& d    = g_fst[it->second];
+		d.host      = host;
+		d.length    = size;
+		d.fd        = -1;
+		d.from_host = !d.dir;
+		return it->second;
+	}
+	// its parent: a disc folder, or one a mod added
+	u32 parent  = 0;
+	size_t cut  = abs.rfind('/');
+	std::string name = cut == std::string::npos ? abs : abs.substr(cut + 1);
+	if (cut != std::string::npos) {
+		std::string pabs = abs.substr(0, cut);
+		s32 p            = lookup_disc(("/" + pabs).c_str());
+		parent           = p >= 0 ? (u32)p : add_entry(pabs, true, std::string(), 0);
+	}
+	u32 idx = (u32)g_fst.size();
+	Entry d;
+	d.dir    = dir;
+	d.name   = name;
+	d.host   = host;
+	d.parent = parent;
+	d.next   = dir ? idx + 1 : 0; // lists as empty: its contents are found by path
+	d.length = size;
+	d.fd     = -1;
+	d.mem       = NULL;
+	d.from_host = !dir;
+	g_fst.push_back(d);
+	g_added[low] = idx;
+	return idx;
+}
+
+static void overlay_dir(const std::string& host, const std::string& rel, int* replaced, int* added)
+{
+	DIR* dp = opendir(host.c_str());
+	if (!dp)
+		return;
+	std::vector<std::string> names;
+	while (dirent* e = readdir(dp))
+		if (strcmp(e->d_name, ".") && strcmp(e->d_name, ".."))
+			names.push_back(e->d_name);
+	closedir(dp);
+	for (const std::string& n : names) {
+		std::string h = host + "/" + n, r = rel.empty() ? n : rel + "/" + n;
+		struct stat st;
+		if (stat(h.c_str(), &st) != 0)
+			continue;
+		if (S_ISDIR(st.st_mode)) {
+			overlay_dir(h, r, replaced, added);
+			continue;
+		}
+		s32 e = lookup_disc(("/" + r).c_str());
+		if (e >= 0 && !g_fst[e].dir) { // the disc's file, replaced
+			Entry& d    = g_fst[e];
+			d.host      = h;
+			d.length    = (u32)st.st_size;
+			d.fd        = -1;
+			d.mem       = NULL;
+			d.from_host = true;
+			(*replaced)++;
+		} else {
+			add_entry(r, false, h, (u32)st.st_size);
+			(*added)++;
+		}
+	}
+}
+
+static void apply_mods()
+{
+	const char* list = getenv("SMS_MOD");
+	if (!list || !*list || !strcmp(list, "0") || !strcmp(list, "none"))
+		return;
+	std::string all = list, name;
+	for (size_t i = 0; i <= all.size(); i++) {
+		if (i < all.size() && all[i] != ';' && all[i] != ',') {
+			name += all[i];
+			continue;
+		}
+		if (name.empty())
+			continue;
+		std::string dir;
+		struct stat st;
+		for (const std::string& c : { name + "/files", "mods/" + name + "/files", "../../mods/" + name + "/files" })
+			if (stat(c.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
+				dir = c;
+				break;
+			}
+		if (dir.empty()) {
+			port_log("[dvd] mod %s: no files/ folder (looked in mods/%s/files)\n", name.c_str(), name.c_str());
+		} else {
+			int replaced = 0, added = 0;
+			overlay_dir(dir, std::string(), &replaced, &added);
+			port_log("[dvd] mod %s: %d disc files replaced, %d added (%s)\n", name.c_str(), replaced, added,
+			         dir.c_str());
+		}
+		name.clear();
+	}
+}
+
 extern "C" void port_dvd_init(void)
 {
 	if (open_image()) {
 		g_cwd = 0;
+		apply_mods();
 		return;
 	}
 	if (!port_disc_root) {
@@ -285,6 +444,7 @@ extern "C" void port_dvd_init(void)
 		memcpy(g_disk_id.company, "01", 2);
 	}
 	port_log("[dvd] FST: %u entries from %s\n", (unsigned)g_fst.size(), root.c_str());
+	apply_mods();
 }
 
 // All of disc file `path`, read at once with no drive timing, for host use

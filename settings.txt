@@ -12,6 +12,9 @@
 # view; the HUD and menus stay at 4:3 in the middle.
 # widescreen = off
 
+# Game file mods from mods/<name>/files/ (see mods/README.md), as name or a;b.
+# mod = none
+
 # Internal resolution: 1 is the GameCube's 640x528, 2 twice that, and so on.
 # resolution = 1
 # Window size, in multiples of 640x480.
