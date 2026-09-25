@@ -47,6 +47,17 @@ The route that reuses the most is to build BSE and Eclipse from their own source
 5. **Data.** The player's Eclipse ISO, used as the disc (`SMS_DISC_IMAGE`), or its files as a mod overlay.
 6. **Milestones.** BSE's callback and registration API working with an empty module; Eclipse compiling and linking; booting the Eclipse ISO to its title and character select; its first stage; then the rest of its hooks.
 
+## Feasibility checks (2026-09-25)
+
+Run outside this repository, on Eclipse `5274979` and BSE's current source, with Clang 18 for 32-bit x86 (`-m32`) against SunshineHeaderInterface:
+
+- **Compiling.** Eclipse's 61 source files give 39 errors in total, BSE's 82 give 82; nearly all are missing include paths (BSE's `libs/` and generated headers), an undefined version macro and a few field designators, not code that depends on the PowerPC.
+- **Linking.** 21 Eclipse files that compile as they are reference 393 outside symbols; 318 of them are defined in the 32-bit port binary under the same mangled names.
+  The rest are Eclipse's and BSE's own, and a few game functions the decomp only has inline (`JUtility::TColor::TColor()`, `JGeometry::TVec3<float>::add`, `JDrama::TNameRefGen::getInstance`), which a small shim can define.
+- **Layouts.** SunshineHeaderInterface puts `TMario::mState` at 0x7C and `mSpeed` at 0xA4, where the decomp has `mStatus` and `mVel`, and gives `TMario` 0x4290 bytes; checking every class Eclipse touches is step 2 of the plan.
+
+So the code side looks like engineering rather than research: the hooks (step 4) are the bulk of it.
+
 ## Licensing
 
 A binary that includes BSE or Eclipse is a work under GPL-3.0.
