@@ -48,6 +48,12 @@ void GXPC_SetWidescreen(float widthOver43);
 /* With widescreen, draw the following 2D stretched across the whole frame
  * (the game's faders call it around their drawing); 0 goes back. */
 void GXPC_SetStretch2D(int on);
+/* SMS_WIDESCREEN_HUD=edges: mark the gameplay HUD's drawing, and bracket
+ * each J2D pane's drawing with its horizontal extent (game x), so HUD pieces
+ * move to the screen edge on their side. */
+void GXPC_SetHud(int on);
+void GXPC_HudPaneBegin(float x1, float x2);
+void GXPC_HudPaneEnd(void);
 float GXPC_GetWidescreen(void);
 
 /* Input hook for the PAD layer.  sms_gx_pump_events runs SDL_PollEvent (it is

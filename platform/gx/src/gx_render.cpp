@@ -79,6 +79,30 @@ struct XMap {
 };
 static XMap s_xmap;
 static bool s_stretch2D = false;  // GXPC_SetStretch2D: the game's faders
+// SMS_WIDESCREEN_HUD=edges: while the game draws its gameplay HUD
+// (GXPC_SetHud), a piece in the left third of the 4:3 frame goes to the left
+// edge of the wide one and one in the right third to the right edge; the
+// middle stays centred. A piece is the outermost J2D pane being drawn that
+// is narrower than three quarters of the screen (wider ones are the HUD's
+// screen-sized containers), with everything in it (GXPC_HudPaneBegin), or
+// else a draw on its own.
+static bool s_hudEdges = false, s_hud = false;
+struct HudPane {
+    float x1, x2;
+};
+static std::vector<HudPane> s_hudPanes;  // the J2D panes being drawn, outermost first
+static float s_hudAnchor = -1.0f;        // the piece's centre (game x), -1 for none
+
+static float hudOffset(float at) {
+    if (at < float(EFB_W) / 3) return 0.0f;
+    if (at > float(EFB_W) * 2 / 3) return float(2 * s_ox);
+    return float(s_ox);
+}
+// the offset of a centred draw whose own centre is at game x `at`
+static float centredOffset(float at) {
+    if (!s_hud) return float(s_ox);
+    return hudOffset(s_hudAnchor >= 0.0f ? s_hudAnchor : at);
+}
 // the game camera's aspect (TMarDirector: video width 660 * 0.91346 / 448)
 static const float kCamAspect = 660.0f * 0.91346145f / 448.0f;
 static GLuint s_efbFbo, s_efbColor, s_efbDepth;
@@ -343,6 +367,7 @@ void rendererInit(int efbScale) {
                "gets a GPU driver only if its 32-bit GL libraries are installed; the 64-bit build "
                "(SMS_ARCH=64 ./build.sh) uses the system's driver.", renderer);
     s_efbW = s_wide > 1.0f ? (int(float(EFB_W) * s_wide + 1.0f) & ~1) : EFB_W;
+    if (const char* e = getenv("SMS_WIDESCREEN_HUD")) s_hudEdges = s_efbW != EFB_W && !strcmp(e, "edges");
     s_ox = (s_efbW - EFB_W) / 2;
     if (s_efbW != EFB_W) logmsg("widescreen: EFB %dx%d", s_efbW, EFB_H);
     int W = s_efbW * s_scale, H = EFB_H * s_scale;
@@ -958,11 +983,12 @@ static void pixMetricResume() {
     }
 }
 
-// An orthographic batch's horizontal extent on screen (game coordinates),
-// from its positions, position matrices and the projection and viewport.
-static bool orthoSpansWidth(float sx, float cx) {
+// A batch's horizontal extent on screen (game coordinates), from its
+// positions, position matrices and the projection and viewport.
+static void screenExtent(float sx, float cx, float* outLo, float* outHi) {
     const VtxFmtLayout& l = vtxFmtLayout(s_bfmt);
     float p0 = xff(XFR_PROJ), p1 = xff(XFR_PROJ + 1);
+    bool ortho = g.xfReg[XFR_PROJ + 6] & 1;
     uint32_t defIdx = g.xfReg[XFR_MATIDX_A] & 63;
     float lo = 1e30f, hi = -1e30f;
     for (uint32_t v = 0; v < s_bcount; v++) {
@@ -970,14 +996,22 @@ static bool orthoSpansWidth(float sx, float cx) {
         float pos[3];
         memcpy(pos, vx, 12);
         uint32_t idx = (s_bfmt & VF_MTX) ? (vx[l.mtx] & 63) : defIdx;
-        float m[4];
-        memcpy(m, &g.xfMem[idx * 4], 16);
+        float m[12];
+        memcpy(m, &g.xfMem[idx * 4], 48);
         float x = m[0] * pos[0] + m[1] * pos[1] + m[2] * pos[2] + m[3];
-        float X = cx + sx * (p0 * x + p1);
+        float X;
+        if (ortho) {
+            X = cx + sx * (p0 * x + p1);
+        } else {
+            float z = m[8] * pos[0] + m[9] * pos[1] + m[10] * pos[2] + m[11];
+            if (z > -1e-6f) continue;  // behind the eye
+            X = cx + sx * (p0 * x + p1 * z) / -z;
+        }
         lo = std::min(lo, X);
         hi = std::max(hi, X);
     }
-    return lo <= 2.0f && hi >= float(EFB_W) - 2.0f;
+    *outLo = lo;
+    *outHi = hi;
 }
 
 // How the current batch's game coordinates map into the widened EFB.
@@ -991,10 +1025,16 @@ static XMap drawXMap() {
     float sx = xff(XFR_VIEWPORT), cx = xff(XFR_VIEWPORT + 3) - 342.0f;
     bool fullWidth = fabsf(fabsf(sx) * 2.0f - float(EFB_W)) < 2.0f && fabsf(cx - float(EFB_W) / 2) < 2.0f;
     if (!fullWidth) {
-        m.b = float(s_ox);
+        m.b = centredOffset(cx);
         return m;
     }
     if ((g.xfReg[XFR_PROJ + 6] & 1) == 0) {  // perspective
+        if (s_hud) {  // a 3D part of the HUD (the water tank): moved like the rest
+            float lo, hi;
+            screenExtent(sx, cx, &lo, &hi);
+            if (lo <= hi) m.b = centredOffset((lo + hi) / 2);
+            return m;
+        }
         m.a = s_wide;
         float p00 = xff(XFR_PROJ), p11 = xff(XFR_PROJ + 2);
         float aspect = p00 != 0.0f ? fabsf(p11 / p00) : 0.0f;
@@ -1019,8 +1059,11 @@ static XMap drawXMap() {
         int cw, ch;
         if (ptr && tw >= 32 && th >= 32 && !efbCopyLookup(ptr, &cw, &ch)) artwork = true;
     }
-    if (!artwork && orthoSpansWidth(sx, cx)) m.a = s_wide;
-    else m.b = float(s_ox);
+    float lo, hi;
+    screenExtent(sx, cx, &lo, &hi);
+    bool spans = lo <= 2.0f && hi >= float(EFB_W) - 2.0f;
+    if (spans && !artwork) m.a = s_wide;
+    else m.b = spans ? float(s_ox) : centredOffset((lo + hi) / 2);
     return m;
 }
 
@@ -1619,6 +1662,41 @@ void GXPC_GetLastFrameStats(GXPCStats* out) {
     *out = s_lastFrameStats;
     out->shaderCompiles = g_statShaderCompiles;
     out->textureUploads = g_statTexUploads;
+}
+
+void GXPC_SetHud(int on) {
+    if (!s_hudEdges || s_hud == (on != 0)) return;
+    flushBatch();
+    s_hud = on != 0;
+    s_hudPanes.clear();
+    s_hudAnchor = -1.0f;
+}
+
+// Anchor on the outermost pane that is a piece, not a container; the batch
+// queued so far keeps its mapping when the anchor moves to another side.
+static void hudReanchor() {
+    float now = -1.0f;
+    for (const HudPane& p : s_hudPanes) {
+        if (p.x2 - p.x1 < float(EFB_W) * 3 / 4) {
+            now = (p.x1 + p.x2) / 2;
+            break;
+        }
+    }
+    if (now == s_hudAnchor) return;
+    if (now < 0.0f || s_hudAnchor < 0.0f || hudOffset(now) != hudOffset(s_hudAnchor)) flushBatch();
+    s_hudAnchor = now;
+}
+
+void GXPC_HudPaneBegin(float x1, float x2) {
+    if (!s_hud) return;
+    s_hudPanes.push_back({std::min(x1, x2), std::max(x1, x2)});
+    hudReanchor();
+}
+
+void GXPC_HudPaneEnd(void) {
+    if (!s_hud || s_hudPanes.empty()) return;
+    s_hudPanes.pop_back();
+    hudReanchor();
 }
 
 void GXPC_SetStretch2D(int on) {

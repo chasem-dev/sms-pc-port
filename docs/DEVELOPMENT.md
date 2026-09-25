@@ -176,6 +176,8 @@ Measured headless on the 32-bit Linux build (Mesa llvmpipe software GL), 2026-09
   What is left on the game thread is mostly the game itself, the vertex loader and the EFB-copy write-back (`encodeTexture`, `hashBytes`); on llvmpipe the rest is rasterisation.
   The overlay's frame breakdown (README, "Frame rate") shows the same split on any machine.
 - **Widescreen** (`SMS_WIDESCREEN`): the game camera is widened by a port patch and sms_gx maps each draw into the wider EFB (`drawXMap` in `gx_render.cpp`).
-  The HUD stays 4:3 in the middle. Anchoring its counters to the screen edges was tried per 2D batch and pulls composite panes apart (the message bar's end caps, the pause map); it needs anchoring per J2D pane, by the pane's tag, from a hook in the pane's draw.
+  The HUD stays 4:3 in the middle by default.
+  With `SMS_WIDESCREEN_HUD=edges` the gameplay HUD is anchored to the screen edges per piece, not per 2D batch (which pulls composite panes apart): `TGCConsole2::perform` marks its HUD drawing (`GXPC_SetHud`), and `J2DPane::draw` brackets each pane with its extent (`GXPC_HudPaneBegin`/`End`, patch `widescreen-03`).
+  A piece is the outermost pane narrower than three quarters of the screen (the HUD's containers are 600 wide), and moves by which third of the 4:3 frame its centre is in; draws outside any piece (the water tank, drawn in 3D) move by their own extent.
 - **Software GL.**
   The 32-bit Linux build without the GPU driver's `:i386` libraries renders with llvmpipe and cannot hold 30 fps in the plaza; the port logs a warning and the overlay says so.

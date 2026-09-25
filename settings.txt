@@ -11,6 +11,9 @@
 # Widescreen: off, 16:9, 21:9, 16:10 (or on for 16:9). The game sees a wider
 # view; the HUD and menus stay at 4:3 in the middle.
 # widescreen = off
+# With widescreen, where the gameplay HUD goes: centre (with the menus), or
+# edges (counters to the left edge, the water gauge to the right one).
+# widescreen_hud = centre
 
 # Game file mods from mods/<name>/files/ (see mods/README.md), as name or a;b.
 # mod = none
