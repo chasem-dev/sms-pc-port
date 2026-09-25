@@ -72,7 +72,9 @@
     X(PFNGLVERTEXATTRIB4FPROC, glVertexAttrib4f)                                    \
     X(PFNGLVERTEXATTRIBI4UIPROC, glVertexAttribI4ui)                                \
     X(PFNGLDISABLEVERTEXATTRIBARRAYPROC, glDisableVertexAttribArray)                \
-    X(PFNGLGENERATEMIPMAPPROC, glGenerateMipmap)
+    X(PFNGLGENERATEMIPMAPPROC, glGenerateMipmap)                                    \
+    X(PFNGLCOMPRESSEDTEXIMAGE2DPROC, glCompressedTexImage2D)                        \
+    X(PFNGLGETSTRINGIPROC, glGetStringi)
 
 #define SMS_GX_DECLARE(type, name) extern type gx_##name;
 extern "C++" {
@@ -190,5 +192,7 @@ SMS_GX_GL_FUNCS(SMS_GX_ALIAS)
 #define glVertexAttribI4ui gx_glVertexAttribI4ui
 #define glDisableVertexAttribArray gx_glDisableVertexAttribArray
 #define glGenerateMipmap gx_glGenerateMipmap
+#define glCompressedTexImage2D gx_glCompressedTexImage2D
+#define glGetStringi gx_glGetStringi
 
 #endif

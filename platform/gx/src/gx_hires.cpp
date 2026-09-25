@@ -21,6 +21,7 @@
 #include "gl_funcs.h"
 #include "gx_glcache.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <algorithm>
@@ -38,6 +39,9 @@
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_STATIC
 #include "third_party/stb_image.h"
+#define BCDEC_STATIC
+#define BCDEC_IMPLEMENTATION
+#include "third_party/bcdec.h"
 
 namespace gx {
 
@@ -118,7 +122,7 @@ static bool endsWith(const std::string& s, const char* suf) {
 static void indexFile(const std::filesystem::path& p) {
     std::string ext = p.extension().string();
     for (char& c : ext) c = char(tolower(c));
-    if (ext != ".png") return;  // DDS is not read yet
+    if (ext != ".png" && ext != ".dds") return;
     std::string stem = p.stem().string();
     if (stem.compare(0, 5, "tex1_") != 0) return;
     bool arb = false;
@@ -142,6 +146,8 @@ static void indexFile(const std::filesystem::path& p) {
         if (f.mips[size_t(level) - 1].empty()) f.mips[size_t(level) - 1] = p.string();
     }
 }
+
+static void queryFormats();
 
 static void scan() {
     s_state = 0;
@@ -174,6 +180,7 @@ static void scan() {
     for (auto it = s_index.begin(); it != s_index.end();)  // mips without a level 0
         it = it->second.path.empty() ? s_index.erase(it) : std::next(it);
     s_state = s_index.empty() ? 0 : 1;
+    if (s_state) queryFormats();
 }
 
 bool hiresEnabled() {
@@ -245,10 +252,117 @@ std::string hiresName(const uint8_t* data, uint32_t fmt, uint32_t w, uint32_t h,
 // ------------------------------------------------------------------ loading
 struct Loaded {
     int w = 0, h = 0;
-    std::vector<std::vector<uint8_t>> levels;  // RGBA8; levels[0] always present
+    std::vector<std::vector<uint8_t>> levels;  // levels[0] always present
+    GLenum compressed = 0;                     // the levels' GL block format, 0 for RGBA8
     bool arbitrary = false;
     bool failed = false;
 };
+
+// What the GL takes compressed (queried on the render thread by the scan).
+static bool s_s3tc = false, s_bptc = false;
+
+static void queryFormats() {
+    GLint n = 0, major = 0, minor = 0;
+    glGetIntegerv(GL_NUM_EXTENSIONS, &n);
+    glGetIntegerv(GL_MAJOR_VERSION, &major);
+    glGetIntegerv(GL_MINOR_VERSION, &minor);
+    s_bptc = major > 4 || (major == 4 && minor >= 2);  // core since 4.2
+    for (GLint i = 0; i < n; i++) {
+        const char* e = reinterpret_cast<const char*>(glGetStringi(GL_EXTENSIONS, GLuint(i)));
+        if (!e) continue;
+        if (!strcmp(e, "GL_EXT_texture_compression_s3tc")) s_s3tc = true;
+        if (!strcmp(e, "GL_ARB_texture_compression_bptc")) s_bptc = true;
+    }
+}
+
+// DDS (the format most Dolphin packs ship in): BC1-3 and BC7 blocks with the
+// file's own mip levels, or 32-bit RGBA/BGRA. Blocks the GL cannot take are
+// decoded here; so is a single-level file, whose mipmaps are then generated.
+enum { DDS_BC1 = 1, DDS_BC2, DDS_BC3, DDS_BC7, DDS_RGBA, DDS_BGRA };
+
+static bool readFile(const std::string& path, std::vector<uint8_t>& out) {
+    FILE* f = fopen(path.c_str(), "rb");
+    if (!f) return false;
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    out.resize(n > 0 ? size_t(n) : 0);
+    bool ok = n > 0 && fread(out.data(), 1, out.size(), f) == out.size();
+    fclose(f);
+    return ok;
+}
+
+static bool decodeDds(const std::string& path, Loaded* L) {
+    std::vector<uint8_t> file;
+    if (!readFile(path, file) || file.size() < 128 || memcmp(file.data(), "DDS ", 4) != 0) return false;
+    const uint8_t* d = file.data();
+    int h = int(rd32(d + 12)), w = int(rd32(d + 16));
+    int mips = std::max(1, int(rd32(d + 28)));
+    uint32_t pfFlags = rd32(d + 80), rmask = rd32(d + 92);
+    size_t off = 128;
+    int fmt = 0;
+    if (!memcmp(d + 84, "DXT1", 4)) fmt = DDS_BC1;
+    else if (!memcmp(d + 84, "DXT3", 4)) fmt = DDS_BC2;
+    else if (!memcmp(d + 84, "DXT5", 4)) fmt = DDS_BC3;
+    else if (!memcmp(d + 84, "DX10", 4) && file.size() >= 148) {
+        uint32_t dxgi = rd32(d + 128);
+        off = 148;
+        if (dxgi >= 70 && dxgi <= 72) fmt = DDS_BC1;
+        else if (dxgi >= 73 && dxgi <= 75) fmt = DDS_BC2;
+        else if (dxgi >= 76 && dxgi <= 78) fmt = DDS_BC3;
+        else if (dxgi >= 97 && dxgi <= 99) fmt = DDS_BC7;
+        else if (dxgi == 28 || dxgi == 29) fmt = DDS_RGBA;
+        else if (dxgi == 87 || dxgi == 91) fmt = DDS_BGRA;
+    } else if ((pfFlags & 0x40) && rd32(d + 88) == 32) {
+        fmt = rmask == 0x000000FFu ? DDS_RGBA : DDS_BGRA;
+    }
+    if (!fmt || w <= 0 || h <= 0) return false;
+    bool block = fmt <= DDS_BC7;
+    size_t bsz = fmt == DDS_BC1 ? 8 : 16;
+    int full = 1;
+    for (int m = std::max(w, h); m > 1; m >>= 1) full++;
+    // blocks go to the GL as they are only with a full chain: a partial one
+    // (Dolphin packs often ship 3 levels) is completed from RGBA below
+    bool gpu = mips >= full && ((fmt <= DDS_BC3 && s_s3tc) || (fmt == DDS_BC7 && s_bptc));
+    static const GLenum kGl[] = {0, 0x83F1, 0x83F2, 0x83F3, 0x8E8C};  // S3TC DXT1/3/5 RGBA, BPTC UNORM
+    L->w = w;
+    L->h = h;
+    L->compressed = gpu ? kGl[fmt] : 0;
+    int lw = w, lh = h;
+    for (int m = 0; m < mips; m++) {
+        int bw = (lw + 3) / 4, bh = (lh + 3) / 4;
+        size_t bytes = block ? size_t(bw) * bh * bsz : size_t(lw) * lh * 4;
+        if (off + bytes > file.size()) break;
+        const uint8_t* src = d + off;
+        if (gpu) {
+            L->levels.emplace_back(src, src + bytes);
+        } else if (block) {  // decode whole blocks into a padded image, then crop
+            std::vector<uint8_t> pad(size_t(bw) * 4 * bh * 4 * 4);
+            int pitch = bw * 4 * 4;
+            for (int by = 0; by < bh; by++)
+                for (int bx = 0; bx < bw; bx++) {
+                    const uint8_t* b = src + (size_t(by) * bw + bx) * bsz;
+                    uint8_t* o = pad.data() + size_t(by) * 4 * pitch + size_t(bx) * 16;
+                    if (fmt == DDS_BC1) bcdec_bc1(b, o, pitch);
+                    else if (fmt == DDS_BC2) bcdec_bc2(b, o, pitch);
+                    else if (fmt == DDS_BC3) bcdec_bc3(b, o, pitch);
+                    else bcdec_bc7(b, o, pitch);
+                }
+            std::vector<uint8_t> px(size_t(lw) * lh * 4);
+            for (int y = 0; y < lh; y++) memcpy(&px[size_t(y) * lw * 4], &pad[size_t(y) * pitch], size_t(lw) * 4);
+            L->levels.push_back(std::move(px));
+        } else {
+            std::vector<uint8_t> px(src, src + bytes);
+            if (fmt == DDS_BGRA)
+                for (size_t i = 0; i < px.size(); i += 4) std::swap(px[i], px[i + 2]);
+            L->levels.push_back(std::move(px));
+        }
+        off += bytes;
+        lw = std::max(1, lw / 2);
+        lh = std::max(1, lh / 2);
+    }
+    return !L->levels.empty();
+}
 
 // Each replacement is decoded once, on a worker thread, uploaded into its own
 // GL texture on the render thread and its pixels freed; every cache entry
@@ -265,9 +379,47 @@ static std::deque<std::string> s_queue;                        // to decode
 static std::vector<std::pair<std::string, Loaded*>> s_decoded;  // decoded, to upload
 static bool s_workerStarted = false;
 
+// Completes an RGBA mip chain down to 1x1 with 2x2 box filtering, so every
+// replacement has all its levels (the sampler picks the ones the original
+// would use) whatever the pack supplied.
+static void completeChain(Loaded* L) {
+    if (L->compressed || L->levels.empty()) return;
+    int lw = L->w, lh = L->h;
+    for (size_t i = 1; i < L->levels.size(); i++) {
+        lw = std::max(1, lw / 2);
+        lh = std::max(1, lh / 2);
+    }
+    while (lw > 1 || lh > 1) {
+        int nw = std::max(1, lw / 2), nh = std::max(1, lh / 2);
+        const std::vector<uint8_t>& src = L->levels.back();
+        std::vector<uint8_t> dst(size_t(nw) * nh * 4);
+        for (int y = 0; y < nh; y++)
+            for (int x = 0; x < nw; x++) {
+                int x0 = std::min(2 * x, lw - 1), x1 = std::min(2 * x + 1, lw - 1);
+                int y0 = std::min(2 * y, lh - 1), y1 = std::min(2 * y + 1, lh - 1);
+                for (int c = 0; c < 4; c++) {
+                    int sum = src[(size_t(y0) * lw + x0) * 4 + c] + src[(size_t(y0) * lw + x1) * 4 + c] +
+                              src[(size_t(y1) * lw + x0) * 4 + c] + src[(size_t(y1) * lw + x1) * 4 + c];
+                    dst[(size_t(y) * nw + x) * 4 + c] = uint8_t((sum + 2) / 4);
+                }
+            }
+        L->levels.push_back(std::move(dst));
+        lw = nw;
+        lh = nh;
+    }
+}
+
 static Loaded* decode(const PackFile& f) {
     Loaded* L = new Loaded;
     L->arbitrary = f.arbitrary;
+    if (endsWith(f.path, ".dds") || endsWith(f.path, ".DDS")) {
+        if (!decodeDds(f.path, L)) {
+            logmsg("texture pack: cannot read %s (not a DDS of a supported format)", f.path.c_str());
+            L->failed = true;
+        }
+        completeChain(L);
+        return L;
+    }
     int n = 0;
     uint8_t* px = stbi_load(f.path.c_str(), &L->w, &L->h, &n, 4);
     if (!px) {
@@ -290,6 +442,7 @@ static Loaded* decode(const PackFile& f) {
         L->levels.emplace_back(m, m + size_t(mw) * mh * 4);
         stbi_image_free(m);
     }
+    completeChain(L);
     return L;
 }
 
@@ -320,23 +473,17 @@ static void upload(Replacement& r, Loaded* L, int unit, uint32_t gxW, uint32_t g
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     int lw = L->w, lh = L->h, n = 0;
     for (const auto& lv : L->levels) {
-        glTexImage2D(GL_TEXTURE_2D, n, GL_RGBA8, lw, lh, 0, GL_RGBA, GL_UNSIGNED_BYTE, lv.data());
+        if (L->compressed)
+            glCompressedTexImage2D(GL_TEXTURE_2D, n, L->compressed, lw, lh, 0, GLsizei(lv.size()), lv.data());
+        else
+            glTexImage2D(GL_TEXTURE_2D, n, GL_RGBA8, lw, lh, 0, GL_RGBA, GL_UNSIGNED_BYTE, lv.data());
         lw = std::max(1, lw / 2);
         lh = std::max(1, lh / 2);
         n++;
     }
-    // A full chain: the sampler picks the levels the original would use (and
-    // stops a plain texture's upscale at its original size); the pack's own
-    // levels are kept when it has them.
-    int full = 1;
-    for (int m = std::max(L->w, L->h); m > 1; m >>= 1) full++;
+    // every replacement arrives with its full chain (completeChain)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
-    if (L->levels.size() == 1 && full > 1) {
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, full - 1);
-        glGenerateMipmap(GL_TEXTURE_2D);
-    } else {
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, int(L->levels.size()) - 1);
-    }
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, int(L->levels.size()) - 1);
     r.scale = scale;
     r.state = Replacement::READY;
     s_uploaded++;
