@@ -41,6 +41,30 @@ int port_disc_explicit = 0;
 // SMS_SKIP_MOVIES=1 reports every THP movie as finished at once (patch 0016).
 extern "C" int port_skip_movies;
 int port_skip_movies = 0;
+// SMS_WIDESCREEN: the displayed width over the GameCube's 4:3 (1 when off);
+// the game camera (widescreen-01 patch) and sms_gx widen by it.
+extern "C" float port_widescreen;
+float port_widescreen = 1.0f;
+extern "C" __attribute__((weak)) void GXPC_SetWidescreen(float widthOver43);
+
+// "16:9", "21:9", "16:10", "on" (16:9), "off"/"0", or a ratio such as 1.85.
+static float parse_widescreen(const char* v)
+{
+	if (!v || !*v || !strcmp(v, "0") || !strcmp(v, "off"))
+		return 1.0f;
+	float aspect = 16.0f / 9.0f;
+	float a = 0, b = 0;
+	if (sscanf(v, "%f:%f", &a, &b) == 2 && a > 0 && b > 0)
+		aspect = a / b;
+	else if (strcmp(v, "1") && strcmp(v, "on") && atof(v) > 0)
+		aspect = (float)atof(v);
+	float f = aspect / (4.0f / 3.0f);
+	if (f < 1.0f)
+		f = 1.0f;
+	if (f > 3.0f)
+		f = 3.0f;
+	return f;
+}
 
 extern "C" void port_log(const char* fmt, ...)
 {
@@ -405,6 +429,11 @@ extern "C" void port_init(int argc, char** argv)
 	pick_glx_vendor();
 	if (const char* m = getenv("SMS_SKIP_MOVIES"))
 		port_skip_movies = *m && strcmp(m, "0") != 0;
+	port_widescreen = parse_widescreen(getenv("SMS_WIDESCREEN"));
+	if (GXPC_SetWidescreen)
+		GXPC_SetWidescreen(port_widescreen);
+	if (port_widescreen > 1.0f)
+		port_log("[port] widescreen: %.3f times the 4:3 width\n", port_widescreen);
 	for (int i = 1; i < argc; i++)
 		if (strcmp(argv[i], "--headless") == 0) {
 			port_setenv("SMS_HEADLESS", "1", 1);

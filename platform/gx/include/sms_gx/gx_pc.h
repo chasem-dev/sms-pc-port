@@ -40,6 +40,12 @@ uint32_t GXPC_FrameCount(void);              /* display copies so far */
 /* Window (taskbar / Dock) icon: w x h RGBA8 pixels, copied. Applied to the
  * SDL window now, or when it opens; ignored without a window. */
 void GXPC_SetWindowIcon(const uint8_t* rgba, int w, int h);
+/* Widescreen: the displayed width over the GameCube's 4:3 (1 = off). Set
+ * before the context exists; the EFB, the display and the window widen, and
+ * draws map the game's 640-wide coordinates into it (see gx_render.cpp). The
+ * game camera itself must be widened by the same factor to fill it. */
+void GXPC_SetWidescreen(float widthOver43);
+float GXPC_GetWidescreen(void);
 
 /* Input hook for the PAD layer.  sms_gx_pump_events runs SDL_PollEvent (it is
  * also called after every present), opens game controllers as they appear and

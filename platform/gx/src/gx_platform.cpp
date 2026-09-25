@@ -80,7 +80,8 @@ bool openWindow(int scale) {
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     int ws = scale < 1 ? 1 : scale;
     if (const char* e = getenv("SMS_WINDOW_SCALE")) ws = atoi(e) > 0 ? atoi(e) : ws;
-    s_window = SDL_CreateWindow("Super Mario Sunshine", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 640 * ws,
+    int winW = int(640.0f * GXPC_GetWidescreen() + 0.5f) * ws;
+    s_window = SDL_CreateWindow("Super Mario Sunshine", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, winW,
                                 480 * ws, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     if (!s_window) {
         logmsg("SDL_CreateWindow failed: %s", SDL_GetError());
@@ -106,7 +107,7 @@ bool openWindow(int scale) {
         SDL_Quit();
         return false;
     }
-    logmsg("window %dx%d, OpenGL context ready", 640 * ws, 480 * ws);
+    logmsg("window %dx%d, OpenGL context ready", winW, 480 * ws);
     return true;
 }
 #endif
