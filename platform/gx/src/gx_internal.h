@@ -184,6 +184,7 @@ std::string hiresName(const uint8_t* data, uint32_t fmt, uint32_t w, uint32_t h,
                       uint32_t tlutBytes, bool onlyIfPresent);
 unsigned hiresTexture(const std::string& name, int unit, uint32_t gxW, uint32_t gxH, int* scale);
 void hiresShutdown();
+void hiresEndFrame();  // once per display copy
 uint32_t hiresUploadedCount();
 uint64_t xxh64(const void* data, size_t len, uint64_t seed);
 

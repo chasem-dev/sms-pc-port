@@ -1243,6 +1243,7 @@ static void copyEfb(uint32_t ctrl) {
     if (clear) s_drawGen++;
     if (disp) {
         resolveWriteBacks(false);
+        hiresEndFrame();
         s_frameNo++;
         traceFrameAdvance();
         statsFrame();
