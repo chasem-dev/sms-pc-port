@@ -62,7 +62,13 @@
     X(PFNGLFENCESYNCPROC, glFenceSync) X(PFNGLCLIENTWAITSYNCPROC, glClientWaitSync) X(PFNGLDELETESYNCPROC, glDeleteSync) \
     X(PFNGLGENRENDERBUFFERSPROC, glGenRenderbuffers) X(PFNGLBINDRENDERBUFFERPROC, glBindRenderbuffer) \
     X(PFNGLRENDERBUFFERSTORAGEPROC, glRenderbufferStorage)                          \
-    X(PFNGLFRAMEBUFFERRENDERBUFFERPROC, glFramebufferRenderbuffer)
+    X(PFNGLFRAMEBUFFERRENDERBUFFERPROC, glFramebufferRenderbuffer)                  \
+    X(PFNGLGENSAMPLERSPROC, glGenSamplers) X(PFNGLBINDSAMPLERPROC, glBindSampler)   \
+    X(PFNGLSAMPLERPARAMETERIPROC, glSamplerParameteri)                              \
+    X(PFNGLSAMPLERPARAMETERFPROC, glSamplerParameterf)                              \
+    X(PFNGLDELETESAMPLERSPROC, glDeleteSamplers)                                    \
+    X(PFNGLDRAWELEMENTSBASEVERTEXPROC, glDrawElementsBaseVertex)                    \
+    X(PFNGLBINDBUFFERRANGEPROC, glBindBufferRange)
 
 #define SMS_GX_DECLARE(type, name) extern type gx_##name;
 extern "C++" {
@@ -169,5 +175,12 @@ SMS_GX_GL_FUNCS(SMS_GX_ALIAS)
 #define glBindRenderbuffer gx_glBindRenderbuffer
 #define glRenderbufferStorage gx_glRenderbufferStorage
 #define glFramebufferRenderbuffer gx_glFramebufferRenderbuffer
+#define glGenSamplers gx_glGenSamplers
+#define glBindSampler gx_glBindSampler
+#define glSamplerParameteri gx_glSamplerParameteri
+#define glSamplerParameterf gx_glSamplerParameterf
+#define glDeleteSamplers gx_glDeleteSamplers
+#define glDrawElementsBaseVertex gx_glDrawElementsBaseVertex
+#define glBindBufferRange gx_glBindBufferRange
 
 #endif

@@ -3,6 +3,7 @@
 // presentation.
 #include "gx_internal.h"
 #include "gl_funcs.h"
+#include "gx_glcache.h"
 #include "sms_gx/gx_pc.h"
 
 #include <math.h>
@@ -15,6 +16,9 @@
 namespace gx {
 
 uint32_t g_statTexUploads, g_statShaderCompiles;
+uint64_t g_statTexHashBytes, g_statTexInvalidates;
+namespace gl { extern uint64_t g_statGlCalls; }
+extern double g_decodeSeconds;
 static GXPCStats s_stats;
 void shaderShutdown();
 
@@ -22,7 +26,7 @@ enum { EFB_W = 640, EFB_H = 528 };
 
 static int s_scale = 1;
 static GLuint s_efbFbo, s_efbColor, s_efbDepth;
-static GLuint s_vao, s_vbo, s_ibo, s_ubo;
+static GLuint s_vao;
 static GLuint s_copyProg, s_copyVao;
 static GLint s_copyUMode, s_copyURect, s_copyUAlphaOne;
 static GLuint s_tmpFbo;
@@ -32,6 +36,76 @@ static GLint s_overlayRect, s_overlayWindow;
 static GXPCStats s_lastFrameStats;
 static bool s_ready = false;
 static bool s_xfDirty = true;
+
+// Append-only stream of per-draw data (vertices, indices, the XF block) in
+// one GL buffer, written through unsynchronized maps. The buffer is split
+// into four segments; a fence marks the end of each one's use, and a segment
+// is only written again once its fence has passed, so a write never touches
+// data a queued draw still reads. Replaces a glBufferData reallocation (or a
+// glBufferSubData into a buffer every queued draw uses) per batch.
+struct StreamBuffer {
+    enum { kSegments = 4 };
+    GLenum target = 0;
+    GLuint buf = 0;
+    size_t size = 0, pos = 0;
+    GLsync fence[kSegments] = {};
+
+    void init(GLenum t, size_t bytes) {
+        target = t;
+        size = bytes;
+        glGenBuffers(1, &buf);
+        if (target == GL_ELEMENT_ARRAY_BUFFER) glBindBuffer(target, buf);
+        else bind();
+        glBufferData(target, GLsizeiptr(size), nullptr, GL_STREAM_DRAW);
+    }
+    void bind() {
+        if (target == GL_ARRAY_BUFFER) glcBindArrayBuffer(buf);
+        else if (target == GL_UNIFORM_BUFFER) glcBindUniformBuffer(buf);
+        // the element buffer is VAO state: bound once at init, with s_vao
+    }
+    size_t unfenced = 0;  // first segment written since the last fence
+
+    size_t segOf(size_t p) const { return p * kSegments / size; }
+    // Every draw reading what was written so far has been issued: fence the
+    // segments from `unfenced` through `last`.
+    void fenceThrough(size_t last) {
+        for (size_t sg = unfenced; sg <= last && sg < kSegments; sg++)
+            if (!fence[sg]) fence[sg] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    }
+    void waitSegment(size_t seg) {
+        if (!fence[seg]) return;
+        glClientWaitSync(fence[seg], GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
+        glDeleteSync(fence[seg]);
+        fence[seg] = 0;
+    }
+    // Returns the offset `bytes` were written at (a multiple of `align`).
+    // Called before the draw that reads the data, after the previous one.
+    size_t append(const void* data, size_t bytes, size_t align) {
+        size_t at = (pos + align - 1) / align * align;
+        size_t cur = segOf(pos ? pos - 1 : 0);
+        if (at + bytes > size) {  // wrap
+            fenceThrough(kSegments - 1);
+            at = 0;
+            unfenced = 0;
+        } else if (segOf(at) != cur) {
+            fenceThrough(segOf(at) - 1);
+            unfenced = segOf(at);
+        }
+        size_t endSeg = segOf(at + bytes - 1);
+        for (size_t sg = segOf(at); sg <= endSeg; sg++) waitSegment(sg);
+        bind();
+        void* dst = glMapBufferRange(target, GLintptr(at), GLsizeiptr(bytes),
+                                     GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT | GL_MAP_INVALIDATE_RANGE_BIT);
+        if (dst) {
+            memcpy(dst, data, bytes);
+            glUnmapBuffer(target);
+        }
+        pos = at + bytes;
+        return at;
+    }
+};
+static StreamBuffer s_vstream, s_istream, s_ustream;
+static GLint s_uboAlign = 256;
 
 static std::vector<HostVertex> s_bverts;
 static std::vector<uint32_t> s_bidx;
@@ -168,12 +242,11 @@ void rendererInit(int efbScale) {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glGenFramebuffers(1, &s_tmpFbo);
 
+    glcInvalidate();
     glGenVertexArrays(1, &s_vao);
-    glBindVertexArray(s_vao);
-    glGenBuffers(1, &s_vbo);
-    glGenBuffers(1, &s_ibo);
-    glBindBuffer(GL_ARRAY_BUFFER, s_vbo);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_ibo);
+    glcBindVertexArray(s_vao);
+    s_vstream.init(GL_ARRAY_BUFFER, 96u << 20);
+    s_istream.init(GL_ELEMENT_ARRAY_BUFFER, 16u << 20);
     const GLsizei st = sizeof(HostVertex);
     auto off = [](size_t o) { return reinterpret_cast<const void*>(o); };
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, st, off(offsetof(HostVertex, pos)));
@@ -187,10 +260,9 @@ void rendererInit(int efbScale) {
     glVertexAttribIPointer(14, 3, GL_UNSIGNED_INT, st, off(offsetof(HostVertex, mtx)));
     for (GLuint i = 0; i < 15; i++) glEnableVertexAttribArray(i);
 
-    glGenBuffers(1, &s_ubo);
-    glBindBuffer(GL_UNIFORM_BUFFER, s_ubo);
-    glBufferData(GL_UNIFORM_BUFFER, 184 * 16, nullptr, GL_DYNAMIC_DRAW);
-    glBindBufferBase(GL_UNIFORM_BUFFER, 0, s_ubo);
+    glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, &s_uboAlign);
+    if (s_uboAlign < 16) s_uboAlign = 16;
+    s_ustream.init(GL_UNIFORM_BUFFER, 16u << 20);
 
     s_copyProg = compileProgram(kCopyVs, kCopyFs);
     glUseProgram(s_copyProg);
@@ -200,6 +272,7 @@ void rendererInit(int efbScale) {
     s_copyURect = glGetUniformLocation(s_copyProg, "u_rect");
     s_copyUAlphaOne = glGetUniformLocation(s_copyProg, "u_alphaOne");
     glGenVertexArrays(1, &s_copyVao);
+    glcInvalidate();
     s_ready = true;
 }
 
@@ -274,10 +347,33 @@ static inline float xff(uint32_t r) {
     return f;
 }
 
+GlCache g_glc;
+
+void glcInvalidate() {
+    // raw paths sample with the textures' own parameters: drop the samplers
+    for (int u = 0; u < 8; u++)
+        if (g_glc.sampler[u] != 0 && g_glc.sampler[u] != ~0u) glBindSampler(GLuint(u), 0);
+    memset(&g_glc, 0xFF, sizeof(g_glc));  // ~0 names/enums, -1 flags, NaN floats
+}
+
+void glcForgetTexture(GLuint tex) {
+    for (int u = 0; u < 8; u++)
+        if (g_glc.tex[u] == tex) g_glc.tex[u] = ~0u;
+}
+
 static void applyGlState() {
+    GlCache& c = g_glc;
     int W = EFB_W * s_scale, H = EFB_H * s_scale;
-    glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
-    glViewport(0, 0, W, H);
+    if (c.fbo != s_efbFbo) {
+        c.fbo = s_efbFbo;
+        glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
+    }
+    if (c.vp[0] != 0 || c.vp[1] != 0 || c.vp[2] != W || c.vp[3] != H) {
+        c.vp[0] = c.vp[1] = 0;
+        c.vp[2] = W;
+        c.vp[3] = H;
+        glViewport(0, 0, W, H);
+    }
 
     // scissor (registers hold coordinates + 342)
     uint32_t tl = g.bp[BP_SCISSOR_TL], br = g.bp[BP_SCISSOR_BR];
@@ -286,35 +382,59 @@ static void applyGlState() {
     int sw = right - left + 1, sh = bottom - top + 1;
     if (sw < 0) sw = 0;
     if (sh < 0) sh = 0;
-    glEnable(GL_SCISSOR_TEST);
-    glScissor(left * s_scale, top * s_scale, sw * s_scale, sh * s_scale);
+    glcCap(GL_SCISSOR_TEST, c.scissor, true);
+    GLint sc[4] = {left * s_scale, top * s_scale, sw * s_scale, sh * s_scale};
+    if (memcmp(sc, c.sc, sizeof sc) != 0) {
+        memcpy(c.sc, sc, sizeof sc);
+        glScissor(sc[0], sc[1], sc[2], sc[3]);
+    }
 
     // culling: GX front faces are clockwise on screen, which is counter-clockwise
     // in this framebuffer's (y-down) window coordinates
     uint32_t cull = (g.bp[BP_GENMODE] >> 14) & 3;
-    glFrontFace(GL_CCW);
-    if (cull == 0 || s_bclass != PRIM_TRIS) glDisable(GL_CULL_FACE);
+    if (c.frontFace != GL_CCW) {
+        c.frontFace = GL_CCW;
+        glFrontFace(GL_CCW);
+    }
+    if (cull == 0 || s_bclass != PRIM_TRIS) glcCap(GL_CULL_FACE, c.cull, false);
     else {
-        glEnable(GL_CULL_FACE);
-        glCullFace(cull == 1 ? GL_BACK : cull == 2 ? GL_FRONT : GL_FRONT_AND_BACK);
+        glcCap(GL_CULL_FACE, c.cull, true);
+        GLenum cf = cull == 1 ? GL_BACK : cull == 2 ? GL_FRONT : GL_FRONT_AND_BACK;
+        if (c.cullFace != cf) {
+            c.cullFace = cf;
+            glCullFace(cf);
+        }
     }
 
     static const GLenum cmp[8] = {GL_NEVER, GL_LESS, GL_EQUAL, GL_LEQUAL, GL_GREATER, GL_NOTEQUAL, GL_GEQUAL, GL_ALWAYS};
     uint32_t z = g.bp[BP_ZMODE];
+    GLboolean dmask = GL_FALSE;
     if (z & 1) {
-        glEnable(GL_DEPTH_TEST);
-        glDepthFunc(cmp[(z >> 1) & 7]);
-        glDepthMask((z >> 4) & 1 ? GL_TRUE : GL_FALSE);
+        glcCap(GL_DEPTH_TEST, c.depth, true);
+        GLenum df = cmp[(z >> 1) & 7];
+        if (c.depthFunc != df) {
+            c.depthFunc = df;
+            glDepthFunc(df);
+        }
+        dmask = (z >> 4) & 1 ? GL_TRUE : GL_FALSE;
     } else {
-        glDisable(GL_DEPTH_TEST);
-        glDepthMask(GL_FALSE);
+        glcCap(GL_DEPTH_TEST, c.depth, false);
+    }
+    if (c.depthMask != dmask) {
+        c.depthMask = dmask;
+        glDepthMask(dmask);
     }
 
     uint32_t pix = g.bp[BP_PE_CONTROL] & 7;
     bool hasAlpha = pix == 1;  // GX_PF_RGBA6_Z24
     uint32_t cm = g.bp[BP_CMODE0], cm1 = g.bp[BP_CMODE1];
     bool colorUpd = (cm >> 3) & 1, alphaUpd = ((cm >> 4) & 1) && hasAlpha;
-    glColorMask(colorUpd, colorUpd, colorUpd, alphaUpd || ((cm1 >> 8) & 1 && hasAlpha));
+    GLboolean mask[4] = {GLboolean(colorUpd), GLboolean(colorUpd), GLboolean(colorUpd),
+                         GLboolean(alphaUpd || ((cm1 >> 8) & 1 && hasAlpha))};
+    if (memcmp(mask, c.cmask, sizeof mask) != 0) {
+        memcpy(c.cmask, mask, sizeof mask);
+        glColorMask(mask[0], mask[1], mask[2], mask[3]);
+    }
 
     static const GLenum srcF[8] = {GL_ZERO, GL_ONE, GL_DST_COLOR, GL_ONE_MINUS_DST_COLOR,
                                    GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_DST_ALPHA, GL_ONE_MINUS_DST_ALPHA};
@@ -324,53 +444,90 @@ static void applyGlState() {
         if (hasAlpha) return f;
         return f == GL_DST_ALPHA ? GLenum(GL_ONE) : f == GL_ONE_MINUS_DST_ALPHA ? GLenum(GL_ZERO) : f;
     };
+    auto blendEq = [&](GLenum rgb, GLenum a) {
+        if (c.beq[0] != rgb || c.beq[1] != a) {
+            c.beq[0] = rgb;
+            c.beq[1] = a;
+            glBlendEquationSeparate(rgb, a);
+        }
+    };
+    auto blendFunc = [&](GLenum s0, GLenum d0, GLenum s1, GLenum d1) {
+        if (c.bf[0] != s0 || c.bf[1] != d0 || c.bf[2] != s1 || c.bf[3] != d1) {
+            c.bf[0] = s0;
+            c.bf[1] = d0;
+            c.bf[2] = s1;
+            c.bf[3] = d1;
+            glBlendFuncSeparate(s0, d0, s1, d1);
+        }
+    };
     bool dstAlpha = ((cm1 >> 8) & 1) != 0;
     GLenum aSrc = GL_ONE, aDst = GL_ZERO;
     if (dstAlpha) {
-        glBlendColor(0, 0, 0, float(cm1 & 0xFF) / 255.0f);
+        float bc = float(cm1 & 0xFF) / 255.0f;
+        if (!(c.blendColor[3] == bc) || !(c.blendColor[0] == 0.0f)) {
+            c.blendColor[0] = c.blendColor[1] = c.blendColor[2] = 0.0f;
+            c.blendColor[3] = bc;
+            glBlendColor(0, 0, 0, bc);
+        }
         aSrc = GL_CONSTANT_ALPHA;
         aDst = GL_ZERO;
     }
-    glDisable(GL_COLOR_LOGIC_OP);
     if (cm & 1) {
-        glEnable(GL_BLEND);
+        glcCap(GL_COLOR_LOGIC_OP, c.logic, false);
+        glcCap(GL_BLEND, c.blend, true);
         if ((cm >> 11) & 1) {
-            glBlendEquationSeparate(GL_FUNC_REVERSE_SUBTRACT, dstAlpha ? GL_FUNC_ADD : GL_FUNC_REVERSE_SUBTRACT);
-            glBlendFuncSeparate(GL_ONE, GL_ONE, dstAlpha ? aSrc : GL_ONE, dstAlpha ? aDst : GL_ONE);
+            blendEq(GL_FUNC_REVERSE_SUBTRACT, dstAlpha ? GL_FUNC_ADD : GL_FUNC_REVERSE_SUBTRACT);
+            blendFunc(GL_ONE, GL_ONE, dstAlpha ? aSrc : GL_ONE, dstAlpha ? aDst : GL_ONE);
         } else {
             GLenum s = noDstAlpha(srcF[(cm >> 8) & 7]), d = noDstAlpha(dstF[(cm >> 5) & 7]);
-            glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
-            glBlendFuncSeparate(s, d, dstAlpha ? aSrc : s, dstAlpha ? aDst : d);
+            blendEq(GL_FUNC_ADD, GL_FUNC_ADD);
+            blendFunc(s, d, dstAlpha ? aSrc : s, dstAlpha ? aDst : d);
         }
     } else if ((cm >> 1) & 1) {
         static const GLenum lop[16] = {GL_CLEAR, GL_AND, GL_AND_REVERSE, GL_COPY, GL_AND_INVERTED, GL_NOOP,
                                        GL_XOR, GL_OR, GL_NOR, GL_EQUIV, GL_INVERT, GL_OR_REVERSE,
                                        GL_COPY_INVERTED, GL_OR_INVERTED, GL_NAND, GL_SET};
-        glDisable(GL_BLEND);
-        glEnable(GL_COLOR_LOGIC_OP);
-        glLogicOp(lop[(cm >> 12) & 15]);
+        glcCap(GL_BLEND, c.blend, false);
+        glcCap(GL_COLOR_LOGIC_OP, c.logic, true);
+        GLenum op = lop[(cm >> 12) & 15];
+        if (c.logicOp != op) {
+            c.logicOp = op;
+            glLogicOp(op);
+        }
     } else if (dstAlpha) {
-        glEnable(GL_BLEND);
-        glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
-        glBlendFuncSeparate(GL_ONE, GL_ZERO, aSrc, aDst);
+        glcCap(GL_COLOR_LOGIC_OP, c.logic, false);
+        glcCap(GL_BLEND, c.blend, true);
+        blendEq(GL_FUNC_ADD, GL_FUNC_ADD);
+        blendFunc(GL_ONE, GL_ZERO, aSrc, aDst);
     } else {
-        glDisable(GL_BLEND);
+        glcCap(GL_COLOR_LOGIC_OP, c.logic, false);
+        glcCap(GL_BLEND, c.blend, false);
     }
 
-    if (g.xfReg[0x05] == 0) {
-        glEnable(GL_CLIP_DISTANCE0);
-        glEnable(GL_CLIP_DISTANCE0 + 1);
-    } else {
-        glDisable(GL_CLIP_DISTANCE0);
-        glDisable(GL_CLIP_DISTANCE0 + 1);
-    }
+    bool clipOn = g.xfReg[0x05] == 0;
+    glcCap(GL_CLIP_DISTANCE0, c.clip0, clipOn);
+    glcCap(GL_CLIP_DISTANCE0 + 1, c.clip1, clipOn);
     uint32_t lp = g.bp[BP_LPSIZE];
     float pt = float((lp >> 8) & 0xFF) / 6.0f * float(s_scale);
-    glPointSize(pt > 1.0f ? pt : 1.0f);
-    glLineWidth(1.0f);
+    if (pt < 1.0f) pt = 1.0f;
+    if (!(c.pointSize == pt)) {
+        c.pointSize = pt;
+        glPointSize(pt);
+    }
+    if (!(c.lineWidth == 1.0f)) {
+        c.lineWidth = 1.0f;
+        glLineWidth(1.0f);
+    }
 }
 
 static void uploadUniforms(const ShaderProgram* sp, float texW[8], float texH[8]) {
+    UniformCache& uc = sp->uc;
+    // uploads `value` (same size as the cached copy) only when it changed
+#define UNI(loc, field, value, call)                                               \
+    if (!uc.init || memcmp(uc.field, value, sizeof uc.field) != 0) {                \
+        memcpy(uc.field, value, sizeof uc.field);                                   \
+        if (sp->loc >= 0) call;                                                     \
+    }
     GLint iv[16];
     for (int i = 0; i < 4; i++) {
         uint32_t ra = g.bp[BP_TEV_REG + 2 * i], bg = g.bp[BP_TEV_REG + 2 * i + 1];
@@ -379,7 +536,7 @@ static void uploadUniforms(const ShaderProgram* sp, float texW[8], float texH[8]
         iv[4 * i + 2] = sext11(bg & 0x7FF);
         iv[4 * i + 3] = sext11((ra >> 12) & 0x7FF);
     }
-    glUniform4iv(sp->uTevReg, 4, iv);
+    UNI(uTevReg, tevreg, iv, glUniform4iv(sp->uTevReg, 4, iv));
     for (int i = 0; i < 4; i++) {
         uint32_t ra = g.kreg[2 * i], bg = g.kreg[2 * i + 1];
         iv[4 * i + 0] = int(ra & 0xFF);
@@ -387,7 +544,7 @@ static void uploadUniforms(const ShaderProgram* sp, float texW[8], float texH[8]
         iv[4 * i + 2] = int(bg & 0xFF);
         iv[4 * i + 3] = int((ra >> 12) & 0xFF);
     }
-    glUniform4iv(sp->uKonst, 4, iv);
+    UNI(uKonst, konst, iv, glUniform4iv(sp->uKonst, 4, iv));
 
     // manual texcoord scaling: coordinates are in units of the given size
     float ts[16];
@@ -401,16 +558,16 @@ static void uploadUniforms(const ShaderProgram* sp, float texW[8], float texH[8]
             ts[2 * coord + 1] = float((g.bp[BP_SU_SSIZE + 2 * coord + 1] & 0xFFFF) + 1) / texH[map];
         }
     }
-    glUniform2fv(sp->uTexScale, 8, ts);
+    UNI(uTexScale, texscale, ts, glUniform2fv(sp->uTexScale, 8, ts));
     float tsz[16];
     for (int m = 0; m < 8; m++) {
         tsz[2 * m] = texW[m] > 0 ? texW[m] : 1.0f;
         tsz[2 * m + 1] = texH[m] > 0 ? texH[m] : 1.0f;
     }
-    glUniform2fv(sp->uTexSize, 8, tsz);
+    UNI(uTexSize, texsize, tsz, glUniform2fv(sp->uTexSize, 8, tsz));
     uint32_t ac = g.bp[BP_ALPHACOMPARE];
     GLint ar[2] = {GLint(ac & 0xFF), GLint((ac >> 8) & 0xFF)};
-    glUniform2iv(sp->uAlphaRef, 1, ar);
+    UNI(uAlphaRef, alpharef, ar, glUniform2iv(sp->uAlphaRef, 1, ar));
 
     // fog
     uint32_t f0 = g.bp[BP_FOG0], f1 = g.bp[BP_FOG1], f2 = g.bp[BP_FOG2], f3 = g.bp[BP_FOG3];
@@ -425,10 +582,10 @@ static void uploadUniforms(const ShaderProgram* sp, float texW[8], float texH[8]
     float A = ldexpf(a, bs);
     float B = ldexpf(float(f1 & 0xFFFFFF) / 8388638.0f, bs - 1);
     float fog[4] = {A, B, c, float((f3 >> 20) & 1)};
-    glUniform4fv(sp->uFog, 1, fog);
+    UNI(uFog, fog, fog, glUniform4fv(sp->uFog, 1, fog));
     uint32_t fc = g.bp[BP_FOG_COLOR];
     float fcol[4] = {float((fc >> 16) & 255) / 255.0f, float((fc >> 8) & 255) / 255.0f, float(fc & 255) / 255.0f, 1.0f};
-    glUniform4fv(sp->uFogColor, 1, fcol);
+    UNI(uFogColor, fogcolor, fcol, glUniform4fv(sp->uFogColor, 1, fcol));
 
     float im[24];
     for (int m = 0; m < 3; m++) {
@@ -445,16 +602,16 @@ static void uploadUniforms(const ShaderProgram* sp, float texW[8], float texH[8]
         row0[3] = ldexpf(1.0f, sc);
         row1[3] = 0.0f;
     }
-    glUniform4fv(sp->uIndMtx, 6, im);
+    UNI(uIndMtx, indmtx, im, glUniform4fv(sp->uIndMtx, 6, im));
 
     float efb[2] = {float(EFB_W), float(EFB_H)};
-    glUniform2fv(sp->uEfb, 1, efb);
+    UNI(uEfb, efb, efb, glUniform2fv(sp->uEfb, 1, efb));
     float proj[8] = {xff(XFR_PROJ), xff(XFR_PROJ + 1), xff(XFR_PROJ + 2), xff(XFR_PROJ + 3),
                      xff(XFR_PROJ + 4), xff(XFR_PROJ + 5), float(g.xfReg[XFR_PROJ + 6] & 1), 0.0f};
-    glUniform4fv(sp->uProj, 2, proj);
+    UNI(uProj, proj, proj, glUniform4fv(sp->uProj, 2, proj));
     float vp[8] = {xff(XFR_VIEWPORT), xff(XFR_VIEWPORT + 1), xff(XFR_VIEWPORT + 2), 0.0f,
                    xff(XFR_VIEWPORT + 3), xff(XFR_VIEWPORT + 4), xff(XFR_VIEWPORT + 5), 0.0f};
-    glUniform4fv(sp->uViewport, 2, vp);
+    UNI(uViewport, vp, vp, glUniform4fv(sp->uViewport, 2, vp));
     float ch[16];
     const int regs[4] = {XFR_AMB0, XFR_AMB0 + 1, XFR_MAT0, XFR_MAT0 + 1};
     for (int i = 0; i < 4; i++) {
@@ -464,7 +621,9 @@ static void uploadUniforms(const ShaderProgram* sp, float texW[8], float texH[8]
         ch[4 * i + 2] = float((v >> 8) & 255) / 255.0f;
         ch[4 * i + 3] = float(v & 255) / 255.0f;
     }
-    glUniform4fv(sp->uAmbMat, 4, ch);
+    UNI(uAmbMat, ambmat, ch, glUniform4fv(sp->uAmbMat, 4, ch));
+#undef UNI
+    uc.init = true;
 }
 
 // SMS_GX_STATS=n: every n display frames, log draws, uploads and the wall time
@@ -482,6 +641,7 @@ struct GxTimer {
     ~GxTimer() { *acc += nowSeconds() - t0; }
 };
 static uint32_t s_syncReads = 0;  // reads that made the CPU wait for the GPU
+static uint64_t s_flushes = 0;    // flushBatch calls that drew
 static void statsFrame() {
     static int every = -1;
     static uint32_t frames = 0, draws = 0, verts = 0, compiles0 = 0, uploads0 = 0, sync0 = 0;
@@ -505,6 +665,18 @@ static void statsFrame() {
            (s_texSeconds - tex0) * 1000.0 / frames, (s_drawSeconds - draw0) * 1000.0 / frames,
            (s_copySeconds - copy0) * 1000.0 / frames, (s_peekSeconds - peek0) * 1000.0 / frames,
            double(s_syncReads - sync0) / frames);
+    static uint64_t gl0 = 0, hash0 = 0, inv0 = 0, flush0 = 0;
+    static double dec0 = 0;
+    logmsg("stats: %.0f GL calls/frame, %.0f batch flushes/frame, %.0f KiB texture data hashed/frame, "
+           "%.1f texture invalidations/frame, %.2f ms/frame decoding vertices",
+           double(gl::g_statGlCalls - gl0) / frames, double(s_flushes - flush0) / frames,
+           double(g_statTexHashBytes - hash0) / 1024.0 / frames, double(g_statTexInvalidates - inv0) / frames,
+           (g_decodeSeconds - dec0) * 1000.0 / frames);
+    dec0 = g_decodeSeconds;
+    gl0 = gl::g_statGlCalls;
+    hash0 = g_statTexHashBytes;
+    inv0 = g_statTexInvalidates;
+    flush0 = s_flushes;
     sync0 = s_syncReads;
     tex0 = s_texSeconds;
     draw0 = s_drawSeconds;
@@ -664,7 +836,7 @@ void flushBatch() {
     }
     GxTimer timer;
     const ShaderProgram* sp = shaderForCurrentState();
-    glUseProgram(sp->prog);
+    glcUseProgram(sp->prog);
     applyGlState();
 
     // textures: every map referenced by an enabled TEV stage or an indirect stage
@@ -679,41 +851,46 @@ void flushBatch() {
     for (uint32_t i = 0; i < nind && i < 4; i++) used |= 1u << ((g.bp[BP_RAS1_IREF] >> (6 * i)) & 7);
     for (int m = 0; m < 8; m++) {
         if (!(used & (1u << m))) continue;
-        glActiveTexture(GL_TEXTURE0 + m);
         GxTimer tt(&s_texSeconds);
         bindTextureMap(m, &texW[m], &texH[m]);
     }
-    glActiveTexture(GL_TEXTURE0);
 
-    if (s_xfDirty) {
-        static uint32_t buf[736];
-        memcpy(buf, &g.xfMem[0], 256 * 4);
-        memcpy(buf + 256, &g.xfMem[0x400], 96 * 4);
-        memcpy(buf + 352, &g.xfMem[0x500], 256 * 4);
-        memcpy(buf + 608, &g.xfMem[0x600], 128 * 4);
-        glBindBuffer(GL_UNIFORM_BUFFER, s_ubo);
-        glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(buf), buf);
-        s_xfDirty = false;
+    static size_t s_xfOffset = 0;
+    if (s_xfDirty || g_glc.uniformBuffer == ~0u) {
+        if (s_xfDirty) {
+            static uint32_t buf[736];
+            memcpy(buf, &g.xfMem[0], 256 * 4);
+            memcpy(buf + 256, &g.xfMem[0x400], 96 * 4);
+            memcpy(buf + 352, &g.xfMem[0x500], 256 * 4);
+            memcpy(buf + 608, &g.xfMem[0x600], 128 * 4);
+            s_xfOffset = s_ustream.append(buf, sizeof(buf), size_t(s_uboAlign));
+            s_xfDirty = false;
+        }
+        glBindBufferRange(GL_UNIFORM_BUFFER, 0, s_ustream.buf, GLintptr(s_xfOffset), 736 * 4);
+        g_glc.uniformBuffer = s_ustream.buf;  // the range bind also sets the generic binding
     }
     uploadUniforms(sp, texW, texH);
 
-    glBindVertexArray(s_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, s_vbo);
-    glBufferData(GL_ARRAY_BUFFER, GLsizeiptr(s_bverts.size() * sizeof(HostVertex)), s_bverts.data(), GL_STREAM_DRAW);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_ibo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, GLsizeiptr(s_bidx.size() * 4), s_bidx.data(), GL_STREAM_DRAW);
+    glcBindVertexArray(s_vao);
+    size_t vOff = s_vstream.append(s_bverts.data(), s_bverts.size() * sizeof(HostVertex), sizeof(HostVertex));
+    size_t iOff = s_istream.append(s_bidx.data(), s_bidx.size() * 4, 4);
     GLenum mode = s_bclass == PRIM_TRIS ? GL_TRIANGLES : s_bclass == PRIM_LINES ? GL_LINES : GL_POINTS;
     {
         GxTimer td(&s_drawSeconds);
-        glDrawElements(mode, GLsizei(s_bidx.size()), GL_UNSIGNED_INT, nullptr);
+        glDrawElementsBaseVertex(mode, GLsizei(s_bidx.size()), GL_UNSIGNED_INT, reinterpret_cast<const void*>(iOff),
+                                 GLint(vOff / sizeof(HostVertex)));
     }
     s_stats.draws++;
+    s_flushes++;
     s_drawGen++;
     if (s_pixActive && s_bclass == PRIM_TRIS) s_pixTris += uint32_t(s_bidx.size() / 3);
     if (traceFile()) traceDraw(int(s_bclass), uint32_t(s_bverts.size()), uint32_t(s_bidx.size()), s_bverts.data(), sp->id);
     s_bidx.clear();
     s_bverts.clear();
-    if (traceFile()) traceProbe();
+    if (traceFile()) {
+        traceProbe();
+        glcInvalidate();
+    }
 }
 
 // ------------------------------------------------------------------ EFB copies
@@ -865,6 +1042,7 @@ static void writeBackCopy(const void* dest, GLuint tex, int ow, int oh, uint32_t
 void executeCopy(uint32_t ctrl) {
     if (!s_ready) return;
     flushBatch();
+    glcInvalidate();  // copies, clears and write-backs set GL state directly
     pixMetricPause();
     struct Resume { ~Resume() { pixMetricResume(); } } resume;
     GxTimer timer;
@@ -1004,6 +1182,7 @@ static uint32_t s_peekDrawGen = ~0u, s_peekFrame = ~0u, s_peekIssued = 0;
 static int s_peekGroup = -1;
 
 static uint32_t peekSync(int x, int y, bool depth) {
+    glcInvalidate();
     s_syncReads++;
     uint32_t v = 0;
     uint8_t px[4] = {0, 0, 0, 0};
@@ -1048,6 +1227,7 @@ static GLuint peekSource() {
 // Returns the raw texel: RGBA bytes packed little-endian, or the 32-bit depth.
 static uint32_t peekRaw(int x, int y, bool depth) {
     flushBatch();
+    glcInvalidate();
     GxTimer tp(&s_peekSeconds);
     if (!asyncReads() || x < 0 || y < 0 || x >= EFB_W || y >= EFB_H) return peekSync(x, y, depth);
     if (s_peekDrawGen != s_drawGen || s_peekFrame != s_frameNo) {
@@ -1114,6 +1294,7 @@ extern "C" {
 
 int GXPC_PresentXFB(const void* xfb, int winW, int winH) {
     flushBatch();
+    glcInvalidate();
     if (!xfb) xfb = s_lastXfb;
     auto it = s_xfbs.find(xfb);
     if (it == s_xfbs.end()) return 0;
@@ -1146,6 +1327,7 @@ void GXPC_EndPresent(void) {
 
 void GXPC_ReadEFB(uint8_t* rgba, int* w, int* h) {
     flushBatch();
+    glcInvalidate();
     *w = EFB_W * s_scale;
     *h = EFB_H * s_scale;
     if (!rgba) return;
@@ -1156,6 +1338,7 @@ void GXPC_ReadEFB(uint8_t* rgba, int* w, int* h) {
 
 int GXPC_ReadXFB(const void* xfb, uint8_t* rgba, int* w, int* h) {
     flushBatch();
+    glcInvalidate();
     if (!xfb) xfb = s_lastXfb;
     auto it = s_xfbs.find(xfb);
     if (it == s_xfbs.end()) return 0;
@@ -1181,6 +1364,7 @@ double GXPC_GxSeconds(void) { return s_gxSeconds; }
 void GXPC_DrawOverlay(const uint8_t* rgba, int w, int h, int x, int y, int scale, int winW, int winH) {
     if (!s_ready || !rgba || w <= 0 || h <= 0) return;
     flushBatch();
+    glcInvalidate();
     // glBlitFramebuffer ignores alpha, so draw the panel with source-alpha blending.
     if (!s_overlayProg) {
         static const char* vs = R"(#version 330 core

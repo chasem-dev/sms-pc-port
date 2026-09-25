@@ -4,6 +4,7 @@
 // (matrices, colours, references) is a uniform.
 #include "gx_internal.h"
 #include "gl_funcs.h"
+#include "gx_glcache.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -536,6 +537,7 @@ const ShaderProgram* shaderForCurrentState() {
     glDeleteShader(f);
     ShaderProgram sp;
     sp.prog = p;
+    sp.uc.init = false;
     sp.id = int(g_statShaderCompiles);
     if (const char* dir = getenv("SMS_GX_DUMP_SHADERS")) {
         char path[1024];
@@ -545,6 +547,7 @@ const ShaderProgram* shaderForCurrentState() {
         if (FILE* f = fopen(path, "w")) { fputs(fs.c_str(), f); fclose(f); }
     }
     glUseProgram(p);
+    g_glc.prog = p;
     GLuint blk = glGetUniformBlockIndex(p, "XFBlock");
     if (blk != GL_INVALID_INDEX) glUniformBlockBinding(p, blk, 0);
     GLint units[8] = {0, 1, 2, 3, 4, 5, 6, 7};

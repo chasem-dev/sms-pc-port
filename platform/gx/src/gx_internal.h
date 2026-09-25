@@ -159,11 +159,19 @@ uint32_t encodeTexture(const uint8_t* rgba, uint32_t fmt, uint32_t w, uint32_t h
 uint32_t texLevelBytes(uint32_t fmt, uint32_t w, uint32_t h);
 
 // ---------------------------------------------------------------- shaders (gx_shader.cpp)
+// The uniform values a program was last given (uploadUniforms skips the ones
+// that did not change; `init` is false until the first upload).
+struct UniformCache {
+    bool init;
+    int tevreg[16], konst[16], alpharef[2];
+    float texscale[16], texsize[16], fog[4], fogcolor[4], indmtx[24], efb[2], proj[8], vp[8], ambmat[16];
+};
 struct ShaderProgram {
     unsigned prog;
     int id;  // creation order; SMS_GX_DUMP_SHADERS=dir writes dir/prog<id>.vs/.fs
     int uTevReg, uKonst, uTexScale, uAlphaRef, uFog, uFogColor, uIndMtx, uTexSize, uEfb,
         uProj, uViewport, uAmbMat, uDstAlpha;
+    mutable UniformCache uc;
 };
 const ShaderProgram* shaderForCurrentState();
 

@@ -1,6 +1,7 @@
 // Texture decoding (GameCube tiled formats -> RGBA8) and the GL texture cache.
 #include "gx_internal.h"
 #include "gl_funcs.h"
+#include "gx_glcache.h"
 
 #include <string.h>
 #include <algorithm>
@@ -9,6 +10,7 @@
 namespace gx {
 
 extern uint32_t g_statTexUploads;
+extern uint64_t g_statTexHashBytes, g_statTexInvalidates;
 
 static inline uint16_t be16(const uint8_t* p) { return uint16_t(p[0] << 8 | p[1]); }
 
@@ -216,7 +218,10 @@ static std::unordered_map<const void*, CopyEntry> s_copies;
 
 static void drainDeletedCopies();
 
-void textureInvalidateAll() { s_gen++; }
+void textureInvalidateAll() {
+    s_gen++;
+    g_statTexInvalidates++;
+}
 
 void textureInvalidateRange(const void* p, uint32_t size) {
     if (!s_rangesSorted) {
@@ -235,6 +240,7 @@ void textureInvalidateRange(const void* p, uint32_t size) {
 }
 
 void textureShutdown() {
+    glcInvalidate();
     for (auto& kv : s_cache) glDeleteTextures(1, &kv.second.tex);
     s_cache.clear();
     s_ranges.clear();
@@ -256,7 +262,10 @@ unsigned efbCopyLookup(const void* addr, int* w, int* h) {
 void efbCopyRegister(const void* addr, unsigned tex, int w, int h, uint32_t fmt) {
     drainDeletedCopies();
     auto it = s_copies.find(addr);
-    if (it != s_copies.end() && it->second.tex != tex) glDeleteTextures(1, &it->second.tex);
+    if (it != s_copies.end() && it->second.tex != tex) {
+        glcForgetTexture(it->second.tex);
+        glDeleteTextures(1, &it->second.tex);
+    }
     s_copies[addr] = CopyEntry{tex, w, h, fmt, 0};
 }
 
@@ -275,6 +284,7 @@ static std::vector<GLuint> s_deadCopyTex;
 
 static void drainDeletedCopies() {
     if (s_deadCopyTex.empty()) return;
+    for (GLuint t : s_deadCopyTex) glcForgetTexture(t);
     glDeleteTextures(GLsizei(s_deadCopyTex.size()), s_deadCopyTex.data());
     s_deadCopyTex.clear();
 }
@@ -379,11 +389,20 @@ uint32_t encodeTexture(const uint8_t* rgba, uint32_t fmt, uint32_t w, uint32_t h
     return uint32_t(p - dst);
 }
 
-static void applySampler(uint32_t mode0, uint32_t mode1, uint32_t levels) {
+// GX sampler state (wrap, filters, LOD bias and clamp) as a GL sampler
+// object, one per distinct setting, so binding a texture costs at most a
+// sampler bind instead of seven glTexParameter calls.
+static std::unordered_map<uint64_t, GLuint> s_samplers;
+
+static GLuint samplerFor(uint32_t mode0, uint32_t mode1, uint32_t levels) {
+    uint64_t key = uint64_t(mode0 & 0x1FFFF) | uint64_t(mode1 & 0xFFFF) << 17 | uint64_t(levels > 1) << 33;
+    GLuint& smp = s_samplers[key];
+    if (smp) return smp;
+    glGenSamplers(1, &smp);
     static const GLint wrap[4] = {GL_CLAMP_TO_EDGE, GL_REPEAT, GL_MIRRORED_REPEAT, GL_REPEAT};
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap[mode0 & 3]);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap[(mode0 >> 2) & 3]);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, (mode0 >> 4) & 1 ? GL_LINEAR : GL_NEAREST);
+    glSamplerParameteri(smp, GL_TEXTURE_WRAP_S, wrap[mode0 & 3]);
+    glSamplerParameteri(smp, GL_TEXTURE_WRAP_T, wrap[(mode0 >> 2) & 3]);
+    glSamplerParameteri(smp, GL_TEXTURE_MAG_FILTER, (mode0 >> 4) & 1 ? GL_LINEAR : GL_NEAREST);
     uint32_t mf = (mode0 >> 5) & 7;
     bool lin = (mf & 4) != 0;
     uint32_t mip = mf & 3;  // 0 none, 1 nearest mip, 2 linear mip
@@ -391,10 +410,11 @@ static void applySampler(uint32_t mode0, uint32_t mode1, uint32_t levels) {
     if (levels <= 1 || mip == 0) minf = lin ? GL_LINEAR : GL_NEAREST;
     else if (mip == 1) minf = lin ? GL_LINEAR_MIPMAP_NEAREST : GL_NEAREST_MIPMAP_NEAREST;
     else minf = lin ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_LINEAR;
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, minf);
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, float(int8_t((mode0 >> 9) & 0xFF)) / 32.0f);
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_LOD, float(mode1 & 0xFF) / 16.0f);
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_LOD, float((mode1 >> 8) & 0xFF) / 16.0f);
+    glSamplerParameteri(smp, GL_TEXTURE_MIN_FILTER, minf);
+    glSamplerParameterf(smp, GL_TEXTURE_LOD_BIAS, float(int8_t((mode0 >> 9) & 0xFF)) / 32.0f);
+    glSamplerParameterf(smp, GL_TEXTURE_MIN_LOD, float(mode1 & 0xFF) / 16.0f);
+    glSamplerParameterf(smp, GL_TEXTURE_MAX_LOD, float((mode1 >> 8) & 0xFF) / 16.0f);
+    return smp;
 }
 
 static GLuint s_whiteTex = 0;
@@ -412,18 +432,21 @@ unsigned bindTextureMap(int map, float* outW, float* outH) {
 
     int cw, ch;
     if (GLuint ct = efbCopyLookup(ptr, &cw, &ch)) {
-        glBindTexture(GL_TEXTURE_2D, ct);
-        applySampler(mode0, 0, 1);
+        glcBindTexture(map, ct);
+        glcBindSampler(map, samplerFor(mode0, 0, 1));
         return ct;
     }
     if (!ptr) {
         if (!s_whiteTex) {
             glGenTextures(1, &s_whiteTex);
+            glcActiveUnit(map);
             glBindTexture(GL_TEXTURE_2D, s_whiteTex);
+            glcNoteBound(map, s_whiteTex);
             uint32_t px = 0xFFFFFFFFu;
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, &px);
         }
-        glBindTexture(GL_TEXTURE_2D, s_whiteTex);
+        glcBindTexture(map, s_whiteTex);
+        glcBindSampler(map, 0);  // its own (default) parameters, as before samplers
         return s_whiteTex;
     }
 
@@ -460,6 +483,7 @@ unsigned bindTextureMap(int map, float* outW, float* outH) {
         if (total > s_maxBytes) s_maxBytes = total;
     }
     if (e.checkedGen != s_gen || upload) {
+        g_statTexHashBytes += total;
         uint64_t dh = hashBytes(ptr, total);
         uint64_t th = tlut ? hashBytes(tlut, tlutBytes) : 0;
         if (upload || dh != e.dataHash || th != e.tlutHash) upload = true;
@@ -468,8 +492,9 @@ unsigned bindTextureMap(int map, float* outW, float* outH) {
         e.checkedGen = s_gen;
         e.bytes = total;
     }
-    glBindTexture(GL_TEXTURE_2D, e.tex);
+    glcBindTexture(map, e.tex);
     if (upload) {
+        glcActiveUnit(map);  // the upload targets the active unit's texture
         g_statTexUploads++;
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         const uint8_t* src = ptr;
@@ -486,7 +511,7 @@ unsigned bindTextureMap(int map, float* outW, float* outH) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, GLint(levels - 1));
     }
-    applySampler(mode0, mode1, levels);
+    glcBindSampler(map, samplerFor(mode0, mode1, levels));
     return e.tex;
 }
 

@@ -1,5 +1,6 @@
 // Register file, command-stream parser and vertex loader.
 #include "gx_internal.h"
+#include <time.h>
 
 #include <string.h>
 #include <stdio.h>
@@ -375,6 +376,7 @@ static const uint8_t* arrayElem(int slot, uint32_t idx) {
 }
 
 static uint32_t s_vertsLoaded = 0;
+double g_decodeSeconds = 0;  // SMS_GX_STATS: time in the vertex loader
 
 // Where one attribute comes from: inline in the command stream (base null)
 // or an array element picked by an 8/16-bit index.
@@ -560,7 +562,13 @@ static uint32_t parse(const uint8_t* p, uint32_t n, uint32_t* need) {
             len = 3 + cnt * L.size;
             if (avail < len) break;
             g_traceLastVat = op & 7;
-            decodeVertices(op & 0xF8, p + 3, cnt, L);
+            {
+                timespec t0, t1;
+                clock_gettime(CLOCK_MONOTONIC, &t0);
+                decodeVertices(op & 0xF8, p + 3, cnt, L);
+                clock_gettime(CLOCK_MONOTONIC, &t1);
+                g_decodeSeconds += double(t1.tv_sec - t0.tv_sec) + double(t1.tv_nsec - t0.tv_nsec) * 1e-9;
+            }
         } else {
             logmsg("unknown FIFO opcode 0x%02X, skipping byte", op);
             p++;
