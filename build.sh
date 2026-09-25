@@ -19,6 +19,7 @@ fi
 source tools/common.sh
 sms_detect_os
 sms_migrate_legacy
+sms_legacy_notes
 sms_select_arch build
 bdir=$sms_build_dir
 cmake_args=()

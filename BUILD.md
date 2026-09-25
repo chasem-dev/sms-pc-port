@@ -1,10 +1,11 @@
 # Building and running
 
-Every system uses the same two scripts from the repository root:
+Every system uses the same scripts from the repository root:
 
 ```sh
 ./build.sh [IMAGE]     # build for this computer
 ./run.sh   [IMAGE]     # play
+./clean.sh             # delete the build output
 ```
 
 | System | Shell | Output folder | Executable | Standalone (built when an image is given) |
@@ -27,7 +28,11 @@ Every system uses the same two scripts from the repository root:
 - **`SMS_ARCH=32` or `64`** picks the word size for both scripts.
   Linux builds either (32-bit is the default); macOS builds only 64-bit and Windows only 32-bit so far.
   When both Linux builds exist, `./run.sh` takes 32-bit unless `SMS_ARCH=64` is set; when only one exists, it takes that one.
-- Everything generated lives under `build/` (including downloaded dependencies in `build/deps/`), so `rm -rf build` returns the checkout to a clean state without touching `rom/`.
+- **`./clean.sh`** deletes the build output: every `build/<os>-<arch>/` folder (with its standalone executable or `SMS.app`), captures in `build/`, and the build folders of older layouts (`build-mac/`, `build-64/`, `build32/`).
+  It never deletes a disc image: `rom/` is never touched, an image left in an old build folder's `rom/` is moved to `rom/` first, and a folder that still holds an image is skipped.
+  It also keeps the downloaded SDL2 in `build/deps/` and `tools/mkpatch.sh` edits in `build/patchwork/`.
+  `--dry-run` lists what it would delete; `--all` deletes all of `build/`; `SMS_ARCH=64 ./clean.sh` deletes only that build.
+  Everything generated lives under `build/`, so `./clean.sh --all` returns the checkout to a fresh clone plus your `rom/`.
 
 ## Linux
 
@@ -160,12 +165,13 @@ Headless mode (EGL) is not available on Windows; the SDL2 window is the only mod
 ### From PowerShell or Command Prompt
 
 The `.sh` files are Bash scripts, so do not open them through Windows file associations or Git for Windows.
-`build.cmd` and `run.cmd` start MSYS2's MINGW32 Bash for you and put its 32-bit DLLs on `PATH`:
+`build.cmd`, `run.cmd` and `clean.cmd` start MSYS2's MINGW32 Bash for you and put its 32-bit DLLs on `PATH`:
 
 ```powershell
 .\build.cmd
 .\run.cmd
 .\run.cmd 'C:\Games\Super Mario Sunshine (US).iso'
+.\clean.cmd
 ```
 
 If MSYS2 is not installed at `C:\msys64`, set `MSYS2_ROOT` to its installation folder first.
@@ -248,4 +254,4 @@ cmake --build build/linux-32 --target sms --parallel
 | macOS: "SMS is damaged" / "cannot be verified" on a copied `SMS.app` | `xattr -dr com.apple.quarantine /path/to/SMS.app` |
 | Windows: `Use the MSYS2 MINGW32 shell` | open **MSYS2 MINGW32** (not MSYS or UCRT64), or use `build.cmd` / `run.cmd` |
 | Windows: missing DLL when starting `sms.exe` directly | start it from the MINGW32 shell or with `run.cmd` |
-| Stale build after pulling | `rm -rf build/<os>-<arch>` and `./build.sh` again (`build/deps/` and `rom/` are kept) |
+| Stale or broken build after pulling | `./clean.sh` and `./build.sh` again (`rom/` and `build/deps/` are kept) |

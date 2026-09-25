@@ -1,4 +1,4 @@
-# Shared by build.sh and run.sh (bash, run from the repository root): which
+# Shared by build.sh, run.sh and clean.sh (bash, run from the repository root): which
 # host this is, which word size to build or run, where that build lives, and
 # where the disc image is.
 #
@@ -105,16 +105,18 @@ sms_find_rom() {
 # Earlier layouts kept a rom/ folder inside each build directory
 # (build/, build-64/, build-mac/, build32/bin/) and SDL2.framework in
 # third_party/. Move the user's image and the framework to where they live
-# now, and point out the old build trees, which nothing uses any more.
+# now.
+sms_legacy_rom_dirs=(build/rom build-64/rom build-mac/rom build32/bin/rom)
+sms_legacy_build_dirs=(build-64 build-mac build32)
 sms_migrate_legacy() {
-  local d e f old=()
-  for d in build/rom build-64/rom build-mac/rom build32/bin/rom; do
+  local d e f
+  for d in "${sms_legacy_rom_dirs[@]}"; do
     for e in "${sms_image_exts[@]}"; do
       for f in "$d"/*."$e"; do
         [[ -f "$f" ]] || continue
         mkdir -p rom
         if [[ -e "rom/$(basename "$f")" ]]; then
-          echo "Note: $f is a second copy of rom/$(basename "$f"); it can be deleted." >&2
+          echo "Note: $f has the same name as rom/$(basename "$f"); if it is a second copy, it can be deleted." >&2
         else
           mv "$f" rom/
           echo "Moved $f to rom/ (the one place build.sh and run.sh look for it now)." >&2
@@ -128,15 +130,17 @@ sms_migrate_legacy() {
     rmdir third_party 2>/dev/null || true
     echo "Moved third_party/SDL2.framework to build/deps/." >&2
   fi
-  for d in build-64 build-mac build32; do
+}
+
+# Points out build output of earlier layouts, which nothing uses any more.
+sms_legacy_notes() {
+  local d old=()
+  for d in "${sms_legacy_build_dirs[@]}"; do
     [[ -d "$d" ]] && old+=("$d/")
   done
+  [[ -f build/CMakeCache.txt ]] && old+=("the old build tree at the top of build/")
   if (( ${#old[@]} )); then
-    echo "Note: builds now go to build/<os>-<arch>/; delete the old build output to free space: ${old[*]}" >&2
-  fi
-  if [[ -f build/CMakeCache.txt ]]; then
-    echo "Note: build/ holds an old build tree (builds now go to build/<os>-<arch>/). To free space:" >&2
-    echo "  find build -mindepth 1 -maxdepth 1 ! -name '*-32' ! -name '*-64' ! -name deps -exec rm -rf {} +" >&2
+    echo "Note: builds now go to build/<os>-<arch>/; ./clean.sh deletes the old build output (${old[*]})." >&2
   fi
 }
 

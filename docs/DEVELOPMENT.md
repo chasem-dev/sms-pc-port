@@ -38,7 +38,7 @@ How the port is put together and where changes go. To build and play, see the [R
 
 | Tool | Use |
 | --- | --- |
-| `tools/common.sh` | shared by `build.sh` and `run.sh`: host detection, `SMS_ARCH`, build folder, `rom/` lookup |
+| `tools/common.sh` | shared by `build.sh`, `run.sh` and `clean.sh`: host detection, `SMS_ARCH`, build folder, `rom/` lookup, moving files out of older layouts |
 | `tools/bundle_disc.py` | packs the disc's files into `sms-standalone` (or `SMS.app`'s `disc.gcm`) |
 | `tools/make_mac_app.sh`, `tools/extract_icon.py` | assemble and sign `SMS.app`; the app / `.exe` icon from the disc's memory-card icon |
 | `tools/run_capture.sh SECS FIELDS` | headless run + captures + retail comparison |

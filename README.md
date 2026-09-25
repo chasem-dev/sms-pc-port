@@ -53,10 +53,11 @@ The same two scripts work on every system:
 | --- | --- |
 | `./build.sh [IMAGE]` | builds `build/<os>-<arch>/sms`; with an image (argument, `SMS_DISC_IMAGE`, or the one in `rom/`) also the standalone copy |
 | `./run.sh [IMAGE] [--headless]` | runs that build: with the image you pass, else the standalone copy, else the image in `rom/` |
+| `./clean.sh [--all] [--dry-run]` | deletes the build output (every `build/<os>-<arch>/`); never deletes your disc image, and keeps the downloaded SDL2; `--all` deletes all of `build/` |
 | `SMS_ARCH=64 ./build.sh` | chooses the word size (Linux: `32` default or `64`; macOS: `64` only; Windows: `32` only) |
 | `JOBS=2 ./build.sh` | limits parallel compiler jobs (default: all cores) |
 
-`./build.sh --help` and `./run.sh --help` print the details.
+`./build.sh --help`, `./run.sh --help` and `./clean.sh --help` print the details.
 When both a 32-bit and a 64-bit build exist, `./run.sh` runs the 32-bit one unless `SMS_ARCH=64` is set.
 
 ## Options
@@ -103,7 +104,8 @@ On the file-select screen, walk Mario left under a block for about half a second
 
 ```
 build.sh, run.sh      build and run, on every system
-build.cmd, run.cmd    the same from PowerShell or Command Prompt (Windows)
+clean.sh              delete build output
+*.cmd                 the same three from PowerShell or Command Prompt (Windows)
 bindings.txt          keyboard bindings
 rom/                  your disc image (ignored by git)
 build/<os>-<arch>/    build output (ignored by git)
