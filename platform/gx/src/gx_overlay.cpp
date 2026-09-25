@@ -7,6 +7,7 @@
 #include "sms_gx/gx_pc.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <atomic>
@@ -28,20 +29,23 @@ double nowSeconds() {
 }
 
 // Frame timing over a sliding one-second window, refreshed once a second so
-// the numbers are readable.
+// the numbers are readable, with where the game thread's time went.
 struct FrameClock {
-    double start = 0, windowStart = 0, last = 0, gxAtWindow = 0;
+    double start = 0, windowStart = 0, last = 0;
+    GXPCTimes atWindow = {};
     int frames = 0;
     double worst = 0;
-    // shown values
-    double fps = 0, avgMs = 0, maxMs = 0, gxMs = 0;
+    // shown values, ms per frame
+    double fps = 0, avgMs = 0, maxMs = 0;
+    GXPCTimes per = {};
+    double gameMs = 0;
     uint32_t total = 0;
 
     void tick() {
         double t = nowSeconds();
         if (start == 0) {
             start = windowStart = last = t;
-            gxAtWindow = GXPC_GxSeconds();
+            GXPC_GetTimes(&atWindow);
             return;
         }
         double dt = t - last;
@@ -51,12 +55,25 @@ struct FrameClock {
         total++;
         double span = t - windowStart;
         if (span >= 1.0) {
-            double gx = GXPC_GxSeconds();
+            GXPCTimes now;
+            GXPC_GetTimes(&now);
+            double k = 1000.0 / frames;
+            per.gx = (now.gx - atWindow.gx) * k;
+            per.vertices = (now.vertices - atWindow.vertices) * k;
+            per.draws = (now.draws - atWindow.draws) * k;
+            per.textures = (now.textures - atWindow.textures) * k;
+            per.copies = (now.copies - atWindow.copies) * k;
+            per.peeks = (now.peeks - atWindow.peeks) * k;
+            per.gpuWait = (now.gpuWait - atWindow.gpuWait) * k;
+            per.present = (now.present - atWindow.present) * k;
+            per.swap = (now.swap - atWindow.swap) * k;
+            per.idle = (now.idle - atWindow.idle) * k;
             fps = frames / span;
             avgMs = span * 1000.0 / frames;
             maxMs = worst * 1000.0;
-            gxMs = (gx - gxAtWindow) * 1000.0 / frames;
-            gxAtWindow = gx;
+            gameMs = avgMs - per.gx - per.present - per.swap - per.idle;
+            if (gameMs < 0) gameMs = 0;
+            atWindow = now;
             windowStart = t;
             frames = 0;
             worst = 0;
@@ -97,19 +114,31 @@ void drawText(std::vector<uint8_t>& px, int w, int h, int x, int y, const char* 
 
 extern "C" {
 
-void GXPC_OverlayToggle(void) { s_visible = !s_visible; }
+void GXPC_OverlayToggle(void) {
+    s_visible = !s_visible;
+    GXPC_SetDetailedTimers(s_visible);
+}
 int GXPC_OverlayVisible(void) { return s_visible; }
 
 void GXPC_CycleSpeed(void) { s_speedIndex.store((s_speedIndex.load() + 1) % int(sizeof kSpeeds / sizeof kSpeeds[0])); }
 int GXPC_GetSpeed(void) { return kSpeeds[s_speedIndex.load()]; }
 
 void GXPC_OverlayDraw(int winW, int winH) {
+    static bool s_envChecked = false;
+    if (!s_envChecked) {  // SMS_OVERLAY=1: start with the overlay open
+        s_envChecked = true;
+        const char* e = getenv("SMS_OVERLAY");
+        if (e && *e && strcmp(e, "0") != 0 && !s_visible) GXPC_OverlayToggle();
+    }
     s_clock.tick();
     if (!s_visible) return;
     if (s_renderer.empty()) {
         const char* r = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
         s_renderer = r ? r : "?";
+        bool soft = strstr(s_renderer.c_str(), "llvmpipe") || strstr(s_renderer.c_str(), "softpipe") ||
+                    strstr(s_renderer.c_str(), "Software");
         if (s_renderer.size() > 44) s_renderer.resize(44);
+        if (soft) s_renderer += "\nSOFTWARE RENDERING (no GPU driver): see README";
     }
     GXPCStats st;
     GXPC_GetLastFrameStats(&st);
@@ -118,7 +147,9 @@ void GXPC_OverlayDraw(int winW, int winH) {
     char text[2048];
     snprintf(text, sizeof text,
              "FPS %.1f   frame %.1f ms avg, %.1f ms worst   speed x%d\n"
-             "sms_gx %.1f ms/frame\n"
+             "ms/frame: game %.1f  GX %.1f  present %.1f  swap %.1f  idle %.1f\n"
+             "GX: vertices %.1f  batches %.1f  textures %.1f  copies %.1f  peeks %.1f\n"
+             "    waiting for the GPU %.1f\n"
              "draws %u   vertices %u   EFB copies %u\n"
              "texture uploads %u   shader compiles %u\n"
              "frames %u   up %d:%02d\n"
@@ -134,7 +165,9 @@ void GXPC_OverlayDraw(int winW, int winH) {
              "D-pad: 1 2 3 4\n"
              "`: this overlay     F7: speed x1/x2/x4/x10\n"
              "Esc: quit",
-             s_clock.fps, s_clock.avgMs, s_clock.maxMs, GXPC_GetSpeed(), s_clock.gxMs, st.draws, st.vertices, st.efbCopies,
+             s_clock.fps, s_clock.avgMs, s_clock.maxMs, GXPC_GetSpeed(), s_clock.gameMs, s_clock.per.gx,
+             s_clock.per.present, s_clock.per.swap, s_clock.per.idle, s_clock.per.vertices, s_clock.per.draws,
+             s_clock.per.textures, s_clock.per.copies, s_clock.per.peeks, s_clock.per.gpuWait, st.draws, st.vertices, st.efbCopies,
              st.textureUploads, st.shaderCompiles, s_clock.total, int(up) / 60, int(up) % 60, winW, winH,
              s_renderer.c_str());
 

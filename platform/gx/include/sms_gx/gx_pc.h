@@ -26,6 +26,7 @@ typedef void* (*GXPCGetProcFn)(const char* name);
  *   SMS_HEADLESS=1                                       force offscreen
  * Other environment: SMS_GX_SCALE=n (internal EFB scale), SMS_WINDOW_SCALE=n
  * (window size multiple of 640x480), SMS_VSYNC=1 or --vsync (swap interval 1),
+ * SMS_OVERLAY=1 (open the debug overlay at start),
  * SMS_GX_DUMP_EVERY=n + SMS_GX_DUMP_DIR=dir (write every n-th XFB as PPM).
  * Every GXCopyDisp presents the copied XFB to the window and swaps (disable
  * with GXPC_SetAutoPresent(0) if the VI layer calls GXPC_Present itself). */
@@ -112,6 +113,19 @@ typedef struct GXPCStats {
 void GXPC_GetStats(GXPCStats* out);
 void GXPC_GetLastFrameStats(GXPCStats* out); /* the last completed display frame */
 double GXPC_GxSeconds(void);                   /* wall time spent inside sms_gx so far */
+/* Where the game thread's time goes, as seconds since start. gx is all time
+ * inside sms_gx apart from presenting; the parts of it (vertices .. gpuWait)
+ * are measured only while GXPC_SetDetailedTimers(1) is on (the overlay turns
+ * it on, as does SMS_GX_STATS). gpuWait is time blocked on the GPU (fences,
+ * reading back copies, peeks and pixel counts); present is drawing the XFB to
+ * the window, swap is SDL_GL_SwapWindow. idle is the time the game had no
+ * runnable thread (waiting for the next retrace), from GXPC_SetIdleClock. */
+typedef struct GXPCTimes {
+    double gx, vertices, draws, textures, copies, peeks, gpuWait, present, swap, idle;
+} GXPCTimes;
+void GXPC_GetTimes(GXPCTimes* out);
+void GXPC_SetDetailedTimers(int on);
+void GXPC_SetIdleClock(double (*idleSeconds)(void));
 /* Blend an RGBA image (row 0 = top) onto the window at (x, y) from its top-left,
  * magnified by scale.  Call between GXPC_PresentXFB and the swap. */
 void GXPC_DrawOverlay(const uint8_t* rgba, int w, int h, int x, int y, int scale, int winW, int winH);

@@ -223,12 +223,22 @@ void switch_to(OSThread* self, OSThread* next, bool exiting)
 	g_irq_enabled = hs->irq_enabled;
 }
 
+// Wall time with no runnable game thread (the overlay's frame breakdown).
+double g_idle_seconds;
+double mono_seconds()
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+}
+
 // Give up the CPU if someone better is runnable (or, with `yield`, an equal).
 // Blocks in the idle loop while nothing is runnable.
 void reschedule(bool yield)
 {
 	OSThread* self = g_cur;
 	OSThread* next;
+	double idle_from = 0;
 	for (;;) {
 		deliver_irqs();
 		next = pick(self, yield);
@@ -238,6 +248,8 @@ void reschedule(bool yield)
 		// a deterministic clock, make the next retrace happen now).
 		if (port_vi_idle_advance())
 			continue;
+		if (idle_from == 0)
+			idle_from = mono_seconds();
 		struct timespec ts;
 		clock_gettime(CLOCK_REALTIME, &ts);
 		ts.tv_nsec += 1000000;
@@ -247,6 +259,8 @@ void reschedule(bool yield)
 		}
 		pthread_cond_timedwait(&g_idle_cv, &g_cpu, &ts);
 	}
+	if (idle_from != 0)
+		g_idle_seconds += mono_seconds() - idle_from;
 	g_need_resched = false;
 	if (next == self) {
 		self->state = OS_THREAD_STATE_RUNNING;
@@ -702,3 +716,5 @@ extern "C" void OSWaitCond(OSCond* c, OSMutex* m)
 }
 
 extern "C" void OSSignalCond(OSCond* c) { OSWakeupThread(&c->queue); }
+
+extern "C" double port_idle_seconds(void) { return g_idle_seconds; }

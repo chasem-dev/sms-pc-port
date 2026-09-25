@@ -17,10 +17,44 @@ namespace gx {
 
 uint32_t g_statTexUploads, g_statShaderCompiles;
 uint64_t g_statTexHashBytes, g_statTexInvalidates;
-namespace gl { extern uint64_t g_statGlCalls; }
+namespace gl {
+extern uint64_t g_statGlCalls;
+void logTopCalls(uint32_t frames);
+}
 extern double g_decodeSeconds;
 static GXPCStats s_stats;
 void shaderShutdown();
+
+// SMS_GX_STATS=n: every n display frames, log draws, uploads and the wall time
+// spent inside sms_gx (flushes, texture decode, copies) against the frame time.
+static double s_gxSeconds = 0, s_texSeconds = 0, s_copySeconds = 0, s_peekSeconds = 0;
+double g_flushSeconds = 0;  // in flushBatch (read by the vertex loader timer)
+static double s_waitSeconds = 0;  // blocked on the GPU
+double g_presentSeconds = 0, g_swapSeconds = 0;  // GXPC_Present (gx_platform.cpp)
+static double (*s_idleClock)(void) = nullptr;
+static double nowSeconds() {
+    timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return double(ts.tv_sec) + double(ts.tv_nsec) * 1e-9;
+}
+// The breakdown timers (textures, draws, copies, peeks, GPU waits, the vertex
+// loader) run with SMS_GX_STATS or while the overlay is open
+// (GXPC_SetDetailedTimers). Otherwise only the overall sms_gx time is
+// measured; the others cost a clock read per texture bind and per primitive.
+static bool statsEnv() {
+    const char* e = getenv("SMS_GX_STATS");
+    return e && atoi(e) > 0;
+}
+bool g_gxStats = statsEnv();
+struct GxTimer {
+    double* acc;
+    double t0;
+    explicit GxTimer(double* a = &s_gxSeconds) : acc(a == &s_gxSeconds || g_gxStats ? a : nullptr),
+                                                 t0(acc ? nowSeconds() : 0) {}
+    ~GxTimer() {
+        if (acc) *acc += nowSeconds() - t0;
+    }
+};
 
 enum { EFB_W = 640, EFB_H = 528 };
 
@@ -38,30 +72,28 @@ static bool s_ready = false;
 static bool s_xfDirty = true;
 
 // Append-only stream of per-draw data (vertices, indices, the XF block) in
-// one GL buffer, written through unsynchronized maps. The buffer is split
-// into four segments; a fence marks the end of each one's use, and a segment
-// is only written again once its fence has passed, so a write never touches
-// data a queued draw still reads. Replaces a glBufferData reallocation (or a
-// glBufferSubData into a buffer every queued draw uses) per batch.
+// one GL buffer, a batch's pieces written through one unsynchronized map. The
+// buffer is split into four segments; a fence marks the end of each one's use,
+// and a segment is only written again once its fence has passed, so a write
+// never touches data a queued draw still reads. Replaces a glBufferData
+// reallocation (or a glBufferSubData into a buffer every queued draw uses) per
+// batch, and a map per piece (map/unmap were half of all GL calls).
+struct StreamPiece {
+    const void* data;
+    size_t bytes, align;
+    size_t at;  // out: offset written at, a multiple of align
+};
 struct StreamBuffer {
     enum { kSegments = 4 };
-    GLenum target = 0;
     GLuint buf = 0;
     size_t size = 0, pos = 0;
     GLsync fence[kSegments] = {};
 
-    void init(GLenum t, size_t bytes) {
-        target = t;
+    void init(size_t bytes) {
         size = bytes;
         glGenBuffers(1, &buf);
-        if (target == GL_ELEMENT_ARRAY_BUFFER) glBindBuffer(target, buf);
-        else bind();
-        glBufferData(target, GLsizeiptr(size), nullptr, GL_STREAM_DRAW);
-    }
-    void bind() {
-        if (target == GL_ARRAY_BUFFER) glcBindArrayBuffer(buf);
-        else if (target == GL_UNIFORM_BUFFER) glcBindUniformBuffer(buf);
-        // the element buffer is VAO state: bound once at init, with s_vao
+        glcBindArrayBuffer(buf);
+        glBufferData(GL_ARRAY_BUFFER, GLsizeiptr(size), nullptr, GL_STREAM_DRAW);
     }
     size_t unfenced = 0;  // first segment written since the last fence
 
@@ -74,37 +106,50 @@ struct StreamBuffer {
     }
     void waitSegment(size_t seg) {
         if (!fence[seg]) return;
+        GxTimer tw(&s_waitSeconds);
         glClientWaitSync(fence[seg], GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
         glDeleteSync(fence[seg]);
         fence[seg] = 0;
     }
-    // Returns the offset `bytes` were written at (a multiple of `align`).
-    // Called before the draw that reads the data, after the previous one.
-    size_t append(const void* data, size_t bytes, size_t align) {
-        size_t at = (pos + align - 1) / align * align;
+    static size_t worstCase(const StreamPiece* pc, int n) {
+        size_t w = 0;
+        for (int i = 0; i < n; i++) w += pc[i].bytes + pc[i].align;
+        return w;
+    }
+    // appendAll of pieces this large starts over at the buffer's beginning
+    bool wouldWrap(size_t worst) const { return pos + worst > size; }
+    // Writes the pieces one after another (each at a multiple of its
+    // alignment) and sets their offsets. Called before the draw that reads
+    // them, after the previous one.
+    void appendAll(StreamPiece* pc, int n) {
+        size_t start = wouldWrap(worstCase(pc, n)) ? 0 : pos;
+        size_t end = start;
+        for (int i = 0; i < n; i++) {
+            pc[i].at = (end + pc[i].align - 1) / pc[i].align * pc[i].align;
+            end = pc[i].at + pc[i].bytes;
+        }
+        size_t first = pc[0].at;
         size_t cur = segOf(pos ? pos - 1 : 0);
-        if (at + bytes > size) {  // wrap
+        if (start == 0 && pos != 0) {  // wrap
             fenceThrough(kSegments - 1);
-            at = 0;
             unfenced = 0;
-        } else if (segOf(at) != cur) {
-            fenceThrough(segOf(at) - 1);
-            unfenced = segOf(at);
+        } else if (segOf(first) != cur) {
+            fenceThrough(segOf(first) - 1);
+            unfenced = segOf(first);
         }
-        size_t endSeg = segOf(at + bytes - 1);
-        for (size_t sg = segOf(at); sg <= endSeg; sg++) waitSegment(sg);
-        bind();
-        void* dst = glMapBufferRange(target, GLintptr(at), GLsizeiptr(bytes),
-                                     GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT | GL_MAP_INVALIDATE_RANGE_BIT);
+        for (size_t sg = segOf(first), last = segOf(end - 1); sg <= last; sg++) waitSegment(sg);
+        glcBindArrayBuffer(buf);
+        uint8_t* dst = static_cast<uint8_t*>(
+            glMapBufferRange(GL_ARRAY_BUFFER, GLintptr(first), GLsizeiptr(end - first),
+                             GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT | GL_MAP_INVALIDATE_RANGE_BIT));
         if (dst) {
-            memcpy(dst, data, bytes);
-            glUnmapBuffer(target);
+            for (int i = 0; i < n; i++) memcpy(dst + (pc[i].at - first), pc[i].data, pc[i].bytes);
+            glUnmapBuffer(GL_ARRAY_BUFFER);
         }
-        pos = at + bytes;
-        return at;
+        pos = end;
     }
 };
-static StreamBuffer s_vstream, s_istream, s_ustream;
+static StreamBuffer s_stream;
 static GLint s_uboAlign = 256;
 
 // One VAO per packed vertex format: attribute pointers into the vertex stream
@@ -118,8 +163,8 @@ static GLuint vaoForFormat(uint32_t fmt) {
     const VtxFmtLayout& l = vtxFmtLayout(fmt);
     glGenVertexArrays(1, &vao);
     glcBindVertexArray(vao);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_istream.buf);
-    glcBindArrayBuffer(s_vstream.buf);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_stream.buf);
+    glcBindArrayBuffer(s_stream.buf);
     const GLsizei st = l.stride;
     auto off = [](size_t o) { return reinterpret_cast<const void*>(o); };
     auto attr = [&](GLuint i, bool on, GLint n, GLenum type, GLboolean norm, size_t o) {
@@ -267,8 +312,13 @@ void main() {
 
 void rendererInit(int efbScale) {
     s_scale = efbScale < 1 ? 1 : efbScale;
-    logmsg("OpenGL %s, renderer %s (%s)", (const char*)glGetString(GL_VERSION), (const char*)glGetString(GL_RENDERER),
+    const char* renderer = (const char*)glGetString(GL_RENDERER);
+    logmsg("OpenGL %s, renderer %s (%s)", (const char*)glGetString(GL_VERSION), renderer,
            (const char*)glGetString(GL_VENDOR));
+    if (renderer && (strstr(renderer, "llvmpipe") || strstr(renderer, "softpipe") || strstr(renderer, "Software")))
+        logmsg("WARNING: %s renders on the CPU and cannot keep the game at full speed. On Linux the 32-bit build "
+               "gets a GPU driver only if its 32-bit GL libraries are installed; the 64-bit build "
+               "(SMS_ARCH=64 ./build.sh) uses the system's driver.", renderer);
     int W = EFB_W * s_scale, H = EFB_H * s_scale;
     glGenTextures(1, &s_efbColor);
     glBindTexture(GL_TEXTURE_2D, s_efbColor);
@@ -297,8 +347,7 @@ void rendererInit(int efbScale) {
     glcInvalidate();
     glGenVertexArrays(1, &s_vao);
     glcBindVertexArray(s_vao);
-    s_vstream.init(GL_ARRAY_BUFFER, 96u << 20);
-    s_istream.init(GL_ELEMENT_ARRAY_BUFFER, 16u << 20);
+    s_stream.init(128u << 20);
     // Values of the attributes a packed format leaves out (see vaoForFormat):
     // the same defaults the loader used to write into every vertex.
     glVertexAttrib4f(1, 0.0f, 0.0f, 1.0f, 1.0f);  // normal
@@ -310,7 +359,6 @@ void rendererInit(int efbScale) {
 
     glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, &s_uboAlign);
     if (s_uboAlign < 16) s_uboAlign = 16;
-    s_ustream.init(GL_UNIFORM_BUFFER, 16u << 20);
 
     s_copyProg = compileProgram(kCopyVs, kCopyFs);
     glUseProgram(s_copyProg);
@@ -678,37 +726,12 @@ static void uploadUniforms(const ShaderProgram* sp, float texW[8], float texH[8]
     uc.init = true;
 }
 
-// SMS_GX_STATS=n: every n display frames, log draws, uploads and the wall time
-// spent inside sms_gx (flushes, texture decode, copies) against the frame time.
-static double s_gxSeconds = 0, s_texSeconds = 0, s_drawSeconds = 0, s_copySeconds = 0, s_peekSeconds = 0;
-static double nowSeconds() {
-    timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return double(ts.tv_sec) + double(ts.tv_nsec) * 1e-9;
-}
-// SMS_GX_STATS is set: the breakdown timers (textures, draws, copies, peeks,
-// the vertex loader) run. Without it only the overall sms_gx time the overlay
-// shows is measured; the others cost a clock read per texture bind and per
-// primitive.
-bool g_gxStats = [] {
-    const char* e = getenv("SMS_GX_STATS");
-    return e && atoi(e) > 0;
-}();
-struct GxTimer {
-    double* acc;
-    double t0;
-    explicit GxTimer(double* a = &s_gxSeconds) : acc(a == &s_gxSeconds || g_gxStats ? a : nullptr),
-                                                 t0(acc ? nowSeconds() : 0) {}
-    ~GxTimer() {
-        if (acc) *acc += nowSeconds() - t0;
-    }
-};
 static uint32_t s_syncReads = 0;  // reads that made the CPU wait for the GPU
 static uint64_t s_flushes = 0;    // flushBatch calls that drew
 static void statsFrame() {
     static int every = -1;
     static uint32_t frames = 0, draws = 0, verts = 0, compiles0 = 0, uploads0 = 0, sync0 = 0;
-    static double t0 = 0, gx0 = 0, tex0 = 0, draw0 = 0, copy0 = 0, peek0 = 0;
+    static double t0 = 0, gx0 = 0, tex0 = 0, draw0 = 0, copy0 = 0, peek0 = 0, wait0 = 0;
     if (every < 0) {
         const char* e = getenv("SMS_GX_STATS");
         every = e ? atoi(e) : 0;
@@ -721,35 +744,38 @@ static void statsFrame() {
     if (frames < uint32_t(every)) return;
     double t = nowSeconds();
     logmsg("stats: %u frames, %.1f draws/frame, %.0f vertices/frame, %u shader compiles, %u texture uploads, "
-           "%.1f ms/frame total, %.1f ms/frame in sms_gx (textures %.1f, GL draw %.1f, copies %.1f, peeks %.1f), "
-           "%.1f synchronous GPU reads/frame",
+           "%.1f ms/frame total, %.1f ms/frame in sms_gx (textures %.1f, batches %.1f, copies %.1f, peeks %.1f, "
+           "GPU waits %.1f), %.1f synchronous GPU reads/frame",
            frames, double(draws) / frames, double(verts) / frames, g_statShaderCompiles - compiles0,
-           g_statTexUploads - uploads0, (t - t0) * 1000.0 / frames, (s_gxSeconds - gx0) * 1000.0 / frames,
-           (s_texSeconds - tex0) * 1000.0 / frames, (s_drawSeconds - draw0) * 1000.0 / frames,
+           g_statTexUploads - uploads0, (t - t0) * 1000.0 / frames, (s_gxSeconds + g_decodeSeconds - gx0) * 1000.0 / frames,
+           (s_texSeconds - tex0) * 1000.0 / frames, (g_flushSeconds - s_texSeconds - draw0) * 1000.0 / frames,
            (s_copySeconds - copy0) * 1000.0 / frames, (s_peekSeconds - peek0) * 1000.0 / frames,
-           double(s_syncReads - sync0) / frames);
+           (s_waitSeconds - wait0) * 1000.0 / frames, double(s_syncReads - sync0) / frames);
     static uint64_t gl0 = 0, hash0 = 0, inv0 = 0, flush0 = 0;
-    static double dec0 = 0;
+    static double dec0 = 0, idle0 = 0;
     logmsg("stats: %.0f GL calls/frame, %.0f batch flushes/frame, %.0f KiB texture data hashed/frame, "
-           "%.1f texture invalidations/frame, %.2f ms/frame decoding vertices",
+           "%.1f texture invalidations/frame, %.2f ms/frame decoding vertices, %.1f ms/frame idle",
            double(gl::g_statGlCalls - gl0) / frames, double(s_flushes - flush0) / frames,
            double(g_statTexHashBytes - hash0) / 1024.0 / frames, double(g_statTexInvalidates - inv0) / frames,
-           (g_decodeSeconds - dec0) * 1000.0 / frames);
+           (g_decodeSeconds - dec0) * 1000.0 / frames, ((s_idleClock ? s_idleClock() : 0) - idle0) * 1000.0 / frames);
+    gl::logTopCalls(frames);
     dec0 = g_decodeSeconds;
+    idle0 = s_idleClock ? s_idleClock() : 0;
     gl0 = gl::g_statGlCalls;
     hash0 = g_statTexHashBytes;
     inv0 = g_statTexInvalidates;
     flush0 = s_flushes;
     sync0 = s_syncReads;
     tex0 = s_texSeconds;
-    draw0 = s_drawSeconds;
+    draw0 = g_flushSeconds - s_texSeconds;
+    wait0 = s_waitSeconds;
     copy0 = s_copySeconds;
     peek0 = s_peekSeconds;
     frames = draws = verts = 0;
     compiles0 = g_statShaderCompiles;
     uploads0 = g_statTexUploads;
     t0 = t;
-    gx0 = s_gxSeconds;
+    gx0 = s_gxSeconds + g_decodeSeconds;
 }
 
 // Asynchronous GPU reads. Every synchronous read (glReadPixels into client
@@ -806,6 +832,7 @@ static void pixReleasePending() {
     s_pixPending.clear();
 }
 static uint64_t queryResult(GLuint q) {
+    GxTimer tw(&s_waitSeconds);
     GLuint n = 0;
     glGetQueryObjectuiv(q, GL_QUERY_RESULT, &n);
     return n;
@@ -898,6 +925,7 @@ void flushBatch() {
         return;
     }
     GxTimer timer;
+    GxTimer tf(&g_flushSeconds);
     const ShaderProgram* sp = shaderForCurrentState();
     glcUseProgram(sp->prog);
     applyGlState();
@@ -918,20 +946,6 @@ void flushBatch() {
         bindTextureMap(m, &texW[m], &texH[m]);
     }
 
-    static size_t s_xfOffset = 0;
-    if (s_xfDirty || g_glc.uniformBuffer == ~0u) {
-        if (s_xfDirty) {
-            static uint32_t buf[736];
-            memcpy(buf, &g.xfMem[0], 256 * 4);
-            memcpy(buf + 256, &g.xfMem[0x400], 96 * 4);
-            memcpy(buf + 352, &g.xfMem[0x500], 256 * 4);
-            memcpy(buf + 608, &g.xfMem[0x600], 128 * 4);
-            s_xfOffset = s_ustream.append(buf, sizeof(buf), size_t(s_uboAlign));
-            s_xfDirty = false;
-        }
-        glBindBufferRange(GL_UNIFORM_BUFFER, 0, s_ustream.buf, GLintptr(s_xfOffset), 736 * 4);
-        g_glc.uniformBuffer = s_ustream.buf;  // the range bind also sets the generic binding
-    }
     uploadUniforms(sp, texW, texH);
 
     glcBindVertexArray(vaoForFormat(s_bfmt));
@@ -950,11 +964,35 @@ void flushBatch() {
             glVertexAttribI4ui(14, m[0], m[1], m[2], 0);
         }
     }
-    size_t vOff = s_vstream.append(s_bdata.data, s_bdata.size, s_bstride);
-    size_t iOff = s_istream.append(s_bidx.data, s_bidx.size * 4, 4);
+    // this batch's XF block (when it changed), vertices and indices, in one map
+    static uint32_t xfBlock[736];
+    static size_t s_xfOffset = 0;
+    StreamPiece pc[3];
+    int np = 0;
+    size_t worst = sizeof(xfBlock) + size_t(s_uboAlign) + s_bdata.size + s_bstride + s_bidx.size * 4 + 4;
+    // Starting a new lap of the stream overwrites older data, possibly the
+    // block still bound: write it again with this batch.
+    if (s_stream.wouldWrap(worst)) s_xfDirty = true;
+    bool xfWritten = s_xfDirty;
+    if (s_xfDirty) {
+        memcpy(xfBlock, &g.xfMem[0], 256 * 4);
+        memcpy(xfBlock + 256, &g.xfMem[0x400], 96 * 4);
+        memcpy(xfBlock + 352, &g.xfMem[0x500], 256 * 4);
+        memcpy(xfBlock + 608, &g.xfMem[0x600], 128 * 4);
+        pc[np++] = {xfBlock, sizeof(xfBlock), size_t(s_uboAlign), 0};
+        s_xfDirty = false;
+    }
+    pc[np++] = {s_bdata.data, s_bdata.size, s_bstride, 0};
+    pc[np++] = {s_bidx.data, s_bidx.size * 4, 4, 0};
+    s_stream.appendAll(pc, np);
+    if (xfWritten) s_xfOffset = pc[0].at;
+    if (xfWritten || g_glc.uniformBuffer == ~0u) {
+        glBindBufferRange(GL_UNIFORM_BUFFER, 0, s_stream.buf, GLintptr(s_xfOffset), sizeof(xfBlock));
+        g_glc.uniformBuffer = s_stream.buf;  // the range bind also sets the generic binding
+    }
+    size_t vOff = pc[np - 2].at, iOff = pc[np - 1].at;
     GLenum mode = s_bclass == PRIM_TRIS ? GL_TRIANGLES : s_bclass == PRIM_LINES ? GL_LINES : GL_POINTS;
     {
-        GxTimer td(&s_drawSeconds);
         glDrawElementsBaseVertex(mode, GLsizei(s_bidx.size), GL_UNSIGNED_INT, reinterpret_cast<const void*>(iOff),
                                  GLint(vOff / s_bstride));
     }
@@ -1053,9 +1091,13 @@ static std::vector<GLuint> s_freePbos;
 
 static void resolveWriteBack(PendingWriteBack& w) {
     if (!w.cancelled && hashBytes(w.dest, w.bytes) == w.hash) {
-        glClientWaitSync(w.fence, GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
-        glBindBuffer(GL_PIXEL_PACK_BUFFER, w.pbo);
-        const void* px = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, GLsizeiptr(w.ow) * w.oh * 4, GL_MAP_READ_BIT);
+        const void* px;
+        {
+            GxTimer tw(&s_waitSeconds);
+            glClientWaitSync(w.fence, GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
+            glBindBuffer(GL_PIXEL_PACK_BUFFER, w.pbo);
+            px = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, GLsizeiptr(w.ow) * w.oh * 4, GL_MAP_READ_BIT);
+        }
         if (px) encodeAndStore(static_cast<const uint8_t*>(px), w.dest, w.ow, w.oh, w.layout);
         glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
         glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
@@ -1122,12 +1164,7 @@ static void writeBackCopy(const void* dest, GLuint tex, int ow, int oh, uint32_t
     (void)tex;
 }
 
-void executeCopy(uint32_t ctrl) {
-    if (!s_ready) return;
-    flushBatch();
-    glcInvalidate();  // copies, clears and write-backs set GL state directly
-    pixMetricPause();
-    struct Resume { ~Resume() { pixMetricResume(); } } resume;
+static void copyEfb(uint32_t ctrl) {
     GxTimer timer;
     GxTimer tc(&s_copySeconds);
     uint32_t src = g.bp[BP_COPY_SRC_TL], size = g.bp[BP_COPY_SRC_WH];
@@ -1212,6 +1249,18 @@ void executeCopy(uint32_t ctrl) {
         s_lastFrameStats = s_stats;
         s_stats.draws = s_stats.vertices = 0;
     }
+}
+
+void executeCopy(uint32_t ctrl) {
+    if (!s_ready) return;
+    flushBatch();
+    glcInvalidate();  // copies, clears and write-backs set GL state directly
+    pixMetricPause();
+    struct Resume { ~Resume() { pixMetricResume(); } } resume;
+    const void* dest = g.copyDest;
+    bool disp = (ctrl >> 14) & 1;
+    copyEfb(ctrl);
+    // presenting (the hook) is timed apart from sms_gx: GXPC_GetTimes
     if (disp && g_displayCopyHook) g_displayCopyHook(dest);
 }
 
@@ -1266,6 +1315,7 @@ static int s_peekGroup = -1;
 
 static uint32_t peekSync(int x, int y, bool depth) {
     glcInvalidate();
+    GxTimer tw(&s_waitSeconds);
     s_syncReads++;
     uint32_t v = 0;
     uint8_t px[4] = {0, 0, 0, 0};
@@ -1346,6 +1396,7 @@ static uint32_t peekRaw(int x, int y, bool depth) {
     PeekSnap& prev = s_peek[cur ^ 1][s_peekGroup][t];
     if (prev.pbo && prev.frame + 1 == s_frameNo) {
         if (!prev.map) {
+            GxTimer tw(&s_waitSeconds);
             glClientWaitSync(prev.fence, GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
             glBindBuffer(GL_PIXEL_PACK_BUFFER, prev.pbo);
             prev.map = static_cast<const uint8_t*>(glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, bytes, GL_MAP_READ_BIT));
@@ -1442,7 +1493,23 @@ void GXPC_GetLastFrameStats(GXPCStats* out) {
     out->textureUploads = g_statTexUploads;
 }
 
-double GXPC_GxSeconds(void) { return s_gxSeconds; }
+double GXPC_GxSeconds(void) { return s_gxSeconds + g_decodeSeconds; }
+
+void GXPC_GetTimes(GXPCTimes* out) {
+    out->gx = s_gxSeconds + g_decodeSeconds;
+    out->vertices = g_decodeSeconds;
+    out->draws = g_flushSeconds - s_texSeconds;
+    out->textures = s_texSeconds;
+    out->copies = s_copySeconds;
+    out->peeks = s_peekSeconds;
+    out->gpuWait = s_waitSeconds;
+    out->present = g_presentSeconds;
+    out->swap = g_swapSeconds;
+    out->idle = s_idleClock ? s_idleClock() : 0;
+}
+
+void GXPC_SetDetailedTimers(int on) { g_gxStats = on || statsEnv(); }
+void GXPC_SetIdleClock(double (*idleSeconds)(void)) { s_idleClock = idleSeconds; }
 
 void GXPC_DrawOverlay(const uint8_t* rgba, int w, int h, int x, int y, int scale, int winW, int winH) {
     if (!s_ready || !rgba || w <= 0 || h <= 0) return;

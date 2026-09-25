@@ -72,9 +72,24 @@ Set these before the command, for example `SMS_SKIP_MOVIES=1 ./run.sh`:
 | `SMS_BINDINGS=file` | key bindings file (default `bindings.txt` in this folder) |
 | `SMS_DISC_IMAGE=file` | disc image to use when none is passed |
 | `--headless` (after the image) or `SMS_HEADLESS=1` | no window, for testing (Linux only) |
+| `SMS_OVERLAY=1` | open the debug overlay at start |
 
 Saves go to a memory card in slot A, kept as files in `~/.local/share/sms-port/card-a` on Linux and macOS (`$XDG_DATA_HOME/sms-port/card-a` if that is set) and in `%APPDATA%\sms-port\card-a` on Windows.
 Every other switch (debugging, tracing, graphics) is listed in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#environment-variables).
+
+## Frame rate
+
+The game runs at 30 frames a second, and like on the GameCube a frame that takes longer than two retraces (33 ms) waits for the next one, so a slow frame shows as 20 or 15 fps rather than 28.
+The debug overlay (backtick) shows where each frame's time goes:
+
+- `game`: the game's own code (and the GX commands it writes).
+- `GX`: the renderer, split into `vertices` (loading GX vertices), `batches` (issuing draws), `textures`, `copies` (EFB copies) and `peeks`.
+  `waiting for the GPU` is the part of it spent blocked on the GPU.
+- `present` and `swap`: drawing the frame to the window and `SDL_GL_SwapWindow`.
+- `idle`: the game waiting for the next retrace, which is spare time.
+
+If the overlay's `GL` line says `llvmpipe`, `softpipe` or `Software`, the game is rendering on the CPU and cannot hold 30 fps.
+On Linux this is usually the 32-bit build without the GPU driver's 32-bit libraries; build 64-bit (`SMS_ARCH=64 ./build.sh`) or see [BUILD.md](BUILD.md#troubleshooting).
 
 ## Controls
 

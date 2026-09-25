@@ -22,6 +22,8 @@
 // the retail capture numbering (VI retraces since boot).
 extern "C" __attribute__((weak)) int GXPC_ReadXFB(const void* xfb, void* rgba, int* w, int* h);
 extern "C" __attribute__((weak)) u32 GXPC_FrameCount(void);
+extern "C" __attribute__((weak)) void GXPC_SetIdleClock(double (*idleSeconds)(void));
+extern "C" double port_idle_seconds(void);
 extern "C" void port_pad_autopress_field(u32 field);
 extern "C" __attribute__((weak)) void port_trace_on_retrace(uint32_t retrace_count);
 extern "C" __attribute__((weak)) void port_audio_on_retrace(void);
@@ -165,6 +167,8 @@ extern "C" void port_vi_init(void)
 {
 	OSInitThreadQueue(&g_retrace_queue);
 	shots_init();
+	if (GXPC_SetIdleClock)
+		GXPC_SetIdleClock(port_idle_seconds); // the overlay's frame breakdown
 	port_irq_add_source(retrace_irq);
 	// SMS_VI_FIELD_BASE=<n>: the retrace counter starts at n instead of 0, to
 	// stand for the time retail spends before the game's first frame (IPL,

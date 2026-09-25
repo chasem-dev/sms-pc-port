@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <vector>
 
 #ifdef SMS_GX_HAVE_SDL2
@@ -23,6 +24,7 @@
 namespace gx {
 extern void (*g_displayCopyHook)(const void* xfb);
 bool rendererReady();
+extern double g_presentSeconds, g_swapSeconds;
 }
 
 using namespace gx;
@@ -43,6 +45,12 @@ std::vector<SDL_GameController*> s_pads;
 #endif
 std::vector<uint8_t> s_icon;  // GXPC_SetWindowIcon, RGBA8
 int s_iconW = 0, s_iconH = 0;
+
+double nowSeconds() {
+    timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return double(ts.tv_sec) + double(ts.tv_nsec) * 1e-9;
+}
 
 bool envTrue(const char* name) {
     const char* v = getenv(name);
@@ -255,9 +263,14 @@ void GXPC_Present(const void* xfb) {
     if (s_mode == MODE_WINDOW && s_window) {
         int w = 0, h = 0;
         SDL_GL_GetDrawableSize(s_window, &w, &h);
+        double t0 = nowSeconds();
         GXPC_PresentXFB(xfb, w, h);
         GXPC_OverlayDraw(w, h);
+        double t1 = nowSeconds();
         SDL_GL_SwapWindow(s_window);
+        double t2 = nowSeconds();
+        g_presentSeconds += t1 - t0;
+        g_swapSeconds += t2 - t1;
         GXPC_EndPresent();
         sms_gx_pump_events();
     }

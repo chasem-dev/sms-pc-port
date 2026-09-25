@@ -407,7 +407,8 @@ static const uint8_t* arrayElem(int slot, uint32_t idx) {
 }
 
 static uint32_t s_vertsLoaded = 0;
-double g_decodeSeconds = 0;  // SMS_GX_STATS: time in the vertex loader
+double g_decodeSeconds = 0;  // detailed timers: time in the vertex loader
+extern double g_flushSeconds;
 
 // ------------------------------------------------------------------ packed vertex formats
 // A batch's vertices carry only the attributes the GX vertex descriptor
@@ -816,10 +817,12 @@ static uint32_t parse(const uint8_t* p, uint32_t n, uint32_t* need) {
             g_traceLastVat = op & 7;
             if (g_gxStats) {
                 timespec t0, t1;
+                double f0 = g_flushSeconds;  // a batch flushed inside counts as drawing
                 clock_gettime(CLOCK_MONOTONIC, &t0);
                 decodeVertices(op & 0xF8, p + 3, cnt, L, op & 7);
                 clock_gettime(CLOCK_MONOTONIC, &t1);
-                g_decodeSeconds += double(t1.tv_sec - t0.tv_sec) + double(t1.tv_nsec - t0.tv_nsec) * 1e-9;
+                g_decodeSeconds += double(t1.tv_sec - t0.tv_sec) + double(t1.tv_nsec - t0.tv_nsec) * 1e-9 -
+                                   (g_flushSeconds - f0);
             } else {
                 decodeVertices(op & 0xF8, p + 3, cnt, L, op & 7);
             }
