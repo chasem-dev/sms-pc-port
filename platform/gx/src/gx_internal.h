@@ -10,6 +10,7 @@
 #define SMS_GX_INTERNAL_H
 
 #include <stdint.h>
+#include <string>
 #include <stddef.h>
 #include <vector>
 
@@ -176,6 +177,15 @@ void textureCpuWrote(const void* p, uint32_t size);
 uint32_t copyLayout(uint32_t copyFmt, bool z);
 uint32_t encodeTexture(const uint8_t* rgba, uint32_t fmt, uint32_t w, uint32_t h, uint8_t* dst);
 uint32_t texLevelBytes(uint32_t fmt, uint32_t w, uint32_t h);
+// Texture packs (gx_hires.cpp)
+bool hiresEnabled();
+bool hiresLog();
+std::string hiresName(const uint8_t* data, uint32_t fmt, uint32_t w, uint32_t h, bool mipmapped, const uint8_t* tlut,
+                      uint32_t tlutBytes, bool onlyIfPresent);
+unsigned hiresTexture(const std::string& name, int unit, uint32_t gxW, uint32_t gxH, int* scale);
+void hiresShutdown();
+uint32_t hiresUploadedCount();
+uint64_t xxh64(const void* data, size_t len, uint64_t seed);
 
 // ---------------------------------------------------------------- shaders (gx_shader.cpp)
 // The uniform values a program was last given (uploadUniforms skips the ones

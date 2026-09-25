@@ -8,3 +8,6 @@
 /build32/
 /third_party/
 .DS_Store
+# Optional mods (texture packs and the like), see mods/README.md.
+/mods/*
+!/mods/README.md

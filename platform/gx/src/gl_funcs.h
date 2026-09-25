@@ -71,7 +71,8 @@
     X(PFNGLBINDBUFFERRANGEPROC, glBindBufferRange)                                  \
     X(PFNGLVERTEXATTRIB4FPROC, glVertexAttrib4f)                                    \
     X(PFNGLVERTEXATTRIBI4UIPROC, glVertexAttribI4ui)                                \
-    X(PFNGLDISABLEVERTEXATTRIBARRAYPROC, glDisableVertexAttribArray)
+    X(PFNGLDISABLEVERTEXATTRIBARRAYPROC, glDisableVertexAttribArray)                \
+    X(PFNGLGENERATEMIPMAPPROC, glGenerateMipmap)
 
 #define SMS_GX_DECLARE(type, name) extern type gx_##name;
 extern "C++" {
@@ -188,5 +189,6 @@ SMS_GX_GL_FUNCS(SMS_GX_ALIAS)
 #define glVertexAttrib4f gx_glVertexAttrib4f
 #define glVertexAttribI4ui gx_glVertexAttribI4ui
 #define glDisableVertexAttribArray gx_glDisableVertexAttribArray
+#define glGenerateMipmap gx_glGenerateMipmap
 
 #endif

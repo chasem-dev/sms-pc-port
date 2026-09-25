@@ -73,6 +73,9 @@ Set these before the command, for example `SMS_SKIP_MOVIES=1 ./run.sh`:
 | `SMS_DISC_IMAGE=file` | disc image to use when none is passed |
 | `--headless` (after the image) or `SMS_HEADLESS=1` | no window, for testing (Linux only) |
 | `SMS_OVERLAY=1` | open the debug overlay at start |
+| `SMS_GX_SCALE=n` | render at n times the GameCube's resolution |
+
+Optional mods, such as HD texture packs, go in [`mods/`](mods/README.md).
 
 Saves go to a memory card in slot A, kept as files in `~/.local/share/sms-port/card-a` on Linux and macOS (`$XDG_DATA_HOME/sms-port/card-a` if that is set) and in `%APPDATA%\sms-port\card-a` on Windows.
 Every other switch (debugging, tracing, graphics) is listed in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#environment-variables).
