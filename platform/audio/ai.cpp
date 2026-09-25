@@ -178,6 +178,18 @@ bool open_sdl()
 {
 #ifdef _WIN32
 	void* h = dlopen("SDL2.dll", RTLD_NOW | RTLD_GLOBAL);
+#elif defined(__APPLE__)
+	// Prefer symbols already linked (SDL2.framework), then common dylib names.
+	void* h = dlopen(NULL, RTLD_NOW | RTLD_GLOBAL);
+	if (!h || !dlsym(h, "SDL_InitSubSystem")) {
+		h = dlopen("@rpath/SDL2.framework/SDL2", RTLD_NOW | RTLD_GLOBAL);
+	}
+	if (!h)
+		h = dlopen("SDL2.framework/SDL2", RTLD_NOW | RTLD_GLOBAL);
+	if (!h)
+		h = dlopen("libSDL2-2.0.0.dylib", RTLD_NOW | RTLD_GLOBAL);
+	if (!h)
+		h = dlopen("libSDL2.dylib", RTLD_NOW | RTLD_GLOBAL);
 #else
 	void* h = dlopen("libSDL2-2.0.so.0", RTLD_NOW | RTLD_GLOBAL);
 #endif

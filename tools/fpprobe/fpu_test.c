@@ -1,7 +1,7 @@
 /* Checks src/port_fpu.h against the dolphin-oracle measurement of frsqrte /
  * fres (tools/fpprobe: probe.dol run by scripts/run_oracle.py).
  *   python3 build_dol.py /tmp/x (writes inputs.bin); cc -O2 -o fpu_test fpu_test.c -lm
- *   ./fpu_test /home/netflix/dolphin-oracle/runs/fpprobe-interp/trace.txt /tmp/x/inputs.bin */
+ *   ./fpu_test $DOLPHIN_ORACLE/runs/fpprobe-interp/trace.txt /tmp/x/inputs.bin */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>

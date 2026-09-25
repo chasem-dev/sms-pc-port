@@ -44,7 +44,7 @@ The busy-wait loops in `DsetupTable` and `DspBoot` rely on this.
 Nothing else in the OS layer is needed.
 The ARAM lookup uses `port_aram_ptr` from `platform/ar`.
 
-This was verified by linking a private binary with `-DSMS_AUDIO_DSP_HLE=1` and `-Wl,--allow-multiple-definition` (audio objects first) against the `build/` game library.
+This was verified by linking a private binary with `-DSMS_AUDIO_DSP_HLE=1` and `-Wl,--allow-multiple-definition` (audio objects first) against the `build/linux-32/` game library.
 It boots, and the logo, UI sounds, sequences and voice clips play; see Status.
 
 ## Environment

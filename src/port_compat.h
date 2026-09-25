@@ -30,6 +30,13 @@
 #include <algorithm>
 #include <iterator>
 #include <utility>
+/* libc++ (macOS) defines nullptr as __nullptr in C++03 mode; the decomp's
+ * types.h expects it undefined so it becomes a plain 0, which the game assigns
+ * to integer fields (MActorAnmBck::unk28). */
+#if defined(_LIBCPP_VERSION) && __cplusplus < 201103L
+#undef nullptr
+#define nullptr 0
+#endif
 #endif
 
 #include <dolphin/types.h> /* the port override (see port_include/) */
@@ -113,6 +120,15 @@ using std::fabs;
 using std::floor;
 using std::fmod;
 using std::pow;
+#endif
+
+/* Heaps the game sizes with fixed GameCube constants (decomp-patches/ptr64-*):
+ * with 8-byte pointers objects are up to twice as large, so 64-bit hosts
+ * double them; 32-bit hosts keep retail's sizes. */
+#if defined(__SIZEOF_POINTER__) && __SIZEOF_POINTER__ == 8
+#define PORT_HEAP64(n) ((n) * 2)
+#else
+#define PORT_HEAP64(n) (n)
 #endif
 
 /* Endianness: game data on disc is big-endian. Loaders that the port has

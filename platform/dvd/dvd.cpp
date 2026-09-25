@@ -207,19 +207,19 @@ s32 do_read(DVDFileInfo* fi, void* addr, s32 length, s32 offset)
 
 // The disc source: SMS_DISC_IMAGE; or port_disc_root when the command line or
 // SMS_DISC_ROOT names an image file (.iso/.gcm/.ciso); else the image bundled
-// into the executable, if any; else port_disc_root (the machine default) as an
-// image or as an extracted files/ folder.
+// into the executable, if any; else port_disc_root (the platform default) as
+// an image or as an extracted files/ folder.
 static bool open_image()
 {
 	const char* img = getenv("SMS_DISC_IMAGE");
 	if (!img && !port_disc_explicit) {
 		g_disc = gcdisc_open_embedded(1);
 		if (g_disc)
-			img = "embedded in the executable";
+			img = "bundled with the executable";
 	}
 	if (!img) {
 		struct stat st;
-		if (stat(port_disc_root, &st) == 0 && S_ISREG(st.st_mode))
+		if (port_disc_root && stat(port_disc_root, &st) == 0 && S_ISREG(st.st_mode))
 			img = port_disc_root;
 	}
 	if (!img)
@@ -255,6 +255,11 @@ extern "C" void port_dvd_init(void)
 		g_cwd = 0;
 		return;
 	}
+	if (!port_disc_root) {
+		port_log("[dvd] no game: pass a GMSE01 disc image (or extracted files/ folder), "
+		         "or set SMS_DISC_IMAGE\n");
+		exit(1);
+	}
 	std::string root = port_disc_root;
 	if (!load_fst_bin(root)) {
 		port_log("[dvd] no sys/fst.bin next to %s; building the FST from the directory tree\n", root.c_str());
@@ -280,6 +285,27 @@ extern "C" void port_dvd_init(void)
 		memcpy(g_disk_id.company, "01", 2);
 	}
 	port_log("[dvd] FST: %u entries from %s\n", (unsigned)g_fst.size(), root.c_str());
+}
+
+// All of disc file `path`, read at once with no drive timing, for host use
+// outside the game (the window icon). Returns a malloc'd buffer, NULL if the
+// file is missing or unreadable.
+extern "C" void* port_dvd_read_file(const char* path, size_t* size)
+{
+	s32 e = lookup(path);
+	if (e < 0 || g_fst[e].dir)
+		return NULL;
+	DVDFileInfo fi;
+	DVDFastOpen(e, &fi);
+	void* buf = malloc(fi.length ? fi.length : 1);
+	if (!buf)
+		return NULL;
+	if (do_read(&fi, buf, (s32)fi.length, 0) != (s32)fi.length) {
+		free(buf);
+		return NULL;
+	}
+	*size = fi.length;
+	return buf;
 }
 
 // Serve `path` (an existing disc file) from memory instead of the disc.

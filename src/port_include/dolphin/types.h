@@ -52,4 +52,36 @@ typedef int BOOL;
 #endif
 #endif
 
+/* PTR32(T): a pointer field of a struct laid over file data (see the decomp's
+ * types.h). With 4-byte pointers it is T*. With 8-byte pointers it stays a
+ * 4-byte slot holding the address, which works because everything the game
+ * can point at lives below 4 GiB (MEM1, static data, low thread stacks); a
+ * higher address is a port bug, reported by port_ptr32_trap. */
+#if defined(__SIZEOF_POINTER__) && __SIZEOF_POINTER__ == 8
+#ifdef __cplusplus
+extern "C" void port_ptr32_trap(const void* p);
+template <typename T> struct port_ptr32 {
+	u32 raw;
+	operator T*() const { return (T*)(unsigned long long)raw; }
+	T* operator->() const { return (T*)(unsigned long long)raw; }
+	port_ptr32& operator=(T* p)
+	{
+		unsigned long long a = (unsigned long long)p;
+		if (a >> 32)
+			port_ptr32_trap(p);
+		raw = (u32)a;
+		return *this;
+	}
+	/* pointer arithmetic, as on T* (in-place relocation adds a base) */
+	template <typename I> port_ptr32& operator+=(I n) { return *this = (T*)*this + n; }
+	template <typename I> port_ptr32& operator-=(I n) { return *this = (T*)*this - n; }
+};
+#define PTR32(T) port_ptr32<T>
+#else
+#define PTR32(T) u32
+#endif
+#else
+#define PTR32(T) T*
+#endif
+
 #endif

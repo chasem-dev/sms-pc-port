@@ -231,7 +231,7 @@ void init()
 		path = "bindings.txt";
 	FILE* f = fopen(path, "r");
 	if (!f && !getenv("SMS_BINDINGS")) {
-		path = "../bindings.txt"; // running from build/
+		path = "../../bindings.txt"; // running from build/<os>-<arch>/
 		f    = fopen(path, "r");
 	}
 	if (f) {

@@ -14,6 +14,7 @@ void port_sleep_until(const struct timespec* deadline);
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <errno.h>
 static inline ssize_t port_pread(int fd, void* buffer, size_t count, unsigned long long offset)
 {
 #ifdef __linux__
@@ -32,7 +33,26 @@ static inline int port_mkdir(const char* path, int mode)
 }
 static inline void port_sleep_until(const struct timespec* deadline)
 {
+#ifdef __APPLE__
+	// macOS has no clock_nanosleep; sleep the remaining monotonic interval.
+	struct timespec now, rem;
+	if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+		return;
+	rem.tv_sec = deadline->tv_sec - now.tv_sec;
+	rem.tv_nsec = deadline->tv_nsec - now.tv_nsec;
+	if (rem.tv_nsec < 0) {
+		rem.tv_sec -= 1;
+		rem.tv_nsec += 1000000000L;
+	}
+	if (rem.tv_sec < 0)
+		return;
+	while (nanosleep(&rem, &rem) != 0) {
+		if (errno != EINTR)
+			break;
+	}
+#else
 	clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, deadline, NULL);
+#endif
 }
 #endif
 

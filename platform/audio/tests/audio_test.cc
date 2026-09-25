@@ -1,6 +1,6 @@
 // Offline test of the software DSP mixer against the real disc data.
 //
-//   audio_test [disc files dir] [out dir]
+//   audio_test DISC_FILES_DIR [OUT_DIR]
 //
 // Reads mSound.aaf out of data/nintendo.szs (Yaz0 + RARC), walks its WSYS
 // wave systems, loads the referenced .aw wave archives into a fake ARAM and
@@ -219,7 +219,11 @@ static void write_wav(const std::string& path, const std::vector<int16_t>& pcm)
 
 int main(int argc, char** argv)
 {
-	std::string disc = argc > 1 ? argv[1] : "/home/netflix/sms/orig/GMSE01/files";
+	if (argc < 2) {
+		fprintf(stderr, "usage: %s DISC_FILES_DIR [OUT_DIR]  (the disc's extracted files/ folder)\n", argv[0]);
+		return 2;
+	}
+	std::string disc = argv[1];
 	std::string out  = argc > 2 ? argv[2] : ".";
 	Bytes szs, aaf;
 	if (!read_file(disc + "/data/nintendo.szs", szs) || !rarc_find(yaz0(szs), "mSound.aaf", aaf)) {
