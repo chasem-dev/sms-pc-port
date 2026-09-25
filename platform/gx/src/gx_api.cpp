@@ -1548,31 +1548,41 @@ static void vtxPN(float x, float y, float z, float nx, float ny, float nz) {
     GXPC_WriteF32(x); GXPC_WriteF32(y); GXPC_WriteF32(z);
     GXPC_WriteF32(nx); GXPC_WriteF32(ny); GXPC_WriteF32(nz);
 }
+// The SDK's cube (GXDrawCube in the decomp's GXDraw.c): six quads with the
+// corners on the unit sphere (+-0.57735026), wound clockwise seen from
+// outside, i.e. front-facing. Games rely on both: Mario's occlusion probe
+// (TMario::boxDrawPrepare) culls front faces and depth-tests the far side
+// of a box that must stay above the floor he stands on.
+static void cubeFace(float nx, float ny, float nz, float tx, float ty, float tz, float bx, float by, float bz) {
+    const float k = 0.57735026f;
+    vtxPN(k * (nx + tx + bx), k * (ny + ty + by), k * (nz + tz + bz), nx, ny, nz);
+    vtxPN(k * (nx - tx + bx), k * (ny - ty + by), k * (nz - tz + bz), nx, ny, nz);
+    vtxPN(k * (nx - tx - bx), k * (ny - ty - by), k * (nz - tz - bz), nx, ny, nz);
+    vtxPN(k * (nx + tx - bx), k * (ny + ty - by), k * (nz + tz - bz), nx, ny, nz);
+}
 static void cubeBody() {
-    static const float n[6][3] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
     GXBegin(GX_QUADS, GX_VTXFMT3, 24);
-    for (int f = 0; f < 6; f++) {
-        float ax = n[f][0], ay = n[f][1], az = n[f][2];
-        // two in-plane axes
-        float ux = az != 0 ? 1.0f : 0.0f, uy = ax != 0 ? 1.0f : 0.0f, uz = ay != 0 ? 1.0f : 0.0f;
-        float vx = ay * uz - az * uy, vy = az * ux - ax * uz, vz = ax * uy - ay * ux;
-        const float s[4][2] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
-        for (int k = 0; k < 4; k++)
-            vtxPN(ax + s[k][0] * ux + s[k][1] * vx, ay + s[k][0] * uy + s[k][1] * vy, az + s[k][0] * uz + s[k][1] * vz, ax, ay, az);
-    }
+    cubeFace(-1, 0, 0, 0, 0, -1, 0, 1, 0);
+    cubeFace(1, 0, 0, 0, 1, 0, 0, 0, -1);
+    cubeFace(0, -1, 0, -1, 0, 0, 0, 0, 1);
+    cubeFace(0, 1, 0, 0, 0, 1, -1, 0, 0);
+    cubeFace(0, 0, -1, 0, -1, 0, 1, 0, 0);
+    cubeFace(0, 0, 1, 1, 0, 0, 0, -1, 0);
 }
 static uint8_t s_sphMajor, s_sphMinor;
+// The SDK's sphere (GXDrawSphere in GXDraw.c): rings from the +z pole down,
+// each strip emitting the next ring's vertex before the current one's, which
+// sets the winding the sky's front-face culling relies on.
 static void sphereBody() {
-    const float pi = 3.14159265f;
+    const float majorStep = 3.1415927f / s_sphMajor, minorStep = 6.2831855f / s_sphMinor;
     for (int i = 0; i < s_sphMajor; i++) {
-        float a0 = pi * i / s_sphMajor - pi / 2, a1 = pi * (i + 1) / s_sphMajor - pi / 2;
+        float a = i * majorStep, b = a + majorStep;
+        float r0 = sinf(a), r1 = sinf(b), z0 = cosf(a), z1 = cosf(b);
         GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT3, u16((s_sphMinor + 1) * 2));
         for (int j = 0; j <= s_sphMinor; j++) {
-            float b = 2 * pi * j / s_sphMinor;
-            float x1 = cosf(a1) * cosf(b), y1 = cosf(a1) * sinf(b), z1 = sinf(a1);
-            float x0 = cosf(a0) * cosf(b), y0 = cosf(a0) * sinf(b), z0 = sinf(a0);
-            vtxPN(x1, y1, z1, x1, y1, z1);
-            vtxPN(x0, y0, z0, x0, y0, z0);
+            float c = j * minorStep, x = cosf(c), y = sinf(c);
+            vtxPN(x * r1, y * r1, z1, x * r1, y * r1, z1);
+            vtxPN(x * r0, y * r0, z0, x * r0, y * r0, z0);
         }
     }
 }
