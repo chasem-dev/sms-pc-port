@@ -125,6 +125,7 @@ The everyday options are in the [README](../README.md#options); this is the full
 | `SMS_DVD_BPS`, `SMS_DVD_SEEK_MS`, `SMS_DVD_LOG=1` | drive timing model (reads occupy the drive for bytes/rate + seek, counted in fields; off by default) and a per-read log |
 | `SMS_MOVIE`, `SMS_TRACE_OUT` | `.dtm` movie input and retail-format field traces (`platform/trace`) |
 | `SMS_MEM_MB`, `SMS_QUIET_STUBS=1` | emulated MEM1 size; silence first-call stub logs |
+| `SMS_OVERLAY=1` | open the debug overlay (frame rate and where the frame's time goes) at start |
 | `SMS_GX_*` | graphics switches (`platform/gx/README.md`) |
 
 ## Progress log
@@ -161,3 +162,16 @@ Measured headless on the 32-bit Linux build (Mesa llvmpipe software GL), 2026-09
   After both are optimised, llvmpipe (about 52 ms of CPU per frame, spread over its threads) is the limit.
 - **Result:** the default build type is `RelWithDebInfo`, `-O2 -g` for `sms_game`, `sms` and `sms_gx`, keeping `-fno-strict-aliasing` and `-fwrapv` (the decomp type-puns freely; strict aliasing was not tried).
   `SMS_VI_HZ=<rate>` overrides the retrace rate for benchmarking.
+- **Delfino Plaza, 2026-09-25** (the scripted plaza run, `SMS_GX_STATS=30`, the 810-batch window):
+
+  | | before | after |
+  | --- | --- | --- |
+  | GL calls per frame | ~41,000 | ~5,200 |
+  | of which `glMapBufferRange` + `glUnmapBuffer` | – | ~1,640 (one pair per batch) |
+  | vertex loader (32-bit; 64-bit after: 3.0) | 10.6 ms/frame | 4.7 ms/frame |
+
+  The GL state is shadowed and only changes are sent, samplers and uniforms are cached, each batch's vertices, indices and XF block go into one streamed buffer through one map, and the loader keeps packed per-format vertices and per-VAT readers.
+  What is left on the game thread is mostly the game itself, the vertex loader and the EFB-copy write-back (`encodeTexture`, `hashBytes`); on llvmpipe the rest is rasterisation.
+  The overlay's frame breakdown (README, "Frame rate") shows the same split on any machine.
+- **Software GL.**
+  The 32-bit Linux build without the GPU driver's `:i386` libraries renders with llvmpipe and cannot hold 30 fps in the plaza; the port logs a warning and the overlay says so.
