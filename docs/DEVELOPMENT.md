@@ -175,5 +175,7 @@ Measured headless on the 32-bit Linux build (Mesa llvmpipe software GL), 2026-09
   The GL state is shadowed and only changes are sent, samplers and uniforms are cached, each batch's vertices, indices and XF block go into one streamed buffer through one map, and the loader keeps packed per-format vertices and per-VAT readers.
   What is left on the game thread is mostly the game itself, the vertex loader and the EFB-copy write-back (`encodeTexture`, `hashBytes`); on llvmpipe the rest is rasterisation.
   The overlay's frame breakdown (README, "Frame rate") shows the same split on any machine.
+- **Widescreen** (`SMS_WIDESCREEN`): the game camera is widened by a port patch and sms_gx maps each draw into the wider EFB (`drawXMap` in `gx_render.cpp`).
+  The HUD stays 4:3 in the middle. Anchoring its counters to the screen edges was tried per 2D batch and pulls composite panes apart (the message bar's end caps, the pause map); it needs anchoring per J2D pane, by the pane's tag, from a hook in the pane's draw.
 - **Software GL.**
   The 32-bit Linux build without the GPU driver's `:i386` libraries renders with llvmpipe and cannot hold 30 fps in the plaza; the port logs a warning and the overlay says so.
