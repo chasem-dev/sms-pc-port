@@ -370,8 +370,12 @@ static bool decodeDds(const std::string& path, Loaded* L) {
 struct Replacement {
     enum { QUEUED, READY, FAILED } state = QUEUED;
     GLuint tex = 0;
-    int scale = 0;  // log2 of its size over the GX size
+    int scale = 0;       // log2 of its size over the GX size
+    size_t bytes = 0;    // in GL
+    uint32_t used = 0;   // the display frame it was last sampled in
 };
+static size_t s_bytes = 0;     // all READY replacements
+static uint32_t s_frame = 0;   // display frames (hiresEndFrame)
 static std::unordered_map<std::string, Replacement> s_repl;  // render thread only
 static std::mutex s_mu;
 static std::condition_variable s_cv;
@@ -472,7 +476,9 @@ static void upload(Replacement& r, Loaded* L, int unit, uint32_t gxW, uint32_t g
     glcBindTexture(unit, r.tex);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     int lw = L->w, lh = L->h, n = 0;
+    r.bytes = 0;
     for (const auto& lv : L->levels) {
+        r.bytes += lv.size();
         if (L->compressed)
             glCompressedTexImage2D(GL_TEXTURE_2D, n, L->compressed, lw, lh, 0, GLsizei(lv.size()), lv.data());
         else
@@ -486,6 +492,7 @@ static void upload(Replacement& r, Loaded* L, int unit, uint32_t gxW, uint32_t g
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, int(L->levels.size()) - 1);
     r.scale = scale;
     r.state = Replacement::READY;
+    s_bytes += r.bytes;
     s_uploaded++;
 }
 
@@ -529,11 +536,47 @@ GLuint hiresTexture(const std::string& name, int unit, uint32_t gxW, uint32_t gx
         }
     }
     if (it->second.state != Replacement::READY) return 0;
+    it->second.used = s_frame;
     *scale = it->second.scale;
     return it->second.tex;
 }
 
+// Once a display frame: over the memory budget (SMS_TEXTURE_PACK_MB, 1536
+// by default), the replacements unused for longest are freed, down to three
+// quarters of it. One sampled since the previous frame is never freed; a
+// freed one is read again the next time its texture is.
+void hiresEndFrame() {
+    s_frame++;
+    static size_t budget = 0;
+    if (!budget) {
+        const char* e = getenv("SMS_TEXTURE_PACK_MB");
+        budget = size_t(e && atoi(e) > 0 ? atoi(e) : 1536) << 20;
+    }
+    if (s_bytes <= budget) return;
+    std::vector<std::pair<uint32_t, const std::string*>> old;
+    for (auto& kv : s_repl)
+        if (kv.second.state == Replacement::READY && kv.second.used + 1 < s_frame) old.emplace_back(kv.second.used, &kv.first);
+    std::sort(old.begin(), old.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    size_t freed = 0, n = 0;
+    std::vector<std::string> names;
+    for (auto& o : old) {
+        if (s_bytes - freed <= budget / 4 * 3) break;
+        freed += s_repl[*o.second].bytes;
+        names.push_back(*o.second);
+    }
+    for (const std::string& nm : names) {
+        Replacement& r = s_repl[nm];
+        glcForgetTexture(r.tex);
+        glDeleteTextures(1, &r.tex);
+        s_repl.erase(nm);
+        n++;
+    }
+    s_bytes -= freed;
+    if (n) logmsg("texture pack: freed %zu replacements (%zu MiB) over the %zu MiB budget", n, freed >> 20, budget >> 20);
+}
+
 void hiresShutdown() {
+    s_bytes = 0;
     for (auto& kv : s_repl)
         if (kv.second.tex) {
             glcForgetTexture(kv.second.tex);
