@@ -7,6 +7,7 @@
 #include "sms_gx/gx_pc.h"
 
 #include <math.h>
+#include <algorithm>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -59,6 +60,26 @@ struct GxTimer {
 enum { EFB_W = 640, EFB_H = 528 };
 
 static int s_scale = 1;
+
+// Widescreen (GXPC_SetWidescreen): the EFB is s_efbW = 640 * s_wide wide
+// while the game keeps working in 640-wide coordinates, which each draw,
+// copy and peek maps into it (XMap: x' = a * x + b, clip x scaled by clip):
+//   stretched (a = s_wide): the game camera, which the widescreen patch
+//     widens itself, 2D that spans the whole width (fades, screen copies
+//     drawn back), full-width copies and clears, peeks;
+//   centred (b = s_ox): 2D and 3D that cover part of the screen (the HUD).
+// A full-screen perspective draw whose projection the game did not widen
+// (title, file select, cutscene overlays) is stretched with its clip x
+// scaled by 1 / s_wide: its field of view widens, and what the game placed
+// at x lands on x + s_ox, beside the centred HUD.
+static float s_wide = 1.0f;
+static int s_efbW = EFB_W, s_ox = 0;
+struct XMap {
+    float a = 1, b = 0, clip = 1;
+};
+static XMap s_xmap;
+// the game camera's aspect (TMarDirector: video width 660 * 0.91346 / 448)
+static const float kCamAspect = 660.0f * 0.91346145f / 448.0f;
 static GLuint s_efbFbo, s_efbColor, s_efbDepth;
 static GLuint s_vao;
 static GLuint s_copyProg, s_copyVao;
@@ -320,7 +341,10 @@ void rendererInit(int efbScale) {
         logmsg("WARNING: %s renders on the CPU and cannot keep the game at full speed. On Linux the 32-bit build "
                "gets a GPU driver only if its 32-bit GL libraries are installed; the 64-bit build "
                "(SMS_ARCH=64 ./build.sh) uses the system's driver.", renderer);
-    int W = EFB_W * s_scale, H = EFB_H * s_scale;
+    s_efbW = s_wide > 1.0f ? (int(float(EFB_W) * s_wide + 1.0f) & ~1) : EFB_W;
+    s_ox = (s_efbW - EFB_W) / 2;
+    if (s_efbW != EFB_W) logmsg("widescreen: EFB %dx%d", s_efbW, EFB_H);
+    int W = s_efbW * s_scale, H = EFB_H * s_scale;
     glGenTextures(1, &s_efbColor);
     glBindTexture(GL_TEXTURE_2D, s_efbColor);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, W, H, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
@@ -464,7 +488,7 @@ void glcForgetTexture(GLuint tex) {
 
 static void applyGlState() {
     GlCache& c = g_glc;
-    int W = EFB_W * s_scale, H = EFB_H * s_scale;
+    int W = s_efbW * s_scale, H = EFB_H * s_scale;
     if (c.fbo != s_efbFbo) {
         c.fbo = s_efbFbo;
         glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
@@ -484,6 +508,16 @@ static void applyGlState() {
     if (sw < 0) sw = 0;
     if (sh < 0) sh = 0;
     glcCap(GL_SCISSOR_TEST, c.scissor, true);
+    if (s_efbW != EFB_W) {  // into the draw's widescreen mapping; the whole width stays whole
+        if (left <= 0 && left + sw >= EFB_W) {
+            left = 0;
+            sw = s_efbW;
+        } else {
+            int l = int(floorf(float(left) * s_xmap.a + s_xmap.b)), r = int(ceilf(float(left + sw) * s_xmap.a + s_xmap.b));
+            left = l;
+            sw = r - l;
+        }
+    }
     GLint sc[4] = {left * s_scale, top * s_scale, sw * s_scale, sh * s_scale};
     if (memcmp(sc, c.sc, sizeof sc) != 0) {
         memcpy(c.sc, sc, sizeof sc);
@@ -705,13 +739,17 @@ static void uploadUniforms(const ShaderProgram* sp, float texW[8], float texH[8]
     }
     UNI(uIndMtx, indmtx, im, glUniform4fv(sp->uIndMtx, 6, im));
 
-    float efb[2] = {float(EFB_W), float(EFB_H)};
+    float efb[2] = {float(s_efbW), float(EFB_H)};
     UNI(uEfb, efb, efb, glUniform2fv(sp->uEfb, 1, efb));
     float proj[8] = {xff(XFR_PROJ), xff(XFR_PROJ + 1), xff(XFR_PROJ + 2), xff(XFR_PROJ + 3),
                      xff(XFR_PROJ + 4), xff(XFR_PROJ + 5), float(g.xfReg[XFR_PROJ + 6] & 1), 0.0f};
     UNI(uProj, proj, proj, glUniform4fv(sp->uProj, 2, proj));
     float vp[8] = {xff(XFR_VIEWPORT), xff(XFR_VIEWPORT + 1), xff(XFR_VIEWPORT + 2), 0.0f,
                    xff(XFR_VIEWPORT + 3), xff(XFR_VIEWPORT + 4), xff(XFR_VIEWPORT + 5), 0.0f};
+    if (s_efbW != EFB_W) {  // the draw's widescreen mapping (centre and half-width, clip x scale)
+        vp[4] = (vp[4] - 342.0f) * s_xmap.a + s_xmap.b + 342.0f;
+        vp[0] *= s_xmap.a * s_xmap.clip;
+    }
     UNI(uViewport, vp, vp, glUniform4fv(sp->uViewport, 2, vp));
     float ch[16];
     const int regs[4] = {XFR_AMB0, XFR_AMB0 + 1, XFR_MAT0, XFR_MAT0 + 1};
@@ -919,6 +957,63 @@ static void pixMetricResume() {
     }
 }
 
+// An orthographic batch's horizontal extent on screen (game coordinates),
+// from its positions, position matrices and the projection and viewport.
+static bool orthoSpansWidth(float sx, float cx) {
+    const VtxFmtLayout& l = vtxFmtLayout(s_bfmt);
+    float p0 = xff(XFR_PROJ), p1 = xff(XFR_PROJ + 1);
+    uint32_t defIdx = g.xfReg[XFR_MATIDX_A] & 63;
+    float lo = 1e30f, hi = -1e30f;
+    for (uint32_t v = 0; v < s_bcount; v++) {
+        const uint8_t* vx = s_bdata.data + size_t(v) * s_bstride;
+        float pos[3];
+        memcpy(pos, vx, 12);
+        uint32_t idx = (s_bfmt & VF_MTX) ? (vx[l.mtx] & 63) : defIdx;
+        float m[4];
+        memcpy(m, &g.xfMem[idx * 4], 16);
+        float x = m[0] * pos[0] + m[1] * pos[1] + m[2] * pos[2] + m[3];
+        float X = cx + sx * (p0 * x + p1);
+        lo = std::min(lo, X);
+        hi = std::max(hi, X);
+    }
+    return lo <= 2.0f && hi >= float(EFB_W) - 2.0f;
+}
+
+// How the current batch's game coordinates map into the widened EFB.
+static XMap drawXMap() {
+    XMap m;
+    if (s_efbW == EFB_W) return m;
+    float sx = xff(XFR_VIEWPORT), cx = xff(XFR_VIEWPORT + 3) - 342.0f;
+    bool fullWidth = fabsf(fabsf(sx) * 2.0f - float(EFB_W)) < 2.0f && fabsf(cx - float(EFB_W) / 2) < 2.0f;
+    if (!fullWidth) {
+        m.b = float(s_ox);
+        return m;
+    }
+    if ((g.xfReg[XFR_PROJ + 6] & 1) == 0) {  // perspective
+        m.a = s_wide;
+        float p00 = xff(XFR_PROJ), p11 = xff(XFR_PROJ + 2);
+        float aspect = p00 != 0.0f ? fabsf(p11 / p00) : 0.0f;
+        if (aspect < kCamAspect * sqrtf(s_wide)) m.clip = 1.0f / s_wide;  // not widened by the game
+        return m;
+    }
+    // 2D across the whole width: stretched when it is a fade or mask (no
+    // texture) or draws screen copies back; artwork (menus, the map, movies)
+    // stays centred
+    bool artwork = false;
+    uint32_t gen = g.bp[BP_GENMODE];
+    uint32_t nst = ((gen >> 10) & 15) + 1;
+    for (uint32_t st = 0; st < nst && !artwork; st++) {
+        uint32_t ord = (g.bp[BP_TREF + (st >> 1)] >> ((st & 1) * 12)) & 0x3FF;
+        if (!((ord >> 6) & 1)) continue;
+        const uint8_t* ptr = g.texImage[ord & 7];
+        int cw, ch;
+        if (ptr && !efbCopyLookup(ptr, &cw, &ch)) artwork = true;
+    }
+    if (!artwork && orthoSpansWidth(sx, cx)) m.a = s_wide;
+    else m.b = float(s_ox);
+    return m;
+}
+
 void flushBatch() {
     if (!s_bidx.size || !s_ready) {
         s_bidx.size = s_bdata.size = 0;
@@ -927,6 +1022,7 @@ void flushBatch() {
     }
     GxTimer timer;
     GxTimer tf(&g_flushSeconds);
+    s_xmap = drawXMap();
     const ShaderProgram* sp = shaderForCurrentState();
     glcUseProgram(sp->prog);
     applyGlState();
@@ -1045,15 +1141,18 @@ static bool copyWriteBackEnabled() {
     return on != 0;
 }
 
-static void encodeAndStore(const uint8_t* px, const void* dest, int ow, int oh, uint32_t layout) {
+// px: the copy as read back (ow x oh); stored as the tw x th texels the
+// game asked for (sampled nearest when the EFB scale or widescreen made the
+// copy larger).
+static void encodeAndStore(const uint8_t* px, const void* dest, int ow, int oh, int tw, int th, uint32_t layout) {
     static std::vector<uint8_t> texels, enc;
-    int S = s_scale, tw = ow / S, th = oh / S;
     const uint8_t* src = px;
-    if (S != 1) {
+    if (ow != tw || oh != th) {
         texels.resize(size_t(tw) * th * 4);
         for (int y = 0; y < th; y++)
             for (int x = 0; x < tw; x++)
-                memcpy(&texels[(size_t(y) * tw + x) * 4], &px[(size_t(y * S) * ow + x * S) * 4], 4);
+                memcpy(&texels[(size_t(y) * tw + x) * 4],
+                       &px[(size_t(y) * oh / th * ow + size_t(x) * ow / tw) * 4], 4);
         src = texels.data();
     }
     enc.resize(texLevelBytes(layout, tw, th));
@@ -1083,7 +1182,7 @@ struct PendingWriteBack {
     uint64_t hash;
     GLuint pbo;
     GLsync fence;
-    int ow, oh;
+    int ow, oh, tw, th;
     uint32_t layout, frame;
     bool cancelled;
 };
@@ -1099,7 +1198,7 @@ static void resolveWriteBack(PendingWriteBack& w) {
             glBindBuffer(GL_PIXEL_PACK_BUFFER, w.pbo);
             px = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, GLsizeiptr(w.ow) * w.oh * 4, GL_MAP_READ_BIT);
         }
-        if (px) encodeAndStore(static_cast<const uint8_t*>(px), w.dest, w.ow, w.oh, w.layout);
+        if (px) encodeAndStore(static_cast<const uint8_t*>(px), w.dest, w.ow, w.oh, w.tw, w.th, w.layout);
         glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
         glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
     }
@@ -1118,9 +1217,9 @@ static void resolveWriteBacks(bool all) {
     s_writeBacks.resize(keep);
 }
 
-static void writeBackCopy(const void* dest, GLuint tex, int ow, int oh, uint32_t layout) {
+// tw x th: the copy's size in texels as the game sees it.
+static void writeBackCopy(const void* dest, GLuint tex, int ow, int oh, int tw, int th, uint32_t layout) {
     if (!dest || !copyWriteBackEnabled()) return;
-    int S = s_scale, tw = ow / S, th = oh / S;
     if (tw < 1 || th < 1) return;
     uint32_t bytes = texLevelBytes(layout, tw, th);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, s_tmpFbo);
@@ -1131,7 +1230,7 @@ static void writeBackCopy(const void* dest, GLuint tex, int ow, int oh, uint32_t
         static std::vector<uint8_t> px;
         px.resize(size_t(ow) * oh * 4);
         glReadPixels(0, 0, ow, oh, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
-        encodeAndStore(px.data(), dest, ow, oh, layout);
+        encodeAndStore(px.data(), dest, ow, oh, tw, th, layout);
         return;
     }
     // A copy to the same place supersedes one of this frame; one from an
@@ -1160,7 +1259,7 @@ static void writeBackCopy(const void* dest, GLuint tex, int ow, int oh, uint32_t
     glReadPixels(0, 0, ow, oh, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
     PendingWriteBack w{dest, bytes, hashBytes(dest, bytes), pbo, glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0),
-                       ow, oh, layout, s_frameNo, false};
+                       ow, oh, tw, th, layout, s_frameNo, false};
     s_writeBacks.push_back(w);
     (void)tex;
 }
@@ -1176,6 +1275,16 @@ static void copyEfb(uint32_t ctrl) {
     bool clear = (ctrl >> 11) & 1;
     if (traceFile()) traceCopy(disp, x, y, w, h, dest, ctrl);
     int S = s_scale;
+    // widescreen: a full-width copy takes the whole EFB, others the centred 4:3 part
+    int gw = w;
+    if (s_efbW != EFB_W) {
+        if (x <= 0 && x + w >= EFB_W) {
+            x = 0;
+            w = s_efbW;
+        } else {
+            x += s_ox;
+        }
+    }
     glDisable(GL_SCISSOR_TEST);
     glDisable(GL_BLEND);
     glDisable(GL_COLOR_LOGIC_OP);
@@ -1208,6 +1317,7 @@ static void copyEfb(uint32_t ctrl) {
         bool zcopy = (g.bp[BP_PE_CONTROL] & 7) == 3;
         bool half = (ctrl >> 9) & 1;
         int ow = (half ? w / 2 : w) * S, oh = (half ? h / 2 : h) * S;
+        int tw = half ? gw / 2 : gw, th = half ? h / 2 : h;
         if (ow < 1) ow = 1;
         if (oh < 1) oh = 1;
         int cw = 0, chh = 0;
@@ -1229,7 +1339,7 @@ static void copyEfb(uint32_t ctrl) {
         glBindTexture(GL_TEXTURE_2D, s_efbDepth);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, s_efbColor);
-        float rect[4] = {float(x) / EFB_W, float(y) / EFB_H, float(w) / EFB_W, float(h) / EFB_H};
+        float rect[4] = {float(x) / float(s_efbW), float(y) / EFB_H, float(w) / float(s_efbW), float(h) / EFB_H};
         glUniform4fv(s_copyURect, 1, rect);
         glUniform1i(s_copyUMode, GLint(mode));
         glUniform1i(s_copyUAlphaOne, (g.bp[BP_PE_CONTROL] & 7) != 1);
@@ -1237,7 +1347,7 @@ static void copyEfb(uint32_t ctrl) {
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         glBindVertexArray(s_vao);
         s_stats.efbCopies++;
-        writeBackCopy(dest, tex, ow, oh, copyLayout(fmt, zcopy));
+        writeBackCopy(dest, tex, ow, oh, tw, th, copyLayout(fmt, zcopy));
     }
     if (clear) clearRect(x, y, w, h);
     glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
@@ -1341,10 +1451,10 @@ static GLuint peekSource() {
     if (!s_peekFbo) {
         glGenRenderbuffers(1, &s_peekColor);
         glBindRenderbuffer(GL_RENDERBUFFER, s_peekColor);
-        glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, EFB_W, EFB_H);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, s_efbW, EFB_H);
         glGenRenderbuffers(1, &s_peekDepth);
         glBindRenderbuffer(GL_RENDERBUFFER, s_peekDepth);
-        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, EFB_W, EFB_H);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, s_efbW, EFB_H);
         glBindRenderbuffer(GL_RENDERBUFFER, 0);
         glGenFramebuffers(1, &s_peekFbo);
         glBindFramebuffer(GL_FRAMEBUFFER, s_peekFbo);
@@ -1354,17 +1464,18 @@ static GLuint peekSource() {
     glDisable(GL_SCISSOR_TEST);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, s_efbFbo);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s_peekFbo);
-    glBlitFramebuffer(0, 0, EFB_W * s_scale, EFB_H * s_scale, 0, 0, EFB_W, EFB_H,
+    glBlitFramebuffer(0, 0, s_efbW * s_scale, EFB_H * s_scale, 0, 0, s_efbW, EFB_H,
                       GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, GL_NEAREST);
     return s_peekFbo;
 }
 
 // Returns the raw texel: RGBA bytes packed little-endian, or the 32-bit depth.
 static uint32_t peekRaw(int x, int y, bool depth) {
+    if (s_efbW != EFB_W && x >= 0) x = int((float(x) + 0.5f) * s_wide);  // the game camera's coordinates: stretched
     flushBatch();
     glcInvalidate();
     GxTimer tp(&s_peekSeconds);
-    if (!asyncReads() || x < 0 || y < 0 || x >= EFB_W || y >= EFB_H) return peekSync(x, y, depth);
+    if (!asyncReads() || x < 0 || y < 0 || x >= s_efbW || y >= EFB_H) return peekSync(x, y, depth);
     if (s_peekDrawGen != s_drawGen || s_peekFrame != s_frameNo) {
         if (s_peekFrame != s_frameNo) s_peekGroup = -1;
         s_peekGroup++;
@@ -1373,7 +1484,7 @@ static uint32_t peekRaw(int x, int y, bool depth) {
         s_peekIssued = 0;
     }
     if (s_peekGroup >= kPeekGroups) return peekSync(x, y, depth);
-    const GLsizeiptr bytes = GLsizeiptr(EFB_W) * EFB_H * 4;
+    const GLsizeiptr bytes = GLsizeiptr(s_efbW) * EFB_H * 4;
     int cur = s_frameNo & 1, t = depth ? 1 : 0;
     if (!(s_peekIssued & (1u << t))) {
         s_peekIssued |= 1u << t;
@@ -1388,8 +1499,8 @@ static uint32_t peekRaw(int x, int y, bool depth) {
         glBufferData(GL_PIXEL_PACK_BUFFER, bytes, nullptr, GL_STREAM_READ);
         glBindFramebuffer(GL_READ_FRAMEBUFFER, peekSource());
         glPixelStorei(GL_PACK_ALIGNMENT, 4);
-        if (depth) glReadPixels(0, 0, EFB_W, EFB_H, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
-        else glReadPixels(0, 0, EFB_W, EFB_H, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        if (depth) glReadPixels(0, 0, s_efbW, EFB_H, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+        else glReadPixels(0, 0, s_efbW, EFB_H, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
         glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
         glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
         now.fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
@@ -1406,7 +1517,7 @@ static uint32_t peekRaw(int x, int y, bool depth) {
         }
         if (prev.map) {
             uint32_t v;
-            memcpy(&v, prev.map + (size_t(y) * EFB_W + x) * 4, 4);
+            memcpy(&v, prev.map + (size_t(y) * s_efbW + x) * 4, 4);
             return v;
         }
     }
@@ -1435,10 +1546,11 @@ int GXPC_PresentXFB(const void* xfb, int winW, int winH) {
     auto it = s_xfbs.find(xfb);
     if (it == s_xfbs.end()) return 0;
     const Xfb& x = it->second;
-    // letterbox to 4:3
+    // letterbox to 4:3, or to the widened aspect
+    float aspect = 4.0f / 3.0f * float(s_efbW) / float(EFB_W);
     int vw = winW, vh = winH;
-    if (vw * 3 > vh * 4) vw = vh * 4 / 3;
-    else vh = vw * 3 / 4;
+    if (float(vw) > float(vh) * aspect) vw = int(float(vh) * aspect + 0.5f);
+    else vh = int(float(vw) / aspect + 0.5f);
     int ox = (winW - vw) / 2, oy = (winH - vh) / 2;
     glDisable(GL_SCISSOR_TEST);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
@@ -1464,7 +1576,7 @@ void GXPC_EndPresent(void) {
 void GXPC_ReadEFB(uint8_t* rgba, int* w, int* h) {
     flushBatch();
     glcInvalidate();
-    *w = EFB_W * s_scale;
+    *w = s_efbW * s_scale;
     *h = EFB_H * s_scale;
     if (!rgba) return;
     glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
@@ -1494,6 +1606,12 @@ void GXPC_GetLastFrameStats(GXPCStats* out) {
     out->shaderCompiles = g_statShaderCompiles;
     out->textureUploads = g_statTexUploads;
 }
+
+void GXPC_SetWidescreen(float widthOver43) {
+    if (s_ready) return;  // the EFB size is fixed once it exists
+    s_wide = widthOver43 > 1.0f ? widthOver43 : 1.0f;
+}
+float GXPC_GetWidescreen(void) { return s_wide; }
 
 double GXPC_GxSeconds(void) { return s_gxSeconds + g_decodeSeconds; }
 
