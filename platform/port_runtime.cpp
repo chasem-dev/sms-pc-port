@@ -310,8 +310,98 @@ static void pick_glx_vendor()
 #endif
 }
 
+// settings.txt: one option per line, `name = value`, read at start; an
+// environment variable that is already set wins. The names in kSettings stand
+// for the environment variables beside them (on/off become 1/0); any SMS_*
+// variable can be given by its own name too. Found in the working directory,
+// or two levels up when started from build/<os>-<arch>/, or at SMS_SETTINGS.
+static const struct {
+	const char* name;
+	const char* env;
+} kSettings[] = {
+	{ "texture_packs", "SMS_TEXTURE_PACKS" }, // on (mods/textures), off, or folders
+	{ "texture_pack_mb", "SMS_TEXTURE_PACK_MB" },
+	{ "widescreen", "SMS_WIDESCREEN" },
+	{ "mod", "SMS_MOD" },
+	{ "resolution", "SMS_GX_SCALE" },
+	{ "window_scale", "SMS_WINDOW_SCALE" },
+	{ "vsync", "SMS_VSYNC" },
+	{ "skip_movies", "SMS_SKIP_MOVIES" },
+	{ "audio", "SMS_AUDIO" },
+	{ "overlay", "SMS_OVERLAY" },
+	{ "save_dir", "SMS_SAVE_DIR" },
+	{ "disc_image", "SMS_DISC_IMAGE" },
+};
+
+static void load_settings()
+{
+	const char* path = getenv("SMS_SETTINGS");
+	FILE* f          = path ? fopen(path, "r") : NULL;
+	if (!path) {
+		path = "settings.txt";
+		f    = fopen(path, "r");
+		if (!f) {
+			path = "../../settings.txt"; // running from build/<os>-<arch>/
+			f    = fopen(path, "r");
+		}
+	}
+	if (!f)
+		return;
+	char line[1024];
+	int n = 0;
+	while (fgets(line, sizeof line, f)) {
+		char* p = line;
+		while (*p == ' ' || *p == '\t')
+			p++;
+		if (*p == '#' || *p == '\n' || *p == '\r' || !*p)
+			continue;
+		char* eq = strchr(p, '=');
+		if (!eq)
+			continue;
+		char* ke = eq;
+		while (ke > p && (ke[-1] == ' ' || ke[-1] == '\t'))
+			ke--;
+		*ke     = 0;
+		char* v = eq + 1;
+		while (*v == ' ' || *v == '\t')
+			v++;
+		char* ve = v + strlen(v);
+		while (ve > v && (ve[-1] == '\n' || ve[-1] == '\r' || ve[-1] == ' ' || ve[-1] == '\t'))
+			ve--;
+		*ve = 0;
+		if (char* c = strstr(v, " #")) { // trailing comment
+			*c = 0;
+			while (c > v && (c[-1] == ' ' || c[-1] == '\t'))
+				*--c = 0;
+		}
+		const char* env = strncmp(p, "SMS_", 4) == 0 ? p : NULL;
+		for (size_t i = 0; !env && i < sizeof kSettings / sizeof kSettings[0]; i++)
+			if (strcmp(p, kSettings[i].name) == 0)
+				env = kSettings[i].env;
+		if (!env) {
+			port_log("[port] %s: unknown setting \"%s\"\n", path, p);
+			continue;
+		}
+		const char* val = v;
+		if (!strcmp(v, "on") || !strcmp(v, "yes") || !strcmp(v, "true"))
+			val = "1";
+		else if (!strcmp(v, "off") || !strcmp(v, "no") || !strcmp(v, "false"))
+			val = "0";
+		if (!strcmp(env, "SMS_TEXTURE_PACKS") && !strcmp(val, "1"))
+			continue; // on: the default folder
+		if (!*val || getenv(env))
+			continue;
+		port_setenv(env, val, 0);
+		n++;
+	}
+	fclose(f);
+	if (n)
+		port_log("[port] %d settings from %s\n", n, path);
+}
+
 extern "C" void port_init(int argc, char** argv)
 {
+	load_settings();
 	pick_glx_vendor();
 	if (const char* m = getenv("SMS_SKIP_MOVIES"))
 		port_skip_movies = *m && strcmp(m, "0") != 0;

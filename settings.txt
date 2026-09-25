@@ -1,0 +1,24 @@
+# Game options, one per line: name = value (on/off for switches).
+# Remove the leading # to use a line. An environment variable of the same
+# meaning (listed in README.md) wins over this file.
+
+# HD texture packs from mods/textures/ (see mods/README.md): on, off, or
+# folders separated by ';'.
+# texture_packs = on
+# Video memory for texture pack images before the least used are freed, in MiB.
+# texture_pack_mb = 1536
+
+# Internal resolution: 1 is the GameCube's 640x528, 2 twice that, and so on.
+# resolution = 1
+# Window size, in multiples of 640x480.
+# window_scale = 1
+# Wait for the display's refresh when presenting.
+# vsync = off
+
+# skip_movies = off
+# audio = on
+# Open the debug overlay (frame rate, where the time goes) at start.
+# overlay = off
+
+# save_dir = /path/to/memory/card/folder
+# disc_image = /path/to/GMSE01.iso

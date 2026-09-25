@@ -312,6 +312,7 @@ void main() {
 
 void rendererInit(int efbScale) {
     s_scale = efbScale < 1 ? 1 : efbScale;
+    g_gxStats = g_gxStats || statsEnv();  // settings.txt is read after static initialisation
     const char* renderer = (const char*)glGetString(GL_RENDERER);
     logmsg("OpenGL %s, renderer %s (%s)", (const char*)glGetString(GL_VERSION), renderer,
            (const char*)glGetString(GL_VENDOR));

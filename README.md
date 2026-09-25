@@ -62,7 +62,7 @@ When both a 32-bit and a 64-bit build exist, `./run.sh` runs the 32-bit one unle
 
 ## Options
 
-Set these before the command, for example `SMS_SKIP_MOVIES=1 ./run.sh`:
+Options can be kept in [`settings.txt`](settings.txt) (`resolution = 2`, `texture_packs = on`, ...), or set as environment variables before the command, for example `SMS_SKIP_MOVIES=1 ./run.sh`; an environment variable wins over the file:
 
 | Option | Effect |
 | --- | --- |
