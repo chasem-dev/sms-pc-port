@@ -346,6 +346,7 @@ static const struct {
 	{ "texture_packs", "SMS_TEXTURE_PACKS" }, // on (mods/textures), off, or folders
 	{ "texture_pack_mb", "SMS_TEXTURE_PACK_MB" },
 	{ "widescreen", "SMS_WIDESCREEN" },
+	{ "widescreen_hud", "SMS_WIDESCREEN_HUD" }, // centre or edges
 	{ "mod", "SMS_MOD" },
 	{ "resolution", "SMS_GX_SCALE" },
 	{ "window_scale", "SMS_WINDOW_SCALE" },

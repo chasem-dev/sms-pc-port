@@ -75,6 +75,7 @@ Options can be kept in [`settings.txt`](settings.txt) (`resolution = 2`, `textur
 | `SMS_OVERLAY=1` | open the debug overlay at start |
 | `SMS_GX_SCALE=n` | render at n times the GameCube's resolution |
 | `SMS_WIDESCREEN=16:9` | widescreen (also `21:9`, `16:10`): a wider view, with the HUD and menus kept 4:3 in the middle |
+| `SMS_WIDESCREEN_HUD=edges` | with widescreen, move the gameplay HUD's counters to the left edge and the water gauge to the right one |
 
 Optional mods, such as HD texture packs, go in [`mods/`](mods/README.md).
 
