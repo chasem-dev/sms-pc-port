@@ -544,7 +544,7 @@ REGISTER_OVERRIDES = {
 }
 
 # Where the mods' sources are (for the registers their functions read).
-MOD_ROOTS = ["/home/user/ecl-src/bse/src", "/home/user/ecl-src/eclipse/src"]
+MOD_ROOTS = ["/home/user/ecl-src/bse/src", "/home/user/ecl-src/moveset/src", "/home/user/ecl-src/eclipse/src"]
 
 
 def mod_register_reads(roots):

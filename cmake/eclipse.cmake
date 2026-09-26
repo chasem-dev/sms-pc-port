@@ -1,6 +1,6 @@
 # -DSMS_ECLIPSE=ON builds Super Mario Eclipse into the port (docs/ECLIPSE.md).
 #
-# Eclipse and BetterSunshineEngine (and the SunshineHeaderInterface headers
+# Eclipse, BetterSunshineEngine and BetterSunshineMoveset (and the SunshineHeaderInterface headers
 # they are written against) are fetched at configure time at pinned
 # revisions, never kept in this repository, fixed up mechanically
 # (platform/mods/eclipse/fixup_sources.py) and built with clang into one
@@ -23,12 +23,13 @@ find_package(Git REQUIRED)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 set(SMS_ECLIPSE_SRC_DIR "${CMAKE_BINARY_DIR}/eclipse-src" CACHE PATH
-  "Where the Eclipse, BetterSunshineEngine and SunshineHeaderInterface sources are fetched to")
+  "Where the Eclipse, BetterSunshineEngine, BetterSunshineMoveset and SunshineHeaderInterface sources are fetched to")
 
 # name  url  revision
 set(_eclipse_repos
   "eclipse|https://github.com/JoshuaMKW/super-mario-eclipse|52749795113f415b97d02392c45385982daa70bb"
   "bse|https://github.com/JoshuaMKW/BetterSunshineEngine|fd6273014545ac0174fa54fada02edd9212f63d8"
+  "moveset|https://github.com/JoshuaMKW/BetterSunshineMoveset|2eb6f136cce4c0c7816808ad9dc3d1d95ef52b83"
   "shi|https://github.com/JoshuaMKW/SunshineHeaderInterface|a0d858951e7fb22dce5304aa5c50287ecb0d6862")
 
 foreach(r ${_eclipse_repos})
@@ -61,6 +62,7 @@ endforeach()
 
 execute_process(COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/platform/mods/eclipse/fixup_sources.py
   "${SMS_ECLIPSE_SRC_DIR}/eclipse" "${SMS_ECLIPSE_SRC_DIR}/bse" "${SMS_ECLIPSE_SRC_DIR}/shi"
+  "${SMS_ECLIPSE_SRC_DIR}/moveset"
   RESULT_VARIABLE _rc)
 if(NOT _rc EQUAL 0)
   message(FATAL_ERROR "SMS_ECLIPSE: fixup_sources.py failed")
@@ -74,6 +76,7 @@ ExternalProject_Add(sms_eclipse_build
   CMAKE_ARGS -DCMAKE_BUILD_TYPE=RelWithDebInfo
     -DCMAKE_C_COMPILER=${SMS_CLANG} -DCMAKE_CXX_COMPILER=${SMS_CLANGXX}
     -DECLIPSE_SRC=${SMS_ECLIPSE_SRC_DIR}/eclipse -DBSE_SRC=${SMS_ECLIPSE_SRC_DIR}/bse
+    -DMOVESET_SRC=${SMS_ECLIPSE_SRC_DIR}/moveset
     -DSHI_SRC=${SMS_ECLIPSE_SRC_DIR}/shi -DPORT_MODS=${CMAKE_CURRENT_SOURCE_DIR}/platform/mods
   BUILD_ALWAYS ON
   INSTALL_COMMAND ""

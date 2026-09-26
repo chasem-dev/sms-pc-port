@@ -185,12 +185,39 @@ extern "C" void sms_mod_activate(void)
 	s_enabled = true;
 }
 
+extern "C" uint32_t __OSBusClock;
+extern "C" uint32_t __OSCoreClock;
+extern "C" unsigned long OSGetConsoleType(void);
+extern "C" void* DVDGetCurrentDiskID(void);
+
+namespace {
+// The boot information the GameCube's OS keeps at the bottom of MEM1, which
+// the mods read directly (the bus clock for OSTicksToSeconds, the console
+// type, the disc's ID). The port's own code never reads it there, so it is
+// only filled in for a code mod, in host byte order as the mods read it.
+void fill_boot_info()
+{
+	uint8_t* low = reinterpret_cast<uint8_t*>(static_cast<uintptr_t>(0x80000000u));
+	memcpy(low, DVDGetCurrentDiskID(), 0x20);
+	const uint32_t words[][2] = {
+		{0x28, 0x01800000u},               // physical memory size
+		{0x2C, (uint32_t)OSGetConsoleType()},
+		{0xF0, 0x01800000u},               // simulated memory size
+		{0xF8, __OSBusClock},
+		{0xFC, __OSCoreClock},
+	};
+	for (const auto& w : words)
+		memcpy(low + w[0], &w[1], 4);
+}
+} // namespace
+
 extern "C" void sms_mod_start(void)
 {
 	static bool started = false;
 	if (!s_enabled || started)
 		return;
 	started = true;
+	fill_boot_info();
 	for (ctor_t* c = __start_sms_mod_ctors; c < __stop_sms_mod_ctors; ++c)
 		if (*c && *c != (ctor_t)-1)
 			(*c)();

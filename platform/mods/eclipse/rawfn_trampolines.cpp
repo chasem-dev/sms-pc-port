@@ -297,6 +297,11 @@ extern "C" int sms_rawfn_isDamageToCannon__8TBombHeiFv(void* self)
 	return rawfn_int([&]() -> decltype(((TBombHei*)self)->TBombHei::isDamageToCannon()) { return ((TBombHei*)self)->TBombHei::isDamageToCannon(); });
 }
 
+extern "C" int sms_rawfn_isEmitting__9TWaterGunFv(void* self)
+{
+	return rawfn_int([&]() -> decltype(((TWaterGun*)self)->TWaterGun::isEmitting()) { return ((TWaterGun*)self)->TWaterGun::isEmitting(); });
+}
+
 extern "C" int sms_rawfn_isMarioClimb__16TCameraMarioDataCFUl(void* self, u32 p0)
 {
 	return rawfn_int([&]() -> decltype(((const TCameraMarioData*)self)->TCameraMarioData::isMarioClimb(p0)) { return ((const TCameraMarioData*)self)->TCameraMarioData::isMarioClimb(p0); });

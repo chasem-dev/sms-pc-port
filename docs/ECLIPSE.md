@@ -35,7 +35,7 @@ cmake --build build-ecl
 SMS_DISC_IMAGE="mods/eclipse/Super Mario Eclipse v1.1.0.iso" build-ecl/sms
 ```
 
-`-DSMS_ECLIPSE=ON` ([cmake/eclipse.cmake](../cmake/eclipse.cmake)) fetches Eclipse, BSE and SunshineHeaderInterface at pinned revisions into the build directory (`SMS_ECLIPSE_SRC_DIR` to put them elsewhere), fixes them up mechanically ([fixup_sources.py](../platform/mods/eclipse/fixup_sources.py)) and builds them with clang into the 32-bit port.
+`-DSMS_ECLIPSE=ON` ([cmake/eclipse.cmake](../cmake/eclipse.cmake)) fetches Eclipse, BSE, [BetterSunshineMoveset](https://github.com/JoshuaMKW/BetterSunshineMoveset) (a third module Eclipse requires) and SunshineHeaderInterface at pinned revisions into the build directory (`SMS_ECLIPSE_SRC_DIR` to put them elsewhere), fixes them up mechanically ([fixup_sources.py](../platform/mods/eclipse/fixup_sources.py)) and builds them with clang into the 32-bit port.
 Nothing of theirs is kept in this repository.
 Without it, the build is the plain port: every hook below is in the source but finds nothing registered and runs the original code.
 
@@ -51,16 +51,15 @@ Without it, the build is the plain port: every hook below is in the source but f
   Functions the decomp only has inline are in [port_shims.cpp](../platform/mods/eclipse/port_shims.cpp).
 - **Layouts.** The 32-bit port lays out the game's classes as retail does (the `layout-01` patch removes Itanium tail-padding reuse), so SunshineHeaderInterface's view of an object is valid on the port's.
 - **Data.** The Eclipse disc as it is, with the port's byte-order conversion; two converter fixes came from it (JAudio files read straight from disc, and J3D files whose empty sections point at the next table).
+  Textures the mods build into their code are converted when the game first stores them, and the boot information the GameCube keeps at the bottom of memory (clocks, console type, disc ID), which the mods read directly, is filled in when they start.
+- **Modules.** Each module built on BSE is linked into one object with its own names made local, as Kuribo keeps them apart (Eclipse and the moveset both define `gSettingsGroup`).
 
 For bisecting, `SMS_MOD_LIST=1` prints every registered patch and `SMS_MOD_DISABLE=addr,addr` switches patches off by retail address; `SMS_MOD_REPORT=1` lists, at exit, patches the game never reached.
 
 ## Status (2026-09-26)
 
-- The 32-bit port boots the Eclipse disc to its title screen, file select (save-file creation included) and first stage, and runs it with Eclipse's dialogue and HUD.
-- **BetterSunshineMoveset.** Eclipse's disc also loads a third module, BetterSunshineMoveset, and Eclipse refuses to start without it.
-  It is not built in yet, so the runs above switch off BSE's replacement of the application loop, where that check happens: `SMS_MOD_DISABLE=80005624`.
-  Building it in is the next step, pending a decision to fetch that repository too.
-- **Hooks left.** 194 of 257 redirected calls are hooked; the rest need hand-written hooks, and about 150 of BSE's patches replace an instruction inside a function rather than a call (the scenario-select screen's table rewrite, Mario's extended animation tables and many physics tweaks), each ported by hand.
+- The 32-bit port runs all three modules on the Eclipse disc: BSE's first-boot settings screen (saved to the memory card), Eclipse's title screen and file select, its Tutorial stage and its first stage, with Eclipse's dialogue and HUD.
+- **Hooks left.** 206 of 274 redirected calls are hooked; the rest need hand-written hooks, and about 150 patches replace an instruction inside a function rather than a call (the scenario-select screen's table rewrite, Mario's extended animation tables and many physics tweaks), each ported by hand.
 - **64-bit.** Not yet: SunshineHeaderInterface describes 32-bit layouts.
 
 ## Licensing

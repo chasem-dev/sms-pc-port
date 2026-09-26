@@ -1,11 +1,11 @@
-# Builds BetterSunshineEngine and Super Mario Eclipse (fetched sources, see
+# Builds BetterSunshineEngine, BetterSunshineMoveset and Super Mario Eclipse (fetched sources, see
 # cmake/eclipse.cmake) into one static library for the 32-bit port, with
 # clang (their sources are written for it) and the port's shim headers in
 # place of the Kuribo/Kamek SDKs and PowerPC-only macros.
 cmake_minimum_required(VERSION 3.16)
 project(sms_eclipse C CXX)
 
-foreach(v ECLIPSE_SRC BSE_SRC SHI_SRC PORT_MODS)
+foreach(v ECLIPSE_SRC BSE_SRC MOVESET_SRC SHI_SRC PORT_MODS)
   if(NOT ${v})
     message(FATAL_ERROR "${v} is required")
   endif()
@@ -22,6 +22,7 @@ foreach(d ${_bse_dirs})
   file(GLOB _f ${BSE_SRC}/${d}/*.c ${BSE_SRC}/${d}/*.cpp)
   list(APPEND BSE_SOURCES ${_f})
 endforeach()
+file(GLOB MOVESET_SOURCES ${MOVESET_SRC}/src/*.cpp ${MOVESET_SRC}/src/*/*.cpp)
 file(GLOB ECLIPSE_SOURCES ${ECLIPSE_SRC}/src/*.c ${ECLIPSE_SRC}/src/*.cpp ${ECLIPSE_SRC}/src/*/*.c ${ECLIPSE_SRC}/src/*/*.cpp)
 
 set(_shi ${SHI_SRC}/include ${SHI_SRC}/include/JSystem ${SHI_SRC}/include/Dolphin ${SHI_SRC}/include/SMS
@@ -42,21 +43,44 @@ target_include_directories(bse_objs PRIVATE ${PORT_MODS}/eclipse/shim ${PORT_MOD
 target_compile_definitions(bse_objs PRIVATE ${_defs})
 target_compile_options(bse_objs PRIVATE ${_opts})
 
+add_library(moveset_objs OBJECT ${MOVESET_SOURCES})
+target_include_directories(moveset_objs PRIVATE ${PORT_MODS}/eclipse/shim ${PORT_MODS}/include
+  ${MOVESET_SRC}/include ${BSE_SRC}/include ${_shi})
+target_compile_definitions(moveset_objs PRIVATE ${_defs})
+target_compile_options(moveset_objs PRIVATE ${_opts})
+
 add_library(eclipse_objs OBJECT ${ECLIPSE_SOURCES})
 target_include_directories(eclipse_objs PRIVATE ${PORT_MODS}/eclipse/shim ${PORT_MODS}/include
   ${ECLIPSE_SRC}/include ${BSE_SRC}/include ${_shi})
 target_compile_definitions(eclipse_objs PRIVATE ${_defs})
 target_compile_options(eclipse_objs PRIVATE ${_opts})
 
-# Linked into one object first: the two projects share many file names
+# Kuribo loads each module on its own, so their private names never meet;
+# linked into one program they would (Eclipse and the moveset both define
+# gSettingsGroup, gSaveBnr...). The modules built on BetterSunshineEngine are
+# each linked into one object whose own definitions are made local; what they
+# use of the engine and the game stays an undefined reference, resolved by
+# name as Kuribo resolves it.
+set(_modules)
+foreach(m moveset eclipse)
+  target_compile_options(${m}_objs PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden)
+  set(_o ${CMAKE_CURRENT_BINARY_DIR}/${m}_module.o)
+  add_custom_command(OUTPUT ${_o}
+    COMMAND ${CMAKE_CXX_COMPILER} -m32 -r -nostdlib -o ${_o} $<TARGET_OBJECTS:${m}_objs>
+    COMMAND ${CMAKE_OBJCOPY} --localize-hidden ${_o}
+    DEPENDS ${m}_objs $<TARGET_OBJECTS:${m}_objs> COMMAND_EXPAND_LISTS VERBATIM)
+  list(APPEND _modules ${_o})
+endforeach()
+
+# Then everything into one object: the projects share many file names
 # (player.cpp, generic.cpp...), which an archive of their objects would not
-# keep apart. The partial link also moves their static constructors out of
+# keep apart. This partial link also moves their static constructors out of
 # .ctors (mod_ctors.ld).
 set(_obj ${CMAKE_CURRENT_BINARY_DIR}/sms_eclipse_all.o)
 add_custom_command(OUTPUT ${_obj}
   COMMAND ${CMAKE_CXX_COMPILER} -m32 -r -nostdlib -Wl,-T,${CMAKE_CURRENT_SOURCE_DIR}/mod_ctors.ld -o ${_obj}
-    $<TARGET_OBJECTS:bse_objs> $<TARGET_OBJECTS:eclipse_objs>
-  DEPENDS $<TARGET_OBJECTS:bse_objs> $<TARGET_OBJECTS:eclipse_objs> ${CMAKE_CURRENT_SOURCE_DIR}/mod_ctors.ld
+    $<TARGET_OBJECTS:bse_objs> ${_modules}
+  DEPENDS bse_objs $<TARGET_OBJECTS:bse_objs> ${_modules} ${CMAKE_CURRENT_SOURCE_DIR}/mod_ctors.ld
   COMMAND_EXPAND_LISTS VERBATIM)
 add_library(sms_eclipse STATIC ${_obj})
 set_target_properties(sms_eclipse PROPERTIES LINKER_LANGUAGE CXX)

@@ -112,6 +112,19 @@ extern "C" int port_endian_bti(void* p, uint32_t size)
 	return 1;
 }
 
+// A texture a code mod builds into its own code (BetterSunshineEngine's
+// icons): a whole BTI, header first, of no known size; converted in place the
+// first time the game stores it (JUTTexture::storeTIMG).
+extern "C" int port_endian_bti_embedded(void* p)
+{
+	Buf b(p, 1u << 24); // only the header is read; offsets just have to be plausible
+	if (b.base[0x19] == PE_NATIVE_MARK || !timg_plausible_be(b))
+		return 0;
+	timg(b, 0);
+	b.base[0x19] = PE_NATIVE_MARK;
+	return 1;
+}
+
 // ResTLUT (J2D 'TLUT' resources, JUTPalette::storeTLUT): u8 format, u8
 // transparency, u16 numColors, pad to 0x20, then TLUT entries (stay
 // big-endian for GX). Byte 4 (pad, never read) marks a converted header.

@@ -4,7 +4,7 @@ SunshineHeaderInterface sources before the port compiles them (nothing of
 theirs is kept in this repository). Each entry: a glob under the source root,
 a regular expression and its replacement, and why. Idempotent.
 
-    fixup_sources.py ECLIPSE_ROOT BSE_ROOT SHI_ROOT
+    fixup_sources.py ECLIPSE_ROOT BSE_ROOT SHI_ROOT [MOVESET_ROOT]
 """
 import glob
 import os
@@ -16,15 +16,30 @@ import sys
 RAWADDR_FIX = ("src/**/*.cpp", r"(\(\s*\([^;{}()]*\(\s*\*\s*\)\s*\([^;{}()]*\)\s*\)\s*)(0x8[0-3][0-9A-Fa-f]{6})(\s*\)\s*\()",
                r"\1sms_mod_rawaddr(\2)\3", "retail addresses called go to the port's functions")
 
-ECLIPSE_FIXES = [
+# Textures built into the code as byte arrays are converted to host byte
+# order in place when the game first stores them (JUTTexture::storeTIMG), so
+# they cannot be read-only; static keeps the internal linkage const gave them.
+# (The memory card banner and icon are declared extern and never stored.)
+TEXTURE_FIXES = [
+    (glob_, r"(?<!static )\bconst u8 SMS_ALIGN\(32\) (?!gSaveBnr\b|gSaveIcon\b)(\w+)\[\]",
+     r"static u8 SMS_ALIGN(32) \1[]", "embedded textures are converted in place")
+    for glob_ in ("src/**/*.cpp", "src/**/*.hxx", "include/**/*.hxx")
+]
+
+ECLIPSE_FIXES = TEXTURE_FIXES + [
     RAWADDR_FIX,
     # SunshineHeaderInterface named obj_hit_info's third field (May 2026);
     # Eclipse still initialises it by its old placeholder name.
     ("src/*/*.cpp", r"(obj_hit_info\s+\w+\s*=?\s*\{[^}]*?)\._08(\s*=)", r"\1.mVisualOfsY\2",
      "obj_hit_info._08 is mVisualOfsY"),
 ]
-BSE_FIXES = [
+BSE_FIXES = TEXTURE_FIXES + [
     RAWADDR_FIX,
+    # The memory card banner and icon are built into the code as big-endian
+    # BTI files and copied to the card as they are; only their image offset
+    # is read, and it has to be read in their byte order.
+    ("src/settings.cpp", r"\+ info\.(mBannerImage|mIconTable)->mTextureOffset",
+     r"+ __builtin_bswap32(info.\1->mTextureOffset)", "card banner and icon offsets are big-endian"),
     # Run-time rewrites of the retail game's instructions: the port has no
     # retail code, so each goes to the patch registry for the decomp hooks
     # that port it (platform/mods/modhooks.cpp) instead of into memory.
@@ -34,6 +49,9 @@ BSE_FIXES = [
      r'extern "C" void sms_mod_code_write(uint32_t, uint32_t, int);\n'
      r'\1    sms_mod_code_write((uint32_t)(uintptr_t)ptr, value, \2 / 8);',
      "code writes go to the patch registry"),
+]
+MOVESET_FIXES = TEXTURE_FIXES + [
+    RAWADDR_FIX,
 ]
 SHI_FIXES = [
     # The decomp's JUTRect has a user-provided copy constructor, so the port
@@ -70,7 +88,9 @@ def apply(root, fixes):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
+    if len(sys.argv) not in (4, 5):
         sys.exit(__doc__)
     n = apply(sys.argv[1], ECLIPSE_FIXES) + apply(sys.argv[2], BSE_FIXES) + apply(sys.argv[3], SHI_FIXES)
+    if len(sys.argv) == 5:
+        n += apply(sys.argv[4], MOVESET_FIXES)
     print("fixup_sources: %d replacements" % n)
