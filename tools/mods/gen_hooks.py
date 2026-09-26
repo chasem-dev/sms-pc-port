@@ -710,6 +710,62 @@ VIRTUAL_CALLS = {
 }
 
 
+def entry_hook(p, fnq, clean, text, brace, modsig):
+    """The statement at the top of a function a mod replaces (SMS_PATCH_B at
+    its first instruction): the mod's function, with this function's
+    arguments, when one is registered."""
+    quals, name, is_const = fnq
+    sig = cw_signature(p["fn"])
+    if sig is None:
+        return None
+    ptypes = [t for t in sig[0] if t != "void"]
+    names = param_names(clean, text, brace)
+    names = [n for n in names if n] if ptypes else []
+    if len(names) != len(ptypes):
+        return None
+    # the return type: what precedes the qualified name on the definition
+    i = clean.rfind(")", 0, brace)
+    depth, j = 0, i
+    while j > 0:
+        if clean[j] == ")":
+            depth += 1
+        elif clean[j] == "(":
+            depth -= 1
+            if depth == 0:
+                break
+        j -= 1
+    line_start = clean.rfind("\n", 0, j) + 1
+    head = text[line_start:j].strip()
+    qual = "::".join(quals)
+    mret = re.match(r"(.*?)\s*\b%s\s*$" % re.escape((qual + "::" if qual else "") + name), head)
+    if not mret:
+        return None
+    ret = re.sub(r"\b(static|inline|virtual|extern)\b", "", mret.group(1)).strip() or "void"
+    member = bool(quals) and not is_namespace(quals) and not is_static_member(None, quals, name)
+    types = (["%s%s*" % ("const " if is_const else "", qual)] if member else []) + ptypes
+    args = (["this"] if member else []) + names
+    if modsig is not None and len(modsig) <= len(types):
+        gprs = [(a, t) for a, t in zip(args, types) if not is_fpr(t)]
+        fprs = [(a, t) for a, t in zip(args, types) if is_fpr(t)]
+        picked = []
+        for mt in modsig:
+            pool = fprs if is_fpr(mt) else gprs
+            if not pool:
+                picked = None
+                break
+            picked.append(pool.pop(0))
+        if picked is not None:
+            args, types = [a for a, _ in picked], [t for _, t in picked]
+    call = "((%s (*)(%s))sms_mod_t_)(%s)" % (ret, ", ".join(types), ", ".join(args))
+    if ret == "void":
+        act = "{ %s; return; }" % call
+    else:
+        act = "return %s;" % call
+    return ("\n#ifdef TARGET_PC\n\t{ // replaced by a code mod (retail 0x%08X)\n"
+            "\t\tvoid* sms_mod_t_ = SMS_MOD_SITE(0x%08X);\n\t\tif (sms_mod_t_)\n\t\t\t%s\n\t}\n#endif"
+            % (p["addr"], p["addr"], act))
+
+
 def c_name(sym):
     """A C function's symbol is its name: -> ([], name, False), else None."""
     if re.fullmatch(r"[A-Za-z_]\w*", sym) and "__" not in sym.lstrip("_"):
@@ -797,8 +853,18 @@ def main():
             seen.add(p["addr"])
             uniq.append(p)
 
+    # Function replacements (SMS_PATCH_B at a function's first instruction):
+    # an entry hook that calls the mod's function and returns its result.
+    entries = []
+    for p in patches:
+        if p["kind"] != "SMS_PATCH_B" or any(fnmatch.fnmatch(p["where"], g) for g in exclude):
+            continue
+        ins_ = insns.get(p.get("fn"), [])
+        if ins_ and ins_[0][0] == p["addr"] and p["addr"] not in hand and all(e["addr"] != p["addr"] for e in entries):
+            entries.append(p)
+
     srcs = {}
-    for p in uniq:
+    for p in uniq + entries:
         base = os.path.splitext(p["asmfile"])[0]
         for ext in (".cpp", ".c", ".cp"):
             if os.path.exists(os.path.join(DECOMP, "src", base + ext)):
@@ -937,6 +1003,24 @@ def main():
             else:
                 rep = hook_expr(p["addr"], stmt, original, free_fntype(original, tname, sig), args_)
         edits.setdefault(f, []).append((start, close + 1, rep, p))
+        done.append(p)
+
+    for p in entries:
+        f = srcs.get(p["addr"])
+        fnq = cw_demangle(p["fn"]) or c_name(p["fn"])
+        if not f or not fnq:
+            manual.append((p, "function replacement: no source or name"))
+            continue
+        clean = blank_comments_strings(texts[f])
+        body = find_function_body(clean, fnq[0], fnq[1])
+        if not body:
+            manual.append((p, "function replacement: definition not found once in %s" % f))
+            continue
+        rep = entry_hook(p, fnq, clean, texts[f], body[0], modsigs.get(p["value"].lstrip("&")))
+        if rep is None:
+            manual.append((p, "function replacement: cannot write the hook"))
+            continue
+        edits.setdefault(f, []).append((body[0] + 1, body[0] + 1, rep, p))
         done.append(p)
 
     for f, es in edits.items():
