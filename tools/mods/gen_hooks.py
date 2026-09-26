@@ -541,6 +541,7 @@ def member_fntype(original, qual, name, sig):
 # (site, register) -> the source expression it holds there.
 REGISTER_OVERRIDES = {
     (0x8021B144, 31): "actor",  # TLiveManager::clipActorsAux: the actor being clipped
+    (0x8024C3A8, 30): "this",   # TMario::checkBackTrig: its callers keep this Mario in r30
 }
 
 # Where the mods' sources are (for the registers their functions read).
@@ -762,7 +763,7 @@ def entry_hook(p, fnq, clean, text, brace, modsig):
     else:
         act = "return %s;" % call
     return ("\n#ifdef TARGET_PC\n\t{ // replaced by a code mod (retail 0x%08X)\n"
-            "\t\tvoid* sms_mod_t_ = SMS_MOD_SITE(0x%08X);\n\t\tif (sms_mod_t_)\n\t\t\t%s\n\t}\n#endif"
+            "\t\tvoid* sms_mod_t_ = SMS_MOD_SITE(0x%08X);\n\t\tif (sms_mod_t_)\n\t\t\t%s\n\t}\n#endif\n"
             % (p["addr"], p["addr"], act))
 
 

@@ -26,8 +26,29 @@ TEXTURE_FIXES = [
     for glob_ in ("src/**/*.cpp", "src/**/*.hxx", "include/**/*.hxx")
 ]
 
-ECLIPSE_FIXES = TEXTURE_FIXES + [
+# Its caller passes the particle id in a full register (0x113); declared u8,
+# it only works on the PowerPC, where the value is used unmasked.
+PARTICLE_FIXES = [
+    (glob_, r"(smParticleInit\(JPAResourceManager \*\s*\w*,\s*const char \*\s*\w*,\s*)u8(\s*\w*\))",
+     r"\1u32\2", "the particle id is 16 bits")
+    for glob_ in ("src/**/*.cpp", "include/**/*.hxx")
+]
+
+# Two TGCConsole2::checkChangeTelopArray switch-table entries are PowerPC
+# assembly: store a news list in the console (r30) and jump back to the end
+# of the switch. The port calls the entry with the console and continues
+# after the switch itself, so they become the store alone.
+DEBS_FIXES = [
+    ("src/stage/behavior.cpp",
+     r"SMS_ASM_FUNC static void (set\w+DEBSList)\(TGCConsole2 \*console2\) \{\n"
+     r"\s*SMS_ASM_BLOCK\(\"lis 3, (\w+)@h[^;]*\);\n\}",
+     r"static void \1(TGCConsole2 *console2) {\n    *(s32 **)((u8 *)console2 + 0x574) = \2;\n}",
+     "news list setters without assembly"),
+]
+
+ECLIPSE_FIXES = TEXTURE_FIXES + PARTICLE_FIXES + DEBS_FIXES + [
     RAWADDR_FIX,
+
     # SunshineHeaderInterface named obj_hit_info's third field (May 2026);
     # Eclipse still initialises it by its old placeholder name.
     ("src/*/*.cpp", r"(obj_hit_info\s+\w+\s*=?\s*\{[^}]*?)\._08(\s*=)", r"\1.mVisualOfsY\2",
@@ -35,6 +56,9 @@ ECLIPSE_FIXES = TEXTURE_FIXES + [
 ]
 BSE_FIXES = TEXTURE_FIXES + [
     RAWADDR_FIX,
+    # Declared bool, but the game reads the float the function leaves in f1.
+    ("src/patches/sun.cpp", r"static bool scaleGlowToLightness\(", r"static f32 scaleGlowToLightness(",
+     "the lens glow scale is a float"),
     # The memory card banner and icon are built into the code as big-endian
     # BTI files and copied to the card as they are; only their image offset
     # is read, and it has to be read in their byte order.
@@ -43,6 +67,12 @@ BSE_FIXES = TEXTURE_FIXES + [
     # Run-time rewrites of the retail game's instructions: the port has no
     # retail code, so each goes to the patch registry for the decomp hooks
     # that port it (platform/mods/modhooks.cpp) instead of into memory.
+    # TMarioAnimeData::isPumpOK's replacement is PowerPC assembly: the FLUDD
+    # animation id against BSE's (extended) animation count.
+    ("src/player.cpp",
+     r"static SMS_ASM_FUNC void isPumpOk\(\) \{\n\s*SMS_ASM_BLOCK\(\"lhz       3, 2 \(3\)[^;]*\);\n\}",
+     r"static bool isPumpOk(const u8 *animeData) {\n    return *(const u16 *)(animeData + 2) < sPlayerAnimeInfosSize;\n}",
+     "isPumpOk without assembly"),
     ("src/memory.cpp",
      r"(BETTER_SMS_FOR_EXPORT void BetterSMS::PowerPC::writeU(8|16|32)\(u\d+ \*ptr, u\d+ value\) \{\n)"
      r"\s*\*ptr = value;\n\s*BetterSMS::Cache::store\(ptr, sizeof\(u\d+\)\);",

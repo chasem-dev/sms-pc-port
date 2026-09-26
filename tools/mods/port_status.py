@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """How much of the code mods' patching the port covers.
 
-  port_status.py PATCHES_JSON [--list]
+  port_status.py PATCHES_JSON [--list] [--registered MODLIST]
 
 A patch counts as ported when a decomp patch (decomp-patches/*.patch) names
 its retail address in a hook (SMS_MOD_*), or when it is listed in
 tools/mods/not_ported.txt with the reason it needs no port (the feature is
-the port's own, or debug-only).
+the port's own). With --registered (the output of a run with SMS_MOD_LIST=1),
+patches the mods never register (their code is compiled out) are inactive.
 """
 import json
 import os
@@ -45,6 +46,13 @@ def main():
     patches = json.load(open(sys.argv[1]))
     hooked = hooked_addresses()
     wv = waived()
+    registered = None
+    if "--registered" in sys.argv:
+        registered = set()
+        for line in open(sys.argv[sys.argv.index("--registered") + 1]):
+            m = re.match(r"\[mod\] (?:bl|b |w ) ([0-9a-f]{8}) ", line)
+            if m:
+                registered.add(int(m.group(1), 16))
     import fnmatch
     rows = []
     for p in patches:
@@ -53,13 +61,20 @@ def main():
             kind = "BL-insn"
         where = p["where"]
         w = next((why for g, why in wv.items() if fnmatch.fnmatch(where, g)), None)
-        state = "ported" if p["addr"] in hooked else ("waived" if w else "todo")
+        if p["addr"] in hooked:
+            state = "ported"
+        elif w:
+            state = "waived"
+        elif registered is not None and p["addr"] not in registered:
+            state = "inactive"
+        else:
+            state = "todo"
         rows.append((state, kind, p))
     c = Counter((k, s) for s, k, _ in rows)
     kinds = sorted({k for _, k, _ in rows})
-    print("%-8s %6s %6s %6s" % ("kind", "ported", "waived", "todo"))
+    print("%-8s %6s %6s %8s %6s" % ("kind", "ported", "waived", "inactive", "todo"))
     for k in kinds:
-        print("%-8s %6d %6d %6d" % (k, c[(k, "ported")], c[(k, "waived")], c[(k, "todo")]))
+        print("%-8s %6d %6d %8d %6d" % (k, c[(k, "ported")], c[(k, "waived")], c[(k, "inactive")], c[(k, "todo")]))
     if "--list" in sys.argv:
         for s, k, p in sorted(rows, key=lambda r: (r[2]["where"], r[2]["addr"])):
             if s == "todo":

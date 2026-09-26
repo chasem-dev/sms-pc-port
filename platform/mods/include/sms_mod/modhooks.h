@@ -41,6 +41,10 @@ int sms_mod_word(uint32_t addr, uint32_t* value);
  * `addr`, recorded as a word patch there, which hooks read back with
  * sms_mod_word. Nothing is written: the address is not code in the port. */
 void sms_mod_code_write(uint32_t addr, uint32_t value, int size);
+/* Game data a mod rewrites in place (SMS_WRITE_32 on a variable, not code):
+ * the port's variable for the retail address `addr`. When the mods start, a
+ * word registered there is stored into it (`size` 4). */
+void sms_mod_bind_data(uint32_t addr, void* var, int size);
 /* Kuribo's by-name linking between modules. */
 void sms_mod_export(const char* name, void* fn);
 void* sms_mod_import(const char* name);

@@ -42,6 +42,17 @@ std::unordered_map<std::string, void*>& exports()
 	static std::unordered_map<std::string, void*>* m = new std::unordered_map<std::string, void*>;
 	return *m;
 }
+struct DataBinding {
+	uint32_t addr;
+	void* var;
+	int size;
+};
+std::vector<DataBinding>& data_bindings()
+{
+	static std::vector<DataBinding>* v = new std::vector<DataBinding>;
+	return *v;
+}
+
 std::vector<Module>& modules()
 {
 	static std::vector<Module>* m = new std::vector<Module>;
@@ -151,6 +162,11 @@ extern "C" int sms_mod_word(uint32_t addr, uint32_t* value)
 	return 1;
 }
 
+extern "C" void sms_mod_bind_data(uint32_t addr, void* var, int size)
+{
+	data_bindings().push_back({addr, var, size});
+}
+
 extern "C" void sms_mod_export(const char* name, void* fn)
 {
 	exports()[name] = fn;
@@ -244,6 +260,12 @@ extern "C" void sms_mod_start(void)
 			        (unsigned long)p.value, p.enabled ? "" : " (off)", p.file ? p.file : "?", p.line);
 	s_active = true;
 	bump();
+	// Game data the mods rewrote in place.
+	for (const DataBinding& d : data_bindings()) {
+		uint32_t w;
+		if (d.size == 4 && sms_mod_word(d.addr, &w))
+			memcpy(d.var, &w, 4);
+	}
 	fprintf(stderr, "[mod] %zu patches registered by %zu module(s)\n", patches().size(), modules().size());
 	// BetterSunshineEngine first: the other modules register with it.
 	std::vector<Module> order;
