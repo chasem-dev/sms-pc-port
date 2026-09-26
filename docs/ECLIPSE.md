@@ -26,42 +26,42 @@ Counted with [`tools/mods/patch_inventory.py`](../tools/mods/patch_inventory.py)
 Eclipse's own code is about 18,500 lines and calls 79 BSE API functions (most often `Spc::` script builtins, `Stage::register*Stage` and `add*Callback`, `Objects::registerObjectAs*`, `Player::add*Callback` and per-player data, `THP::addTHP`, `Music::`, `Settings::`).
 Much of BSE's own patching is features the port has or does not need (60 fps, 16:9 and 21:9, bug fixes, the Kuribo loader), so only the part of BSE that Eclipse reaches has to come along.
 
-## What the port already has
+## Building it
 
-- `python3 tools/mods/get.py eclipse` downloads the GameBanana release, checks it and your ISO, and applies the patch (with its own VCDIFF decoder, [`tools/mods/vcdiff.py`](../tools/mods/vcdiff.py)) to `mods/eclipse/Super Mario Eclipse v1.1.0.iso`, which the installer checks against the expected result (MD5 `caa546309e0443f7b47632b040a250d7`).
-  It is byte-for-byte the image Eclipse's own patcher (xdelta3) makes, for Dolphin or a console.
-  Given to the port (`SMS_DISC_IMAGE`), it does not boot: the vanilla code reports `Seqs/JaiSeInf.bst` missing from Eclipse's disc and then crashes while setting up sound.
-  That is expected, since the disc's data is made for Eclipse's code, and nothing of Eclipse runs until that code is ported.
-- `SMS_MOD` / `mod = <name>` overlays `mods/<name>/files/` on the disc ([mods/README.md](../mods/README.md)), and `SMS_DISC_IMAGE` takes any GameCube image.
-  That serves Eclipse's files, but not its code: the vanilla game cannot load stages that place Eclipse's custom objects, or reach its new menus.
-- Widescreen and texture packs, which BSE and Dolphin supply on the other platforms.
+```sh
+python3 tools/mods/get.py eclipse          # the Eclipse ISO, mods/eclipse/Super Mario Eclipse v1.1.0.iso
+cmake -S . -B build-ecl -DSMS_ARCH=32 -DSMS_ECLIPSE=ON
+cmake --build build-ecl
+SMS_DISC_IMAGE="mods/eclipse/Super Mario Eclipse v1.1.0.iso" build-ecl/sms
+```
 
-## Plan
+`-DSMS_ECLIPSE=ON` ([cmake/eclipse.cmake](../cmake/eclipse.cmake)) fetches Eclipse, BSE and SunshineHeaderInterface at pinned revisions into the build directory (`SMS_ECLIPSE_SRC_DIR` to put them elsewhere), fixes them up mechanically ([fixup_sources.py](../platform/mods/eclipse/fixup_sources.py)) and builds them with clang into the 32-bit port.
+Nothing of theirs is kept in this repository.
+Without it, the build is the plain port: every hook below is in the source but finds nothing registered and runs the original code.
 
-The route that reuses the most is to build BSE and Eclipse from their own sources into the port, 32-bit first:
+## How the port runs it
 
-1. **Build.** Compile BSE's and Eclipse's C++ with the port's compiler against SunshineHeaderInterface, leaving out the Kuribo loader, the PowerPC assembly and the parts of BSE Eclipse does not use.
-   Fetch them at build time (not vendored), as an optional component switched on by `mod = eclipse`.
-2. **Layouts.** The 32-bit port lays out the game's classes exactly as retail, so SunshineHeaderInterface's view of an object is valid on the port's objects; static asserts on the sizes and member offsets of the classes Eclipse touches (TMario, TMarDirector, TMapObjBase, the actor bases...) keep that true.
-   The 64-bit build lays them out differently (8-byte pointers), so it needs the headers adapted the way the decomp was (`PTR32`), later.
-3. **Linking.** SunshineHeaderInterface declares the game's functions and globals by their retail names, which the decomp also uses; where a signature differs (for example `u32` as `unsigned long` there and `unsigned int` here), a generated alias bridges the two names.
-4. **Hooks.** Each `SMS_PATCH_BL`/`SMS_PATCH_B` becomes a hook point in the decomp source, added by a port patch (`#ifdef TARGET_PC`) that calls the registered replacement when a mod set one and the original call otherwise.
-   The inventory names the call each `bl` redirects, which pins the source line.
-   `SMS_WRITE_32` patches (changed constants, removed branches) are translated by hand, each into a hook or a variable the mod sets.
-   A switch keeps the vanilla game byte-for-byte unchanged in behaviour when no mod is on.
-5. **Data.** The Eclipse ISO that `get.py eclipse` builds, used as the disc; the port runs its own build of Eclipse's code in place of the one on that disc's `main.dol`.
-6. **Milestones.** BSE's callback and registration API working with an empty module; Eclipse compiling and linking; booting the Eclipse ISO to its title and character select; its first stage; then the rest of its hooks.
+- **Patches.** Each `SMS_PATCH_BL`/`SMS_PATCH_B`/`SMS_WRITE_32` registers under its retail address in the port's registry ([modhooks.cpp](../platform/mods/modhooks.cpp)) instead of writing to memory, from the mods' static constructors, which run when the modules load (after `TApplication::initialize` has the heaps and DVD up), as Kuribo runs them.
+  BSE's run-time instruction rewrites (`PowerPC::writeU32`) are recorded the same way.
+- **Hooks.** The decomp source asks the registry at each patched call site ([sms_modhook.h](../src/port_include/sms_modhook.h)).
+  [tools/mods/gen_hooks.py](../tools/mods/gen_hooks.py) writes most of them (`decomp-patches/zz-modhook-50-calls.patch`): it finds the retail call in the disassembly, the matching call in the source, and emits a typed hook.
+  It also passes on what a mod function reads from its caller's registers (`SMS_FROM_GPR`), worked out from the retail code around the call, and reorders arguments into the mod function's declared order (the PowerPC keeps integer and float arguments apart, so a mod may declare them in any interleaving).
+  The rest are hand-written `modhook-*` patches.
+- **Game functions by retail name.** SunshineHeaderInterface's `raw_fn.hxx` calls game functions through casts of their retail addresses; those go to typed trampolines into the decomp, generated by [tools/mods/gen_rawfn.py](../tools/mods/gen_rawfn.py).
+  Functions the decomp only has inline are in [port_shims.cpp](../platform/mods/eclipse/port_shims.cpp).
+- **Layouts.** The 32-bit port lays out the game's classes as retail does (the `layout-01` patch removes Itanium tail-padding reuse), so SunshineHeaderInterface's view of an object is valid on the port's.
+- **Data.** The Eclipse disc as it is, with the port's byte-order conversion; two converter fixes came from it (JAudio files read straight from disc, and J3D files whose empty sections point at the next table).
 
-## Feasibility checks (2026-09-25)
+For bisecting, `SMS_MOD_LIST=1` prints every registered patch and `SMS_MOD_DISABLE=addr,addr` switches patches off by retail address; `SMS_MOD_REPORT=1` lists, at exit, patches the game never reached.
 
-Run outside this repository, on Eclipse `5274979` and BSE's current source, with Clang 18 for 32-bit x86 (`-m32`) against SunshineHeaderInterface:
+## Status (2026-09-26)
 
-- **Compiling.** Eclipse's 61 source files give 39 errors in total, BSE's 82 give 82; nearly all are missing include paths (BSE's `libs/` and generated headers), an undefined version macro and a few field designators, not code that depends on the PowerPC.
-- **Linking.** 21 Eclipse files that compile as they are reference 393 outside symbols; 318 of them are defined in the 32-bit port binary under the same mangled names.
-  The rest are Eclipse's and BSE's own, and a few game functions the decomp only has inline (`JUtility::TColor::TColor()`, `JGeometry::TVec3<float>::add`, `JDrama::TNameRefGen::getInstance`), which a small shim can define.
-- **Layouts.** SunshineHeaderInterface puts `TMario::mState` at 0x7C and `mSpeed` at 0xA4, where the decomp has `mStatus` and `mVel`, and gives `TMario` 0x4290 bytes; checking every class Eclipse touches is step 2 of the plan.
-
-So the code side looks like engineering rather than research: the hooks (step 4) are the bulk of it.
+- The 32-bit port boots the Eclipse disc to its title screen, file select (save-file creation included) and first stage, and runs it with Eclipse's dialogue and HUD.
+- **BetterSunshineMoveset.** Eclipse's disc also loads a third module, BetterSunshineMoveset, and Eclipse refuses to start without it.
+  It is not built in yet, so the runs above switch off BSE's replacement of the application loop, where that check happens: `SMS_MOD_DISABLE=80005624`.
+  Building it in is the next step, pending a decision to fetch that repository too.
+- **Hooks left.** 194 of 257 redirected calls are hooked; the rest need hand-written hooks, and about 150 of BSE's patches replace an instruction inside a function rather than a call (the scenario-select screen's table rewrite, Mario's extended animation tables and many physics tweaks), each ported by hand.
+- **64-bit.** Not yet: SunshineHeaderInterface describes 32-bit layouts.
 
 ## Licensing
 
