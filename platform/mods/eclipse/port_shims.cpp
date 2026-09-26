@@ -114,6 +114,7 @@ SHIM(JDrama::TNameRef*, shim_TNameRefGen_getRoot, "_ZN6JDrama11TNameRefGen14getR
 	return self->getRootNameRef();
 }
 SHIM(void, shim_TVec3_add, "_ZN9JGeometry5TVec3IfE3addERKS1_", Vec3f* self, const Vec3f* b) { self->add(*b); }
+SHIM(void, shim_TVec3_sub1, "_ZN9JGeometry5TVec3IfE3subERKS1_", Vec3f* self, const Vec3f* b) { self->sub(*b); }
 SHIM(void, shim_TVec3_sub2, "_ZN9JGeometry5TVec3IfE3subERKS1_S3_", Vec3f* self, const Vec3f* a,
      const Vec3f* b)
 {

@@ -404,7 +404,19 @@ def is_statement(clean, start, close):
     j = start - 1
     while j >= 0 and clean[j] in " \t\n":
         j -= 1
-    prev_ok = j < 0 or clean[j] in ";{})" or clean[max(0, j - 3):j + 1] == "else"
+    prev_ok = j < 0 or clean[j] in ";{}" or clean[max(0, j - 3):j + 1] == "else"
+    if not prev_ok and clean[j] == ")":
+        # the end of an if/while/for condition, not of a cast
+        depth, i = 0, j
+        while i >= 0:
+            if clean[i] == ")":
+                depth += 1
+            elif clean[i] == "(":
+                depth -= 1
+                if depth == 0:
+                    break
+            i -= 1
+        prev_ok = bool(re.search(r"\b(if|while|for)\s*$", clean[:max(i, 0)]))
     k = close + 1
     while k < len(clean) and clean[k] in " \t\n":
         k += 1
@@ -483,11 +495,36 @@ def count_args(text):
     return n
 
 
+CTX = []  # register context for the hook being written: [(reg, expression)]
+
+
 def hook_expr(addr, stmt, original, fntype_expr, call_args):
     """The hook, written out (a statement expression): the mod's function when
     one is registered at addr, else the original call. sms_mod_r_ is the
-    original call's type."""
+    original call's type. CTX: the retail registers the mod function reads."""
+    # The PowerPC passes integers and pointers in r3..., floats in f1...,
+    # each in order: a mod function may declare them interleaved otherwise
+    # than the function it stands in for (TMap::checkGround(x, y, z, water)
+    # on `this` as (x, y, z, map, water)). Called with its own order here.
+    types, mod = CALL["types"], CALL["mod"]
+    if types is not None and mod is not None:
+        args = [a for c in call_args for a in split_args(c)]
+        if len(args) == len(types) and [is_fpr(t) for t in types][:len(mod)] != [is_fpr(t) for t in mod]:
+            gprs = [(a, t) for a, t in zip(args, types) if not is_fpr(t)]
+            fprs = [(a, t) for a, t in zip(args, types) if is_fpr(t)]
+            picked = []
+            for mt in mod:
+                pool = fprs if is_fpr(mt) else gprs
+                if not pool:
+                    picked = None
+                    break
+                picked.append(pool.pop(0))
+            if picked is not None:
+                fntype_expr = "sms_mod_r_ (*)(%s)" % ", ".join(t for _, t in picked)
+                call_args = [a for a, _ in picked]
     call = "((%s)sms_mod_t_)(%s)" % (fntype_expr, ", ".join(call_args))
+    if CTX:
+        call = "(%s, %s)" % (", ".join("SMS_MOD_GPR(%d, %s)" % (r, e) for r, e in CTX), call)
     head = "typedef __typeof__(%s) sms_mod_r_; void* sms_mod_t_ = SMS_MOD_SITE(0x%08X);" % (original, addr)
     if stmt:
         return "({ %s if (sms_mod_t_) %s; else %s; })" % (head, call, original)
@@ -499,6 +536,168 @@ def member_fntype(original, qual, name, sig):
     pmf = "sms_mod_r_ (%s::*)(%s)%s" % (qual, ", ".join(params), " const" if is_const else "")
     return "__typeof__(sms_mod_as_free(static_cast<%s>(&%s::%s)))" % (pmf, qual, name)
 
+
+# Registers the walk cannot name, read off the retail code by hand:
+# (site, register) -> the source expression it holds there.
+REGISTER_OVERRIDES = {
+    (0x8021B144, 31): "actor",  # TLiveManager::clipActorsAux: the actor being clipped
+}
+
+# Where the mods' sources are (for the registers their functions read).
+MOD_ROOTS = ["/home/user/ecl-src/bse/src", "/home/user/ecl-src/eclipse/src"]
+
+
+def mod_register_reads(roots):
+    """mod function name -> the GPRs it reads from its caller (SMS_FROM_GPR)."""
+    out = {}
+    for root in roots:
+        for dp, _, fs in os.walk(root):
+            for f in fs:
+                if not f.endswith((".cpp", ".c")):
+                    continue
+                t = blank_comments_strings(open(os.path.join(dp, f), encoding="utf-8", errors="replace").read())
+                for m in re.finditer(r"SMS_FROM_GPR\s*\(\s*(\d+)", t):
+                    # the enclosing function: the last definition header before it at depth 0
+                    depth, i, start = 0, m.start(), None
+                    while i > 0:
+                        i -= 1
+                        if t[i] == "}":
+                            depth += 1
+                        elif t[i] == "{":
+                            if depth == 0:
+                                start = i
+                                break
+                            depth -= 1
+                    if start is None:
+                        continue
+                    h = re.search(r"(\w+)\s*\([^;{}]*\)\s*(?:const\s*)?$", t[:start])
+                    if h:
+                        out.setdefault(h.group(1), set()).add(int(m.group(1)))
+    return out
+
+
+def mod_signatures(roots):
+    """mod function name -> its parameter types, as declared at its definition."""
+    out = {}
+    for root in roots:
+        for dp, _, fs in os.walk(root):
+            for f in fs:
+                if not f.endswith((".cpp", ".c")):
+                    continue
+                t = blank_comments_strings(open(os.path.join(dp, f), encoding="utf-8", errors="replace").read())
+                for m in re.finditer(r"\b(\w+)\s*\(([^;{}()]*(?:\([^;{}()]*\)[^;{}()]*)*)\)\s*(?:const\s*)?\{", t):
+                    name, plist = m.group(1), m.group(2).strip()
+                    if name in ("if", "while", "for", "switch", "catch") or name in out:
+                        continue
+                    types = []
+                    for part in plist.split(",") if plist and plist != "void" else []:
+                        part = re.sub(r"=.*", "", part).strip()
+                        mm = re.match(r"(.*?)\s*\b\w+\s*(\[[^\]]*\])?$", part)
+                        types.append((mm.group(1) if mm and mm.group(1) else part).strip())
+                    out[name] = types
+    return out
+
+
+def is_fpr(t):
+    return re.sub(r"\bconst\b", "", t).strip() in ("f32", "float", "f64", "double")
+
+
+def split_args(text):
+    """A call's argument text split at its top-level commas."""
+    out, depth, cur = [], 0, ""
+    for ch in text:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        if ch == "," and depth == 0:
+            out.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    if cur.strip():
+        out.append(cur.strip())
+    return out
+
+
+# The call being hooked, for hook_expr: its parameter types (the object
+# first for a member), and the mod function's declared parameter types.
+CALL = {"types": None, "mod": None}
+
+
+NOT_WRITES = ("st", "cmp", "b", "mt", "tw", "dcb", "icb", "sync", "isync", "nop", "crclr", "crset", "crxor")
+
+
+def register_at(ins, site, reg, params):
+    """A C++ expression for what retail register r`reg` holds at the
+    instruction at `site`, from a straight-line walk of the function up to it
+    (params: the expressions r3, r4... hold on entry). It follows copies,
+    loads through a known pointer (the port keeps the retail layouts),
+    address arithmetic, constants and small-data globals. None when that
+    cannot be told."""
+    held = {3 + i: e for i, e in enumerate(params) if e}
+    for addr, mn, ops in ins:
+        if addr >= site:
+            break
+        if mn in ("bl", "blrl", "bctrl"):
+            # a call leaves the volatile registers undefined
+            for r in [0] + list(range(3, 13)):
+                held.pop(r, None)
+            continue
+        if mn.startswith(NOT_WRITES):
+            continue
+        parts = [x.strip() for x in ops.split(",")]
+        m = re.fullmatch(r"r(\d+)", parts[0]) if parts else None
+        if not m:
+            continue  # writes a float or condition register
+        dst = int(m.group(1))
+        val = None
+        if mn == "mr" and len(parts) > 1 and re.fullmatch(r"r\d+", parts[1]):
+            val = held.get(int(parts[1][1:]))
+        elif mn == "li" and len(parts) > 1 and re.fullmatch(r"-?(0x[0-9a-fA-F]+|\d+)", parts[1]):
+            val = parts[1]
+        elif mn == "lwz" and len(parts) > 1:
+            mm = re.fullmatch(r"(-?(?:0x[0-9a-fA-F]+|\d+))\(r(\d+)\)", parts[1])
+            ms = re.fullmatch(r"([A-Za-z_]\w*)@sda21\(r[02]\)", parts[1])
+            if mm and held.get(int(mm.group(2))):
+                val = "*(uintptr_t*)((char*)(%s) + %s)" % (held[int(mm.group(2))], mm.group(1))
+            elif ms and "__" not in ms.group(1):
+                val = "(uintptr_t)%s" % ms.group(1)
+        elif mn == "addi" and len(parts) > 2 and re.fullmatch(r"-?(0x[0-9a-fA-F]+|\d+)", parts[2]):
+            if held.get(int(parts[1][1:])) if re.fullmatch(r"r\d+", parts[1]) else None:
+                val = "((char*)(%s) + %s)" % (held[int(parts[1][1:])], parts[2])
+        if val is None:
+            held.pop(dst, None)
+        else:
+            held[dst] = val
+    return held.get(reg)
+
+
+def param_names(clean, text, body_start):
+    """The parameter names of the function whose body opens at body_start."""
+    i = clean.rfind(")", 0, body_start)
+    j = i
+    depth = 0
+    while j > 0:
+        if clean[j] == ")":
+            depth += 1
+        elif clean[j] == "(":
+            depth -= 1
+            if depth == 0:
+                break
+        j -= 1
+    names = []
+    for part in text[j + 1:i].split(","):
+        m = re.search(r"(\w+)\s*(?:\[[^\]]*\])?\s*(?:=.*)?$", part.strip())
+        names.append(m.group(1) if m and part.strip() not in ("", "void") else None)
+    return names
+
+
+# Inline wrappers in the decomp that pass their arguments straight on to the
+# function a retail call site calls: callee name -> wrapper names.
+INLINE_WRAPPERS = {
+    "getGlbResource": ("JKRGetResource",),
+}
 
 VIRTUAL_CALLS = {
     0x802A616C: "direct__Q26JDrama9TDirectorFv",                  # TApplication::gameLoop
@@ -555,8 +754,12 @@ def main():
     patches = json.load(open(args[0]))
     asm_dir = args[1]
 
-    # every bl in the retail functions: fn -> [(addr, callee)]
+    # every bl in the retail functions: fn -> [(addr, callee)]; every
+    # instruction: fn -> [(addr, mnemonic, operands)]
     bls = {}
+    insns = {}
+    modregs = mod_register_reads(MOD_ROOTS)
+    modsigs = mod_signatures(MOD_ROOTS)
     import glob
     for f in glob.glob(asm_dir + "/**/*.s", recursive=True):
         fn = None
@@ -565,9 +768,11 @@ def main():
             if m:
                 fn = m.group(1).strip('"')
                 continue
-            m = re.match(r"/\* ([0-9A-F]{8}) [0-9A-F]{8}  [0-9A-F ]{11} \*/\s*bl (\S+)", line)
+            m = re.match(r"/\* ([0-9A-F]{8}) [0-9A-F]{8}  [0-9A-F ]{11} \*/\s*(\S+)\s*(.*)", line)
             if m and fn:
-                bls.setdefault(fn, []).append((int(m.group(1), 16), m.group(2).strip('"')))
+                insns.setdefault(fn, []).append((int(m.group(1), 16), m.group(2), m.group(3).strip()))
+                if m.group(2) == "bl":
+                    bls.setdefault(fn, []).append((int(m.group(1), 16), m.group(3).strip().strip('"')))
 
     # Virtual calls (blrl) a mod redirects: the function each one calls, read
     # off the retail code around it; treated as a direct call to it.
@@ -598,6 +803,7 @@ def main():
     texts = {f: open(os.path.join(b, f), encoding="utf-8", errors="surrogateescape").read() for f in set(srcs.values())}
 
     done, manual = [], []
+    ctx_unknown = []  # [(patch, register)] the hook could not supply
     edits = {}  # file -> [(start, end, replacement)]
     for p in uniq:
         why = None
@@ -620,6 +826,9 @@ def main():
             manual.append((p, "definition of %s not found once in %s" % ("::".join(caller[0] + [caller[1]]), f)))
             continue
         sites = call_sites(clean, body[0], body[1], target[1])
+        for alias in INLINE_WRAPPERS.get(target[1], ()):
+            # calls through an inline wrapper that passes its arguments on
+            sites = sorted(sites + call_sites(clean, body[0], body[1], alias))
         if not sites and not target[0] and target[1].startswith("PS"):
             # the SDK's paired-single matrix functions, called by their
             # generic names (MTXCopy is PSMTXCopy)
@@ -629,6 +838,29 @@ def main():
             manual.append((p, "%d calls to %s in the source, %d in retail" % (len(sites), target[1], len(retail))))
             continue
         name_at = body[0] + sites[retail.index(p["addr"])]
+        # the retail registers the mod function reads (SMS_FROM_GPR)
+        CTX[:] = []
+        regs = modregs.get(p["value"].lstrip("&"), ())
+        if regs:
+            names = param_names(clean, texts[f], body[0])
+            member = bool(caller[0]) and not is_namespace(caller[0]) and not is_static_member(
+                None, caller[0], caller[1])
+            exprs = (["this"] if member else []) + names
+            for r in sorted(regs):
+                e = REGISTER_OVERRIDES.get((p["addr"], r)) or register_at(insns.get(fn, []), p["addr"], r, exprs)
+                if e is None:
+                    ctx_unknown.append((p, r))
+                else:
+                    CTX.append((r, e))
+        sig_ = cw_signature(callee)
+        CALL["mod"] = modsigs.get(p["value"].lstrip("&"))
+        CALL["types"] = None
+        if sig_ is not None:
+            ptypes = [t for t in sig_[0] if t != "void"]
+            is_member = bool(target[0]) and not is_namespace(target[0]) and not (
+                not sig_[1] and is_static_member(None, target[0], target[1]))
+            CALL["types"] = ((["%s%s*" % ("const " if sig_[1] else "", "::".join(target[0]))] if is_member else [])
+                             + ptypes)
         paren = clean.index("(", name_at)
         close = match_paren(clean, paren)
         argtext = texts[f][paren + 1:close].strip()
@@ -720,6 +952,8 @@ def main():
     open(os.path.join(PATCHES, OUT_NAME), "w", encoding="utf-8", errors="surrogateescape").write(
         reason + "\n" + diff)
     print("hooked %d of %d redirected calls; %d need a hand-written hook" % (len(done), len(uniq), len(manual)))
+    for p, r in ctx_unknown:
+        print("  %08X reads r%d, which the hook cannot supply  [%s]" % (p["addr"], r, p["where"]))
     for p, why in manual:
         print("  %08X %-40s %s  [%s]" % (p["addr"], (p.get("fn") or "?")[:40], why, p["where"]))
     shutil.rmtree(work)

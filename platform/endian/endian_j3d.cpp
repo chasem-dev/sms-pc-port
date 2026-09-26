@@ -25,8 +25,13 @@ int layout_sections(Section* s, int n, u32 limit)
 	for (int i = 0; i < n; i++) {
 		if (s[i].off == 0 || s[i].off >= limit)
 			continue;
-		if (m > 0 && s[m - 1].off == s[i].off)
+		// Sections at the same offset: the empty ones in front point where the
+		// next table starts (some tools write that instead of 0, Super Mario
+		// Eclipse's models among them), so the last one owns the data.
+		if (m > 0 && s[m - 1].off == s[i].off) {
+			s[m - 1] = s[i];
 			continue;
+		}
 		s[m++] = s[i];
 	}
 	for (int i = 0; i < m; i++)

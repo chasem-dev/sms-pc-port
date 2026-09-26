@@ -21,6 +21,11 @@
 extern "C" void* sms_mod_target(unsigned int addr);
 extern "C" int sms_mod_word(unsigned int addr, unsigned int* value);
 extern "C" unsigned int sms_mod_generation;
+extern "C" uintptr_t sms_mod_gpr[32];
+
+// What retail register r`reg` holds at a hooked call, for a mod function
+// that reads it (BetterSunshineEngine's SMS_FROM_GPR).
+#define SMS_MOD_GPR(reg, value) (sms_mod_gpr[reg] = (uintptr_t)(value))
 
 static inline void* sms_mod_site_(unsigned int addr, void** cache, unsigned int* gen)
 {

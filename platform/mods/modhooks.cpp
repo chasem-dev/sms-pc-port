@@ -88,6 +88,11 @@ void report()
 
 } // namespace
 
+// The retail registers a mod function reads at a call site (SMS_FROM_GPR),
+// set by the port's hook there (SMS_MOD_GPR in sms_modhook.h).
+extern "C" uintptr_t sms_mod_gpr[32] = {};
+extern "C" double sms_mod_fpr[32]    = {};
+
 // Bumped whenever an answer may change; hook sites cache per generation.
 extern "C" unsigned int sms_mod_generation = 1;
 namespace {
