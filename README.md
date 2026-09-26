@@ -62,7 +62,7 @@ When both a 32-bit and a 64-bit build exist, `./run.sh` runs the 32-bit one unle
 
 ## Options
 
-Set these before the command, for example `SMS_SKIP_MOVIES=1 ./run.sh`:
+Options can be kept in [`settings.txt`](settings.txt) (`resolution = 2`, `texture_packs = on`, ...), or set as environment variables before the command, for example `SMS_SKIP_MOVIES=1 ./run.sh`; an environment variable wins over the file:
 
 | Option | Effect |
 | --- | --- |
@@ -73,6 +73,12 @@ Set these before the command, for example `SMS_SKIP_MOVIES=1 ./run.sh`:
 | `SMS_DISC_IMAGE=file` | disc image to use when none is passed |
 | `--headless` (after the image) or `SMS_HEADLESS=1` | no window, for testing (Linux only) |
 | `SMS_OVERLAY=1` | open the debug overlay at start |
+| `SMS_GX_SCALE=n` | render at n times the GameCube's resolution |
+| `SMS_WIDESCREEN=16:9` | widescreen (also `21:9`, `16:10`): a wider view, with the HUD and menus kept 4:3 in the middle |
+| `SMS_FRAME_RATE=60` | gameplay at 60 frames per second (the game's own timing, not sped up); logos, menus and movies stay at 30 |
+| `SMS_WIDESCREEN_HUD=edges` | with widescreen, move the gameplay HUD's counters to the left edge and the water gauge to the right one |
+
+Optional mods, such as HD texture packs, go in [`mods/`](mods/README.md); `python3 tools/mods/get.py textures` downloads and installs the UHD texture pack there.
 
 Saves go to a memory card in slot A, kept as files in `~/.local/share/sms-port/card-a` on Linux and macOS (`$XDG_DATA_HOME/sms-port/card-a` if that is set) and in `%APPDATA%\sms-port\card-a` on Windows.
 Every other switch (debugging, tracing, graphics) is listed in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#environment-variables).

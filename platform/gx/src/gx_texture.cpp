@@ -196,6 +196,7 @@ struct TexEntry {
     uint64_t dataHash = 0, tlutHash = 0;
     uint32_t checkedGen = 0;
     uint32_t bytes = 0;
+    std::string hires;  // the texture pack's replacement for the current data, if any
 };
 
 static std::unordered_map<TexKey, TexEntry, TexKeyHash> s_cache;
@@ -241,6 +242,7 @@ void textureInvalidateRange(const void* p, uint32_t size) {
 
 void textureShutdown() {
     glcInvalidate();
+    hiresShutdown();
     for (auto& kv : s_cache) glDeleteTextures(1, &kv.second.tex);
     s_cache.clear();
     s_ranges.clear();
@@ -394,8 +396,13 @@ uint32_t encodeTexture(const uint8_t* rgba, uint32_t fmt, uint32_t w, uint32_t h
 // sampler bind instead of seven glTexParameter calls.
 static std::unordered_map<uint64_t, GLuint> s_samplers;
 
-static GLuint samplerFor(uint32_t mode0, uint32_t mode1, uint32_t levels) {
-    uint64_t key = uint64_t(mode0 & 0x1FFFF) | uint64_t(mode1 & 0xFFFF) << 17 | uint64_t(levels > 1) << 33;
+// hires: log2 of a texture pack replacement's size over the GX size (-1 for
+// none). Its LOD range moves up by that much, so the same screen size samples
+// the same level of detail; a replacement of a texture without mipmaps gets
+// generated ones down to the original size, so it does not shimmer.
+static GLuint samplerFor(uint32_t mode0, uint32_t mode1, uint32_t levels, int hires = -1) {
+    uint64_t key = uint64_t(mode0 & 0x1FFFF) | uint64_t(mode1 & 0xFFFF) << 17 | uint64_t(levels > 1) << 33 |
+                   uint64_t(hires + 1) << 34;
     GLuint& smp = s_samplers[key];
     if (smp) return smp;
     glGenSamplers(1, &smp);
@@ -407,13 +414,25 @@ static GLuint samplerFor(uint32_t mode0, uint32_t mode1, uint32_t levels) {
     bool lin = (mf & 4) != 0;
     uint32_t mip = mf & 3;  // 0 none, 1 nearest mip, 2 linear mip
     GLint minf;
-    if (levels <= 1 || mip == 0) minf = lin ? GL_LINEAR : GL_NEAREST;
-    else if (mip == 1) minf = lin ? GL_LINEAR_MIPMAP_NEAREST : GL_NEAREST_MIPMAP_NEAREST;
-    else minf = lin ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_LINEAR;
+    float minLod = float(mode1 & 0xFF) / 16.0f, maxLod = float((mode1 >> 8) & 0xFF) / 16.0f;
+    if (hires > 0 && (levels <= 1 || mip == 0)) {  // a plain texture's upscale
+        minf = lin ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST;
+        minLod = 0;
+        maxLod = float(hires);
+    } else if (levels <= 1 || mip == 0) {
+        minf = lin ? GL_LINEAR : GL_NEAREST;
+    } else {
+        minf = mip == 1 ? (lin ? GL_LINEAR_MIPMAP_NEAREST : GL_NEAREST_MIPMAP_NEAREST)
+                        : (lin ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_LINEAR);
+        if (hires > 0) {
+            minLod += float(hires);
+            maxLod += float(hires);
+        }
+    }
     glSamplerParameteri(smp, GL_TEXTURE_MIN_FILTER, minf);
     glSamplerParameterf(smp, GL_TEXTURE_LOD_BIAS, float(int8_t((mode0 >> 9) & 0xFF)) / 32.0f);
-    glSamplerParameterf(smp, GL_TEXTURE_MIN_LOD, float(mode1 & 0xFF) / 16.0f);
-    glSamplerParameterf(smp, GL_TEXTURE_MAX_LOD, float((mode1 >> 8) & 0xFF) / 16.0f);
+    glSamplerParameterf(smp, GL_TEXTURE_MIN_LOD, minLod);
+    glSamplerParameterf(smp, GL_TEXTURE_MAX_LOD, maxLod);
     return smp;
 }
 
@@ -493,6 +512,22 @@ unsigned bindTextureMap(int map, float* outW, float* outH) {
         e.bytes = total;
     }
     glcBindTexture(map, e.tex);
+    // the pack names' _m: mipmap filtering with a maximum LOD above 0
+    bool mipmapped = ((mode0 >> 5) & 3) != 0 && ((mode1 >> 8) & 0xFF) != 0;
+    if (upload && hiresDumpDir()) {  // the pack name, and the image, for making a pack
+        std::vector<uint8_t> rgba(size_t(w) * h * 4);
+        decodeTexture(ptr, fmt, w, h, tlut, (tlutReg >> 10) & 3, rgba.data());
+        hiresDump(hiresName(ptr, fmt, w, h, mipmapped, tlut, tlutBytes, false), rgba.data(), w, h);
+    }
+    if (upload && hiresEnabled()) {  // a texture pack's replacement for the new data
+        e.hires = hiresName(ptr, fmt, w, h, mipmapped, tlut, tlutBytes, true);
+        // the same image dumped from a use with the other mipmap setting
+        if (e.hires.empty()) e.hires = hiresName(ptr, fmt, w, h, !mipmapped, tlut, tlutBytes, true);
+        if (hiresLog()) {
+            std::string n = e.hires.empty() ? hiresName(ptr, fmt, w, h, mipmapped, tlut, tlutBytes, false) : e.hires;
+            logmsg("texture %p %s%s", static_cast<const void*>(ptr), n.c_str(), e.hires.empty() ? "" : " (replaced)");
+        }
+    }
     if (upload) {
         glcActiveUnit(map);  // the upload targets the active unit's texture
         g_statTexUploads++;
@@ -510,6 +545,14 @@ unsigned bindTextureMap(int map, float* outW, float* outH) {
         }
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, GLint(levels - 1));
+    }
+    if (!e.hires.empty()) {  // the replacement, once decoded (the original meanwhile)
+        int scale = 0;
+        if (GLuint t = hiresTexture(e.hires, map, w, h, &scale)) {
+            glcBindTexture(map, t);
+            glcBindSampler(map, samplerFor(mode0, mode1, levels, scale));
+            return t;
+        }
     }
     glcBindSampler(map, samplerFor(mode0, mode1, levels));
     return e.tex;

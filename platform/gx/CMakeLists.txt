@@ -9,6 +9,7 @@ set(SMS_GX_SOURCES
     src/gl_loader.cpp
     src/gx_api.cpp
     src/gx_fifo.cpp
+    src/gx_hires.cpp
     src/gx_overlay.cpp
     src/gx_platform.cpp
     src/gx_render.cpp

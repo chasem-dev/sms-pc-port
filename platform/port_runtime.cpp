@@ -41,6 +41,34 @@ int port_disc_explicit = 0;
 // SMS_SKIP_MOVIES=1 reports every THP movie as finished at once (patch 0016).
 extern "C" int port_skip_movies;
 int port_skip_movies = 0;
+// SMS_WIDESCREEN: the displayed width over the GameCube's 4:3 (1 when off);
+// the game camera (widescreen-01 patch) and sms_gx widen by it.
+extern "C" float port_widescreen;
+float port_widescreen = 1.0f;
+extern "C" __attribute__((weak)) void GXPC_SetWidescreen(float widthOver43);
+// SMS_FRAME_RATE: 30 (the game's own) or 60, for gameplay (the Application
+// patch framerate-01 reads it; logos, menus and movies stay at 30).
+extern "C" int port_frame_rate;
+int port_frame_rate = 30;
+
+// "16:9", "21:9", "16:10", "on" (16:9), "off"/"0", or a ratio such as 1.85.
+static float parse_widescreen(const char* v)
+{
+	if (!v || !*v || !strcmp(v, "0") || !strcmp(v, "off"))
+		return 1.0f;
+	float aspect = 16.0f / 9.0f;
+	float a = 0, b = 0;
+	if (sscanf(v, "%f:%f", &a, &b) == 2 && a > 0 && b > 0)
+		aspect = a / b;
+	else if (strcmp(v, "1") && strcmp(v, "on") && atof(v) > 0)
+		aspect = (float)atof(v);
+	float f = aspect / (4.0f / 3.0f);
+	if (f < 1.0f)
+		f = 1.0f;
+	if (f > 3.0f)
+		f = 3.0f;
+	return f;
+}
 
 extern "C" void port_log(const char* fmt, ...)
 {
@@ -310,11 +338,112 @@ static void pick_glx_vendor()
 #endif
 }
 
+// settings.txt: one option per line, `name = value`, read at start; an
+// environment variable that is already set wins. The names in kSettings stand
+// for the environment variables beside them (on/off become 1/0); any SMS_*
+// variable can be given by its own name too. Found in the working directory,
+// or two levels up when started from build/<os>-<arch>/, or at SMS_SETTINGS.
+static const struct {
+	const char* name;
+	const char* env;
+} kSettings[] = {
+	{ "texture_packs", "SMS_TEXTURE_PACKS" }, // on (mods/textures), off, or folders
+	{ "texture_pack_mb", "SMS_TEXTURE_PACK_MB" },
+	{ "widescreen", "SMS_WIDESCREEN" },
+	{ "widescreen_hud", "SMS_WIDESCREEN_HUD" }, // centre or edges
+	{ "frame_rate", "SMS_FRAME_RATE" },         // 30 or 60
+	{ "mod", "SMS_MOD" },
+	{ "resolution", "SMS_GX_SCALE" },
+	{ "window_scale", "SMS_WINDOW_SCALE" },
+	{ "vsync", "SMS_VSYNC" },
+	{ "skip_movies", "SMS_SKIP_MOVIES" },
+	{ "audio", "SMS_AUDIO" },
+	{ "overlay", "SMS_OVERLAY" },
+	{ "save_dir", "SMS_SAVE_DIR" },
+	{ "disc_image", "SMS_DISC_IMAGE" },
+};
+
+static void load_settings()
+{
+	const char* path = getenv("SMS_SETTINGS");
+	FILE* f          = path ? fopen(path, "r") : NULL;
+	if (!path) {
+		path = "settings.txt";
+		f    = fopen(path, "r");
+		if (!f) {
+			path = "../../settings.txt"; // running from build/<os>-<arch>/
+			f    = fopen(path, "r");
+		}
+	}
+	if (!f)
+		return;
+	char line[1024];
+	int n = 0;
+	while (fgets(line, sizeof line, f)) {
+		char* p = line;
+		while (*p == ' ' || *p == '\t')
+			p++;
+		if (*p == '#' || *p == '\n' || *p == '\r' || !*p)
+			continue;
+		char* eq = strchr(p, '=');
+		if (!eq)
+			continue;
+		char* ke = eq;
+		while (ke > p && (ke[-1] == ' ' || ke[-1] == '\t'))
+			ke--;
+		*ke     = 0;
+		char* v = eq + 1;
+		while (*v == ' ' || *v == '\t')
+			v++;
+		char* ve = v + strlen(v);
+		while (ve > v && (ve[-1] == '\n' || ve[-1] == '\r' || ve[-1] == ' ' || ve[-1] == '\t'))
+			ve--;
+		*ve = 0;
+		if (char* c = strstr(v, " #")) { // trailing comment
+			*c = 0;
+			while (c > v && (c[-1] == ' ' || c[-1] == '\t'))
+				*--c = 0;
+		}
+		const char* env = strncmp(p, "SMS_", 4) == 0 ? p : NULL;
+		for (size_t i = 0; !env && i < sizeof kSettings / sizeof kSettings[0]; i++)
+			if (strcmp(p, kSettings[i].name) == 0)
+				env = kSettings[i].env;
+		if (!env) {
+			port_log("[port] %s: unknown setting \"%s\"\n", path, p);
+			continue;
+		}
+		const char* val = v;
+		if (!strcmp(v, "on") || !strcmp(v, "yes") || !strcmp(v, "true"))
+			val = "1";
+		else if (!strcmp(v, "off") || !strcmp(v, "no") || !strcmp(v, "false"))
+			val = "0";
+		if (!strcmp(env, "SMS_TEXTURE_PACKS") && !strcmp(val, "1"))
+			continue; // on: the default folder
+		if (!*val || getenv(env))
+			continue;
+		port_setenv(env, val, 0);
+		n++;
+	}
+	fclose(f);
+	if (n)
+		port_log("[port] %d settings from %s\n", n, path);
+}
+
 extern "C" void port_init(int argc, char** argv)
 {
+	load_settings();
 	pick_glx_vendor();
 	if (const char* m = getenv("SMS_SKIP_MOVIES"))
 		port_skip_movies = *m && strcmp(m, "0") != 0;
+	port_widescreen = parse_widescreen(getenv("SMS_WIDESCREEN"));
+	if (GXPC_SetWidescreen)
+		GXPC_SetWidescreen(port_widescreen);
+	if (port_widescreen > 1.0f)
+		port_log("[port] widescreen: %.3f times the 4:3 width\n", port_widescreen);
+	if (const char* r = getenv("SMS_FRAME_RATE"))
+		port_frame_rate = atoi(r) == 60 ? 60 : 30;
+	if (port_frame_rate == 60)
+		port_log("[port] frame rate: 60 during gameplay\n");
 	for (int i = 1; i < argc; i++)
 		if (strcmp(argv[i], "--headless") == 0) {
 			port_setenv("SMS_HEADLESS", "1", 1);

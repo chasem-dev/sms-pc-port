@@ -1,0 +1,93 @@
+Reason: port: SMS_WIDESCREEN_HUD=edges moves the gameplay HUD's pieces to the edges of a widescreen frame: TGCConsole2 marks its drawing as HUD (and brackets the message ticker, drawn outside its pane), and J2D panes report their extent as they draw, so sms_gx moves each piece (the outermost pane narrower than three quarters of the screen, with all it contains) as one
+--- a/src/GC2D/GCConsole2.cpp
++++ b/src/GC2D/GCConsole2.cpp
+@@ -1562,6 +1562,15 @@
+ // rogue include
+ #include <M3DUtil/InfectiousStrings.hpp>
+ 
++#ifdef TARGET_PC
++// sms_gx widescreen: the gameplay HUD's pieces can sit at the screen edges
++// (SMS_WIDESCREEN_HUD=edges); GXPC_SetHud marks what is HUD, and the
++// message ticker, drawn outside its pane, is bracketed as one piece.
++extern "C" void GXPC_SetHud(int on);
++extern "C" void GXPC_HudPaneBegin(float x1, float x2);
++extern "C" void GXPC_HudPaneEnd(void);
++#endif
++
+ TGCConsole2::TGCConsole2(const char* name)
+     : JDrama::TViewObj(name)
+     , unk10(0)
+@@ -4793,6 +4802,9 @@
+ 	}
+ 
+ 	if (flags & 8) {
++#ifdef TARGET_PC
++		GXPC_SetHud(1);
++#endif
+ 		J2DOrthoGraph graph(graphics->getViewport());
+ 		graph.setup2D();
+ 
+@@ -4804,6 +4816,9 @@
+ 		unkB0->draw(0, 0, &graph);
+ 
+ 		if (unk44 && !unk43 && !unk42 && unk520->getPane()->isVisible()) {
++#ifdef TARGET_PC
++			GXPC_HudPaneBegin(unk544.x1, unk544.x2);
++#endif
+ 			graphics->setScissor(
+ 			    JDrama::TRect(unk544.x1, unk544.y1, unk544.x2, unk544.y2));
+ 			graph.setup2D();
+@@ -4813,10 +4828,16 @@
+ 			unk528->draw(unk534.x1, unk534.y1);
+ 			unk528->hide();
+ 			unk52C->hide();
++#ifdef TARGET_PC
++			GXPC_HudPaneEnd();
++#endif
+ 		}
+ 
+ 		graphics->setScissor(graphics->mViewportRect);
+ 		graph.setup2D();
+ 		drawWaterOrJuice(this, graph);
++#ifdef TARGET_PC
++		GXPC_SetHud(0);
++#endif
+ 	}
+ }
+--- a/src/JSystem/J2D/J2DPane.cpp
++++ b/src/JSystem/J2D/J2DPane.cpp
+@@ -5,6 +5,14 @@
+ #include <dolphin/gx/GXGeometry.h>
+ #include <math.h>
+ 
++#ifdef TARGET_PC
++// sms_gx widescreen: panes report their extent as they are drawn, so the HUD
++// can move each piece (the outermost pane that is not a screen-sized
++// container, and all it contains) as one.
++extern "C" void GXPC_HudPaneBegin(float x1, float x2);
++extern "C" void GXPC_HudPaneEnd(void);
++#endif
++
+ J2DPane::J2DPane()
+     : mBounds()
+     , mGlobalBounds()
+@@ -199,6 +207,9 @@
+ 			mColorAlpha = mAlpha;
+ 		}
+ 
++#ifdef TARGET_PC
++		GXPC_HudPaneBegin(mGlobalBounds.x1, mGlobalBounds.x2);
++#endif
+ 		if (isOrthoGraf) {
+ 			((J2DOrthoGraph*)p_grafCtx)
+ 			    ->scissorBounds(&mScissorBounds, &mClipRect);
+@@ -218,6 +229,9 @@
+ 				iter.getObject()->draw(0, 0, p_grafCtx, isOrthoGraf);
+ 			}
+ 		}
++#ifdef TARGET_PC
++		GXPC_HudPaneEnd();
++#endif
+ 	}
+ }
+ 

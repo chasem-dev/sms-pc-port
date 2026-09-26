@@ -126,6 +126,8 @@ The everyday options are in the [README](../README.md#options); this is the full
 | `SMS_MOVIE`, `SMS_TRACE_OUT` | `.dtm` movie input and retail-format field traces (`platform/trace`) |
 | `SMS_MEM_MB`, `SMS_QUIET_STUBS=1` | emulated MEM1 size; silence first-call stub logs |
 | `SMS_OVERLAY=1` | open the debug overlay (frame rate and where the frame's time goes) at start |
+| `SMS_SETTINGS=file` | settings file to read instead of `settings.txt` (working directory, then `../../`); its names map to the variables in `kSettings` (`platform/port_runtime.cpp`), and any `SMS_*` name can be used as is |
+| `SMS_TEXTURE_PACKS`, `SMS_TEXTURE_PACK_MB`, `SMS_TEXTURE_PACK_LOG`, `SMS_TEXTURE_PACK_SYNC` | texture packs (see [mods/README.md](../mods/README.md)); `_SYNC=1` decodes on first use instead of on the worker thread, for repeatable captures |
 | `SMS_GX_*` | graphics switches (`platform/gx/README.md`) |
 
 ## Progress log
@@ -173,5 +175,13 @@ Measured headless on the 32-bit Linux build (Mesa llvmpipe software GL), 2026-09
   The GL state is shadowed and only changes are sent, samplers and uniforms are cached, each batch's vertices, indices and XF block go into one streamed buffer through one map, and the loader keeps packed per-format vertices and per-VAT readers.
   What is left on the game thread is mostly the game itself, the vertex loader and the EFB-copy write-back (`encodeTexture`, `hashBytes`); on llvmpipe the rest is rasterisation.
   The overlay's frame breakdown (README, "Frame rate") shows the same split on any machine.
+- **Widescreen** (`SMS_WIDESCREEN`): the game camera is widened by a port patch and sms_gx maps each draw into the wider EFB (`drawXMap` in `gx_render.cpp`).
+  The HUD stays 4:3 in the middle by default.
+  With `SMS_WIDESCREEN_HUD=edges` the gameplay HUD is anchored to the screen edges per piece, not per 2D batch (which pulls composite panes apart): `TGCConsole2::perform` marks its HUD drawing (`GXPC_SetHud`), and `J2DPane::draw` brackets each pane with its extent (`GXPC_HudPaneBegin`/`End`, patch `widescreen-03`).
+  A piece is the outermost pane narrower than three quarters of the screen (the HUD's containers are 600 wide), and moves by which third of the 4:3 frame its centre is in; draws outside any piece (the water tank, drawn in 3D) move by their own extent.
+- **60 frames per second** (`SMS_FRAME_RATE=60`, patches `framerate-*`): while `TMarDirector` runs, the display waits one retrace per frame instead of two and `SMSGetVSyncTimesPerSec` reports 60 instead of 30.
+  The game is built for this: `TMarDirector::direct` runs the movement pass in ticks of 1/120 s (it adds `600 / SMSGetVSyncTimesPerSec()` per frame and spends 5 per tick: four ticks a frame at 30, two at 60), animations advance `SMSGetAnmFrameRate()` per frame, and `TEmitterViewObj` runs particles that many times per frame, so gameplay keeps its speed; at 60 every other frame matches the 30 fps frame at the same moment.
+  What counts rendered frames instead is fixed where it shows: the root fader takes the rate in force, and the stage-entry wipe keeps its one-second lead (`TConsoleStr::getWipeCloseTime`).
+  The check is to run the same scripted input at 30 and at 60 and compare the frames captured at the same fields; random choices (particle scatter, idle NPCs) diverge, since the random numbers are drawn per frame.
 - **Software GL.**
   The 32-bit Linux build without the GPU driver's `:i386` libraries renders with llvmpipe and cannot hold 30 fps in the plaza; the port logs a warning and the overlay says so.
