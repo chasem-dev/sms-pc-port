@@ -784,6 +784,13 @@ def main():
     todo = [p for p in patches if p["kind"] == "SMS_PATCH_BL" and p.get("ins", "") and p["ins"].startswith("bl ")
             and not any(fnmatch.fnmatch(p["where"], g) for g in exclude)]
     # one hook per retail address (a later registration wins at run time anyway)
+    # addresses a hand-written modhook-* patch already hooks
+    hand = set()
+    for name in os.listdir(PATCHES):
+        if name.startswith("modhook-") and name.endswith(".patch"):
+            t = open(os.path.join(PATCHES, name), encoding="utf-8", errors="surrogateescape").read()
+            hand.update(int(a, 16) for a in re.findall(r"^\+.*SMS_MOD_\w+\(\s*(0x[0-9A-Fa-f]{8})", t, re.M))
+    todo = [p for p in todo if p["addr"] not in hand]
     seen, uniq = set(), []
     for p in todo:
         if p["addr"] not in seen:
