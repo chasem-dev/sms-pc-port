@@ -89,6 +89,16 @@ template <class R, class C, class A0, class A1, class A2, class A3, class A4, cl
 		unsigned int sms_mod_w_;                                                                   \
 		sms_mod_word((addr), &sms_mod_w_) ? sms_mod_w_ : (unsigned int)(original);                 \
 	})
+// A table a mod moved by rewriting the lis/addi pair that loads its address:
+// the halves it wrote at hiAddr and loAddr (the instructions' immediates),
+// else the original table.
+#define SMS_MOD_HILO(hiAddr, loAddr, original)                                                     \
+	({                                                                                             \
+		unsigned int sms_mod_hi_, sms_mod_lo_;                                                     \
+		(sms_mod_word((hiAddr), &sms_mod_hi_) && sms_mod_word((loAddr), &sms_mod_lo_))             \
+		    ? (__typeof__(&(original)[0]))(uintptr_t)((sms_mod_hi_ << 16) + (int)(short)sms_mod_lo_) \
+		    : &(original)[0];                                                                      \
+	})
 #endif
 
 #endif

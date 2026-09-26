@@ -146,6 +146,11 @@ def cw_type(s, i):
             if ret is None:
                 return None, i
             return "%s (*)(%s)" % (ret, ", ".join(p for p in params if p != "void")), j
+        m = re.match(r"A(\d+)_", s[i + 1:])
+        if m:
+            # pointer or reference to an array: PA4_f is float (*)[4]
+            t, j = cw_type(s, i + 1 + m.end())
+            return (("%s (%s)[%s]" % (t, "*" if c == "P" else "&", m.group(1))) if t else None), j
         t, j = cw_type(s, i + 1)
         return ((t + ("*" if c == "P" else "&")) if t else None), j
     if c == "U":
@@ -495,6 +500,13 @@ def member_fntype(original, qual, name, sig):
     return "__typeof__(sms_mod_as_free(static_cast<%s>(&%s::%s)))" % (pmf, qual, name)
 
 
+def c_name(sym):
+    """A C function's symbol is its name: -> ([], name, False), else None."""
+    if re.fullmatch(r"[A-Za-z_]\w*", sym) and "__" not in sym.lstrip("_"):
+        return [], sym, False
+    return None
+
+
 def free_fntype(original, fnref, sig):
     params, _ = sig
     return "__typeof__(static_cast<sms_mod_r_ (*)(%s)>(&%s))" % (", ".join(params), fnref)
@@ -573,8 +585,8 @@ def main():
         why = None
         f = srcs.get(p["addr"])
         fn, callee = p["fn"], p["ins"].split(None, 1)[1].strip('"')
-        caller = cw_demangle(fn)
-        target = cw_demangle(callee)
+        caller = cw_demangle(fn) or c_name(fn)
+        target = cw_demangle(callee) or c_name(callee)
         if not f:
             why = "no source file"
         elif not caller or not target:
@@ -590,6 +602,10 @@ def main():
             manual.append((p, "definition of %s not found once in %s" % ("::".join(caller[0] + [caller[1]]), f)))
             continue
         sites = call_sites(clean, body[0], body[1], target[1])
+        if not sites and not target[0] and target[1].startswith("PS"):
+            # the SDK's paired-single matrix functions, called by their
+            # generic names (MTXCopy is PSMTXCopy)
+            sites = call_sites(clean, body[0], body[1], target[1][2:])
         retail = [a for a, c in bls.get(fn, []) if c == callee]
         if len(sites) != len(retail) or p["addr"] not in retail:
             manual.append((p, "%d calls to %s in the source, %d in retail" % (len(sites), target[1], len(retail))))
@@ -637,10 +653,17 @@ def main():
                 manual.append((p, "called through %s::%s, an inline wrapper" % ("::".join(caller[0]), tname)))
                 continue
             sig = cw_signature(callee)
+            args_ = [argtext] if argtext else []
+            if sig is None and not tq and c_name(callee):
+                # a C function: its own type (a mod's replacement is called
+                # through it, variadic ones included, as the retail bl was)
+                rep = hook_expr(p["addr"], stmt, original, "__typeof__(&%s)" % tname, args_)
+                edits.setdefault(f, []).append((start, close + 1, rep, p))
+                done.append(p)
+                continue
             if sig is None:
                 manual.append((p, "cannot decode the signature of %s" % callee))
                 continue
-            args_ = [argtext] if argtext else []
             if tq and not q and is_namespace(tq):
                 rep = hook_expr(p["addr"], stmt, original, free_fntype(original, qual + "::" + tname, sig), args_)
             elif tq and not q and not sig[1] and is_static_member(texts, tq, tname):

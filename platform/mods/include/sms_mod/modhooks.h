@@ -36,6 +36,11 @@ void* sms_mod_target(uint32_t addr);
 /* The enabled word registered at `addr`: 1 and *value, else 0. */
 int sms_mod_word(uint32_t addr, uint32_t* value);
 
+/* A mod rewriting the retail game's code at run time (BetterSunshineEngine's
+ * PowerPC::writeU8/U16/U32): `size` bytes of `value` at the retail address
+ * `addr`, recorded as a word patch there, which hooks read back with
+ * sms_mod_word. Nothing is written: the address is not code in the port. */
+void sms_mod_code_write(uint32_t addr, uint32_t value, int size);
 /* Kuribo's by-name linking between modules. */
 void sms_mod_export(const char* name, void* fn);
 void* sms_mod_import(const char* name);

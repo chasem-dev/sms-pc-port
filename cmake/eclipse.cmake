@@ -92,7 +92,13 @@ ExternalProject_Add_Step(sms_eclipse_build rename_new
 # SDK functions the retail game never needed: built with the game's flags.
 target_sources(sms_game PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/platform/mods/eclipse/port_shims.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/platform/mods/eclipse/sdk_extras.cpp)
+  ${CMAKE_CURRENT_SOURCE_DIR}/platform/mods/eclipse/sdk_extras.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/platform/mods/eclipse/rawfn_trampolines.cpp)
+# The functions the mods call through SunshineHeaderInterface's raw_fn.hxx
+# (tools/mods/gen_rawfn.py): C++11 for their return conversion, and members
+# called as the retail code calls them whatever their access.
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/platform/mods/eclipse/rawfn_trampolines.cpp
+  PROPERTIES COMPILE_OPTIONS "-std=gnu++11;-fno-access-control")
 
 add_dependencies(sms sms_eclipse_build)
 target_compile_definitions(sms PRIVATE SMS_ECLIPSE=1)

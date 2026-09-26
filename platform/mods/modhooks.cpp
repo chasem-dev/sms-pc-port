@@ -104,6 +104,12 @@ extern "C" int sms_mod_register(int kind, uint32_t addr, uintptr_t value, int en
 	return id;
 }
 
+extern "C" void sms_mod_code_write(uint32_t addr, uint32_t value, int size)
+{
+	const char* what = size == 1 ? "PowerPC::writeU8" : size == 2 ? "PowerPC::writeU16" : "PowerPC::writeU32";
+	sms_mod_register(SMS_MOD_WORD, addr, value, 1, what, 0);
+}
+
 extern "C" void sms_mod_set_enabled(int id, int on)
 {
 	if (id >= 0 && id < (int)patches().size() && patches()[id].enabled != (on != 0)) {
