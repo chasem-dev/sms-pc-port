@@ -148,6 +148,9 @@ struct LowStack {
 	void* base;
 	pthread_t th;
 	bool used;
+	// Windows: set by the host thread once it has left this stack for good.
+	std::atomic<bool> left;
+	LowStack(void* p) : base(p), th(), used(true), left(false) {}
 };
 std::vector<LowStack*> g_low_stacks;
 
@@ -160,17 +163,51 @@ LowStack* low_stack()
 		if (pthread_tryjoin_np(ls->th, NULL) == 0)
 			return ls;
 #endif
+#ifdef _WIN32
+		if (ls->left.exchange(false))
+			return ls;
+#endif
 	}
 	void* p = port_low_alloc(kLowStackSize);
 	if (!p) {
 		port_log("[os] no memory below 2 GiB for a thread stack\n");
 		abort();
 	}
-	LowStack* ls = new LowStack{p, pthread_t(), true};
+	LowStack* ls = new LowStack(p);
 	g_low_stacks.push_back(ls);
 	return ls;
 }
+
+#ifdef _WIN32
+// winpthreads ignores pthread_attr_setstack: the host thread starts on its
+// own stack and switches to the low one (port_run_on_stack).
+struct LowStart {
+	OSThread* t;
+	LowStack* ls;
+};
+
+void* host_entry(void* p);
+
+void* host_entry_low(void* p)
+{
+	LowStart s = *(LowStart*)p;
+	delete (LowStart*)p;
+	port_run_on_stack(s.ls->base, kLowStackSize, host_entry, s.t);
+	s.ls->left.store(true);
+	return NULL;
+}
 #endif
+#endif
+
+// A host thread whose OSThread has exited or was cancelled ends here.
+__attribute__((noreturn)) void host_exit()
+{
+#if defined(_WIN32) && UINTPTR_MAX > 0xFFFFFFFFu
+	port_leave_stack();
+#else
+	pthread_exit(NULL);
+#endif
+}
 
 // Hand the CPU to `next` (already chosen). Returns once `self` owns the CPU
 // again, or never if `self` is exiting.
@@ -189,17 +226,26 @@ void switch_to(OSThread* self, OSThread* next, bool exiting)
 		hn->started = true;
 		pthread_attr_t a;
 		pthread_attr_init(&a);
-#if UINTPTR_MAX > 0xFFFFFFFFu
+#if UINTPTR_MAX > 0xFFFFFFFFu && defined(_WIN32)
+		LowStack* ls = low_stack();
+		pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
+		if (pthread_create(&hn->th, &a, host_entry_low, new LowStart{next, ls}) != 0) {
+			port_log("[os] pthread_create failed\n");
+			abort();
+		}
+#elif UINTPTR_MAX > 0xFFFFFFFFu
 		LowStack* ls = low_stack();
 		pthread_attr_setstack(&a, ls->base, kLowStackSize);
 #else
 		pthread_attr_setstacksize(&a, 1 << 20);
 		pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
 #endif
+#if !(UINTPTR_MAX > 0xFFFFFFFFu && defined(_WIN32))
 		if (pthread_create(&hn->th, &a, host_entry, next) != 0) {
 			port_log("[os] pthread_create failed\n");
 			abort();
 		}
+#endif
 #if UINTPTR_MAX > 0xFFFFFFFFu
 		ls->th = hn->th;
 #endif
@@ -209,7 +255,7 @@ void switch_to(OSThread* self, OSThread* next, bool exiting)
 	}
 	if (exiting) {
 		pthread_mutex_unlock(&g_cpu);
-		pthread_exit(NULL);
+		host_exit();
 	}
 	while (g_cur != self) {
 		pthread_cond_wait(&hs->cv, &g_cpu);
@@ -217,7 +263,7 @@ void switch_to(OSThread* self, OSThread* next, bool exiting)
 		// has since been recreated and scheduled (it then has a new Host).
 		if (hs->cancelled && (g_cur != self || host_of(self) != hs)) {
 			pthread_mutex_unlock(&g_cpu);
-			pthread_exit(NULL);
+			host_exit();
 		}
 	}
 	g_irq_enabled = hs->irq_enabled;

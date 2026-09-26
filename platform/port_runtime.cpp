@@ -288,6 +288,68 @@ void* port_low_alloc(unsigned long size)
 #endif
 }
 
+#ifdef _WIN64
+namespace {
+struct StackRun {
+	void* jb[5]; // __builtin_setjmp buffer, on the thread's own stack
+	void* base;  // the thread's own stack bounds (NT_TIB)
+	void* limit;
+	StackRun* outer;
+};
+thread_local StackRun* t_run;
+
+// Windows x64 ABI: fn's first argument in rcx, 32 bytes of shadow space, rsp
+// 16-byte aligned at the call. rbx (callee-saved, so fn keeps it) holds the
+// thread's own rsp.
+__attribute__((noinline)) void* call_on(void* top, void* (*fn)(void*), void* arg)
+{
+	void* ret;
+	__asm__ volatile(
+		"mov %%rsp, %%rbx\n\t"
+		"mov %1, %%rsp\n\t"
+		"sub $32, %%rsp\n\t"
+		"mov %3, %%rcx\n\t"
+		"call *%2\n\t"
+		"mov %%rbx, %%rsp"
+		: "=a"(ret)
+		: "r"(top), "r"(fn), "r"(arg)
+		: "rbx", "rcx", "rdx", "r8", "r9", "r10", "r11", "xmm0", "xmm1", "xmm2", "xmm3",
+		  "xmm4", "xmm5", "memory", "cc");
+	return ret;
+}
+} // namespace
+
+extern "C" void* port_run_on_stack(void* stack, size_t size, void* (*fn)(void*), void* arg)
+{
+	// Exception dispatch and stack walks check frames against the TEB's
+	// stack bounds, so they follow the switch.
+	NT_TIB* tib = (NT_TIB*)NtCurrentTeb();
+	StackRun run;
+	run.base = tib->StackBase;
+	run.limit = tib->StackLimit;
+	run.outer = t_run;
+	void* volatile ret = NULL;
+	if (__builtin_setjmp(run.jb) == 0) {
+		t_run = &run;
+		void* top = (void*)(((uintptr_t)stack + size) & ~(uintptr_t)15);
+		tib->StackBase = top;
+		tib->StackLimit = stack;
+		ret = call_on(top, fn, arg);
+	}
+	tib->StackBase = run.base;
+	tib->StackLimit = run.limit;
+	t_run = run.outer;
+	return ret;
+}
+
+extern "C" void port_leave_stack(void)
+{
+	if (t_run)
+		__builtin_longjmp(t_run->jb, 1);
+	pthread_exit(NULL);
+}
+#endif
+
 // Hardware register window. The only direct access left in game code is the
 // GX write-gather pipe (GXWGFifo at 0xCC008000, written by the inline GXVert.h
 // vertex/command writers). Until the GX layer redirects those writes, map the

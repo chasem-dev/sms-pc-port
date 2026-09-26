@@ -41,6 +41,11 @@ int main(int argc, char** argv)
 		return 1;
 	}
 	Args a = {argc, argv};
+#ifdef _WIN64
+	// winpthreads would ignore the stack address; switch this thread instead.
+	port_run_on_stack(stack, size, run_game, &a);
+	return 0;
+#endif
 #if defined(__APPLE__) && defined(__x86_64__)
 	// AppKit (SDL's window and event pump) only works on the process's main
 	// thread, so instead of a second thread, switch this one onto the low

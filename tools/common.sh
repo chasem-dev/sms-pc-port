@@ -3,7 +3,7 @@
 # where the disc image is.
 #
 #   build/<os>-<arch>/   one CMake tree per host and word size
-#                        (linux-32, linux-64, macos-64, windows-32)
+#                        (linux-32, linux-64, macos-64, windows-32, windows-64)
 #   build/deps/          downloaded dependencies (SDL2.framework on macOS)
 #   rom/                 the user's GMSE01 disc image (never committed)
 
@@ -29,11 +29,14 @@ sms_detect_os() {
       sms_arches=(64)
       ;;
     MINGW* | MSYS*)
-      if [[ "${MSYSTEM:-}" != MINGW32 ]]; then
-        sms_die "Use the MSYS2 MINGW32 shell (or build.cmd / run.cmd from PowerShell). See BUILD.md#windows-msys2-mingw32."
-      fi
+      # Each MSYS2 environment has one compiler word size: MINGW32 builds
+      # 32-bit, MINGW64 builds 64-bit (build.cmd picks one from SMS_ARCH).
+      case "${MSYSTEM:-}" in
+        MINGW32) sms_arches=(32) ;;
+        MINGW64) sms_arches=(64) ;;
+        *) sms_die "Use the MSYS2 MINGW32 or MINGW64 shell (or build.cmd / run.cmd from PowerShell). See BUILD.md#windows-msys2." ;;
+      esac
       sms_os=windows
-      sms_arches=(32)
       sms_exe_suffix=.exe
       ;;
     *)
@@ -59,7 +62,8 @@ sms_select_arch() {
     done
     case "$sms_os-$SMS_ARCH" in
       macos-32) sms_die "macOS cannot run 32-bit programs; the macOS build is 64-bit only (unset SMS_ARCH)." ;;
-      windows-64) sms_die "The 64-bit Windows build is not done yet (docs/64-BIT.md); unset SMS_ARCH for the 32-bit build." ;;
+      windows-32) sms_die "SMS_ARCH=32 needs the MSYS2 MINGW32 shell (build.cmd and run.cmd choose it for you)." ;;
+      windows-64) sms_die "SMS_ARCH=64 needs the MSYS2 MINGW64 shell (build.cmd and run.cmd choose it for you)." ;;
       *) sms_die "SMS_ARCH must be one of: ${sms_arches[*]}" ;;
     esac
   fi

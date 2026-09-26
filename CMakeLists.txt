@@ -211,6 +211,9 @@ target_compile_options(sms_game PRIVATE ${SMS_GAME_FLAGS})
 # reference to them, so only game code allocates from JKR heaps.
 if(SMS_ARCH STREQUAL "32")
   set(_sz j)
+elseif(WIN32)
+  # LLP64: size_t is unsigned long long.
+  set(_sz y)
 else()
   set(_sz m)
 endif()
@@ -227,8 +230,8 @@ if(APPLE)
   if(NOT SMS_OBJCOPY)
     message(FATAL_ERROR "llvm-objcopy required on macOS (brew install llvm)")
   endif()
-elseif(WIN32)
-  # COFF adds a leading underscore to each 32-bit C++ symbol.
+elseif(WIN32 AND SMS_ARCH STREQUAL "32")
+  # 32-bit COFF adds a leading underscore to each symbol; x64 COFF does not.
   set(_object_prefix "_")
   set(SMS_OBJCOPY objcopy)
 else()
@@ -266,8 +269,14 @@ target_compile_definitions(sms PRIVATE ${SMS_COMMON_DEFS} SMS_AUDIO_DSP_HLE=1)
 target_compile_options(sms PRIVATE -fno-strict-aliasing -Wno-unused-parameter -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
   $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++11>)
 # dsptask.c points a DSP task at the fixed low-memory address 0x80004600.
-if(WIN32)
+if(WIN32 AND SMS_ARCH STREQUAL "32")
   target_link_options(sms PRIVATE -Wl,--large-address-aware -Wl,--defsym=_lbl_80004600=0x80004600)
+elseif(WIN32)
+  # The game keeps addresses of its globals in 32-bit slots, so the image must
+  # load below 4 GiB (the x64 default base is 0x140000000) and stay there: no
+  # ASLR. Without high-entropy ASLR, Windows also keeps heaps and stacks low.
+  target_link_options(sms PRIVATE -Wl,--image-base=0x10000000 -Wl,--disable-dynamicbase
+    -Wl,--disable-high-entropy-va -Wl,--defsym=lbl_80004600=0x80004600)
 elseif(APPLE)
   # Apple ld has no --defsym; provide a normal symbol (DSP HLE does not need the GC address).
   target_sources(sms PRIVATE ${SMS_PORT_SRC}/lbl_80004600_darwin.c)
@@ -276,7 +285,7 @@ else()
 endif()
 if(SMS_ARCH STREQUAL "64")
   target_compile_options(sms PRIVATE -fno-pie)
-  if(NOT APPLE)
+  if(NOT APPLE AND NOT WIN32)
     target_link_options(sms PRIVATE -no-pie)
   endif()
 endif()

@@ -17,6 +17,16 @@ void port_window_icon_init(void);
 // allows it): 64-bit builds put every stack game code runs on here, since
 // the game keeps pointers in u32 slots. Returns NULL on failure.
 void* port_low_alloc(unsigned long size);
+#ifdef _WIN64
+// winpthreads ignores a thread's stack address, so 64-bit Windows moves each
+// thread that runs game code onto its low stack itself. port_run_on_stack
+// calls fn(arg) on [stack, stack + size) and returns its result.
+// port_leave_stack, called from inside, abandons that stack and makes
+// port_run_on_stack return NULL: a thread exit (pthread_exit unwinds, which
+// must not happen across the switched stack). Outside one it is pthread_exit.
+void* port_run_on_stack(void* stack, size_t size, void* (*fn)(void*), void* arg);
+void port_leave_stack(void) __attribute__((noreturn));
+#endif
 #ifdef __cplusplus
 }
 #endif
