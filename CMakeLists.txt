@@ -249,6 +249,8 @@ file(GLOB_RECURSE SMS_PLATFORM_SOURCES CONFIGURE_DEPENDS
 # platform/gx/CMakeLists.txt defining a library target `sms_gx`, it is linked
 # in and its strong GX* definitions replace the weak stubs.
 list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/gx/")
+# platform/mods/eclipse is built by cmake/eclipse.cmake, and only with SMS_ECLIPSE.
+list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/mods/eclipse/")
 if(WIN32 OR APPLE)
   list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/trace/trace\\.cpp$")
 endif()
@@ -260,7 +262,7 @@ if(APPLE AND SMS_SDL2_FRAMEWORK_DIR)
   set_target_properties(sms PROPERTIES BUILD_RPATH "@executable_path;@executable_path/../Frameworks")
 endif()
 target_include_directories(sms PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/platform ${SMS_PORT_SRC}
+  ${CMAKE_CURRENT_SOURCE_DIR}/platform ${CMAKE_CURRENT_SOURCE_DIR}/platform/mods/include ${SMS_PORT_SRC}
   ${SMS_PORT_SRC}/port_include ${SMS_DECOMP}/include)
 target_compile_definitions(sms PRIVATE ${SMS_COMMON_DEFS} SMS_AUDIO_DSP_HLE=1)
 target_compile_options(sms PRIVATE -fno-strict-aliasing -Wno-unused-parameter -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
@@ -303,6 +305,11 @@ else()
   if(TARGET sms_gx)
     target_link_libraries(sms PRIVATE -Wl,--whole-archive sms_gx -Wl,--no-whole-archive)
   endif()
+endif()
+
+option(SMS_ECLIPSE "Build Super Mario Eclipse in (32-bit; fetches its sources, see docs/ECLIPSE.md)" OFF)
+if(SMS_ECLIPSE)
+  include(cmake/eclipse.cmake)
 endif()
 
 # --- Standalone executable ------------------------------------------------------
