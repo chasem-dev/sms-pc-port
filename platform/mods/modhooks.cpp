@@ -189,6 +189,27 @@ extern "C" void sms_mod_start(void)
 	for (ctor_t* c = __start_sms_mod_ctors; c < __stop_sms_mod_ctors; ++c)
 		if (*c && *c != (ctor_t)-1)
 			(*c)();
+	// SMS_MOD_DISABLE=addr,addr,...: switch off the patches at these retail
+	// addresses (hex), to bisect a mod's patches while porting it.
+	if (const char* e = getenv("SMS_MOD_DISABLE")) {
+		for (const char* q = e; *q;) {
+			char* end;
+			unsigned long a = strtoul(q, &end, 16);
+			if (end == q)
+				break;
+			for (Patch& p : patches())
+				if (p.addr == a && p.enabled) {
+					p.enabled = false;
+					fprintf(stderr, "[mod] patch at %08lx switched off (SMS_MOD_DISABLE)\n", a);
+				}
+			q = *end == ',' ? end + 1 : end;
+		}
+	}
+	if (getenv("SMS_MOD_LIST"))
+		for (const Patch& p : patches())
+			fprintf(stderr, "[mod] %s %08x -> %08lx%s (%s:%d)\n",
+			        p.kind == SMS_MOD_BRANCH ? "b " : p.kind == SMS_MOD_CALL ? "bl" : "w ", (unsigned)p.addr,
+			        (unsigned long)p.value, p.enabled ? "" : " (off)", p.file ? p.file : "?", p.line);
 	s_active = true;
 	bump();
 	fprintf(stderr, "[mod] %zu patches registered by %zu module(s)\n", patches().size(), modules().size());

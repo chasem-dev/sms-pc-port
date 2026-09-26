@@ -48,4 +48,15 @@ target_include_directories(eclipse_objs PRIVATE ${PORT_MODS}/eclipse/shim ${PORT
 target_compile_definitions(eclipse_objs PRIVATE ${_defs})
 target_compile_options(eclipse_objs PRIVATE ${_opts})
 
-add_library(sms_eclipse STATIC $<TARGET_OBJECTS:bse_objs> $<TARGET_OBJECTS:eclipse_objs>)
+# Linked into one object first: the two projects share many file names
+# (player.cpp, generic.cpp...), which an archive of their objects would not
+# keep apart. The partial link also moves their static constructors out of
+# .ctors (mod_ctors.ld).
+set(_obj ${CMAKE_CURRENT_BINARY_DIR}/sms_eclipse_all.o)
+add_custom_command(OUTPUT ${_obj}
+  COMMAND ${CMAKE_CXX_COMPILER} -m32 -r -nostdlib -Wl,-T,${CMAKE_CURRENT_SOURCE_DIR}/mod_ctors.ld -o ${_obj}
+    $<TARGET_OBJECTS:bse_objs> $<TARGET_OBJECTS:eclipse_objs>
+  DEPENDS $<TARGET_OBJECTS:bse_objs> $<TARGET_OBJECTS:eclipse_objs> ${CMAKE_CURRENT_SOURCE_DIR}/mod_ctors.ld
+  COMMAND_EXPAND_LISTS VERBATIM)
+add_library(sms_eclipse STATIC ${_obj})
+set_target_properties(sms_eclipse PROPERTIES LINKER_LANGUAGE CXX)

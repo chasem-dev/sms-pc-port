@@ -6,3 +6,10 @@
 #ifdef __cplusplus
 #include <JSystem/memory.hxx>
 #endif
+
+// The port's function for a retail address a mod calls through a cast
+// (fixup_sources.py rewrites the address into a call of this).
+#ifdef __cplusplus
+extern "C"
+#endif
+void* sms_mod_rawaddr(unsigned int addr);

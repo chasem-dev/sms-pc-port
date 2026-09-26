@@ -11,13 +11,20 @@ import os
 import re
 import sys
 
+# A call through a literal retail address: the port's function for it
+# (platform/mods/eclipse/rawfn_trampolines.cpp, tools/mods/gen_rawfn.py).
+RAWADDR_FIX = ("src/**/*.cpp", r"(\(\s*\([^;{}()]*\(\s*\*\s*\)\s*\([^;{}()]*\)\s*\)\s*)(0x8[0-3][0-9A-Fa-f]{6})(\s*\)\s*\()",
+               r"\1sms_mod_rawaddr(\2)\3", "retail addresses called go to the port's functions")
+
 ECLIPSE_FIXES = [
+    RAWADDR_FIX,
     # SunshineHeaderInterface named obj_hit_info's third field (May 2026);
     # Eclipse still initialises it by its old placeholder name.
     ("src/*/*.cpp", r"(obj_hit_info\s+\w+\s*=?\s*\{[^}]*?)\._08(\s*=)", r"\1.mVisualOfsY\2",
      "obj_hit_info._08 is mVisualOfsY"),
 ]
 BSE_FIXES = [
+    RAWADDR_FIX,
     # Run-time rewrites of the retail game's instructions: the port has no
     # retail code, so each goes to the patch registry for the decomp hooks
     # that port it (platform/mods/modhooks.cpp) instead of into memory.
@@ -51,7 +58,7 @@ SHI_FIXES = [
 def apply(root, fixes):
     changed = 0
     for pattern, rx, repl, why in fixes:
-        for path in glob.glob(os.path.join(root, pattern)):
+        for path in glob.glob(os.path.join(root, pattern), recursive=True):
             with open(path, encoding="utf-8", errors="surrogateescape") as f:
                 text = f.read()
             new, n = re.subn(rx, repl, text)

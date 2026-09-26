@@ -79,13 +79,13 @@ ExternalProject_Add(sms_eclipse_build
   INSTALL_COMMAND ""
   BUILD_BYPRODUCTS ${_eclipse_lib})
 # The mods' plain new/delete go to the game's heaps, like the game's own
-# (see the sms_game rename above), and their static constructors run when the
-# modules load (sms_mod_start), not at process start: Kuribo runs a module's
-# constructors when it loads it, and BetterSunshineEngine's start threads and
-# allocate from the game's heaps.
+# (see the sms_game rename above). Their static constructors run when the
+# modules load (sms_mod_start), not at process start (platform/mods/eclipse/lib
+# moves them to their own section): Kuribo runs a module's constructors when
+# it loads it, and BetterSunshineEngine's start threads and allocate from the
+# game's heaps.
 ExternalProject_Add_Step(sms_eclipse_build rename_new
-  COMMAND ${SMS_OBJCOPY} --redefine-syms=${CMAKE_BINARY_DIR}/game_new_syms.txt
-    --rename-section .ctors=sms_mod_ctors,alloc,load,data ${_eclipse_lib}
+  COMMAND ${SMS_OBJCOPY} --redefine-syms=${CMAKE_BINARY_DIR}/game_new_syms.txt ${_eclipse_lib}
   DEPENDEES build)
 
 # Functions the mods call out of line that the decomp only has inline, and

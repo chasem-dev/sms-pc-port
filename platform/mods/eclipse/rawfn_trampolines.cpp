@@ -60,6 +60,7 @@
 #include <Strategic/ObjModel.hpp>
 #include <System/Application.hpp>
 #include <System/MSoundMainSide.hpp>
+#include <System/MarDirector.hpp>
 #include <System/MarioGamePad.hpp>
 #include <System/StageUtil.hpp>
 #include <THPPlayer/THPPlayer.h>
@@ -530,4 +531,26 @@ extern "C" int sms_rawfn_xFadeBgmForce__10MSBgmXFadeFf(void* self, double p0)
 extern "C" int sms_rawfn_xFadeBgm__10MSBgmXFadeFf(void* self, double p0)
 {
 	return rawfn_int([&]() -> decltype(((MSBgmXFade*)self)->MSBgmXFade::xFadeBgm((float)p0)) { return ((MSBgmXFade*)self)->MSBgmXFade::xFadeBgm((float)p0); });
+}
+
+extern "C" auto sms_rawaddr_8029C6F8(void* self) -> decltype(((TMarDirector*)self)->TMarDirector::setup2())
+{
+	return ((TMarDirector*)self)->TMarDirector::setup2();
+}
+
+static const struct {
+	unsigned int addr;
+	void* fn;
+} sRawAddrs[] = {
+	{0x8029C6F8, (void*)&sms_rawaddr_8029C6F8},
+};
+
+// The port's function for a retail address a mod calls through a cast.
+extern "C" void* sms_mod_rawaddr(unsigned int addr)
+{
+	for (unsigned i = 0; i < sizeof(sRawAddrs) / sizeof(sRawAddrs[0]); i++)
+		if (sRawAddrs[i].addr == addr)
+			return sRawAddrs[i].fn;
+	fprintf(stderr, "[mod] %08x: no port function for this retail address\n", addr);
+	abort();
 }

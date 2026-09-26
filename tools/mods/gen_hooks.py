@@ -500,6 +500,17 @@ def member_fntype(original, qual, name, sig):
     return "__typeof__(sms_mod_as_free(static_cast<%s>(&%s::%s)))" % (pmf, qual, name)
 
 
+VIRTUAL_CALLS = {
+    0x802A616C: "direct__Q26JDrama9TDirectorFv",                  # TApplication::gameLoop
+    0x80276C94: "initValues__6TMarioFv",                          # TMario::load
+    0x8024D3A0: "playerControl__6TMarioFPQ26JDrama9TGraphics",    # TMario::perform
+    0x8003F8E8: "playerControl__6TMarioFPQ26JDrama9TGraphics",    # TEnemyMario::perform
+    0x80222584: "initUserBuiltin__10TSpcBinaryFv",                # TSpcBinary::init
+    0x802D0BEC: "makeMatrix__7J2DPaneFii",                        # J2DTextBox::draw
+    0x802CEC2C: "drawChar_scale__7JUTFontFffffib",                # J2DPrint::parse
+}
+
+
 def c_name(sym):
     """A C function's symbol is its name: -> ([], name, False), else None."""
     if re.fullmatch(r"[A-Za-z_]\w*", sym) and "__" not in sym.lstrip("_"):
@@ -558,6 +569,13 @@ def main():
             if m and fn:
                 bls.setdefault(fn, []).append((int(m.group(1), 16), m.group(2).strip('"')))
 
+    # Virtual calls (blrl) a mod redirects: the function each one calls, read
+    # off the retail code around it; treated as a direct call to it.
+    for p in patches:
+        if p["kind"] == "SMS_PATCH_BL" and p.get("ins", "").startswith("blrl") and p["addr"] in VIRTUAL_CALLS:
+            callee = VIRTUAL_CALLS[p["addr"]]
+            p["ins"] = "bl " + callee
+            bls.setdefault(p["fn"], []).append((p["addr"], callee))
     todo = [p for p in patches if p["kind"] == "SMS_PATCH_BL" and p.get("ins", "") and p["ins"].startswith("bl ")
             and not any(fnmatch.fnmatch(p["where"], g) for g in exclude)]
     # one hook per retail address (a later registration wins at run time anyway)
