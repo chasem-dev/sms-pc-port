@@ -48,6 +48,7 @@ std::vector<Module>& modules()
 	return *m;
 }
 bool s_active = false;  // lookups answer
+void bump();
 bool s_enabled = false; // code mods linked in and not switched off
 
 // The last enabled patch of `kind` at `addr` wins, as the last write would.
@@ -87,19 +88,28 @@ void report()
 
 } // namespace
 
+// Bumped whenever an answer may change; hook sites cache per generation.
+extern "C" unsigned int sms_mod_generation = 1;
+namespace {
+void bump() { sms_mod_generation++; }
+} // namespace
+
 extern "C" int sms_mod_register(int kind, uint32_t addr, uintptr_t value, int enabled,
                                 const char* file, int line)
 {
 	int id = (int)patches().size();
 	patches().push_back({kind, addr, value, enabled != 0, false, file, line});
 	byAddr().emplace(addr, id);
+	bump();
 	return id;
 }
 
 extern "C" void sms_mod_set_enabled(int id, int on)
 {
-	if (id >= 0 && id < (int)patches().size())
+	if (id >= 0 && id < (int)patches().size() && patches()[id].enabled != (on != 0)) {
 		patches()[id].enabled = on != 0;
+		bump();
+	}
 }
 
 extern "C" int sms_mod_is_enabled(int id)
@@ -174,6 +184,7 @@ extern "C" void sms_mod_start(void)
 		if (*c && *c != (ctor_t)-1)
 			(*c)();
 	s_active = true;
+	bump();
 	fprintf(stderr, "[mod] %zu patches registered by %zu module(s)\n", patches().size(), modules().size());
 	// BetterSunshineEngine first: the other modules register with it.
 	std::vector<Module> order;
