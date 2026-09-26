@@ -46,6 +46,10 @@ int port_skip_movies = 0;
 extern "C" float port_widescreen;
 float port_widescreen = 1.0f;
 extern "C" __attribute__((weak)) void GXPC_SetWidescreen(float widthOver43);
+// SMS_FRAME_RATE: 30 (the game's own) or 60, for gameplay (the Application
+// patch framerate-01 reads it; logos, menus and movies stay at 30).
+extern "C" int port_frame_rate;
+int port_frame_rate = 30;
 
 // "16:9", "21:9", "16:10", "on" (16:9), "off"/"0", or a ratio such as 1.85.
 static float parse_widescreen(const char* v)
@@ -347,6 +351,7 @@ static const struct {
 	{ "texture_pack_mb", "SMS_TEXTURE_PACK_MB" },
 	{ "widescreen", "SMS_WIDESCREEN" },
 	{ "widescreen_hud", "SMS_WIDESCREEN_HUD" }, // centre or edges
+	{ "frame_rate", "SMS_FRAME_RATE" },         // 30 or 60
 	{ "mod", "SMS_MOD" },
 	{ "resolution", "SMS_GX_SCALE" },
 	{ "window_scale", "SMS_WINDOW_SCALE" },
@@ -435,6 +440,10 @@ extern "C" void port_init(int argc, char** argv)
 		GXPC_SetWidescreen(port_widescreen);
 	if (port_widescreen > 1.0f)
 		port_log("[port] widescreen: %.3f times the 4:3 width\n", port_widescreen);
+	if (const char* r = getenv("SMS_FRAME_RATE"))
+		port_frame_rate = atoi(r) == 60 ? 60 : 30;
+	if (port_frame_rate == 60)
+		port_log("[port] frame rate: 60 during gameplay\n");
 	for (int i = 1; i < argc; i++)
 		if (strcmp(argv[i], "--headless") == 0) {
 			port_setenv("SMS_HEADLESS", "1", 1);

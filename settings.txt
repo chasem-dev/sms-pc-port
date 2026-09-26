@@ -15,6 +15,10 @@
 # edges (counters to the left edge, the water gauge to the right one).
 # widescreen_hud = centre
 
+# Frame rate during gameplay: 30 (the game's own) or 60. Logos, menus and
+# movies stay at 30. 60 draws twice as many frames, so it needs a GPU.
+# frame_rate = 30
+
 # Game file mods from mods/<name>/files/ (see mods/README.md), as name or a;b.
 # mod = none
 
