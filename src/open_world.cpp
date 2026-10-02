@@ -59,7 +59,7 @@ const Bend passage[] = {{1560,0},{1870,-40},{2160,-160},{2400,-350},
     {2590,-590},{2710,-880},{2750,-1190},{2910,-2430},
     {2950,-2740},{3070,-3030},{3260,-3270},{3500,-3460},
     {3790,-3580},{4100,-3620}};
-struct Triangle { JGeometry::TVec3<f32> v[3]; GXColor color; u8 surface; float uv[3][2]; };
+struct Triangle { JGeometry::TVec3<f32> v[3]; GXColor color[3]; u8 surface; float uv[3][2]; };
 int pendingStage = -1;
 // If a save/debug entry starts in Harbor, use the ordinary dry Plaza.
 // Episodes 0/1 can redirect through opening story movies before map setup.
@@ -113,7 +113,7 @@ GXColor color(u8 r, u8 g, u8 b)
     GXColor c = {r,g,b,255}; return c;
 }
 
-enum Surface { PLAIN, LOCAL_PAVING, LOCAL_WOOD, STONE, PLASTER, SHARED_PAVING, SURFACE_COUNT };
+enum Surface { PLAIN, LOCAL_PAVING, LOCAL_WOOD, STONE, PLASTER, SHARED_PAVING, ROOF, SURFACE_COUNT };
 struct SurfaceTexture {
     u8 pixels[65536] __attribute__((aligned(32)));
     GXTexObj texture;
@@ -168,6 +168,10 @@ void setupSurfaces(int stage) {
     }
     if(!surfaces[SHARED_PAVING].valid)
         surfaceTexture(SHARED_PAVING,stage==PLAZA?"A_yuka_itimatu01":"A_heban2");
+    if(!surfaces[ROOF].valid) {
+        if(stage==PLAZA)surfaceTexture(ROOF,"A_billyane_25n",0,400,128,96);
+        else surfaceTexture(ROOF,"A_riccoyane03m2",0,0,128,64);
+    }
     GXInvalidateTexAll();
 }
 
@@ -321,6 +325,26 @@ public:
         for(int i=0;i<n-1;++i) {
             Bend a=right[i],b=left[i],c=left[i+1],d=right[i+1];
             surface=STONE;
+            // The covered walk is a sea wall, with masonry continuing into
+            // the water instead of an unsupported shell above it.
+            quad(b.u,b.v,-route.y-180,b.u,b.v,0,c.u,c.v,0,c.u,c.v,-route.y-180,
+                 color(151,164,156),false);
+            quad(d.u,d.v,-route.y-180,d.u,d.v,0,a.u,a.v,0,a.u,a.v,-route.y-180,
+                 color(151,164,156),false);
+            // Face collision outward so a swimming player cannot enter the
+            // visible masonry from the sea. Reuse the existing drawn faces.
+            int shell=count;
+            quad(c.u,c.v,-route.y-180,c.u,c.v,0,b.u,b.v,0,b.u,b.v,-route.y-180,
+                 color(0,0,0),true);
+            quad(a.u,a.v,-route.y-180,a.u,a.v,0,d.u,d.v,0,d.u,d.v,-route.y-180,
+                 color(0,0,0),true);
+            count=shell;
+            quad(a.u,a.v,-route.y-180,d.u,d.v,-route.y-180,
+                 c.u,c.v,-route.y-180,b.u,b.v,-route.y-180,color(122,139,134),true);
+            if(i==0)quad(a.u,a.v,-route.y-180,b.u,b.v,-route.y-180,
+                 b.u,b.v,0,a.u,a.v,0,color(151,164,156),true);
+            if(i==n-2)quad(d.u,d.v,-route.y-180,d.u,d.v,0,
+                 c.u,c.v,0,c.u,c.v,-route.y-180,color(151,164,156),true);
             int before=count;
             quad(a.u,a.v,0,b.u,b.v,0,c.u,c.v,0,d.u,d.v,0,color(234,231,209),true);
             count=before; // floor collision; textured subdivisions below draw it
@@ -360,8 +384,10 @@ public:
                     Bend ss={dd.u+(cc.u-dd.u)*l,dd.v+(cc.v-dd.v)*l};
                     surface=PLASTER;
                     quad(p.u,p.v,h,ss.u,ss.v,h,rr.u,rr.v,hh,q.u,q.v,hh,color(213,218,205),false);
-                    surface=STONE;
-                    quad(p.u,p.v,h+42,q.u,q.v,hh+42,rr.u,rr.v,hh+42,ss.u,ss.v,h+42,color(224,220,192),false);
+                    surface=ROOF;
+                    float roofLight=.78f+.22f*sinf((l+r)*1.5707963f);
+                    quad(p.u,p.v,h+42,q.u,q.v,hh+42,rr.u,rr.v,hh+42,ss.u,ss.v,h+42,
+                         color(255*roofLight,247*roofLight,224*roofLight),false);
                 }
             }
             // Native curved-roof collision uses long faces rather than every
@@ -380,12 +406,20 @@ public:
             for(int end=0;end<2;++end) {
                 Bend r=end?d:a,l=end?c:b;
                 surface=STONE;
+                float len=sqrtf(du*du+dv*dv),ou=du/len*14,ov=dv/len*14;
+                for(int side=0;side<2;++side) {
+                    Bend p=side?l:r;
+                    float inward=side?-1.f:1.f;
+                    float iu=(l.u-r.u)/720*inward*10,iv=(l.v-r.v)/720*inward*10;
+                    quad(p.u-ou+iu,p.v-ov+iv,0,p.u-ou+iu,p.v-ov+iv,265,
+                         p.u+ou+iu,p.v+ov+iv,265,p.u+ou+iu,p.v+ov+iv,0,
+                         color(205,208,192),false);
+                }
                 for(int k=0;k<8;++k) {
                     float t=k/8.f,q=(k+1)/8.f;
                     float h=260+140*sinf(t*3.14159265f),hh=260+140*sinf(q*3.14159265f);
                     Bend p={r.u+(l.u-r.u)*t,r.v+(l.v-r.v)*t};
                     Bend pp={r.u+(l.u-r.u)*q,r.v+(l.v-r.v)*q};
-                    float len=sqrtf(du*du+dv*dv),ou=du/len*14,ov=dv/len*14;
                     quad(p.u-ou,p.v-ov,h-9,pp.u-ou,pp.v-ov,hh-9,
                          pp.u+ou,pp.v+ov,hh-9,p.u+ou,p.v+ov,h-9,color(219,218,196),false);
                 }
@@ -489,13 +523,24 @@ public:
                 return;
             }
         }
-        Triangle& t=tris[count++];t.v[0]=a;t.v[1]=b;t.v[2]=c;t.color=col;t.surface=surface;
+        Triangle& t=tris[count++];t.v[0]=a;t.v[1]=b;t.v[2]=c;t.surface=surface;
         float au,av,bu,bv,cu,cv;local(route,a,au,av);local(route,b,bu,bv);local(route,c,cu,cv);
         float nu=(bv-av)*(c.y-a.y)-(b.y-a.y)*(cv-av);
         float nv=(b.y-a.y)*(cu-au)-(bu-au)*(c.y-a.y);
         float nh=(bu-au)*(cv-av)-(bv-av)*(cu-au);
         for(int k=0;k<3;++k) {
             float u,v;local(route,t.v[k],u,v);float h=t.v[k].y-route.y;
+            float light=1;
+            if(surface>=STONE && surface<=SHARED_PAVING && h>=0 && h<=passageHeight
+                && u>=routeEnd) {
+                // Symmetric, softly shaded interior: preserve the same light
+                // across the half-turn handoff, with daylight at each mouth.
+                float depth=fminf(u-routeEnd,2*triggerAt-routeEnd-u);
+                float shade=fminf(1.f,fmaxf(0.f,depth/650.f));
+                float enclosed=nh>1.f?.64f:nh< -1.f?.80f:.74f;
+                light=1-shade*(1-enclosed);
+            }
+            t.color[k]=color(col.r*light,col.g*light,col.b*light);
             if(surface>=STONE) {u=fabsf(u-triggerAt);v=fabsf(v-seamV);}
             if(fabsf(nh)>=fabsf(nu) && fabsf(nh)>=fabsf(nv)) {t.uv[k][0]=u/256;t.uv[k][1]=v/256;}
             else {t.uv[k][0]=(fabsf(nu)>fabsf(nv)?v:u)/256;t.uv[k][1]=h/256;}
@@ -569,7 +614,7 @@ public:
             for(int i=0;i<count;++i)if(tris[i].surface==material)
                 for(int j=0;j<3;++j) {
                     GXPosition3f32(tris[i].v[j].x,tris[i].v[j].y,tris[i].v[j].z);
-                    GXColor4u8(tris[i].color.r,tris[i].color.g,tris[i].color.b,255);
+                    GXColor4u8(tris[i].color[j].r,tris[i].color[j].g,tris[i].color[j].b,255);
                     GXTexCoord2f32(tris[i].uv[j][0],tris[i].uv[j][1]);
                 }
             GXEnd();
@@ -651,11 +696,11 @@ void passageCamera(const Route& r,TMario* m)
     refreshCameraMatrices(false);
 }
 
-void placeMario(const Route& r,float u,float v,bool outward)
+void placeMario(const Route& r,float u,float v,bool outward,float height=5)
 {
     TMario* m=gpMarioOriginal;
     OSReport("[open-world] original spawn=(%.0f,%.0f,%.0f)\n",m->mPosition.x,m->mPosition.y,m->mPosition.z);
-    JGeometry::TVec3<f32> p=point(r,u,v,5);
+    JGeometry::TVec3<f32> p=point(r,u,v,height);
     float angle=atan2f(r.dx,r.dz)*180.0f/3.14159265f+(outward?0:180);
     m->waitingStart(&p,angle);
     m->mPosition=p;m->mVel.zero();m->mForwardVel=0;m->resetHistory();
@@ -804,9 +849,9 @@ void sms_open_world_arrive(TMarDirector* d)
         OSReport("[open-world] restored health=%d water=%d\n",savedHealth,(int)savedWater);
         pendingStage=-1;
     } else {
-        float u=200,v=0;
-        sscanf(getenv("SMS_OPEN_WORLD_TEST_SPAWN"),"%f,%f",&u,&v);
-        placeMario(walkway->route,u,v,true);testSpawnUsed=true;
+        float u=200,v=0,height=5;
+        sscanf(getenv("SMS_OPEN_WORLD_TEST_SPAWN"),"%f,%f,%f",&u,&v,&height);
+        placeMario(walkway->route,u,v,true,height);testSpawnUsed=true;
         OSReport("[open-world] test spawn stage=%d u=%.0f v=%.0f\n",d->mMap,u,v);
     }
 }
@@ -884,6 +929,19 @@ void sms_open_world_tick(TMarDirector* d)
 void sms_open_world_camera()
 {
     passageBlend=0;
+    // Optional fixed view for reviewing shoreline placement in the real game.
+    if(sms_open_world_enabled() && gpCamera && walkway && gpMarDirector
+        && gpMarDirector->mState==TMarDirector::STATE_UNK4) {
+        if(const char* view=getenv("SMS_OPEN_WORLD_TEST_VIEW")) {
+            JGeometry::TVec3<f32> eye,at;
+            if(sscanf(view,"%f,%f,%f,%f,%f,%f",&eye.x,&eye.y,&eye.z,
+                &at.x,&at.y,&at.z)==6) {
+                gpCamera->warpPosAndAt(eye,at);
+                gpCamera->unk258=s16(atan2f(eye.x-at.x,eye.z-at.z)*(65536.f/6.283185307f));
+                refreshCameraMatrices(false);return;
+            }
+        }
+    }
     if(getenv("SMS_OPEN_WORLD_TEST_BOATS") && gpCamera && walkway
         && walkway->route.stage==PLAZA && gpMarDirector
         && gpMarDirector->mState==TMarDirector::STATE_UNK4) {

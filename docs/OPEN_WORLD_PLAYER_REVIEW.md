@@ -7,7 +7,30 @@ The highest priority is a believable departure and arrival, followed by uninterr
 **v6 follow-up:** the missing beach sand has been restored, the map exchange moved offshore, and the unrelated cannon departure sequence removed from ferry travel.
 Recorded outbound trigger-to-arrival time dropped to 59 ms in the 64-bit replay and 67 ms in the 32-bit, 60 fps replay with audio.
 A subsequent run with saved graphics settings and the installed texture pack measured 115 ms outbound and 173 ms return until the destination frame was ready to display.
-The findings below describe the reviewed v5 baseline; return-skyline continuity, Harbor placement, and actual boat clearance remain open.
+The findings below describe the reviewed v5 baseline; return-skyline continuity and Harbor placement remain open. Boat clearance was subsequently verified in v7, as described below.
+
+## v8 architecture review
+
+Reviewed the working Harbor route from inside the passage and from a fixed waterfront camera, plus native views of alternative Plaza and Harbor shoreline locations.
+A relocation beside the Plaza bell platform and the Harbor's eastern quay was rejected: the same long shell still projected over the water, and the Harbor end intersected the native cliff backdrop.
+The working entrance positions remain in place. A relocation needs a coherent terrain and scenery solution, not another coordinate change.
+
+The retained architecture pass uses native roof tiles, masonry extending to the water, continuous stone ribs down the passage walls, and softer interior shading.
+Mario and the curve ahead are easier to distinguish from the ceiling and walls.
+The exterior still exposes the route's abrupt end; new materials do not resolve its geographic fit.
+The first-time discovery review and missing scenery across the ferry exchange remain open.
+A close review of the Harbor-to-Plaza handoff also shows a small camera/pose change when drawing resumes; passing the continuity threshold does not make that change invisible.
+
+The player guide now puts launching, visible route locations, Blooper controls, and current limitations before build instructions.
+Implementation history and old performance measurements have moved to `OPEN_WORLD_DEVELOPMENT.md`, where their version is explicit.
+This prevents obsolete multi-second loading notes from appearing as current launch guidance.
+
+Native walking replays passed both directions at 30 and 60 fps, including water consumption and audio on the 32-bit run.
+The 32-bit capture completed all checks before its harness exited with a termination signal; its saved captures and log were validated separately.
+All three native boat routes also completed full circuits with no contact against the expanded masonry; the existing 100-unit hull margin was retained.
+A subsequent swimming replay confirmed that Mario stops against the new foundation instead of passing through its visible wall.
+Evidence: `build/open-world/v8/architecture64`, `architecture32`, `architecture-exterior`, `boats-final`, `swim-foundation`, and `transition-final32`.
+The review image and continuous walking capture are `harbor-architecture-review-v8.png` and `.mp4` in FileBrowser's `Render-Previews` folder.
 
 ## v7 review findings
 
@@ -52,7 +75,7 @@ Detailed earlier ferry captures: `build/open-world/v5/park-entry64-full/` and `r
 Harbor footage: `concepts/delfino-coastal-curve-v4.mp4` and its matching PNG.
 Evidence images are local, extracted from actual game captures; they are not concept art.
 
-## Priorities for the next substantial polish pass
+## Original v5 review priorities (see v6–v8 updates above)
 
 | Priority | What the player sees or feels | Evidence and next change | What would count as finished |
 | --- | --- | --- | --- |
@@ -62,11 +85,11 @@ Evidence images are local, extracted from actual game captures; they are not con
 | 2 | The distant park view changes into a noticeably different close view. | Confirmed across the offshore handoff and approach. Test an earlier exchange over open water, with matching coastline, scale, silhouette, and camera heading. | A viewer can follow the same landmark from departure through arrival without seeing the island change identity. |
 | 2 | Mario becomes very small against a largely empty ocean; the ride lacks a strong sense of speed. | Confirmed in the middle of the ferry recording. Evaluate closer framing, heading response, wake/spray, and clearer forward sightlines in motion. | Mario and the Blooper are readable at ordinary viewing size, steering is legible, and the destination remains visible. |
 | 2 | Landing faces local scenery and enemies, leaving the park entrance off to the left. | Confirmed in baseline field 4620 and the subsequent beach walk. Improve landing orientation and provide a visible route to the entrance. | The next destination is apparent without opening instructions, and the player has time to orient before an enemy reaches them. |
-| 2 | The Harbor route feels attached to the quay rather than integrated into its traffic and shoreline. | Existing footage shows the quay join but does not prove moving-boat clearance. Survey the complete boat route before relocating or reshaping the entrance. | Boats complete their full route without touching the addition; the player can approach naturally from both shores. Boat clearance remains unverified. |
+| 2 | The Harbor route feels attached to the quay rather than integrated into its traffic and shoreline. | Existing footage shows the quay join but does not prove moving-boat clearance. Survey the complete boat route before relocating or reshaping the entrance. | Boats complete their full route without touching the addition; the player can approach naturally from both shores. The v7 circuit review subsequently verified clearance; geographic fit remains open. |
 | 3 | The walkway reads as a long, bright, blank corridor with a large flat roof outside. | Confirmed in the v4 approach/interior captures. Shorten the enclosed visual stretch, reduce dominating roof surfaces, and improve the rhythm and shading of the architecture. | The route fits Sunshine's waterfront scale and materials from outside and inside, and its turns feel geographically motivated. |
 | 3 | Finding and using the new connections depends on prior knowledge. | The ferry replay starts at the boarding point; first-time discovery has not been tested. Review an ordinary Plaza spawn, approach signs from both directions, and the visible waiting Blooper. | Someone unfamiliar with the mod can find, board, reach the park, and return using only in-game cues. |
 
-## Small polish applied during this review
+## Initial instruction polish (v5 baseline)
 
 - Split ferry destination and controls into two shorter lines, clear of the FLUDD gauge.
 - Added a translucent backing so instructions remain legible over bright sand and water.
