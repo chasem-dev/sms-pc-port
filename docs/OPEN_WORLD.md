@@ -24,6 +24,15 @@ To use the ordinary executable instead, pass the image to `run-open-world.sh`.
 The mod is compiled into this branch automatically: CMake includes `src/open_world.cpp` and `src/open_world_sea.cpp`,
 and applies the `decomp-patches/zz-open-world-*.patch` hooks to generated copies of the pinned game sources.
 The `decomp/` submodule stays unchanged.
+Its pinned commit is published on the `mod-open-world` branch of `chasem-dev/sms-english`.
+If an existing checkout reports `not our ref`, update this port branch and synchronize the submodule before rebuilding:
+
+```sh
+git pull --ff-only origin mod-open-world
+git submodule sync --recursive
+git submodule update --init --recursive
+```
+
 Enable the compiled feature at runtime with the wrapper, `SMS_OPEN_WORLD=1`, or `open_world = on` in `settings.txt`.
 There is no separate mod archive to download or directory to install under `mods/`; `SMS_MOD` is not required for this feature.
 Models and textures are read from your disc at runtime.
@@ -172,6 +181,25 @@ Use `--fps 60 --exe build/linux-32/sms --audio` for the other build/frame rate.
 Use `--from-stage 5` to begin on Pinna's beach, or `--rides 1 --turn-back` to test a mid-ocean return to the departure pier.
 The test-only `SMS_SEA_TEST_SPAWN`, `SMS_SEA_TEST_RIDES`, `SMS_SEA_TEST_CONTROL`, and `SMS_SEA_TEST_TURNBACK` flags are absent from normal launches.
 The replay checks both landings, stage/episode selection, speed and state carry, steering/hopping, retained frames, and absence of black frames or FIFO errors.
+
+To verify the complete Plaza-to-park journey, including ordinary walking after landing and the native gate's collision trigger:
+
+```sh
+python3 tools/open_world/sea.py \
+  --iso "/path/to/Super Mario Sunshine.iso" \
+  --seed-card "$HOME/.local/share/sms-port/card-a" \
+  --rides 1 --controls --enter-park --record --out build/open-world/park-entry-check
+```
+
+This test supplies controller axes along the beach and up the west staircase, then verifies player movement inside Pinna Park (internal stage 13).
+It does not reposition Mario or request a stage transition after the ferry landing.
+The additional `SMS_SEA_TEST_ENTER_PARK` flag is only used by this replay.
+The no-black-frame invariant covers the offshore ferry exchange; the original beach-to-park gate keeps its native fade.
+The recorded 64-bit evidence in `build/open-world/v5/park-entry64-full` reaches the park entrance in episode 0,
+then proves controller movement of 125.8 native units inside the park, with all eight health points.
+The 32-bit replay in `build/open-world/v5/park-entry32-full` verifies the same journey at 60 fps with audio,
+including 125.9 native units of movement inside the park and all eight health points.
+The first displayed offshore handoff changes the image by 3.41 RGB levels out of 255 and brightness by 0.57 levels, with Mario visible.
 
 Final v5 evidence is in `build/open-world/v5/release64-final` (64-bit, 30 fps, recorded round trip),
 `release32-60-audio` (32-bit, 60 fps, audio, starting on Pinna), `turnback` (controller reversal),

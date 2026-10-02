@@ -14,30 +14,34 @@ def main():
  p.add_argument('--exe',type=Path,default=ROOT/'build/linux-64/sms');p.add_argument('--fps',type=int,choices=[30,60],default=30)
  p.add_argument('--rides',type=int,default=2);p.add_argument('--from-stage',type=int,default=1)
  p.add_argument('--controls',action='store_true');p.add_argument('--turn-back',action='store_true');
+ p.add_argument('--enter-park',action='store_true',help='walk through the native park gate after one Plaza ferry ride')
  p.add_argument('--record',action='store_true');p.add_argument('--audio',action='store_true');p.add_argument('--out',type=Path,required=True)
  p.add_argument('--timeout',type=float,default=420);a=p.parse_args();out=a.out;out.mkdir(parents=True,exist_ok=False)
+ if a.enter_park and (a.rides!=1 or a.from_stage!=1 or a.turn_back):p.error('--enter-park requires --rides 1 --from-stage 1 without --turn-back')
  shutil.copytree(a.seed_card,out/'card');(out/'shots').mkdir()
- fields=list(range(3980,6001,2 if a.record else 20))
+ fields=list(range(3980,8001 if a.enter_park else 6001,2 if a.record else 20))
  env=os.environ.copy();env.pop('SMS_OPEN_WORLD_TEST_SPAWN',None);env.pop('SMS_OPEN_WORLD_TEST_WALK',None)
  env.update(SMS_OPEN_WORLD='1',SMS_SEA_TEST_SPAWN='1',SMS_SEA_TEST_RIDES=str(a.rides),SMS_OPEN_WORLD_LOG='1',SMS_FRAME_RATE=str(a.fps),SMS_GX_SCALE='1',SMS_TEXTURE_PACKS='0',SMS_AUDIO='1' if a.audio else '0',SMS_SKIP_MOVIES='1',SMS_WARP=f'{a.from_stage},{2 if a.from_stage==1 else 0},50',SMS_VI_DETERMINISTIC='1',SMS_FIELD_CLOCK='retrace',SMS_SAVE_DIR=str((out/'card').resolve()),SMS_AUTOPRESS=BOOT,SMS_SHOTS=','.join(map(str,fields)),SMS_SHOT_DIR=str((out/'shots').resolve()))
  if a.controls or a.turn_back:env['SMS_SEA_TEST_CONTROL']='1'
  if a.turn_back:env['SMS_SEA_TEST_TURNBACK']='1'
+ if a.enter_park:env['SMS_SEA_TEST_ENTER_PARK']='1'
  with (out/'run.log').open('w') as log:
   proc=subprocess.Popen([str(a.exe.resolve()),str(a.iso.resolve()),'--headless'],cwd=ROOT,env=env,stdout=log,stderr=subprocess.STDOUT)
   try:
    deadline=time.monotonic()+a.timeout
    while proc.poll() is None and time.monotonic()<deadline:
     text=(out/'run.log').read_text(errors='replace')
-    if f'captured field {fields[-1]} ' in text and len(re.findall(r'\[sea-route\] landed stage=',text))>=a.rides:break
+    if f'captured field {fields[-1]} ' in text and len(re.findall(r'\[sea-route\] landed stage=',text))>=a.rides and (not a.enter_park or '[sea-route] park control proven stage=' in text):break
     time.sleep(.2)
    if proc.poll() is not None:raise RuntimeError(f'early exit {proc.returncode}; inspect {out}/run.log')
    if len(re.findall(r'\[sea-route\] landed stage=',text))<a.rides:raise RuntimeError(f'ride timed out; inspect {out}/run.log')
+   if a.enter_park and '[sea-route] park control proven stage=' not in text:raise RuntimeError(f'park entry/control timed out; inspect {out}/run.log')
   finally:
    proc.terminate()
    try:proc.wait(timeout=5)
    except subprocess.TimeoutExpired:proc.kill();proc.wait()
- validate(out,a.rides,a.fps,fields,a.from_stage,a.controls,a.turn_back,a.record)
-def validate(out,rides,fps,fields,source=1,controls=False,turn_back=False,record=False):
+ validate(out,a.rides,a.fps,fields,a.from_stage,a.controls,a.turn_back,a.record,a.enter_park)
+def validate(out,rides,fps,fields,source=1,controls=False,turn_back=False,record=False,enter_park=False):
  text=(out/'run.log').read_text(errors='replace')
  assert 'unknown FIFO opcode' not in text
  assert 'fatal signal' not in text and 'missing resource' not in text and 'ready=0' not in text
@@ -62,11 +66,32 @@ def validate(out,rides,fps,fields,source=1,controls=False,turn_back=False,record
  if turn_back:assert '[sea-route] turned back progress=' in text
  assert all((out/'shots'/f'field{n:05d}.ppm').exists() for n in fields)
  from transition import pixels
+ ferry_end=fields[-1]
+ if enter_park:
+  preceding=None
+  for line in text.splitlines():
+   captured=re.search(r'captured field (\d+) ',line)
+   if captured:preceding=int(captured[1])
+   if '[sea-route] landed stage=' in line:ferry_end=preceding;break
+  entry=re.search(r'entered park stage=(\d+) episode=(\d+).*health=(\d+)',text)
+  moved=re.search(r'park control proven stage=(\d+) distance=([\d.]+).*health=(\d+)',text)
+  assert entry and moved and entry[1]==moved[1]=='13' and int(entry[3])>0 and int(moved[3])>0
+  assert float(moved[2])>120
+  assert [int(n) for n in re.findall(r'park walk node=(\d+)',text)]==list(range(5))
+  # Normal native stage loads do not print their archive names. The park's
+  # stage ID comes from the runtime pinnaParco scenario table, and movement
+  # is logged only after the native entrance sequence and fade finish.
+  latest=pixels(out/'shots'/f'field{fields[-1]:05d}.ppm')
+  assert sum(latest)/len(latest)>50,'park gameplay frame was not visible'
  for path in (out/'shots').glob('*.ppm'):
+  # The native beach-to-park gate keeps its original fade. Only the ferry
+  # promises no loading/black frames; do not apply that invariant to the gate.
+  if int(path.stem[5:])>ferry_end:continue
   data=pixels(path);assert sum(data)/len(data)>45,path
  visual=check_handoffs(out,text) if record and arrivals else ''
  behavior='controller turn-back to departure pier' if turn_back else 'offshore stage swaps, continuous speed/animation/health/water, beach/pier landings'
- result=f'PASS: {fps} fps, {rides} Blooper rides, {behavior}, no black captured frames.\nTrigger-to-arrival ms: '+', '.join(a[3] for a in arrivals)+'\n'+visual
+ result=f'PASS: {fps} fps, {rides} Blooper rides, {behavior}, no black ferry frames.\nTrigger-to-arrival ms: '+', '.join(a[3] for a in arrivals)+'\n'+visual
+ if enter_park:result+=f'Native gate entered Pinna Park stage {entry[1]}, episode {entry[2]}; controller movement inside park {moved[2]} units, health {moved[3]}.\n'
  (out/'result.txt').write_text(result);print(result)
 
 def check_handoffs(out,log):

@@ -46,7 +46,7 @@ extern "C" void GXPC_CoastalHold(int) __attribute__((weak));
 extern "C" void GXPC_CoastalDissolve(int) __attribute__((weak));
 namespace {
 const int PLAZA=1;
-int pinnaStage=5,plazaEpisode=2,pinnaEpisode=0,currentStage=-1,pendingStage=-1;
+int pinnaStage=5,parkStage=13,plazaEpisode=2,pinnaEpisode=0,currentStage=-1,pendingStage=-1;
 const float rotation=.7853981634f,cs=.7071067812f,sn=.7071067812f;
 const float islandX=-43000,islandZ=-26000;
 struct P { float x,z; };
@@ -76,6 +76,8 @@ float savedSpeed,savedFov,savedAnimFrame,savedSquidFrame,rideElapsed;bool testHo
 s16 savedYaw,savedHealth;int savedWater;u8 savedNozzle,savedSecond;
 unsigned long long crossingStart;
 int dockMode;float dockRemaining;JGeometry::TVec3<f32> dockFrom,dockTo;
+int testParkNode;bool testParkEntered,testParkControlled;
+JGeometry::TVec3<f32> testParkStart;
 void initPath() {
     controls[0].x=-11400;controls[0].z=1650;
     controls[1].x=-14000;controls[1].z=2600;
@@ -200,6 +202,45 @@ void clearHud(TMarDirector* d) {
     for(int i=0;i<180;++i){c->processAppearCoin(i);c->processAppearTank(i);}
     c->unk4F=0;c->unk45=0;c->unk46=1;c->unk50=0;c->unk3A=0;c->unk3B=0;c->unk3A8->getPane()->hide();c->startDisappearTelop();
 }
+// Verification only: walk from the ferry landing through the native gate
+// using controller axes. Never move Mario or request a stage in this helper.
+bool testParkWalk(TMarDirector* d) {
+    if(!getenv("SMS_SEA_TEST_ENTER_PARK") || !testDone || active)return false;
+    TMario* m=gpMarioOriginal;
+    if(currentStage==pinnaStage) {
+        // Approach the west staircase, keeping clear of the raised planter.
+        const P nodes[]={{2000,6500},{-3500,5400},{-4700,5200},{-4700,3500},{-3515,3000},{-3515,1900}};
+        float dx=nodes[testParkNode].x-m->mPosition.x,dz=nodes[testParkNode].z-m->mPosition.z;
+        if(dx*dx+dz*dz<140*140 && testParkNode<5) {
+            OSReport("[sea-route] park walk node=%d xyz=(%.1f,%.1f,%.1f)\n",testParkNode,m->mPosition.x,m->mPosition.y,m->mPosition.z);
+            ++testParkNode;dx=nodes[testParkNode].x-m->mPosition.x;dz=nodes[testParkNode].z-m->mPosition.z;
+        }
+        float angle=atan2f(dx,dz)-gpCamera->getUnk258()*(6.283185307f/65536.f);
+        static int timer;
+        if(getenv("SMS_OPEN_WORLD_LOG") && (++timer%60)==0)
+            OSReport("[sea-route] park walking node=%d xyz=(%.1f,%.1f,%.1f)\n",testParkNode,m->mPosition.x,m->mPosition.y,m->mPosition.z);
+        testPadActive=true;testStickX=int(100*sinf(angle));testStickY=int(-100*cosf(angle));
+        return true;
+    }
+    if(currentStage!=parkStage)return false;
+    if(!gpApplication.mFader->isFullyFadedIn())return true;
+    if(!testParkEntered) {
+        testParkEntered=true;testParkStart=m->mPosition;
+        OSReport("[sea-route] entered park stage=%d episode=%d xyz=(%.1f,%.1f,%.1f) health=%d\n",currentStage,d->unk7D,m->mPosition.x,m->mPosition.y,m->mPosition.z,m->mHealth);
+    }
+    float dx=testParkStart.x+400-m->mPosition.x,dz=testParkStart.z-m->mPosition.z;
+    float movedX=m->mPosition.x-testParkStart.x,movedZ=m->mPosition.z-testParkStart.z;
+    if(!testParkControlled && movedX*movedX+movedZ*movedZ>120*120) {
+        testParkControlled=true;
+        OSReport("[sea-route] park control proven stage=%d distance=%.1f xyz=(%.1f,%.1f,%.1f) health=%d\n",currentStage,sqrtf(movedX*movedX+movedZ*movedZ),m->mPosition.x,m->mPosition.y,m->mPosition.z,m->mHealth);
+    }
+    testPadActive=true;
+    if(!testParkControlled) {
+        float angle=atan2f(dx,dz)-gpCamera->getUnk258()*(6.283185307f/65536.f);
+        testStickX=int(100*sinf(angle));testStickY=int(-100*cosf(angle));
+    }
+    return true;
+}
 void cross(TMarDirector* d) {
     TMario* m=gpMarioOriginal;
     testPadActive=false;
@@ -225,6 +266,7 @@ void sms_sea_setup(TMarDirector* d) {
     if(gpApplication.unk30)for(unsigned i=0;i<gpApplication.unk30->getChildren().size();++i) {
         TNameRefAryT<TScenarioArchiveName>* n=gpApplication.unk30->getChildren()[i];
         if(n->size() && strstr(n->getChildren()[0].mArcName,"pinnaBeach"))pinnaStage=i;
+        if(n->size() && strstr(n->getChildren()[0].mArcName,"pinnaParco"))parkStage=i;
     }
     initPath();
     if(currentStage!=PLAZA && currentStage!=pinnaStage){active=false;pendingStage=-1;return;}
@@ -295,7 +337,8 @@ void sms_sea_arrive(TMarDirector* d) {
 }
 void sms_sea_tick(TMarDirector* d) {
     testPadActive=false;testButtons=0;testStickX=testStickY=0;
-    if(!sms_open_world_enabled() || !ready || pendingStage!=-1 || d->mState!=TMarDirector::STATE_UNK4 || d->unk124 || d->unk4C&0x1ff)return;
+    if(!sms_open_world_enabled() || pendingStage!=-1 || d->mState!=TMarDirector::STATE_UNK4 || d->unk124 || d->unk4C&0x1ff)return;
+    if(testParkWalk(d) || !ready)return;
     TMario* m=gpMarioOriginal;TMarioGamePad* pad=m->getGamePad();float dt=port_fps60_active?.5f:1.f;
     if(cooldown>0)--cooldown;
     if(getenv("SMS_SEA_TEST_RIDES") && !testDone) {
