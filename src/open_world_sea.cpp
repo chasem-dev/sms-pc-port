@@ -92,7 +92,10 @@ void initPath() {
         path[i].z=.5f*(2*b.z+(-a.z+c.z)*t+(2*a.z-5*b.z+4*c.z-d.z)*t*t+(-a.z+3*b.z-3*c.z+d.z)*t*t*t);
         if(i) {float dx=path[i].x-path[i-1].x,dz=path[i].z-path[i-1].z;lengths[i]=lengths[i-1]+sqrtf(dx*dx+dz*dz);}
     }
-    routeLength=lengths[400];swapDistance=lengths[240];
+    routeLength=lengths[400];
+    // Exchange after clearing the Plaza waterfront, while Pinna is still
+    // offshore. Its native shoreline and actors are ready for the approach.
+    swapDistance=lengths[100];
 }
 P sample(float along,P* tangent=0) {
     if(along<0)along=0;if(along>routeLength)along=routeLength;
@@ -140,13 +143,16 @@ void hideScenery(J3DModel* m,bool plaza) {
     if(!m)return;
     J3DModelData* d=m->getModelData();
     if(plaza) {
-        const int hidden[]={10,11,12,19,22,40};
+        // Shape 10 (_m00suna) also contains the nearby islands' sand.
+        // It is terrain, even though its bounds extend across the backdrop.
+        const int hidden[]={11,12,19,22,40};
         for(unsigned i=0;i<sizeof(hidden)/sizeof(hidden[0]);++i)
             if(hidden[i]<d->getShapeNum()){d->getShapeNodePointer(hidden[i])->onFlag(J3DShpFlag_Visible);m->getShapePacket(hidden[i])->hide();}
     } else {
         // The beach model includes the static park as well as distant islands.
         // Keep its near island and remove the baked, differently scaled backdrop.
-        for(int i=0;i<9 && i<d->getShapeNum();++i){d->getShapeNodePointer(i)->onFlag(J3DShpFlag_Visible);m->getShapePacket(i)->hide();}
+        // Shape 7 (_m15_ji_d) contains the beach beneath the native actors.
+        for(int i=0;i<9 && i<d->getShapeNum();++i)if(i!=7){d->getShapeNodePointer(i)->onFlag(J3DShpFlag_Visible);m->getShapePacket(i)->hide();}
     }
 }
 void drawModel(J3DModel* m,JDrama::TGraphics* g) {
@@ -178,7 +184,6 @@ void board() {
     dockMode=1;dockRemaining=30;dockFrom=world(currentStage,m->mPosition);
     P berth=sample(progress);dockTo.set(berth.x,8.f,berth.z);
     seaEye=world(currentStage,gpCamera->mPosition);seaAt=world(currentStage,gpCamera->mTarget);
-    if(currentStage==PLAZA){J3DModel* m=gpMap->getModelManager()->getJointModel(0)->getModel();m->getModelData()->getShapeNodePointer(10)->onFlag(J3DShpFlag_Visible);m->getShapePacket(10)->hide();}
     m->mSurfGesso=squid;m->mSurfGessoType=TMario::SURF_GESSO_TYPE_GREEN;
     m->changePlayerStatus(MARIO_STATUS_SURF,0,true);m->mStatusTimer=0;
     m->setAnimation(TMario::ANIM_RIDE_SHELL,1.0f);
@@ -192,7 +197,6 @@ void land() {
     p.y=fmaxf(y,100.f)+5;
     m->waitingStart(&p,currentStage==PLAZA?90:180);m->mPosition=p;m->mVel.zero();m->mForwardVel=0;
     m->mGroundPlane=ground;m->mFloorPosition.set(p.x,y,p.z);m->mSurfGesso=0;m->resetHistory();
-    if(currentStage==PLAZA){J3DModel* m=gpMap->getModelManager()->getJointModel(0)->getModel();m->getModelData()->getShapeNodePointer(10)->offFlag(J3DShpFlag_Visible);m->getShapePacket(10)->show();}
     active=false;dockMode=0;cooldown=60;landingCamera=60;
     OSReport("[sea-route] landed stage=%d ride=%d xyz=(%.1f,%.1f,%.1f) health=%d water=%d\n",currentStage,rideCount,p.x,p.y,p.z,m->mHealth,m->mWaterGun?m->mWaterGun->mCurrentWater:0);
     if(getenv("SMS_SEA_TEST_RIDES") && rideCount>=atoi(getenv("SMS_SEA_TEST_RIDES")))testDone=true;
@@ -254,9 +258,15 @@ void cross(TMarDirector* d) {
     if(GXPC_CoastalDissolve)GXPC_CoastalDissolve(port_fps60_active?36:18);
     if(GXPC_CoastalHold)GXPC_CoastalHold(8);
     crossingStart=port_open_world_milliseconds();
+    sms_open_world_profile("ferry crossing begin");
     int ep=pendingStage==PLAZA?plazaEpisode:pinnaEpisode;
     OSReport("[sea-route] crossing stage=%d -> stage=%d episode=%d progress=%.1f speed=%.2f health=%d water=%d\n",currentStage,pendingStage,ep,progress,savedSpeed,savedHealth,savedWater);
     d->setNextStage(((pendingStage+1)<<8)|ep,0);
+    // Plaza -> Pinna normally starts the cannon/gate departure demo.
+    // The ferry already supplies that journey; request the stage exchange
+    // directly instead of waiting behind a frozen frame for the demo.
+    d->offFlag(TMarDirector::DIRECTOR_FLAG_GATE_DEMO_STAGE_TRANSITION_PENDING);
+    d->onFlag(TMarDirector::DIRECTOR_FLAG_STAGE_TRANSITION_PENDING);
 }
 }
 void sms_sea_setup(TMarDirector* d) {
@@ -268,13 +278,16 @@ void sms_sea_setup(TMarDirector* d) {
         if(n->size() && strstr(n->getChildren()[0].mArcName,"pinnaBeach"))pinnaStage=i;
         if(n->size() && strstr(n->getChildren()[0].mArcName,"pinnaParco"))parkStage=i;
     }
+    sms_open_world_profile("sea setup begin");
     initPath();
     if(currentStage!=PLAZA && currentStage!=pinnaStage){active=false;pendingStage=-1;return;}
     if(currentStage==PLAZA)plazaEpisode=d->unk7D;else pinnaEpisode=d->unk7D;
     if(pendingStage!=currentStage){pendingStage=-1;active=false;landingCamera=0;dockMode=0;}
     opa=new J3DDrawBuffer(512);xlu=new J3DDrawBuffer(512);opa->setNonSort();xlu->setNonSort();
     squid=makeSquid();idleSquid=makeSquid();
+    sms_open_world_profile("sea squids ready");
     scenery=model(currentStage==PLAZA?"/data/scene/pinnaBeach0.szs":"/data/scene/dolpic0.szs","map.bmd");
+    sms_open_world_profile("sea scenery ready");
     hideScenery(scenery,currentStage!=PLAZA);
     if(scenery) {
         Mtx transform;C_MTXIdentity(transform);
@@ -285,7 +298,7 @@ void sms_sea_setup(TMarDirector* d) {
     // Replace only the baked distant counterpart. The nearby native map is untouched.
     J3DModel* nativeMap=gpMap->getModelManager()->getJointModel(0)->getModel();
     J3DModelData* map=nativeMap->getModelData();
-    if(currentStage==PLAZA && map->getShapeNum()>22){map->getShapeNodePointer(22)->onFlag(J3DShpFlag_Visible);nativeMap->getShapePacket(22)->hide();if(active){map->getShapeNodePointer(10)->onFlag(J3DShpFlag_Visible);nativeMap->getShapePacket(10)->hide();}}
+    if(currentStage==PLAZA && map->getShapeNum()>22){map->getShapeNodePointer(22)->onFlag(J3DShpFlag_Visible);nativeMap->getShapePacket(22)->hide();}
     if(currentStage==pinnaStage && map->getShapeNum()>1){map->getShapeNodePointer(1)->onFlag(J3DShpFlag_Visible);nativeMap->getShapePacket(1)->hide();}
     const ResTIMG* t=(ResTIMG*)resource("/data/scene/dolpic0.szs","wave.bti");
     if(t) {
@@ -298,6 +311,7 @@ void sms_sea_setup(TMarDirector* d) {
     port_open_world_resource("/data/scene/pinnaBeach0.szs","map.bmd",0,0);
     prefetch(PLAZA,plazaEpisode,0);prefetch(pinnaStage,pinnaEpisode,2);
     ready=squid && idleSquid && scenery && hasWater;
+    sms_open_world_profile("sea setup end");
     OSReport("[sea-route] setup stage=%d pinna=%d ready=%d length=%.1f swap=%.1f\n",currentStage,pinnaStage,ready,routeLength,swapDistance);
 }
 bool sms_sea_pending(){return pendingStage!=-1;}
@@ -324,6 +338,7 @@ void sms_sea_arrive(TMarDirector* d) {
         gpCamera->endDemoCamera();gpCamera->warpPosAndAt(eye,at);gpCamera->mFovy=savedFov;cameraMatrices(true);
         clearHud(d);gpApplication.mFader->setFadeStatus(TSMSFader::FADE_STATUS_FULLY_FADED_IN);
         pendingStage=-1;releasePending=true;active=true;++crossings;
+        sms_open_world_profile("ferry arrived");
         OSReport("[sea-route] arrived stage=%d episode=%d crossing=%d elapsed_ms=%u speed=%.2f -> %.2f squid_frame=%.2f health=%d water=%d\n",currentStage,d->unk7D,crossings,(unsigned)(port_open_world_milliseconds()-crossingStart),savedSpeed,m->mForwardVel,savedSquidFrame,m->mHealth,savedWater);
         OSReport("[sea-route] animation mario=%.2f -> %.2f blooper=%.2f -> %.2f hop=%.2f lateral=%.2f\n",savedAnimFrame,m->getMotionFrameCtrl().getFrame(),savedSquidFrame,squid->getFrameCtrl(0)->getFrame(),hop,lateral);
     } else {
@@ -349,7 +364,11 @@ void sms_sea_tick(TMarDirector* d) {
             if(rideElapsed>=80 && rideElapsed<110)testStickX=70;
             if(rideElapsed>=110 && rideElapsed<140)testStickX=-70;
             if(fabsf(progress-swapDistance)<750 && !testHopSent)testButtons=JUTGamePad::A;
-            if(getenv("SMS_SEA_TEST_TURNBACK") && rideElapsed>180 && !testTurnSent)testButtons=JUTGamePad::B;
+            const char* turn=getenv("SMS_SEA_TEST_TURNBACK");
+            bool turnReady=turn && (atoi(turn)==2
+                ?crossings==1 && fabsf(progress-swapDistance)>1500
+                :crossings==0 && rideElapsed>60);
+            if(turnReady && !testTurnSent)testButtons=JUTGamePad::B;
         }
     }
     if(!active) {
@@ -459,7 +478,9 @@ void sms_sea_draw(unsigned cue,JDrama::TGraphics* graphics) {
     }
     if(releasePending && gpApplication.mFader->isFullyFadedIn()) {
         if(GXPC_CoastalHold)GXPC_CoastalHold(0);releasePending=false;
-        OSReport("[sea-route] continuous frame released crossing=%d\n",crossings);
+        sms_open_world_profile("ferry frame ready");
+        OSReport("[sea-route] continuous frame released crossing=%d elapsed_ms=%u\n",crossings,
+            (unsigned)(port_open_world_milliseconds()-crossingStart));
     }
     // Keep both lines left of FLUDD's gauge. Only advertise boarding when
     // X can actually work; use the landing camera blend to orient arrivals.
@@ -496,12 +517,13 @@ void sms_sea_filter_map() {
     if(!ready || !sms_open_world_enabled() || !gpMap)return;
     J3DModel* m=gpMap->getModelManager()->getJointModel(0)->getModel();
     J3DModelData* d=m->getModelData();
-    // Native backdrop cards were built for a land-bound camera. They cannot
-    // be approached as terrain. Replace them with our registered neighbor.
+    // Replace the baked counterpart, preserving the Plaza's supporting
+    // land and Pinna's sand. A large bounding box alone does not distinguish
+    // a background card from a shape that also contains playable terrain.
     for(unsigned i=0;i<d->getShapeNum();++i) {
         bool replace=currentStage==PLAZA?i==22:i==1;
-        bool background=currentStage==PLAZA?(i==10 || i==11 || i==12 || i==19):i<9;
-        bool hide=replace || (active && background);
+        bool background=currentStage==PLAZA?(i==11 || i==12 || i==19):(i<9 && i!=7);
+        bool hide=replace || (active && currentStage!=PLAZA && background);
         if(hide){d->getShapeNodePointer(i)->onFlag(J3DShpFlag_Visible);m->getShapePacket(i)->hide();}
         else if(background){d->getShapeNodePointer(i)->offFlag(J3DShpFlag_Visible);m->getShapePacket(i)->show();}
     }

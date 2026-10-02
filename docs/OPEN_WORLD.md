@@ -7,6 +7,31 @@ The ferry approaches the actual Pinna coastline without a tunnel.
 The [player experience review](OPEN_WORLD_PLAYER_REVIEW.md) records the remaining visual and usability problems, their priority, and the small instruction improvements made after reviewing actual gameplay.
 The current connection remains a prototype; successful crossings do not mean the scenery, shoreline, or loading pause is fully polished.
 
+## Offshore transition polish (v6)
+
+The ferry now exchanges maps shortly after leaving the Plaza waterfront, while Pinna is still offshore.
+Pinna's native beach and actors are present for most of the approach.
+The sand beneath the beach objects and the Plaza's nearby islands remains visible during the ride.
+These ground surfaces were previously hidden with the background scenery because they share unusually large map sections.
+
+The long outbound freeze was primarily the original Plaza-to-Pinna cannon departure sequence running behind the retained image.
+The ferry now requests a direct stage exchange after choosing the destination, bypassing that unrelated departure sequence.
+Ordinary cannon and gate entries retain their original behavior.
+The recorded 64-bit round trip measured **59 ms outbound / 226 ms return**, and the 32-bit, 60 fps round trip with audio measured **67 ms / 140 ms**.
+These are trigger-to-arrival measurements from the local replay configuration, not a guarantee for all machines or graphics settings.
+An additional run with the saved graphics settings, the installed 2,171-texture pack, and audio measured **115 ms outbound / 173 ms return until the destination frame was ready to release the hold**.
+That measurement includes the first destination draw, beyond the earlier arrival callback.
+The earlier v5 timings below describe the previous implementation.
+
+The return skyline and the geographic fit of the Harbor entrance still need further work.
+An early exchange and preserved sand do not establish that every background transition is visually seamless.
+
+Replay `--turn-back` to reverse before the exchange, or `--turn-back-after-swap` to exchange maps, reverse, and return to the departure shore; both require `--rides 1`.
+Use `--player-settings` to retain the saved resolution and texture-pack settings during a ferry replay.
+Optional `SMS_OPEN_WORLD_PROFILE=1` reports wall-clock phase timestamps for native loading and ferry setup.
+Evidence is under `build/open-world/v6/`: `early-swap`, `early-swap32`, `turn-back-before`, `turn-back-after`, `player-settings` (complete park entry), and `player-frame-ready` (both directions with saved graphics settings).
+The illustrated progress review and uninterrupted round-trip capture are `concepts/pinna-offshore-swap-v6.png` and `.mp4`, also in FileBrowser's `Render-Previews` folder.
+
 ## Build this branch and include the mod
 
 Check out `mod-open-world` and install the platform prerequisites from [BUILD.md](../BUILD.md).

@@ -679,6 +679,12 @@ extern "C" int sms_open_world_enabled()
     return enabled;
 }
 
+void sms_open_world_profile(const char* phase)
+{
+    if (sms_open_world_enabled() && getenv("SMS_OPEN_WORLD_PROFILE"))
+        OSReport("[open-world-profile] %llu %s\n",port_open_world_milliseconds(),phase);
+}
+
 void sms_open_world_setup(TMarDirector* d)
 {
     walkway=0;

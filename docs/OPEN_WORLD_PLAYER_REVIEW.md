@@ -4,6 +4,11 @@ The connection works, but the current journey still looks unfinished to a player
 Successful arrival, preserved health, and an absence of black frames do not establish that the world feels continuous.
 The highest priority is a believable departure and arrival, followed by uninterrupted movement and clear orientation.
 
+**v6 follow-up:** the missing beach sand has been restored, the map exchange moved offshore, and the unrelated cannon departure sequence removed from ferry travel.
+Recorded outbound trigger-to-arrival time dropped to 59 ms in the 64-bit replay and 67 ms in the 32-bit, 60 fps replay with audio.
+A subsequent run with saved graphics settings and the installed texture pack measured 115 ms outbound and 173 ms return until the destination frame was ready to display.
+The findings below describe the reviewed v5 baseline; return-skyline continuity, Harbor placement, and actual boat clearance remain open.
+
 ## What was reviewed
 
 Reviewed native gameplay captures across the complete Plaza–Pinna Beach–park journey, the return ferry footage, and the Plaza–Harbor walking route.

@@ -12,18 +12,25 @@ def main():
  p=argparse.ArgumentParser(description=__doc__)
  p.add_argument('--iso',type=Path,required=True);p.add_argument('--seed-card',type=Path,required=True)
  p.add_argument('--exe',type=Path,default=ROOT/'build/linux-64/sms');p.add_argument('--fps',type=int,choices=[30,60],default=30)
+ p.add_argument('--player-settings',action='store_true',help='use saved resolution and texture settings instead of the lightweight capture overrides')
  p.add_argument('--rides',type=int,default=2);p.add_argument('--from-stage',type=int,default=1)
  p.add_argument('--controls',action='store_true');p.add_argument('--turn-back',action='store_true');
+ p.add_argument('--turn-back-after-swap',action='store_true',help='reverse after entering the neighboring map, then return home')
  p.add_argument('--enter-park',action='store_true',help='walk through the native park gate after one Plaza ferry ride')
  p.add_argument('--record',action='store_true');p.add_argument('--audio',action='store_true');p.add_argument('--out',type=Path,required=True)
  p.add_argument('--timeout',type=float,default=420);a=p.parse_args();out=a.out;out.mkdir(parents=True,exist_ok=False)
- if a.enter_park and (a.rides!=1 or a.from_stage!=1 or a.turn_back):p.error('--enter-park requires --rides 1 --from-stage 1 without --turn-back')
+ turn_back=a.turn_back or a.turn_back_after_swap
+ if a.turn_back and a.turn_back_after_swap:p.error('choose one turn-back mode')
+ if turn_back and a.rides!=1:p.error('turn-back tests require --rides 1')
+ if a.enter_park and (a.rides!=1 or a.from_stage!=1 or turn_back):p.error('--enter-park requires --rides 1 --from-stage 1 without a turn-back mode')
  shutil.copytree(a.seed_card,out/'card');(out/'shots').mkdir()
  fields=list(range(3980,8001 if a.enter_park else 6001,2 if a.record else 20))
  env=os.environ.copy();env.pop('SMS_OPEN_WORLD_TEST_SPAWN',None);env.pop('SMS_OPEN_WORLD_TEST_WALK',None)
  env.update(SMS_OPEN_WORLD='1',SMS_SEA_TEST_SPAWN='1',SMS_SEA_TEST_RIDES=str(a.rides),SMS_OPEN_WORLD_LOG='1',SMS_FRAME_RATE=str(a.fps),SMS_GX_SCALE='1',SMS_TEXTURE_PACKS='0',SMS_AUDIO='1' if a.audio else '0',SMS_SKIP_MOVIES='1',SMS_WARP=f'{a.from_stage},{2 if a.from_stage==1 else 0},50',SMS_VI_DETERMINISTIC='1',SMS_FIELD_CLOCK='retrace',SMS_SAVE_DIR=str((out/'card').resolve()),SMS_AUTOPRESS=BOOT,SMS_SHOTS=','.join(map(str,fields)),SMS_SHOT_DIR=str((out/'shots').resolve()))
- if a.controls or a.turn_back:env['SMS_SEA_TEST_CONTROL']='1'
- if a.turn_back:env['SMS_SEA_TEST_TURNBACK']='1'
+ if a.player_settings:
+  env.pop('SMS_GX_SCALE',None);env.pop('SMS_TEXTURE_PACKS',None)
+ if a.controls or turn_back:env['SMS_SEA_TEST_CONTROL']='1'
+ if turn_back:env['SMS_SEA_TEST_TURNBACK']='2' if a.turn_back_after_swap else '1'
  if a.enter_park:env['SMS_SEA_TEST_ENTER_PARK']='1'
  with (out/'run.log').open('w') as log:
   proc=subprocess.Popen([str(a.exe.resolve()),str(a.iso.resolve()),'--headless'],cwd=ROOT,env=env,stdout=log,stderr=subprocess.STDOUT)
@@ -40,13 +47,13 @@ def main():
    proc.terminate()
    try:proc.wait(timeout=5)
    except subprocess.TimeoutExpired:proc.kill();proc.wait()
- validate(out,a.rides,a.fps,fields,a.from_stage,a.controls,a.turn_back,a.record,a.enter_park)
-def validate(out,rides,fps,fields,source=1,controls=False,turn_back=False,record=False,enter_park=False):
+ validate(out,a.rides,a.fps,fields,a.from_stage,a.controls,turn_back,a.record,a.enter_park,a.turn_back_after_swap)
+def validate(out,rides,fps,fields,source=1,controls=False,turn_back=False,record=False,enter_park=False,turn_back_after_swap=False):
  text=(out/'run.log').read_text(errors='replace')
  assert 'unknown FIFO opcode' not in text
  assert 'fatal signal' not in text and 'missing resource' not in text and 'ready=0' not in text
  arrivals=re.findall(r'\[sea-route\] arrived stage=(\d+) episode=(\d+) crossing=(\d+) elapsed_ms=(\d+) speed=([\d.]+) -> ([\d.]+) squid_frame=([\d.]+) health=(\d+) water=(\d+)',text)
- expected=0 if turn_back else rides
+ expected=2 if turn_back_after_swap else 0 if turn_back else rides
  assert len(arrivals)==expected,(len(arrivals),expected)
  carries=re.findall(r'\[sea-route\] crossing stage=(\d+) -> stage=(\d+) episode=(\d+) progress=([\d.]+) speed=([\d.]+) health=(\d+) water=(\d+)',text)
  for i,(arr,carry) in enumerate(zip(arrivals,carries),1):
@@ -56,12 +63,13 @@ def validate(out,rides,fps,fields,source=1,controls=False,turn_back=False,record
   assert health==carry[5] and water==carry[6] and float(frame)>=0
  phases=re.findall(r'\[sea-route\] animation mario=([\d.]+) -> ([\d.]+) blooper=([\d.]+) -> ([\d.]+) hop=([\d.]+) lateral=([\d.-]+)',text)
  assert len(phases)==expected and all(m==n and b==c for m,n,b,c,h,l in phases)
- if controls:assert any(float(a[4])>0 for a in phases)
+ if controls and expected:assert any(float(a[4])>0 for a in phases)
  lands=re.findall(r'\[sea-route\] landed stage=(\d+) ride=(\d+) xyz=\(([^,]+),([^,]+),([^\)]+)\)',text)
  assert len(lands)==rides and all(float(l[3])>=100 for l in lands)
+ if turn_back:assert int(lands[-1][0])==source,'turn-back did not return to departure shore'
  assert text.count('[sea-route] continuous frame released crossing=')==expected
  if controls:
-  assert '[sea-route] hopped progress=' in text
+  if expected:assert '[sea-route] hopped progress=' in text
   assert any(abs(float(x))>10 for x in re.findall(r'lateral=([\d.-]+)',text))
  if turn_back:assert '[sea-route] turned back progress=' in text
  assert all((out/'shots'/f'field{n:05d}.ppm').exists() for n in fields)
@@ -91,6 +99,8 @@ def validate(out,rides,fps,fields,source=1,controls=False,turn_back=False,record
  visual=check_handoffs(out,text) if record and arrivals else ''
  behavior='controller turn-back to departure pier' if turn_back else 'offshore stage swaps, continuous speed/animation/health/water, beach/pier landings'
  result=f'PASS: {fps} fps, {rides} Blooper rides, {behavior}, no black ferry frames.\nTrigger-to-arrival ms: '+', '.join(a[3] for a in arrivals)+'\n'+visual
+ ready_times=re.findall(r'continuous frame released crossing=\d+ elapsed_ms=(\d+)',text)
+ if ready_times:result+='Trigger-to-frame-ready ms: '+', '.join(ready_times)+'\n'
  if enter_park:result+=f'Native gate entered Pinna Park stage {entry[1]}, episode {entry[2]}; controller movement inside park {moved[2]} units, health {moved[3]}.\n'
  (out/'result.txt').write_text(result);print(result)
 
