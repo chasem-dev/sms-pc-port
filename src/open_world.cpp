@@ -25,6 +25,9 @@
 #include <JSystem/J3D/J3DGraphBase/J3DTexture.hpp>
 #include <JSystem/JUtility/JUTNameTab.hpp>
 #include <JSystem/JDrama/JDRViewObj.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DJoint.hpp>
+#include <Enemy/FruitsBoat.hpp>
+#include <Enemy/Graph.hpp>
 #include <dolphin/gx.h>
 #include <dolphin/os.h>
 #include <math.h>
@@ -881,6 +884,12 @@ void sms_open_world_tick(TMarDirector* d)
 void sms_open_world_camera()
 {
     passageBlend=0;
+    if(getenv("SMS_OPEN_WORLD_TEST_BOATS") && gpCamera && walkway
+        && walkway->route.stage==PLAZA && gpMarDirector
+        && gpMarDirector->mState==TMarDirector::STATE_UNK4) {
+        JGeometry::TVec3<f32> eye(-17200.f,4300.f,4800.f),at(-11700.f,150.f,-900.f);
+        gpCamera->warpPosAndAt(eye,at);refreshCameraMatrices(false);return;
+    }
     if(sms_sea_camera()){passageBlend=1;return;}
     if(sms_open_world_enabled() && walkway && pendingStage==-1 && gpMarDirector
         && gpMarDirector->mState==TMarDirector::STATE_UNK4)
@@ -896,4 +905,95 @@ extern "C" int sms_open_world_test_pad(signed char* x,signed char* y)
 {
     if (!testPadActive) return 0;
     *x=testStickX;*y=testStickY;return 1;
+}
+
+// Diagnostic only: observe the native boats; never change their movement.
+// Test an expanded, oriented hull against every rendered walkway triangle.
+// The expansion allows for the distance traveled between sampled frames.
+namespace {
+typedef JGeometry::TVec3<f32> ProbeVec;
+bool probeSeparates(const ProbeVec& axis,const ProbeVec v[3],const ProbeVec& half) {
+    float r=fabsf(axis.x)*half.x+fabsf(axis.y)*half.y+fabsf(axis.z)*half.z;
+    float a=axis.x*v[0].x+axis.y*v[0].y+axis.z*v[0].z;
+    float b=axis.x*v[1].x+axis.y*v[1].y+axis.z*v[1].z;
+    float c=axis.x*v[2].x+axis.y*v[2].y+axis.z*v[2].z;
+    return fminf(a,fminf(b,c))>r || fmaxf(a,fmaxf(b,c))<-r;
+}
+bool probeTriangleBox(const ProbeVec v[3],const ProbeVec& half) {
+    const ProbeVec axes[3]={ProbeVec(1.f,0.f,0.f),ProbeVec(0.f,1.f,0.f),ProbeVec(0.f,0.f,1.f)};
+    for(int i=0;i<3;++i)if(probeSeparates(axes[i],v,half))return false;
+    ProbeVec edges[3],normal;
+    for(int i=0;i<3;++i)edges[i]=v[(i+1)%3]-v[i];
+    normal.cross(edges[0],edges[1]);
+    if(probeSeparates(normal,v,half))return false;
+    for(int i=0;i<3;++i)for(int j=0;j<3;++j) {
+        ProbeVec axis;axis.cross(edges[i],axes[j]);
+        if(probeSeparates(axis,v,half))return false;
+    }
+    return true;
+}
+struct BoatProbe {
+    TFruitsBoat* boat;
+    unsigned ticks,checks,overlaps,loops;
+    float phase,maxStep;
+    ProbeVec previous;
+};
+BoatProbe boatProbes[8];
+}
+void sms_open_world_boat_probe(TFruitsBoat* boat)
+{
+    static int enabled=getenv("SMS_OPEN_WORLD_TEST_BOATS")!=0;
+    if(!enabled || !walkway || walkway->route.stage!=PLAZA || !gpMarDirector
+        || gpMarDirector->mState!=TMarDirector::STATE_UNK4 || boat->getBoatType()!=0)return;
+    BoatProbe* p=0;
+    for(int i=0;i<8;++i)if(!boatProbes[i].boat || boatProbes[i].boat==boat){p=&boatProbes[i];break;}
+    if(!p)return;
+    const char* route=boat->getTracer()->getGraph()->unkC;
+    float phase=boat->getTracer()->unk14;
+    if(!p->boat){p->boat=boat;p->previous=boat->mPosition;p->phase=phase;}
+    ProbeVec step=boat->mPosition-p->previous;
+    p->maxStep=fmaxf(p->maxStep,sqrtf(step.x*step.x+step.y*step.y+step.z*step.z));
+    p->previous=boat->mPosition;
+    // Native routes can run in either direction through the spline wrap.
+    bool loop=fabsf(phase-p->phase)>.5f;
+    p->phase=phase;if(loop)++p->loops;
+    ++p->ticks;
+    if(!(p->ticks%4)) {
+        J3DModel* model=boat->getModel();
+        J3DJoint* joint=model->getModelData()->getJointNodePointer(0);
+        const Vec& lo=joint->getMin();const Vec& hi=joint->getMax();
+        ProbeVec center((lo.x+hi.x)*.5f,(lo.y+hi.y)*.5f,(lo.z+hi.z)*.5f);
+        ProbeVec half((hi.x-lo.x)*.5f,(hi.y-lo.y)*.5f,(hi.z-lo.z)*.5f);
+        half.x+=100;half.y+=100;half.z+=100;
+        Mtx inverse;
+        if(!MTXInverse(model->getBaseTRMtx(),inverse))return;
+        ++p->checks;
+        ProbeVec hullMin(1e30f,1e30f,1e30f),hullMax(-1e30f,-1e30f,-1e30f);
+        for(int k=0;k<8;++k) {
+            ProbeVec corner((center.x+(k&1?half.x:-half.x))*boat->mScaling.x,
+                (center.y+(k&2?half.y:-half.y))*boat->mScaling.y,
+                (center.z+(k&4?half.z:-half.z))*boat->mScaling.z),v;
+            MTXMultVec(model->getBaseTRMtx(),&corner,&v);
+            hullMin.x=fminf(hullMin.x,v.x);hullMin.y=fminf(hullMin.y,v.y);hullMin.z=fminf(hullMin.z,v.z);
+            hullMax.x=fmaxf(hullMax.x,v.x);hullMax.y=fmaxf(hullMax.y,v.y);hullMax.z=fmaxf(hullMax.z,v.z);
+        }
+        for(int i=0;i<walkway->count;++i) {
+            const ProbeVec* triangle=walkway->tris[i].v;
+            if(fmaxf(triangle[0].x,fmaxf(triangle[1].x,triangle[2].x))<hullMin.x
+                || fminf(triangle[0].x,fminf(triangle[1].x,triangle[2].x))>hullMax.x
+                || fmaxf(triangle[0].z,fmaxf(triangle[1].z,triangle[2].z))<hullMin.z
+                || fminf(triangle[0].z,fminf(triangle[1].z,triangle[2].z))>hullMax.z)continue;
+            ProbeVec v[3];
+            for(int k=0;k<3;++k) {
+                MTXMultVec(inverse,&walkway->tris[i].v[k],&v[k]);
+                v[k].x=v[k].x/boat->mScaling.x-center.x;
+                v[k].y=v[k].y/boat->mScaling.y-center.y;
+                v[k].z=v[k].z/boat->mScaling.z-center.z;
+            }
+            if(probeTriangleBox(v,half)){++p->overlaps;break;}
+        }
+    }
+    if(loop || !(p->ticks%600))
+        OSReport("[boat-probe] route=%s ticks=%u checks=%u loops=%u overlaps=%u max_step=%.2f phase=%.5f xyz=(%.1f,%.1f,%.1f)\n",
+            route,p->ticks,p->checks,p->loops,p->overlaps,p->maxStep,phase,boat->mPosition.x,boat->mPosition.y,boat->mPosition.z);
 }

@@ -1,10 +1,12 @@
 #ifndef SMS_OPEN_WORLD_H
 #define SMS_OPEN_WORLD_H
 class TMarDirector;
+class TFruitsBoat;
 namespace JDrama { class TViewObj; }
 JDrama::TViewObj* sms_open_world_draw_object();
 void sms_open_world_setup(TMarDirector*);
 void sms_open_world_profile(const char*);
+void sms_open_world_boat_probe(TFruitsBoat*);
 void sms_open_world_start_wipe(unsigned int,float,bool);
 void sms_open_world_tick(TMarDirector*);
 void sms_open_world_camera();

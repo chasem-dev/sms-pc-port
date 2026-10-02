@@ -1,0 +1,13 @@
+Reason: optional native boat hull clearance probe; no movement changes
+--- a/src/Enemy/fruitsboat.cpp
++++ b/src/Enemy/fruitsboat.cpp
+@@ -1,2 +1,3 @@
++#include <sms_open_world.h>
+ #include <algorithm>
+ 
+@@ -363,4 +364,5 @@
+ 
+ 	model->setBaseScale(mScaling);
++	sms_open_world_boat_probe(this);
+ }
+ 
