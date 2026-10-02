@@ -1,0 +1,12 @@
+Reason: retain Plaza billboard video initialization without its fixed buffering wait during an already-visible coastal exchange
+--- a/src/System/MarDirectorLoadResource.cpp
++++ b/src/System/MarDirectorLoadResource.cpp
+@@ -451,7 +452,7 @@
+ 		// unsigned one on OS_TIMER_CLOCK are the two doubles the map
+ 		// keeps in .sdata2.
+ 		OSTick startTick = OSGetTick();
+-		while (true) {
++		while (!sms_open_world_crossing()) {
+ 			f32 elapsed = (s32)(OSGetTick() - startTick)
+ 			    / (f32)OS_TIMER_CLOCK;
+ 			if (0.5f <= elapsed)

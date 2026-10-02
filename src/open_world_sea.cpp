@@ -76,10 +76,11 @@ signed char testStickX,testStickY;unsigned short testButtons;int testPulse;
 MActor *squid,*idleSquid;J3DModel* scenery;
 J3DModel* harborScenery;
 J3DDrawBuffer *opa,*xlu;
-GXTexObj water;bool hasWater;float waterTime;
+GXTexObj water;bool hasWater;float waterTime,drawnWaterTime;
 JGeometry::TVec3<f32> seaEye,seaAt,savedPos,savedEye,savedAt,savedVel;
 float savedSpeed,savedFov,savedAnimFrame,savedSquidFrame,rideElapsed;bool testHopSent,testTurnSent;
-s16 savedYaw,savedHealth;int savedWater;u8 savedNozzle,savedSecond;
+float savedWaistRoll,savedWaistPitch;
+s16 savedYaw,savedPreviousYaw,savedFaceRoll,savedHealth;int savedWater;u8 savedNozzle,savedSecond;
 unsigned long long crossingStart;
 int dockMode;float dockRemaining;JGeometry::TVec3<f32> dockFrom,dockTo;
 int testParkNode;bool testParkEntered,testParkControlled;
@@ -474,9 +475,13 @@ void cross(TMarDirector* d) {
     savedPos=world(currentStage,m->mPosition);savedEye=world(currentStage,gpCamera->mPosition);savedAt=world(currentStage,gpCamera->mTarget);
     savedVel=m->mVel;if(currentStage!=PLAZA){float x=cs*savedVel.x+sn*savedVel.z,z=-sn*savedVel.x+cs*savedVel.z;savedVel.x=x;savedVel.z=z;}
     savedYaw=m->mFaceAngle.y+(currentStage==PLAZA?0:s16(0x2000));savedSpeed=m->mForwardVel;savedFov=gpCamera->mFovy;
+    savedPreviousYaw=m->unk9C+(currentStage==PLAZA?0:s16(0x2000));savedFaceRoll=m->mFaceAngle.z;
+    savedWaistRoll=m->mWaistRoll;savedWaistPitch=m->mWaistPitch;
+    if(geography())waterTime=drawnWaterTime;
     savedAnimFrame=m->getMotionFrameCtrl().getFrame();savedSquidFrame=squid->getFrameCtrl(0)->getFrame();
     savedHealth=m->mHealth;savedWater=m->mWaterGun?m->mWaterGun->mCurrentWater:0;
     savedNozzle=m->mWaterGun?m->mWaterGun->mCurrentNozzle:0;savedSecond=m->mWaterGun?m->mWaterGun->mSecondNozzle:4;
+    // Ease the first complete destination frame into the retained view.
     if(GXPC_CoastalDissolve)GXPC_CoastalDissolve(port_fps60_active?4:2);
     if(GXPC_CoastalHold)GXPC_CoastalHold(8);
     crossingStart=port_open_world_milliseconds();
@@ -611,6 +616,8 @@ void sms_sea_arrive(TMarDirector* d) {
         m->mSurfGesso=squid;m->mSurfGessoType=TMario::SURF_GESSO_TYPE_GREEN;
         m->changePlayerStatus(MARIO_STATUS_SURF,0,true);m->mStatusTimer=0;
         m->mFaceAngle.y=yaw;m->mModelFaceAngle=yaw;m->mIntendedYaw=yaw;
+        m->unk9C=savedPreviousYaw-(currentStage==PLAZA?0:s16(0x2000));m->mFaceAngle.z=savedFaceRoll;
+        m->mWaistRoll=savedWaistRoll;m->mWaistPitch=savedWaistPitch;
         m->mVel=savedVel;if(currentStage!=PLAZA){m->mVel.x=cs*savedVel.x-sn*savedVel.z;m->mVel.z=sn*savedVel.x+cs*savedVel.z;}
         m->mForwardVel=savedSpeed;m->mSlideVelX=m->mVel.x;m->mSlideVelZ=m->mVel.z;
         float ground=gpMapCollisionData->checkGround(p.x,p.y+100,p.z,0,&m->mGroundPlane);m->mFloorPosition.set(p.x,ground,p.z);
@@ -624,6 +631,7 @@ void sms_sea_arrive(TMarDirector* d) {
         sms_open_world_profile("ferry arrived");
         OSReport("[sea-route] arrived stage=%d episode=%d crossing=%d elapsed_ms=%u speed=%.2f -> %.2f squid_frame=%.2f health=%d water=%d\n",currentStage,d->unk7D,crossings,(unsigned)(port_open_world_milliseconds()-crossingStart),savedSpeed,m->mForwardVel,savedSquidFrame,m->mHealth,savedWater);
         OSReport("[sea-route] animation mario=%.2f -> %.2f blooper=%.2f -> %.2f hop=%.2f lateral=%.2f\n",savedAnimFrame,m->getMotionFrameCtrl().getFrame(),savedSquidFrame,squid->getFrameCtrl(0)->getFrame(),hop,lateral);
+        OSReport("[sea-route] rider lean roll=%.2f -> %.2f pitch=%.2f -> %.2f yaw_delta=%d\n",savedWaistRoll,m->mWaistRoll,savedWaistPitch,m->mWaistPitch,int(s16(m->mFaceAngle.y-m->unk9C)));
     } else {
         JGeometry::TVec3<f32> p=currentStage==PLAZA?plazaLanding():JGeometry::TVec3<f32>(6000,120,7300);
         m->waitingStart(&p,currentStage==PLAZA?-90:0);m->mPosition=p;m->mVel.zero();m->resetHistory();testSpawnUsed=true;
@@ -636,7 +644,7 @@ void sms_sea_arrive(TMarDirector* d) {
 void sms_sea_tick(TMarDirector* d) {
     testPadActive=false;testButtons=0;testStickX=testStickY=0;
     if(!sms_open_world_enabled() || pendingStage!=-1 || d->mState!=TMarDirector::STATE_UNK4 || d->unk124 || d->unk4C&0x1ff)return;
-    if(geography() && hasWater)waterTime+=.5f;
+    if(geography() && hasWater && !releasePending)waterTime+=.5f;
     if(testParkWalk(d) || !ready)return;
     TMario* m=gpMarioOriginal;TMarioGamePad* pad=m->getGamePad();
     // The director runs 120 simulation ticks per second at either display
@@ -707,6 +715,10 @@ void sms_sea_tick(TMarDirector* d) {
     m->mStatusTimer=0;m->setAnimation(boarding?TMario::ANIM_JUMP:TMario::ANIM_RIDE_SHELL,1.f);
     float angle=(boarding?atan2f(dockTo.x-dockFrom.x,dockTo.z-dockFrom.z)
         :atan2f(tangent.x*direction,tangent.z*direction))-(currentStage==PLAZA?0:rotation);
+    // Native playerControl normally records the previous yaw before moving.
+    // Guided travel bypasses it; a stale shore yaw otherwise makes the torso
+    // lean as though Mario is making one continuous sharp turn offshore.
+    m->unk9C=m->mFaceAngle.y;
     m->mFaceAngle.y=s16(int(angle*65536.f/6.283185307f));m->mModelFaceAngle=m->mFaceAngle.y;m->mIntendedYaw=m->mFaceAngle.y;
     P velocity={boarding?0.f:tangent.x*direction*speed,boarding?0.f:tangent.z*direction*speed};
     if(currentStage!=PLAZA){float x=cs*velocity.x-sn*velocity.z,z=sn*velocity.x+cs*velocity.z;velocity.x=x;velocity.z=z;}
@@ -789,6 +801,7 @@ void sms_sea_draw(unsigned cue,JDrama::TGraphics* graphics) {
     if(active || farWater) {
         // Identical world-space ocean texture and phase on all coastal maps.
         float phase=geography()?waterTime:rideTime;
+        if(geography())drawnWaterTime=waterTime;
         JGeometry::TVec3<f32> center=world(currentStage,gpMarioOriginal->mPosition);
         GXLoadPosMtxImm(graphics->getViewMtx(),GX_PNMTX0);GXSetCurrentMtx(GX_PNMTX0);GXClearVtxDesc();
         GXSetVtxDesc(GX_VA_POS,GX_DIRECT);GXSetVtxDesc(GX_VA_CLR0,GX_DIRECT);GXSetVtxDesc(GX_VA_TEX0,GX_DIRECT);

@@ -90,8 +90,8 @@ float passageBlend=0;
 struct CrossingPose {
     Route from;
     JGeometry::TVec3<f32> pos, vel, eye, at;
-    float speed, fov, animationFrame, animationRate;
-    s16 yaw, cameraYaw;
+    float speed, fov, animationFrame, animationRate, waistRoll, waistPitch;
+    s16 yaw, previousYaw, modelYaw, facePitch, faceRoll, cameraYaw;
     int direction;
     u32 status;
     u16 state, timer, animation;
@@ -942,13 +942,45 @@ void refreshCameraMatrices(bool resetPrevious)
     }
 }
 
+// Native camera collision does not reliably recover at the newly exposed
+// waterfront. Keep the player visible while returning control on the apron.
+void clearApproachCamera(const Route& r,TMario* m,float u,float v)
+{
+    if(!connectedCoast() || !gpMapCollisionData || u< -1200
+        || fabsf(v-bridgeOffset(u))>halfWidth+200
+        || m->mPosition.y>floorHeight(r,u,v)+750)return;
+    const TMapCollisionData* map=gpMapCollisionData;
+    JGeometry::TVec3<f32> at=m->mPosition;at.y+=150;
+    JGeometry::TVec3<f32> eye=gpCamera->mPosition,hit;
+    bool atInside=fabsf(at.x)<map->mGridExtentX-1 && fabsf(at.z)<map->mGridExtentY-1;
+    bool inside=atInside && fabsf(eye.x)<map->mGridExtentX-1 && fabsf(eye.z)<map->mGridExtentY-1;
+    bool blocked=inside && map->intersectLine(at,eye,false,&hit);
+    if(eye.y>=m->mPosition.y+250 && !blocked)return;
+    float yaw=m->mFaceAngle.y*(6.283185307f/65536.f);
+    float behind=sinf(yaw)*r.dx+cosf(yaw)*r.dz>=0?-650.f:650.f;
+    float eyeU=u+behind;
+    eye=point(r,eyeU,bridgeOffset(eyeU),0);eye.y=m->mPosition.y+450;
+    inside=atInside && fabsf(eye.x)<map->mGridExtentX-1 && fabsf(eye.z)<map->mGridExtentY-1;
+    if(inside)for(int i=0;i<8;++i) {
+        if(!map->intersectLine(at,eye,false,&hit))break;
+        float x=hit.x-at.x,y=hit.y-at.y,z=hit.z-at.z;
+        float distance=sqrtf(x*x+y*y+z*z);
+        float scale=distance>45.f?(distance-45.f)/distance:0.f;
+        eye.set(at.x+x*scale,at.y+y*scale,at.z+z*scale);
+        if(distance<=45.f)break;
+    }
+    gpCamera->warpPosAndAt(eye,at);
+    gpCamera->unk258=s16(atan2f(eye.x-at.x,eye.z-at.z)*(65536.f/6.283185307f));
+    refreshCameraMatrices(false);
+}
+
 // Follow the centre line through the narrow bends. The short camera boom
 // stays inside the passage; the open-waterfront camera blends in/out over
 // the approach. The same centre line is used on either side of the exchange.
 void passageCamera(const Route& r,TMario* m)
 {
     float u,v;local(r,m->mPosition,u,v);
-    if (u<routeEnd-600) {passageFacing=1;return;}
+    if (u<routeEnd-600) {clearApproachCamera(r,m,u,v);passageFacing=1;return;}
     if (m->mPosition.y>floorHeight(r,u,v)+750) return;
     const int n=sizeof(passage)/sizeof(passage[0])+1;
     Bend path[n];path[0].u=routeEnd-1100;path[0].v=bridgeOffset(path[0].u);
@@ -1109,6 +1141,11 @@ JGeometry::TVec3<f32> transferPoint(const Route& to,const JGeometry::TVec3<f32>&
     return point(to,targetU,2*seamV-v,p.y-floorHeight(to,targetU,2*seamV-v));
 }
 
+bool sms_open_world_crossing()
+{
+    return sms_open_world_enabled() && (pendingStage!=-1 || sms_sea_pending());
+}
+
 bool sms_open_world_arriving(TMarDirector* d)
 {
     if(sms_sea_arriving(d))return true;
@@ -1139,9 +1176,12 @@ void sms_open_world_arrive(TMarDirector* d)
         m->mSlideVelX=m->mVel.x;m->mSlideVelZ=m->mVel.z;
         float ground=gpMapCollisionData->checkGround(p.x,p.y+100,p.z,0,&m->mGroundPlane);
         m->mFloorPosition.set(p.x,ground,p.z);
-        m->mFaceAngle.y=savedPose.yaw+turn;m->mModelFaceAngle=m->mFaceAngle.y;
+        m->mFaceAngle.y=savedPose.yaw+turn;m->mModelFaceAngle=savedPose.modelYaw+turn;
         m->mIntendedYaw=m->mFaceAngle.y;
         if(!savedPose.actorDependent) {
+            m->unk9C=savedPose.previousYaw+turn;
+            m->mFaceAngle.x=savedPose.facePitch;m->mFaceAngle.z=savedPose.faceRoll;
+            m->mWaistRoll=savedPose.waistRoll;m->mWaistPitch=savedPose.waistPitch;
             m->setAnimation(savedPose.animation,1.0f);
             m->getMotionFrameCtrl().setFrame(savedPose.animationFrame);
             m->getMotionFrameCtrl().setRate(savedPose.animationRate);
@@ -1246,7 +1286,10 @@ void sms_open_world_tick(TMarDirector* d)
     savedPose.from=walkway->route;savedPose.pos=m->mPosition;savedPose.vel=m->mVel;
     savedPose.eye=gpCamera->mPosition;savedPose.at=gpCamera->mTarget;
     savedPose.speed=m->mForwardVel;savedPose.fov=gpCamera->mFovy;
-    savedPose.yaw=m->mFaceAngle.y;savedPose.cameraYaw=gpCamera->unk258;
+    savedPose.yaw=m->mFaceAngle.y;savedPose.previousYaw=m->unk9C;savedPose.modelYaw=m->mModelFaceAngle;
+    savedPose.facePitch=m->mFaceAngle.x;savedPose.faceRoll=m->mFaceAngle.z;
+    savedPose.waistRoll=m->mWaistRoll;savedPose.waistPitch=m->mWaistPitch;
+    savedPose.cameraYaw=gpCamera->unk258;
     savedPose.animationFrame=m->getMotionFrameCtrl().getFrame();
     savedPose.animationRate=m->getMotionFrameCtrl().getRate();
     savedPose.direction=passageFacing;

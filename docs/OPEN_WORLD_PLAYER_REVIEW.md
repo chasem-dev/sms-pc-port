@@ -1,5 +1,15 @@
 # Open-world player experience review
 
+## Rider and return-load polish (v10)
+
+Mario now keeps a natural riding pose offshore instead of leaning continuously as though turning sharply. The ferry carries the torso lean across the exchange; ordinary walking crossings also preserve facing and lean. The shared ocean animation pauses with the held view.
+
+Returning to the Plaza no longer waits for an extra fixed billboard-video buffering delay during a coastal exchange. The video still initializes and prepares normally. The recorded 64-bit round trip with native movie decoding enabled resumed at 183 ms outbound and 151 ms returning. These are local replay measurements, not guaranteed timings.
+
+A walking replay also caught the camera dropping behind the Plaza seawall after returning. The approach now includes a camera recovery for low or obstructed views; its final stability replay is still in progress.
+
+The short background blend remains. Removing it exposed a visible return-view jump in the recorded test, so that experiment was rejected. This pass improves rider stability and the return hold; it does not eliminate every scenery pop-in or establish unaided route discovery.
+
 ## Current coastal layout (v9)
 
 The Harbor now occupies a consistent position beside the Plaza coast. Both shores show the neighboring map and both ends of the walking connection. The approaches follow broad curves, and the covered passage climbs between the native waterfront heights. Two-sided signs identify the destination on entry and the current area on arrival.

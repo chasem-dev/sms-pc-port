@@ -18,6 +18,7 @@ def main():
  p.add_argument('--turn-back-after-swap',action='store_true',help='reverse after entering the neighboring map, then return home')
  p.add_argument('--enter-park',action='store_true',help='walk through the native park gate after one Plaza ferry ride')
  p.add_argument('--record',action='store_true');p.add_argument('--audio',action='store_true');p.add_argument('--out',type=Path,required=True)
+ p.add_argument('--native-movies',action='store_true',help='keep native THP decoding enabled, including the Plaza billboard video')
  p.add_argument('--timeout',type=float,default=420);a=p.parse_args();out=a.out;out.mkdir(parents=True,exist_ok=False)
  turn_back=a.turn_back or a.turn_back_after_swap
  if a.turn_back and a.turn_back_after_swap:p.error('choose one turn-back mode')
@@ -29,6 +30,7 @@ def main():
  env.update(SMS_OPEN_WORLD='1',SMS_SEA_TEST_SPAWN='1',SMS_SEA_TEST_RIDES=str(a.rides),SMS_OPEN_WORLD_LOG='1',SMS_FRAME_RATE=str(a.fps),SMS_GX_SCALE='1',SMS_TEXTURE_PACKS='0',SMS_AUDIO='1' if a.audio else '0',SMS_SKIP_MOVIES='1',SMS_WARP=f'{a.from_stage},{2 if a.from_stage==1 else 0},50',SMS_VI_DETERMINISTIC='1',SMS_FIELD_CLOCK='retrace',SMS_SAVE_DIR=str((out/'card').resolve()),SMS_AUTOPRESS=BOOT,SMS_SHOTS=','.join(map(str,fields)),SMS_SHOT_DIR=str((out/'shots').resolve()))
  if a.player_settings:
   env.pop('SMS_GX_SCALE',None);env.pop('SMS_TEXTURE_PACKS',None)
+ if a.native_movies:env['SMS_SKIP_MOVIES']='0'
  if a.controls or turn_back:env['SMS_SEA_TEST_CONTROL']='1'
  if turn_back:env['SMS_SEA_TEST_TURNBACK']='2' if a.turn_back_after_swap else '1'
  if a.enter_park:env['SMS_SEA_TEST_ENTER_PARK']='1'
@@ -63,6 +65,8 @@ def validate(out,rides,fps,fields,source=1,controls=False,turn_back=False,record
   assert health==carry[5] and water==carry[6] and float(frame)>=0
  phases=re.findall(r'\[sea-route\] animation mario=([\d.]+) -> ([\d.]+) blooper=([\d.]+) -> ([\d.]+) hop=([\d.]+) lateral=([\d.-]+)',text)
  assert len(phases)==expected and all(m==n and b==c for m,n,b,c,h,l in phases)
+ leans=re.findall(r'\[sea-route\] rider lean roll=([\d.-]+) -> ([\d.-]+) pitch=([\d.-]+) -> ([\d.-]+) yaw_delta=(-?\d+)',text)
+ assert len(leans)==expected and all(r==s and p==q for r,s,p,q,y in leans),'rider lean changed at the exchange'
  if controls and expected:assert any(float(a[4])>0 for a in phases)
  lands=re.findall(r'\[sea-route\] landed stage=(\d+) ride=(\d+) xyz=\(([^,]+),([^,]+),([^\)]+)\)',text)
  assert len(lands)==rides and all(float(l[3])>=100 for l in lands)

@@ -4,6 +4,22 @@ This document preserves the implementation history and measurements from earlier
 For current launch instructions, route locations, controls, and known limitations, use the [player guide](OPEN_WORLD.md).
 Measurements below belong to their named version; the multi-second v5 ferry pauses were reduced in v6.
 
+## v10 rider pose and Plaza return
+
+Guided sea travel bypasses native `playerControl`, which ordinarily updates Mario's previous yaw (`unk9C`). A stale shore-facing yaw made `considerWaist` interpret the journey as one continuous sharp turn. The guided tick now records the previous yaw before applying the new heading. Ferry exchanges preserve previous yaw, face roll, waist pitch, and waist roll; walking exchanges also preserve model yaw and face pitch. Ocean texture time remains at the last drawn phase while the destination frame is held.
+
+The native Plaza billboard still calls `THPPlayerInit`, opens its video, supplies the buffer, and calls `THPPlayerPrepare`, including its decoder-readiness wait. `zz-open-world-thp-wait.patch` skips only the subsequent fixed half-second game-clock buffering loop while an enabled coastal exchange is pending. Ordinary entries retain that loop. The patch uses the header inserted earlier by `zz-open-world-profile.patch`; the public decomp pin is unchanged.
+
+The exterior approach now corrects native camera views that fall too low or become obstructed near the added route. It leaves unobstructed views alone and clips the recovery boom against the native collision grid. A recorded walking run exposed the seawall occlusion after returning to the Plaza; the recovery is compiled in both word sizes, with its final stability replay still in progress.
+
+The ferry replay supports `--native-movies` to keep THP decoding enabled. Its runtime assertions now check carried rider lean alongside animation, health, water, and speed. The recorded direct-cut experiment failed the existing first-live-frame check on the Plaza return and showed a visible view jump; it was rejected. The existing approximately 67 ms background blend and two restored draw passes remain.
+
+### Validation on Linux
+
+- `ferry64-final`: recorded 30 fps round trip with audio, steering, hopping, and native THP decoding. Arrival callbacks took 77/101 ms; complete destination frames were ready at 183/151 ms. First displayed frame RGB changes were 5.36/5.76 out of 255, with Mario visible and no black ferry frames. Rider lean carried exactly across both exchanges.
+- `reversal32-final`: recorded 60 fps 32-bit run with audio and native THP decoding; reversed after swapping offshore and returned to the Plaza. Arrival callbacks took 130/115 ms; frame readiness was 298/176 ms. First displayed frame RGB changes were 5.24/6.15 out of 255, with Mario visible and no black ferry frames.
+- `walk32-final`: recorded 60 fps walking round trip with audio and spent FLUDD water. Both native land joins, passage bends, episode selection, speed, health/water carry, retained materials, and archive reuse passed; arrival callbacks took 114/117 ms.
+
 ## v9 connected coastline
 
 The normal enabled mod now uses the connected geographic layout. No experimental environment variable is needed. `SMS_OPEN_WORLD_TEST_GEOGRAPHY=0` retains the previous layout for comparison; it is a diagnostic override, not a player setup step.
