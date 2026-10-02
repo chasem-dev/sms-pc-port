@@ -4,6 +4,9 @@ An optional addition to the native PC port connects **Delfino Plaza and Ricco Ha
 The walking route has a tiled Plaza bridge, timber Harbor pier, and vaulted coastal curve.
 The ferry approaches the actual Pinna coastline without a tunnel.
 
+The [player experience review](OPEN_WORLD_PLAYER_REVIEW.md) records the remaining visual and usability problems, their priority, and the small instruction improvements made after reviewing actual gameplay.
+The current connection remains a prototype; successful crossings do not mean the scenery, shoreline, or loading pause is fully polished.
+
 ## Build this branch and include the mod
 
 Check out `mod-open-world` and install the platform prerequisites from [BUILD.md](../BUILD.md).

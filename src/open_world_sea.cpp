@@ -461,11 +461,29 @@ void sms_sea_draw(unsigned cue,JDrama::TGraphics* graphics) {
         if(GXPC_CoastalHold)GXPC_CoastalHold(0);releasePending=false;
         OSReport("[sea-route] continuous frame released crossing=%d\n",crossings);
     }
-    if(active || nearStation()) {
-        J2DOrthoGraph graph(graphics->getViewport());graph.setPort();graph.setup2D();gpSystemFont->setGX();
-        const char* text=active?(direction>0?"PINNA PARK   |   Steer: Stick   Hop: A   Turn back: B":"DELFINO PLAZA   |   Steer: Stick   Hop: A   Turn back: B"):(currentStage==PLAZA?"X  Ride a Blooper to Pinna Park":"X  Ride a Blooper to Delfino Plaza");
-        gpSystemFont->setCharColor(JUtility::TColor(22,54,69,255));gpSystemFont->drawString_scale(49,417,15,18,text,true);
-        gpSystemFont->setCharColor(JUtility::TColor(255,248,215,255));gpSystemFont->drawString_scale(48,416,15,18,text,true);
+    // Keep both lines left of FLUDD's gauge. Only advertise boarding when
+    // X can actually work; use the landing camera blend to orient arrivals.
+    TMario* player=gpMarioOriginal;
+    bool canBoard=!active && !cooldown && nearStation() && player
+        && !player->onYoshi() && !player->isHolding() && !player->getHolder();
+    bool justLanded=!active && landingCamera>0;
+    if(active || canBoard || justLanded) {
+        J2DOrthoGraph graph(graphics->getViewport());graph.setPort();graph.setup2D();
+        graph.setColor(JUtility::TColor(16,48,64,170));
+        graph.fillBox(JUTRect(38,365,410,425));
+        gpSystemFont->setGX();
+        const char* title=active?(direction>0?"To Pinna Beach":"To Delfino Plaza")
+            :justLanded?(currentStage==PLAZA?"Delfino Plaza":"Pinna Beach")
+            :(currentStage==PLAZA?"Blooper ride to Pinna Beach":"Blooper ride to Delfino Plaza");
+        const char* hint=active?"Stick: Steer   A: Hop   B: Turn back"
+            :justLanded?(currentStage==PLAZA?"Back at the waterfront":"Follow the beach left to the park entrance.")
+            :"X: Board";
+        gpSystemFont->setCharColor(JUtility::TColor(22,54,69,255));
+        gpSystemFont->drawString_scale(49,389,15,18,title,true);
+        gpSystemFont->drawString_scale(49,413,12,16,hint,true);
+        gpSystemFont->setCharColor(JUtility::TColor(255,248,215,255));
+        gpSystemFont->drawString_scale(48,388,15,18,title,true);
+        gpSystemFont->drawString_scale(48,412,12,16,hint,true);
     }
 }
 
