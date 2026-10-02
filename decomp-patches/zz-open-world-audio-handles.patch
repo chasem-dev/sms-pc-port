@@ -1,0 +1,14 @@
+Reason: clear the owner of a sequence controller before releasing it, including failed loads
+--- a/libs/JSystem/src/JAudio/JAInterface/JAIGFrameSequence.cpp
++++ b/libs/JSystem/src/JAudio/JAInterface/JAIGFrameSequence.cpp
+@@ -24,6 +24,10 @@
+ 		}
+ 	}
+ 
++	// PC: failed / finished sequences must clear their owner handle before
++	// returning the controller to the pool. Rapid coastal crossings exposed
++	// a stale MSBgm handle on the sequence-data failure paths.
++	param_1->clearMainSoundPPointer();
+ 	param_1->setMainSoundPPointer(nullptr);
+ 	param_1->getSeqParameter()->mUpdateData = nullptr;
+ 	if (param_1->getStatus() >= SOUNDSTATE_Started) {

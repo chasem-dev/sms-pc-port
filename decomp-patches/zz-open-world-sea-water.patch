@@ -1,0 +1,20 @@
+Reason: registered ferry ocean replaces stage-specific near/far sea layers while riding
+--- a/src/Map/MapStaticObject.cpp
++++ b/src/Map/MapStaticObject.cpp
+@@ -1,3 +1,4 @@
++#include <sms_open_world_sea.h>
+ #include <Map/MapStaticObject.hpp>
+ 
+ // rogue includes needed for matching sinit & bss
+@@ -196,6 +197,11 @@
+ 
+ void TMapStaticObj::perform(u32 cue, JDrama::TGraphics* graphics)
+ {
++    // Native far-water materials draw over an offshore Mario. The ferry
++    // renders a common world-space ocean at a consistent water height.
++    if (sms_sea_active() && mActorName
++        && (!strcmp(mActorName, "sea") || !strcmp(mActorName, "SeaIndirect")))
++        cue &= ~CUE_ENTRY;
+ 	if (cue & CUE_CALC_ANIM) {
+ 		// An object with a rand-play index at 0x7c plays through
+ 		// MSRandPlay instead of the positional SE.

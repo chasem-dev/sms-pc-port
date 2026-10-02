@@ -87,8 +87,12 @@ Options can be kept in [`settings.txt`](settings.txt) (`resolution = 2`, `textur
 | `SMS_WIDESCREEN=16:9` | widescreen (also `21:9`, `16:10`): a wider view, with the HUD and menus kept 4:3 in the middle |
 | `SMS_FRAME_RATE=60` | gameplay at 60 frames per second (the game's own timing, not sped up); logos, menus and movies stay at 30 |
 | `SMS_WIDESCREEN_HUD=edges` | with widescreen, move the gameplay HUD's counters to the left edge and the water gauge to the right one |
+| `SMS_OPEN_WORLD=1` | enable the optional Plaza–Harbor walking route and Plaza–Pinna Blooper ferry; see [docs/OPEN_WORLD.md](docs/OPEN_WORLD.md) |
 
 Optional mods, such as HD texture packs, go in [`mods/`](mods/README.md); `python3 tools/mods/get.py textures` downloads and installs the UHD texture pack there.
+
+The `mod-open-world` branch includes the coastal routes and Blooper ferry as a built-in optional mod.
+See [building and enabling the open-world mod](docs/OPEN_WORLD.md#build-this-branch-and-include-the-mod); launch it with `./run-open-world.sh` after building this branch.
 
 Saves go to a memory card in slot A, kept as files in `~/.local/share/sms-port/card-a` on Linux and macOS (`$XDG_DATA_HOME/sms-port/card-a` if that is set) and in `%APPDATA%\sms-port\card-a` on Windows.
 Every other switch (debugging, tracing, graphics) is listed in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#environment-variables).

@@ -22,6 +22,10 @@ frame_rate = 60
 # Game file mods from mods/<name>/files/ (see mods/README.md), as name or a;b.
 # mod = none
 
+# Optional Plaza–Harbor coastal route and Plaza–Pinna Beach Blooper ferry.
+# See docs/OPEN_WORLD.md. Off by default; also enabled by run-open-world.sh.
+# open_world = off
+
 # Internal resolution: 1 is the GameCube's 640x528, 2 twice that, and so on.
 # resolution = 1
 # Window size, in multiples of 640x480.

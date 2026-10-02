@@ -34,6 +34,22 @@ Every system uses the same scripts from the repository root:
   `--dry-run` lists what it would delete; `--all` deletes all of `build/`; `SMS_ARCH=64 ./clean.sh` deletes only that build.
   Everything generated lives under `build/`, so `./clean.sh --all` returns the checkout to a fresh clone plus your `rom/`.
 
+## Open-world mod branch
+
+The `mod-open-world` branch includes the Plaza–Harbor coastal route and Plaza–Pinna Beach Blooper ferry in the native executable.
+After installing the prerequisites below, build and enable it with:
+
+```sh
+git switch mod-open-world
+SMS_ARCH=64 JOBS=8 ./build.sh "/path/to/your/GMSE01.iso"
+./run-open-world.sh
+```
+
+The build applies the mod's source hooks automatically and also refreshes the standalone executable when an image is supplied.
+The wrapper enables `SMS_OPEN_WORLD=1` and defaults to 64-bit; use `SMS_ARCH=32` on both commands for the 32-bit Linux build.
+You can also set `open_world = on` in `settings.txt` and use the ordinary `run.sh`.
+See [docs/OPEN_WORLD.md](docs/OPEN_WORLD.md) for route locations, controls, implementation, testing, and limitations.
+
 ## Linux
 
 Ubuntu or Debian packages; other distributions need the same tools and libraries.

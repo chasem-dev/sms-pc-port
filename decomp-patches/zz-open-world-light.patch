@@ -1,0 +1,14 @@
+Reason: blend the Plaza's outdoor dimming away inside the shared covered passage
+--- a/src/GC2D/SunGlass.cpp
++++ b/src/GC2D/SunGlass.cpp
+@@ -1,1 +1,2 @@
++#include <sms_open_world.h>
+ #include <GC2D/SunGlass.hpp>
+@@ -108,2 +109,5 @@
+-	if (cue & CUE_DRAW)
+-		draw(graphics->getViewport(), unk14);
++	if (cue & CUE_DRAW) {
++		JUtility::TColor tint=unk14;
++		tint.a=sms_open_world_ambient_alpha(tint.a);
++		draw(graphics->getViewport(), tint);
++	}

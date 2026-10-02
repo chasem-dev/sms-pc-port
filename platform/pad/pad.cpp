@@ -350,6 +350,8 @@ extern "C" void PADControlMotor(s32, u32) {}
 extern "C" void PADControlAllMotors(const u32*) {}
 
 extern "C" __attribute__((weak)) int port_trace_pad_read(struct PADStatus* status);
+extern "C" __attribute__((weak)) int sms_open_world_test_pad(signed char*, signed char*);
+extern "C" __attribute__((weak)) int sms_sea_test_pad(signed char*, signed char*, unsigned short*);
 
 extern "C" u32 PADRead(PADStatus* status)
 {
@@ -412,6 +414,10 @@ extern "C" u32 PADRead(PADStatus* status)
 	}
 	s.stickX    = (s8)(x ? x : axis8(g_axis[0], 100));
 	s.stickY    = (s8)(y ? y : axis8(-g_axis[1], 100));
+	if (sms_open_world_test_pad)
+		sms_open_world_test_pad(&s.stickX, &s.stickY);
+	if (sms_sea_test_pad)
+		sms_sea_test_pad(&s.stickX, &s.stickY, &s.button);
 	int cx      = held(C_CRIGHT) * 100 - held(C_CLEFT) * 100;
 	int cy      = held(C_CUP) * 100 - held(C_CDOWN) * 100;
 	s.substickX = (s8)(cx ? cx : axis8(g_axis[2], 100));

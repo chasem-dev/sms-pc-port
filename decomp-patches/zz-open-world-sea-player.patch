@@ -1,0 +1,31 @@
+Reason: guided Blooper motion crosses the original surfing failure bounds; retain native Mario animation and particles
+--- a/src/Player/MarioMain.cpp
++++ b/src/Player/MarioMain.cpp
+@@ -1,3 +1,4 @@
++#include <sms_open_world_sea.h>
+ #include <Player/Mario.hpp>
+ #include <Player/MarioCap.hpp>
+ #include <Player/WaterGun.hpp>
+@@ -147,7 +148,7 @@
+ 	if (cue & CUE_MOVE) {
+ 		thinkFreeze();
+ 
+-		if (mFreezeTimer <= 0) {
++		if (mFreezeTimer <= 0 && !sms_sea_active()) {
+ 			({ typedef __typeof__(playerControl(graphics)) sms_mod_r_; void* sms_mod_t_ = SMS_MOD_SITE(0x8024D3A0); if (sms_mod_t_) ((__typeof__(sms_mod_as_free(static_cast<sms_mod_r_ (TMario::*)(JDrama::TGraphics*)>(&TMario::playerControl))))sms_mod_t_)(this, graphics); else playerControl(graphics); });
+ 			setPositions();
+ 			if (mCap != nullptr)
+@@ -159,7 +160,12 @@
+ 			moveParticle();
+ 		}
+ 
+-		thinkCube();
++		if (sms_sea_active()) {
++			setPositions();
++			moveParticle();
++		} else {
++			thinkCube();
++		}
+ 		soundMovement();
+ 	}
+ 

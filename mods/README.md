@@ -3,6 +3,9 @@
 Optional additions to the game, each switched on by putting it here.
 Nothing in this folder is needed to play, and git ignores everything in it but this file.
 
+The built-in [coastal connection prototype](../docs/OPEN_WORLD.md) adds a walkable Plaza–Harbor route and an open-water Blooper ferry to Pinna Park’s beach.
+Enable it with `open_world = on` in `settings.txt`, `SMS_OPEN_WORLD=1`, or `./run-open-world.sh`; no files need to be installed here.
+
 ## Installing with get.py
 
 `tools/mods/get.py` downloads a mod from where its authors publish it and installs it here, removing that mod's previous install first:

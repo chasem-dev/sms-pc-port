@@ -9,6 +9,9 @@
 #include <dolphin/os.h>
 #include <dolphin/vi.h>
 #include <functional>
+#include <thread>
+#include <mutex>
+#include <chrono>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -219,11 +222,49 @@ int file_fd(u32 entry)
 	return e.fd;
 }
 
+// Three bounded host-memory slots for Plaza, Harbor and Pinna archives. The
+// worker only reads immutable disc data / a private host fd; it never calls
+// game allocators, DVD callbacks, endian conversion, or stage constructors.
+struct CoastalCache {
+    std::mutex mutex;
+    std::thread worker;
+    ~CoastalCache() { if (worker.joinable()) worker.join(); }
+    u32 entry = ~0u;
+    unsigned generation = 0;
+    bool ready = false;
+    bool reported = false;
+    std::vector<u8> bytes;
+};
+CoastalCache g_coastal_cache[3];
+
+s32 coastal_cached_read(u32 entry, void* addr, s32 length, s32 offset)
+{
+    for (auto& cache : g_coastal_cache) {
+        std::lock_guard<std::mutex> lock(cache.mutex);
+        if (cache.entry != entry || !cache.ready) continue;
+        if (offset < 0 || length < 0) return -1;
+        s32 n = offset >= (s32)cache.bytes.size() ? 0 :
+            std::min(length, (s32)cache.bytes.size() - offset);
+        memcpy(addr, cache.bytes.data() + std::min((size_t)offset, cache.bytes.size()), n);
+        if (!cache.reported) {
+            port_log("[open-world] archive cache hit: %s\n", g_fst[entry].name.c_str());
+            cache.reported = true;
+        }
+        return n;
+    }
+    return -1;
+}
+
 s32 do_read(DVDFileInfo* fi, void* addr, s32 length, s32 offset)
 {
 	u32 entry = fi->startAddr;
 	if (entry >= g_fst.size() || g_fst[entry].dir)
 		return DVD_RESULT_FATAL_ERROR;
+    s32 cached = coastal_cached_read(entry, addr, length, offset);
+    if (cached >= 0) {
+        fi->cb.transferredSize = cached;
+        return cached;
+    }
 	if (g_disc && !g_fst[entry].mem && !g_fst[entry].from_host) {
 		u32 n = gcdisc_read_file(g_disc, entry, (u32)offset, addr, (u32)length);
 		fi->cb.transferredSize = n;
@@ -251,6 +292,125 @@ s32 do_read(DVDFileInfo* fi, void* addr, s32 length, s32 offset)
 }
 
 } // namespace
+
+// Called on the game thread, using an absolute archive path from its real
+// scenario table. Cache slots correspond to Plaza, Harbor and Pinna, not episodes.
+extern "C" void port_open_world_prefetch(const char* path, int slot)
+{
+    s32 entry = lookup(path);
+    if (slot < 0 || slot > 2 || entry < 0 || g_fst[entry].dir ||
+        !g_fst[entry].length || g_fst[entry].length > 16u*1024u*1024u) return;
+    CoastalCache& cache = g_coastal_cache[slot];
+    unsigned generation;
+    {
+        std::lock_guard<std::mutex> lock(cache.mutex);
+        if (cache.entry == (u32)entry) return;
+        cache.entry = entry; cache.ready = false; cache.reported = false;
+        cache.bytes.clear(); generation = ++cache.generation;
+    }
+    if (cache.worker.joinable()) cache.worker.join();
+    const Entry source = g_fst[entry];
+    GCDisc* disc = g_disc;
+    port_log("[open-world] prefetch %s (%u bytes)\n", path, source.length);
+    cache.worker = std::thread([source, disc, entry, slot, generation]() {
+        std::vector<u8> bytes(source.length);
+        u32 n = 0;
+        if (source.mem) {
+            memcpy(bytes.data(), source.mem, source.length); n = source.length;
+        } else if (disc && !source.from_host) {
+            n = gcdisc_read_file(disc, entry, 0, bytes.data(), source.length);
+        } else {
+            int fd = open(source.host.c_str(), O_RDONLY
+#ifdef _WIN32
+                          | O_BINARY
+#endif
+                         );
+            if (fd >= 0) {
+                while (n < source.length) {
+                    ssize_t got = port_pread(fd, bytes.data()+n, source.length-n, n);
+                    if (got <= 0) break;
+                    n += got;
+                }
+                close(fd);
+            }
+        }
+        CoastalCache& out = g_coastal_cache[slot];
+        std::lock_guard<std::mutex> lock(out.mutex);
+        if (generation == out.generation && n == source.length) {
+            out.bytes.swap(bytes); out.ready = true;
+        }
+    });
+}
+
+// Small, bounded resource cache for the sea route's native scenery and squid.
+// Resources stay in disc byte order; callers copy into the current stage heap
+// before the native J3D loader converts/relocates them.
+namespace {
+struct SeaResource { std::string key; std::vector<u8> bytes; };
+std::vector<SeaResource> seaResources;
+bool seaUnpack(const std::vector<u8>& src,std::vector<u8>& out) {
+    if(src.size()<16 || memcmp(src.data(),"Yaz0",4)) {out=src;return true;}
+    u32 size=be32(src.data()+4);
+    if(size>32u*1024u*1024u)return false;
+    out.clear();out.reserve(size);size_t at=16;
+    while(out.size()<size) {
+        if(at>=src.size())return false;
+        u8 code=src[at++];
+        for(int bit=0;bit<8 && out.size()<size;++bit) {
+            if(code&(128>>bit)) {
+                if(at>=src.size())return false;out.push_back(src[at++]);
+            } else {
+                if(at+2>src.size())return false;
+                u8 a=src[at++],b=src[at++];unsigned distance=((a&15)<<8|b)+1;
+                unsigned count=(a>>4)+2;
+                if(!(a>>4)) {if(at>=src.size())return false;count=src[at++]+18;}
+                if(distance>out.size() || count>size-out.size())return false;
+                while(count--)out.push_back(out[out.size()-distance]);
+            }
+        }
+    }
+    return true;
+}
+}
+extern "C" unsigned port_open_world_resource(const char* archive,const char* name,void* dst,unsigned capacity) {
+    std::string key=std::string(archive)+":"+name;
+    for(auto& r:seaResources)if(r.key==key) {
+        if(dst && capacity>=r.bytes.size())memcpy(dst,r.bytes.data(),r.bytes.size());
+        return (unsigned)r.bytes.size();
+    }
+    s32 entry=lookup(archive);
+    if(entry<0 || g_fst[entry].dir || g_fst[entry].length>16u*1024u*1024u)return 0;
+    std::vector<u8> packed(g_fst[entry].length),raw;
+    DVDFileInfo file={};file.startAddr=entry;
+    if(do_read(&file,packed.data(),packed.size(),0)!=(s32)packed.size() || !seaUnpack(packed,raw)
+        || raw.size()<64 || memcmp(raw.data(),"RARC",4))return 0;
+    const u8* b=raw.data();u32 info=be32(b+8),data=32+be32(b+12);
+    if(info>raw.size()-24)return 0;
+    u32 count=be32(b+info+8),table=info+be32(b+info+12),strings=info+be32(b+info+20);
+    if(table>raw.size() || count>(raw.size()-table)/20 || strings>=raw.size())return 0;
+    for(u32 i=0;i<count;++i) {
+        const u8* e=b+table+i*20;u32 flags=be32(e+4),no=strings+(flags&0xffffff);
+        if(flags>>24&2 || no>=raw.size())continue;
+        const char* n=(const char*)b+no;
+        if(!memchr(n,0,raw.size()-no) || strcmp(n,name))continue;
+        u32 off=data+be32(e+8),length=be32(e+12);
+        if(off>raw.size() || length>raw.size()-off)return 0;
+        std::vector<u8> payload(b+off,b+off+length),resource;
+        if(!seaUnpack(payload,resource))return 0;
+        size_t used=resource.size();for(auto& r:seaResources)used+=r.bytes.size();
+        if(used>16u*1024u*1024u)return 0;
+        seaResources.push_back({key,std::move(resource)});
+        port_log("[sea-route] retained native resource %s (%u bytes)\n",key.c_str(),(unsigned)seaResources.back().bytes.size());
+        return port_open_world_resource(archive,name,dst,capacity);
+    }
+    return 0;
+}
+
+extern "C" unsigned long long port_open_world_milliseconds()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 // The disc source: SMS_DISC_IMAGE; or port_disc_root when the command line or
 // SMS_DISC_ROOT names an image file (.iso/.gcm/.ciso); else the image bundled

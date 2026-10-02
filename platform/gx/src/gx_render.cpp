@@ -260,6 +260,16 @@ struct Xfb {
 };
 static std::unordered_map<const void*, Xfb> s_xfbs;
 static const void* s_lastXfb = nullptr;
+// Keep a completed gameplay frame visible while a coastal stage is rebuilt.
+// Both window presentation and capture use this same XFB. Release only when
+// the first complete destination frame has been copied, never mid-frame.
+static const void* s_coastalXfb = nullptr;
+static bool s_coastalRelease = false;
+static double s_coastalDeadline = 0;
+// Ferry horizon blend: only sky/distant scenery fades; Mario and near water
+// stay on the live destination frame. This snapshot is independent of XFBs.
+static GLuint s_coastalSnapshot, s_coastalBlendProg, s_coastalSnapshotFbo;
+static int s_coastalBlendFrames, s_coastalBlendLeft;
 
 void markXfMemDirty() { s_xfDirty = true; }
 FILE* traceFile();
@@ -1351,7 +1361,12 @@ static void copyEfb(uint32_t ctrl) {
     glDisable(GL_CLIP_DISTANCE0 + 1);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
-    if (disp) {
+    if (s_coastalXfb && nowSeconds() > s_coastalDeadline)
+        s_coastalRelease = true; // expose native error/menu frames after a failed load
+    if (disp && s_coastalXfb && !s_coastalRelease) {
+        // The game still runs its normal copy/clear and frame bookkeeping.
+        // Do not overwrite either display buffer with a loading/fader frame.
+    } else if (disp) {
         Xfb& xfb = s_xfbs[dest];
         if (!xfb.tex || xfb.w != w * S || xfb.h != h * S) {
             if (!xfb.tex) glGenTextures(1, &xfb.tex);
@@ -1366,7 +1381,28 @@ static void copyEfb(uint32_t ctrl) {
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s_tmpFbo);
         glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, xfb.tex, 0);
         glBlitFramebuffer(x * S, y * S, (x + w) * S, (y + h) * S, 0, 0, w * S, h * S, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        if (s_coastalBlendLeft>0 && s_coastalSnapshot) {
+            if (!s_coastalBlendProg) {
+                const char* vs=R"(#version 330 core
+out vec2 uv;
+void main(){vec2 p=vec2(float(gl_VertexID&1),float(gl_VertexID>>1));uv=p;gl_Position=vec4(p*2.0-1.0,0.0,1.0);}
+)";
+                const char* fs=R"(#version 330 core
+uniform sampler2D oldFrame;uniform float amount;in vec2 uv;out vec4 color;
+void main(){color=vec4(texture(oldFrame,uv).rgb,amount*(1.0-smoothstep(.25,.43,uv.y)));}
+)";
+                s_coastalBlendProg=compileProgram(vs,fs);
+            }
+            glViewport(0,0,xfb.w,xfb.h);glEnable(GL_BLEND);glBlendFuncSeparate(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA,GL_ONE,GL_ONE_MINUS_SRC_ALPHA);
+            glUseProgram(s_coastalBlendProg);glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,s_coastalSnapshot);
+            glUniform1i(glGetUniformLocation(s_coastalBlendProg,"oldFrame"),0);
+            float amount=float(s_coastalBlendLeft)/s_coastalBlendFrames;glUniform1fv(glGetUniformLocation(s_coastalBlendProg,"amount"),1,&amount);
+            glBindVertexArray(s_copyVao);glDrawArrays(GL_TRIANGLE_STRIP,0,4);glBindVertexArray(s_vao);glDisable(GL_BLEND);
+            --s_coastalBlendLeft;
+        }
         s_lastXfb = dest;
+        s_coastalXfb = nullptr;
+        s_coastalRelease = false;
         s_stats.efbCopies++;
     } else {
         uint32_t fmt = ((ctrl >> 3) & 1) << 3 | ((ctrl >> 4) & 7);
@@ -1453,8 +1489,16 @@ void GXPC_Shutdown(void) {
     if (s_overlayTex) glDeleteTextures(1, &s_overlayTex);
     if (s_overlayProg) glDeleteProgram(s_overlayProg);
     s_overlayTex = s_overlayProg = 0;
+    if(s_coastalSnapshot)glDeleteTextures(1,&s_coastalSnapshot);
+    if(s_coastalBlendProg)glDeleteProgram(s_coastalBlendProg);
+    if(s_coastalSnapshotFbo)glDeleteFramebuffers(1,&s_coastalSnapshotFbo);
+    s_coastalSnapshot=s_coastalBlendProg=s_coastalSnapshotFbo=0;
+    s_coastalBlendLeft=s_coastalBlendFrames=0;
     for (auto& kv : s_xfbs) glDeleteTextures(1, &kv.second.tex);
     s_xfbs.clear();
+    s_lastXfb = s_coastalXfb = nullptr;
+    s_coastalRelease = false;
+    s_coastalDeadline = 0;
     s_ready = false;
 }
 
@@ -1599,7 +1643,8 @@ extern "C" {
 int GXPC_PresentXFB(const void* xfb, int winW, int winH) {
     flushBatch();
     glcInvalidate();
-    if (!xfb) xfb = s_lastXfb;
+    if (s_coastalXfb) xfb = s_coastalXfb;
+    else if (!xfb) xfb = s_lastXfb;
     auto it = s_xfbs.find(xfb);
     if (it == s_xfbs.end()) return 0;
     const Xfb& x = it->second;
@@ -1630,6 +1675,35 @@ void GXPC_EndPresent(void) {
     if (s_ready) glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
 }
 
+void GXPC_CoastalDissolve(int frames) {
+    if(!s_ready || frames<1)return;
+    auto it=s_xfbs.find(s_lastXfb);if(it==s_xfbs.end())return;
+    flushBatch();glcInvalidate();
+    const Xfb& x=it->second;
+    if(!s_coastalSnapshot)glGenTextures(1,&s_coastalSnapshot);
+    glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,s_coastalSnapshot);
+    glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,x.w,x.h,0,GL_RGBA,GL_UNSIGNED_BYTE,nullptr);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER,s_tmpFbo);
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,x.tex,0);
+    if(!s_coastalSnapshotFbo)glGenFramebuffers(1,&s_coastalSnapshotFbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER,s_coastalSnapshotFbo);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,s_coastalSnapshot,0);
+    glDisable(GL_SCISSOR_TEST);glBlitFramebuffer(0,0,x.w,x.h,0,0,x.w,x.h,GL_COLOR_BUFFER_BIT,GL_NEAREST);
+    glBindFramebuffer(GL_FRAMEBUFFER,s_efbFbo);
+    s_coastalBlendFrames=frames;s_coastalBlendLeft=frames;
+}
+
+void GXPC_CoastalHold(int hold) {
+    if (hold) {
+        s_coastalXfb = s_lastXfb;
+        s_coastalRelease = false;
+        s_coastalDeadline = nowSeconds() + (hold>1 ? double(hold) : 2.0);
+    } else if (s_coastalXfb) {
+        s_coastalRelease = true;
+    }
+}
+
 void GXPC_ReadEFB(uint8_t* rgba, int* w, int* h) {
     flushBatch();
     glcInvalidate();
@@ -1644,7 +1718,8 @@ void GXPC_ReadEFB(uint8_t* rgba, int* w, int* h) {
 int GXPC_ReadXFB(const void* xfb, uint8_t* rgba, int* w, int* h) {
     flushBatch();
     glcInvalidate();
-    if (!xfb) xfb = s_lastXfb;
+    if (s_coastalXfb) xfb = s_coastalXfb;
+    else if (!xfb) xfb = s_lastXfb;
     auto it = s_xfbs.find(xfb);
     if (it == s_xfbs.end()) return 0;
     *w = it->second.w;

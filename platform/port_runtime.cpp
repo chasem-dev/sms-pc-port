@@ -415,6 +415,7 @@ static const struct {
 	{ "widescreen_hud", "SMS_WIDESCREEN_HUD" }, // centre or edges
 	{ "frame_rate", "SMS_FRAME_RATE" },         // 30 or 60
 	{ "mod", "SMS_MOD" },
+	{ "open_world", "SMS_OPEN_WORLD" },
 	{ "resolution", "SMS_GX_SCALE" },
 	{ "window_scale", "SMS_WINDOW_SCALE" },
 	{ "vsync", "SMS_VSYNC" },

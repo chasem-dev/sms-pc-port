@@ -222,7 +222,8 @@ if(SMS_WITH_GX AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/platform/gx/CMakeLists.txt
   add_subdirectory(platform/gx)
 endif()
 
-add_library(sms_game STATIC ${SMS_DECOMP_CXX_SOURCES} ${SMS_DECOMP_C_SOURCES})
+add_library(sms_game STATIC ${SMS_DECOMP_CXX_SOURCES} ${SMS_DECOMP_C_SOURCES}
+  ${SMS_PORT_SRC}/open_world.cpp ${SMS_PORT_SRC}/open_world_sea.cpp)
 # Host THP decoders (the decomp's SDK decoder, patched; platform/thp).
 include(${CMAKE_CURRENT_SOURCE_DIR}/platform/thp/thp.cmake)
 # The SDK's PADClamp (dead zone / octagon), built from the decomp as C.

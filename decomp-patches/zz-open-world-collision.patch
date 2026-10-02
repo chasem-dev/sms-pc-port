@@ -1,0 +1,21 @@
+Reason: reserve collision list nodes for optional open-world geometry
+--- a/src/Map/MapCollisionData.cpp
++++ b/src/Map/MapCollisionData.cpp
+@@ -1,5 +1,6 @@
+ #include <Map/MapCollisionData.hpp>
+ #include <Map/MapData.hpp>
++#include <sms_open_world.h>
+ #include <JSystem/JSupport/JSUMemoryInputStream.hpp>
+ #include <macros.h>
+ 
+@@ -62,6 +63,10 @@
+ 
+ 	unk10 = unk8 * unkC;
+ 
++	// Space for the optional walkway, in the same collision grid.
++	if (sms_open_world_enabled())
++		unk20 += 4096;
++
+ 	unk14 = new TBGCheckListRoot[unk10];
+ 	unk18 = new TBGCheckListRoot[unk10];
+ 	unk28 = new TBGCheckData[unk1C];

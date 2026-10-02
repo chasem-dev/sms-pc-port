@@ -1,0 +1,12 @@
+Reason: keep the passage camera inside the bends after native camera movement
+--- a/src/Camera/cameragc.cpp
++++ b/src/Camera/cameragc.cpp
+@@ -1,1 +1,2 @@
++#include <sms_open_world.h>
+ #include <Camera/Camera.hpp>
+@@ -1139,4 +1140,5 @@
+ 		updateDemoCamera_(flag2);
++		sms_open_world_camera();
+ 	}
+ 
+ 	if (cue & (CUE_CALC_VIEW | CUE_SET_PROJECTION)) {

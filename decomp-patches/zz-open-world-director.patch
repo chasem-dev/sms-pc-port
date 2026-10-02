@@ -1,0 +1,49 @@
+Reason: optional Plaza / Ricco Harbor coastal connection, stage lifecycle callbacks
+--- a/src/System/MarDirectorDirect.cpp
++++ b/src/System/MarDirectorDirect.cpp
+@@ -38,6 +38,7 @@
+ #include <Map/MapCollisionEntry.hpp>
+ 
+ #include <System/StageUtil.hpp>
++#include <sms_open_world.h>
+ #ifdef TARGET_PC
+ #include <sms_modhook.h>
+ #include <sms_modhook.h>
+@@ -88,6 +89,7 @@
+ 		unk260 = true;
++		sms_open_world_setup(this);
+ 	}
+ 
+ 	u32 desiredAppState = TApplication::APP_STATE_DEFAULT;
+ 
+ 	JDrama::TGraphics local_140;
+@@ -206,6 +207,7 @@
+ 			u32 unk30Cue = ~someCue;
+ 			unk30->perform(unk30Cue, &local_140);
+ 			movement();
++			sms_open_world_tick(this);
+ 			if (!(blacklistedCues & CUE_CALC_ANIM)) {
+ 				if (checkDemoFlag(DEMO_FLAG_SHINE_GET_STOP_THE_WORLD))
+ 					mShinePfLstAnm->perform(~blacklistedCues, &local_140);
+@@ -497,6 +499,13 @@
+ 	u8 nextState        = mState;
+ 	switch (mState) {
+ 	case STATE_UNK0:
++		if (sms_open_world_arriving(this)) {
++			nextState = STATE_UNK4;
++			offTransitionFlag(TRANSITION_FLAG_GO_BANNER_PENDING
++			                  | TRANSITION_FLAG_SCENARIO_NAME_BANNER_PENDING
++			                  | TRANSITION_FLAG_OPENING_WIPE_PENDING);
++			break;
++		}
+ 		switch (SMSGetApplication()->mCurrArea.getStage()) {
+ 		case 0xf:
+ 			nextState = STATE_UNK4;
+@@ -1011,6 +1020,7 @@
+ 			setMario();
+ 			unk50 |= 1;
+ 		}
++		sms_open_world_arrive(this);
+ 		if (!unk124)
+ 			OSStartStopwatch(&unkE8);
+ 		unk18[0]->onFlag(0x2);

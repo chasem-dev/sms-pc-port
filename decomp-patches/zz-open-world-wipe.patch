@@ -1,0 +1,21 @@
+Reason: exchange coastal stages behind the retained passage frame
+--- a/src/System/MarDirectorDirect.cpp
++++ b/src/System/MarDirectorDirect.cpp
+@@ -765,7 +765,7 @@
+ 		JDrama::TNameRefGen::search<JDrama::TViewObj>("Guide")->unkC.on(
+ 		    CUE_MOVE | CUE_CALC_ANIM | CUE_DRAW);
+ 
+-		gpApplication.mFader->startWipe(unkE4, 0.4f, 0.0f);
++		sms_open_world_start_wipe(unkE4, 0.4f, true);
+ 		SMSRumbleMgr->reset();
+ 		break;
+ 
+@@ -1032,7 +1032,7 @@
+ 			THPPlayerStop();
+ 	// !!!fallthrough!!!
+ 	case 9: {
+-		gpApplication.mFader->startWipe(unkE4, 0.4f, 0.0f);
++		sms_open_world_start_wipe(unkE4, 0.4f, false);
+ 		if (unkE4 == 8)
+ 			SMSGetMSound()->startSoundSystemSE(MSD_SE_MA_INTO_DOKAN, 0, nullptr,
+ 			                                   0);
