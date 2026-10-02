@@ -222,6 +222,13 @@ static void map_mem1()
 	// 64-bit hosts: objects holding pointers are larger, and the fixed-size
 	// heaps grow with them (PORT_HEAP64), so give the game more MEM1.
 	u32 mb = sizeof(void*) == 8 ? 64 : 24;
+	// The connected coastline keeps two neighboring maps resident for views
+	// across the water. Give 32-bit mod runs room for those native assets.
+	const char* coast = getenv("SMS_OPEN_WORLD");
+	if (sizeof(void*) == 4 && coast && (!strcmp(coast, "1") || !strcmp(coast, "on"))
+	    && (!getenv("SMS_OPEN_WORLD_TEST_GEOGRAPHY")
+	        || strcmp(getenv("SMS_OPEN_WORLD_TEST_GEOGRAPHY"), "0")))
+		mb = 40;
 	if (const char* e = getenv("SMS_MEM_MB"))
 		mb = (u32)atoi(e);
 	port_mem1_size = mb << 20;

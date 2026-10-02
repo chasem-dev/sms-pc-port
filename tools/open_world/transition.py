@@ -44,7 +44,8 @@ def main():
     if a.jump:controls+=',a@4516+4'
     env=os.environ.copy()
     env.pop('SMS_OPEN_WORLD_TEST_WALK',None)
-    env.update(SMS_OPEN_WORLD='1',SMS_OPEN_WORLD_TEST_SPAWN='2766.0,-1314.1',
+    spawn='2766.0,-1314.1' if env.get('SMS_OPEN_WORLD_TEST_GEOGRAPHY')=='0' else '2766.0,-3314.1'
+    env.update(SMS_OPEN_WORLD='1',SMS_OPEN_WORLD_TEST_SPAWN=spawn,
         SMS_OPEN_WORLD_LOG='1',SMS_FRAME_RATE=str(a.fps),SMS_GX_SCALE='1',
         SMS_TEXTURE_PACKS='0',SMS_AUDIO='0',SMS_SKIP_MOVIES='1',
         SMS_WARP=f'{a.from_stage},{2 if a.from_stage==1 else 0},50',

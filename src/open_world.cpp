@@ -23,6 +23,9 @@
 #include <Map/Map.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
 #include <JSystem/J3D/J3DGraphBase/J3DTexture.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DDrawBuffer.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DSys.hpp>
+#include <MarioUtil/DrawUtil.hpp>
 #include <JSystem/JUtility/JUTNameTab.hpp>
 #include <JSystem/JDrama/JDRViewObj.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DJoint.hpp>
@@ -49,13 +52,23 @@ const Route routes[] = {
     { PLAZA, -7900, 300, 1000, -0.70710678f, -0.70710678f },
     { HARBOR, -300, 300, 1900, 0.17364818f, 0.98480775f }
 };
-const float halfWidth = 360, routeEnd = 1560, triggerAt = 2830, seamV = -1810;
+const Route geographyRoutes[] = {
+    { PLAZA, -10000, 400, -8300, -0.5f, -0.8660254f },
+    { HARBOR, 14500, 1503, 3950, 1.f, 0.f }
+};
+bool connectedCoast() {
+    static const char* override=getenv("SMS_OPEN_WORLD_TEST_GEOGRAPHY");
+    static bool enabled=!override || strcmp(override,"0")!=0;
+    return enabled;
+}
+const float halfWidth = 360, routeEnd = 1560, triggerAt = 2830;
+float seamV = -1810;
 const float seamDU = 0.12797134f, seamDV = -0.99177885f;
 const float passageHeight = 400;
 struct Bend { float u,v; };
 // Broad, progressively turning coastal approaches. The central straight and
 // its half-turn counterpart keep both shorelines out of the exchange view.
-const Bend passage[] = {{1560,0},{1870,-40},{2160,-160},{2400,-350},
+Bend passage[] = {{1560,0},{1870,-40},{2160,-160},{2400,-350},
     {2590,-590},{2710,-880},{2750,-1190},{2910,-2430},
     {2950,-2740},{3070,-3030},{3260,-3270},{3500,-3460},
     {3790,-3580},{4100,-3620}};
@@ -88,19 +101,48 @@ struct CrossingPose {
 // Kept as scalar values so PADRead cannot touch a stage during teardown.
 int testStickX, testStickY, testWaypoint=1, testDirection=1;
 bool testPadActive, testWalkDone;
-const Bend testPath[]={{-300,0},{1560,0},{1870,-40},{2160,-160},
+Bend testPath[]={{-300,0},{390,0},{780,0},{1170,0},{1560,0},{1870,-40},{2160,-160},
     {2400,-350},{2590,-590},{2710,-880},{2750,-1190},{2862,-2058}};
 const int testPathCount=sizeof(testPath)/sizeof(testPath[0]);
 
+float bridgeOffset(float u) {
+    float t=fminf(1.f,fmaxf(0.f,u/routeEnd));
+    return connectedCoast()?-2000.f*t*t*(3.f-2.f*t):0.f;
+}
+void configureGeography() {
+    static bool configured=false;
+    if(configured || !connectedCoast())return;
+    configured=true;seamV-=2000;
+    for(unsigned i=0;i<sizeof(passage)/sizeof(passage[0]);++i)passage[i].v-=2000;
+    for(int i=1;i<testPathCount;++i)
+        testPath[i].v=testPath[i].u<=routeEnd?bridgeOffset(testPath[i].u):testPath[i].v-2000;
+}
+
+
 const Route* routeFor(int stage)
 {
+    const Route* choices=connectedCoast()?geographyRoutes:routes;
     for (int i = 0; i < 2; ++i)
-        if (routes[i].stage == stage) return &routes[i];
+        if (choices[i].stage == stage) return &choices[i];
     return 0;
+}
+float floorHeight(const Route& r,float u,float v=0) {
+    if(!connectedCoast())return r.y;
+    const Route& other=*routeFor(r.stage==PLAZA?HARBOR:PLAZA);
+    float best=1e30f,along=0,total=0;
+    for(unsigned i=0;i+1<sizeof(passage)/sizeof(passage[0]);++i) {
+        float du=passage[i+1].u-passage[i].u,dv=passage[i+1].v-passage[i].v;
+        float len=sqrtf(du*du+dv*dv);
+        float t=fminf(1.f,fmaxf(0.f,((u-passage[i].u)*du+(v-passage[i].v)*dv)/(len*len)));
+        float x=passage[i].u+t*du-u,z=passage[i].v+t*dv-v;
+        if(x*x+z*z<best){best=x*x+z*z;along=total+t*len;}
+        total+=len;
+    }
+    return r.y+(other.y-r.y)*along/total;
 }
 JGeometry::TVec3<f32> point(const Route& r, float u, float v, float h)
 {
-    return JGeometry::TVec3<f32>(r.x + r.dx*u - r.dz*v, r.y+h,
+    return JGeometry::TVec3<f32>(r.x + r.dx*u - r.dz*v, floorHeight(r,u,v)+h,
                                 r.z + r.dz*u + r.dx*v);
 }
 void local(const Route& r, const JGeometry::TVec3<f32>& p, float& u, float& v)
@@ -113,7 +155,7 @@ GXColor color(u8 r, u8 g, u8 b)
     GXColor c = {r,g,b,255}; return c;
 }
 
-enum Surface { PLAIN, LOCAL_PAVING, LOCAL_WOOD, STONE, PLASTER, SHARED_PAVING, ROOF, SURFACE_COUNT };
+enum Surface { PLAIN, LOCAL_PAVING, LOCAL_WOOD, STONE, PLASTER, SHARED_PAVING, ROOF, REMOTE_PAVING, REMOTE_WOOD, SURFACE_COUNT };
 struct SurfaceTexture {
     u8 pixels[65536] __attribute__((aligned(32)));
     GXTexObj texture;
@@ -122,7 +164,15 @@ struct SurfaceTexture {
 // Host static storage survives native stage-heap teardown. Only texture pixels
 // already on the player's disc are copied; no game art is bundled with source.
 SurfaceTexture surfaces[SURFACE_COUNT];
+J3DModel* textureSource;
 const ResTIMG* mapTexture(const char* name) {
+    if(textureSource) {
+        J3DModelData* data=textureSource->getModelData();
+        if(data && data->getTextureName() && data->getTexture()) {
+            int index=data->getTextureName()->getIndex(name);
+            if(index>=0 && index<data->getTexture()->getNum())return data->getTexture()->getResTIMG(index);
+        }
+    }
     if(!gpMap || !gpMap->getModelManager()) return 0;
     TMapModelManager* manager=gpMap->getModelManager();
     for(int i=0;i<manager->getJointModelNum();++i) {
@@ -152,7 +202,8 @@ void surfaceTexture(int slot,const char* name,int x=0,int y=0,int w=0,int h=0) {
     surfaces[slot].valid=true;
     OSReport("[open-world] material %d = %s (%dx%d)\n",slot,name,w,h);
 }
-void setupSurfaces(int stage) {
+void setupSurfaces(int stage,J3DModel* localModel,J3DModel* remoteModel) {
+    textureSource=localModel;
     surfaceTexture(LOCAL_PAVING,stage==PLAZA?"A_yuka_nami_n3":"A_heban3_w2");
     if(stage==PLAZA)surfaceTexture(LOCAL_WOOD,"A_san04m2");
     else surfaceTexture(LOCAL_WOOD,"A_ricconuki06",72,192,56,64);
@@ -172,32 +223,220 @@ void setupSurfaces(int stage) {
         if(stage==PLAZA)surfaceTexture(ROOF,"A_billyane_25n",0,400,128,96);
         else surfaceTexture(ROOF,"A_riccoyane03m2",0,0,128,64);
     }
+    if(remoteModel) {
+        textureSource=remoteModel;
+        surfaceTexture(REMOTE_PAVING,stage==PLAZA?"A_heban3_w2":"A_yuka_nami_n3");
+        if(stage==PLAZA)surfaceTexture(REMOTE_WOOD,"A_ricconuki06",72,192,56,64);
+        else surfaceTexture(REMOTE_WOOD,"A_san04m2");
+    }
+    textureSource=0;
     GXInvalidateTexAll();
 }
 
 class Walkway : public JDrama::TViewObj {
 public:
     Route route;
-    Triangle tris[12288];
-    TBGCheckData collision[512];
+    Triangle tris[16384];
+    TBGCheckData collision[1024];
     int count, collisionCount, surface;
-    bool armed;
-    Walkway(const Route& r) : JDrama::TViewObj("Coastal Walkway"), route(r),
-        count(0), collisionCount(0), surface(PLAIN), armed(false)
+    J3DModel* neighbor;
+    J3DDrawBuffer *neighborOpa,*neighborXlu;
+    JGeometry::TVec3<f32>* neighborProbe;
+    int neighborProbeCount;
+    bool armed, bendingBridge, farBridge;
+    Walkway(const Route& r,bool sceneryOnly=false,J3DModel* localModel=0,J3DModel* remoteModel=0) : JDrama::TViewObj("Coastal Walkway"), route(r),
+        count(0), collisionCount(0), surface(PLAIN), neighbor(remoteModel),
+        neighborOpa(0),neighborXlu(0),neighborProbe(0),neighborProbeCount(0),armed(false),bendingBridge(false),farBridge(false)
     {
-        setupSurfaces(r.stage);
+        if(connectedCoast() && !sceneryOnly)setupNeighbor();
+        setupSurfaces(r.stage,localModel,neighbor);
         buildBridge();
         buildPassage();
-        // Small dockside destination board, with posts anchored to the deck.
-        surface=PLAIN;
-        box(60,100,430,460,-350,350,color(75,89,92),false);
-        box(60,100,1070,1100,-350,350,color(75,89,92),false);
-        box(60,100,430,1100,220,380,color(35,87,117),false);
-        label(r.stage==PLAZA ? "RICCO HARBOR" : "DELFINO PLAZA");
-        for (int i=0;i<collisionCount;++i)
+        buildSign();
+        if(connectedCoast()) {
+            Route original=route;
+            const Route& other=*routeFor(route.stage==PLAZA?HARBOR:PLAZA);
+            JGeometry::TVec3<f32> anchor=point(route,2*triggerAt,2*seamV,0);
+            route.stage=other.stage;route.x=anchor.x;route.y=other.y;route.z=anchor.z;
+            route.dx=-original.dx;route.dz=-original.dz;
+            int savedCollision=collisionCount;
+            farBridge=true;buildBridge();buildSign();farBridge=false;collisionCount=savedCollision;
+            route=original;
+            buildHarborWall();
+            if(!sceneryOnly && route.stage==HARBOR)openBoundary();
+        }
+        if(sceneryOnly)neighbor=0;
+        for (int i=0;!sceneryOnly && i<collisionCount;++i)
             gpMapCollisionData->addCheckDataToGrid(&collision[i],TMapCollisionBase::KIND_STATIC);
         OSReport("[open-world] walkway stage=%d origin=(%.0f,%.0f,%.0f) triangles=%d collision=%d\n",
                  r.stage,r.x,r.y,r.z,count,collisionCount);
+    }
+    void buildHarborWall() {
+        // The native east quay ends against a backdrop. Give the newly
+        // exposed edge a masonry face, following its actual paving outline.
+        const float edge[][2]={{15400,4451.3823f},{15400,2600},{14900,1700},{14900,100},{14900,-1000}};
+        Mtx transform;C_MTXIdentity(transform);
+        if(route.stage==PLAZA)sms_open_world_harbor_transform(transform);
+        surface=STONE;
+        for(unsigned i=0;i+1<sizeof(edge)/sizeof(edge[0]);++i) {
+            JGeometry::TVec3<f32> p[4]={
+                JGeometry::TVec3<f32>(edge[i][0],-180.f,edge[i][1]),
+                JGeometry::TVec3<f32>(edge[i][0],1500.f,edge[i][1]),
+                JGeometry::TVec3<f32>(edge[i+1][0],1500.f,edge[i+1][1]),
+                JGeometry::TVec3<f32>(edge[i+1][0],-180.f,edge[i+1][1])};
+            for(int k=0;k<4;++k){JGeometry::TVec3<f32> q=p[k];MTXMultVec(transform,&q,&p[k]);}
+            tri(p[0],p[1],p[2],color(201,207,187),false);
+            tri(p[0],p[2],p[3],color(201,207,187),false);
+        }
+    }
+    void setupNeighbor() {
+        int stage=route.stage==PLAZA?HARBOR:PLAZA;
+        int ep=stage==PLAZA?plazaEpisode:harborEpisode;
+        if(!gpApplication.unk30 || stage>=gpApplication.unk30->getChildren().size())return;
+        TNameRefAryT<TScenarioArchiveName>* names=gpApplication.unk30->getChildren()[stage];
+        if(ep>=names->size())return;
+        char archive[128];snprintf(archive,sizeof archive,"/data/scene/%s",names->getChildren()[ep].mArcName);
+        if(char* ext=strstr(archive,".arc"))strcpy(ext,".szs");
+        neighbor=sms_open_world_load_model(archive,"map.bmd");if(!neighbor)return;
+        sms_open_world_crop_model(neighbor,stage==PLAZA);
+        const Route& other=*routeFor(stage);
+        JGeometry::TVec3<f32> anchor=point(route,2*triggerAt,2*seamV,0);
+        // Each map's local approach faces its counterpart at the other mouth.
+        float xx=-route.dx*other.dx-route.dz*other.dz;
+        float xz=-route.dx*other.dz+route.dz*other.dx;
+        float zx=-route.dz*other.dx+route.dx*other.dz;
+        float zz=-route.dz*other.dz-route.dx*other.dx;
+        Mtx transform;C_MTXIdentity(transform);
+        transform[0][0]=xx;transform[0][2]=xz;transform[2][0]=zx;transform[2][2]=zz;
+        transform[0][3]=anchor.x-xx*other.x-xz*other.z;
+        transform[1][3]=0;
+        transform[2][3]=anchor.z-zx*other.x-zz*other.z;
+        neighbor->setBaseTRMtx(transform);
+        if(getenv("SMS_OPEN_WORLD_TEST_BOATS"))setupNeighborProbe();
+        neighborOpa=new J3DDrawBuffer(512);neighborXlu=new J3DDrawBuffer(512);
+        neighborOpa->setNonSort();neighborXlu->setNonSort();
+        OSReport("[coast-geography] neighbor=%d translation=(%.0f,%.0f,%.0f) basis=(%.3f,%.3f)\n",
+                 stage,transform[0][3],transform[1][3],transform[2][3],xx,xz);
+    }
+    void setupNeighborProbe() {
+        // The filtered preview contains independent triangles and identity
+        // map joints. Check its actual visible mesh, including crane decks.
+        J3DModelData* data=neighbor->getModelData();
+        const Vec* positions=(const Vec*)data->getVtxPosArray();
+        for(int pass=0;pass<2;++pass) {
+            int written=0;
+            for(unsigned i=0;i<data->getShapeNum();++i) {
+                J3DShape* shape=data->getShapeNodePointer(i);
+                if(shape->checkFlag(J3DShpFlag_Visible))continue;
+                unsigned stride=0,offset=0,bytes=0;
+                for(const GXVtxDescList* v=shape->getVtxDesc();v->attr!=GX_VA_NULL;++v) {
+                    unsigned size=v->type==GX_NONE?0:v->type==GX_INDEX16?2:1;
+                    if(v->type==GX_DIRECT && v->attr>=GX_VA_POS)abort();
+                    if(v->attr==GX_VA_POS){offset=stride;bytes=size;}
+                    stride+=size;
+                }
+                if(!stride || !bytes)abort();
+                for(unsigned group=0;group<shape->getMtxGroupNum();++group) {
+                    J3DShapeDraw* draw=shape->getShapeDraw(group);
+                    const u8* p=draw->getDisplayList();const u8* end=p+draw->getDisplayListSize();
+                    while(p<end) {
+                        u8 command=*p++;if(!command)continue;
+                        if(end-p<2 || (command&0xf8)!=GX_TRIANGLES)abort();
+                        unsigned count=(p[0]<<8)|p[1];p+=2;
+                        if(count%3 || p+count*stride>end)abort();
+                        for(unsigned k=0;k<count;++k) {
+                            if(pass) {
+                                const u8* v=p+k*stride+offset;
+                                unsigned id=bytes==2?(v[0]<<8)|v[1]:v[0];
+                                if(id>=data->getVtxNum() || written>=neighborProbeCount)abort();
+                                MTXMultVec(neighbor->getBaseTRMtx(),&positions[id],&neighborProbe[written]);
+                            }
+                            ++written;
+                        }
+                        p+=count*stride;
+                    }
+                }
+            }
+            if(!pass){neighborProbeCount=written;neighborProbe=new JGeometry::TVec3<f32>[written];}
+        }
+        OSReport("[boat-probe] neighboring visible mesh triangles=%d\n",neighborProbeCount/3);
+    }
+    void drawNeighbor(JDrama::TGraphics* graphics) {
+        if(!neighbor)return;
+        J3DDrawBuffer *old0=j3dSys.getDrawBuffer(0),*old1=j3dSys.getDrawBuffer(1);
+        neighborOpa->frameInit();neighborXlu->frameInit();
+        j3dSys.setDrawBuffer(neighborOpa,0);j3dSys.setDrawBuffer(neighborXlu,1);
+        j3dSys.setViewMtx(graphics->getViewMtx());
+        neighborOpa->setZMtx(graphics->getViewMtx());neighborXlu->setZMtx(graphics->getViewMtx());
+        neighbor->calc();neighbor->viewCalc();neighbor->entry();
+        SMS_DrawInit();neighborOpa->draw();neighborXlu->draw();
+        j3dSys.setDrawBuffer(old0,0);j3dSys.setDrawBuffer(old1,1);SMS_DrawInit();
+    }
+    float boundaryAxis(const JGeometry::TVec3<f32>& p,int axis) {
+        if(axis==2)return p.y;
+        float u,v;local(route,p,u,v);return axis?v:u;
+    }
+    int clipBoundary(const JGeometry::TVec3<f32>* in,int count,
+                     JGeometry::TVec3<f32>* out,int axis,float limit,float sign) {
+        int n=0;
+        for(int i=0;i<count;++i) {
+            int j=(i+1)%count;
+            float a=(boundaryAxis(in[i],axis)-limit)*sign;
+            float b=(boundaryAxis(in[j],axis)-limit)*sign;
+            if(a>=0)out[n++]=in[i];
+            if((a>=0)!=(b>=0)) {
+                float t=a/(a-b);
+                out[n++].set(in[i].x+(in[j].x-in[i].x)*t,
+                             in[i].y+(in[j].y-in[i].y)*t,
+                             in[i].z+(in[j].z-in[i].z)*t);
+            }
+        }
+        return n;
+    }
+    void openBoundary() {
+        // Only Harbor's tall, invisible arena walls cross this covered
+        // section. Subtract a bounded opening; retain each outside fragment.
+        const float limits[6]={-100,triggerAt+100,-2600,halfWidth-300,850,2200};
+        TMapCollisionData* map=gpMapCollisionData;unsigned replaced=0;
+        for(unsigned index=0;index<map->unk34;++index) {
+            TBGCheckData* original=&map->unk28[index];
+            if(original->mBGType!=0x8000 || original->mMaxY<9000
+                || fabsf(original->mNormal.y)>.01f)continue;
+            JGeometry::TVec3<f32> inside[12],next[12],outside[12],fragments[144];
+            inside[0]=original->mPoint1;inside[1]=original->mPoint2;inside[2]=original->mPoint3;
+            int n=3,vertices=0;
+            for(int plane=0;plane<6 && n;++plane) {
+                float sign=plane%2?-1.f:1.f;
+                int cut=clipBoundary(inside,n,outside,plane/2,limits[plane],-sign);
+                for(int k=1;k+1<cut;++k) {
+                    if(vertices+3>144)abort();
+                    fragments[vertices++]=outside[0];fragments[vertices++]=outside[k];fragments[vertices++]=outside[k+1];
+                }
+                n=clipBoundary(inside,n,next,plane/2,limits[plane],sign);
+                for(int k=0;k<n;++k)inside[k]=next[k];
+            }
+            if(n<3)continue;
+            if(collisionCount+vertices/3>1024)abort();
+            for(int k=0;k<vertices;k+=3) {
+                TBGCheckData& face=collision[collisionCount];face=*original;
+                face.setVertex(fragments[k],fragments[k+1],fragments[k+2]);
+                if(face.mNormal.squared()<.5f)continue;
+                ++collisionCount;
+            }
+            for(int cell=0;cell<map->unk10;++cell) {
+                TBGCheckList* previous=&map->unk14[cell].unk0[2];
+                while(previous->mNext) {
+                    TBGCheckList* node=previous->mNext;
+                    if(node->unk8==original)previous->mNext=node->mNext;
+                    else previous=node;
+                }
+            }
+            ++replaced;
+        }
+        OSReport("[coast-geography] boundary faces opened=%u total collision=%d\n",replaced,collisionCount);
+    }
+    JGeometry::TVec3<f32> vertex(float u,float v,float h) {
+        return point(route,u,v+(bendingBridge?bridgeOffset(u):0),h);
     }
     void pillar(float u,float v,float radius,float lo,float hi,GXColor shade) {
         for(int i=0;i<10;++i) {
@@ -207,7 +446,7 @@ public:
             float light=.78f+.22f*(.5f+.5f*cosf(a-.6f));
             GXColor c=color(shade.r*light,shade.g*light,shade.b*light);
             quad(x,y,lo,xx,yy,lo,xx,yy,hi,x,y,hi,c,false);
-            tri(point(route,u,v,hi),point(route,x,y,hi),point(route,xx,yy,hi),shade,false);
+            tri(vertex(u,v,hi),vertex(x,y,hi),vertex(xx,yy,hi),shade,false);
         }
     }
     void rope(float u0,float u1,float v,float height) {
@@ -231,13 +470,21 @@ public:
         box(u-43,u+43,v-43,v+43,384,396,color(41,69,76),false);
         pillar(u,v,20,396,412,color(56,81,83));
     }
+    int localSurface(int slot) {return farBridge?slot+REMOTE_PAVING-LOCAL_PAVING:slot;}
     void buildBridge() {
+        bendingBridge=true;
         bool plaza=route.stage==PLAZA;
+        if(connectedCoast()) {
+            surface=localSurface(plaza?LOCAL_PAVING:LOCAL_WOOD);
+            float start=(route.stage==HARBOR?1503.f:300.f)-floorHeight(route,-500);
+            quad(-500,-300,start,-500,300,start,-150,300,0,-150,-300,0,
+                 color(239,235,215),true);
+        }
         // Continuous collision slab beneath the visible paving/planks.
         surface=STONE;
         box(-150,routeEnd,-halfWidth,halfWidth,-85,0,color(219,214,192),true);
         if(plaza) {
-            surface=LOCAL_PAVING;
+            surface=localSurface(LOCAL_PAVING);
             for(float u=-150;u<routeEnd;u+=320) {
                 float end=fminf(u+320,routeEnd);
                 quad(u,-300,1,u,300,1,end,300,1,end,-300,1,color(255,252,239),false);
@@ -262,7 +509,7 @@ public:
                 surface=PLASTER;
             }
         } else {
-            surface=LOCAL_WOOD;
+            surface=localSurface(LOCAL_WOOD);
             for(float u=-150;u<routeEnd;u+=70) {
                 float end=fminf(u+66,routeEnd);
                 box(u,end,-halfWidth+8,halfWidth-8,0,2,color(210,195,162),false);
@@ -270,8 +517,8 @@ public:
             for(int side=-1;side<=1;side+=2) {
                 float v=side*335;
                 for(float u=0;u<=routeEnd-260;u+=260) {
-                    surface=LOCAL_WOOD;
-                    pillar(u,v,30,-480,198,color(184,168,133));
+                    surface=localSurface(LOCAL_WOOD);
+                    pillar(u,v,30,-floorHeight(route,u)-180,198,color(184,168,133));
                     surface=PLAIN;
                     pillar(u,v,34,151,169,color(55,86,97));
                     pillar(u,v,36,196,210,color(65,105,119));
@@ -281,13 +528,13 @@ public:
         }
         // Visible supports tie the deck to the sea instead of leaving it afloat.
         for(float u=200;u<routeEnd;u+=650) {
-            surface=plaza?STONE:LOCAL_WOOD;
+            surface=plaza?STONE:localSurface(LOCAL_WOOD);
             for(int side=-1;side<=1;side+=2) {
                 float v=side*278;
-                pillar(u,v,plaza?74:46,-530,-65,color(190,191,163));
+                pillar(u,v,plaza?74:46,-floorHeight(route,u)-230,-65,color(190,191,163));
                 surface=STONE;
                 box(u-90,u+90,v-90,v+90,-90,-55,color(212,208,184),false);
-                surface=plaza?STONE:LOCAL_WOOD;
+                surface=plaza?STONE:localSurface(LOCAL_WOOD);
             }
             box(u-50,u+50,-360,360,-130,-80,color(176,176,149),false);
         }
@@ -299,6 +546,7 @@ public:
             lantern(routeEnd-350,side*330);
         }
         surface=PLAIN;
+        bendingBridge=false;
     }
     void wallStrip(Bend a,Bend b,float lo,float hi,GXColor shade) {
         float du=b.u-a.u,dv=b.v-a.v,len=sqrtf(du*du+dv*dv);
@@ -327,24 +575,24 @@ public:
             surface=STONE;
             // The covered walk is a sea wall, with masonry continuing into
             // the water instead of an unsupported shell above it.
-            quad(b.u,b.v,-route.y-180,b.u,b.v,0,c.u,c.v,0,c.u,c.v,-route.y-180,
+            quad(b.u,b.v,-floorHeight(route,b.u,b.v)-180,b.u,b.v,0,c.u,c.v,0,c.u,c.v,-floorHeight(route,c.u,c.v)-180,
                  color(151,164,156),false);
-            quad(d.u,d.v,-route.y-180,d.u,d.v,0,a.u,a.v,0,a.u,a.v,-route.y-180,
+            quad(d.u,d.v,-floorHeight(route,d.u,d.v)-180,d.u,d.v,0,a.u,a.v,0,a.u,a.v,-floorHeight(route,a.u,a.v)-180,
                  color(151,164,156),false);
             // Face collision outward so a swimming player cannot enter the
             // visible masonry from the sea. Reuse the existing drawn faces.
             int shell=count;
-            quad(c.u,c.v,-route.y-180,c.u,c.v,0,b.u,b.v,0,b.u,b.v,-route.y-180,
+            quad(c.u,c.v,-floorHeight(route,c.u,c.v)-180,c.u,c.v,0,b.u,b.v,0,b.u,b.v,-floorHeight(route,b.u,b.v)-180,
                  color(0,0,0),true);
-            quad(a.u,a.v,-route.y-180,a.u,a.v,0,d.u,d.v,0,d.u,d.v,-route.y-180,
+            quad(a.u,a.v,-floorHeight(route,a.u,a.v)-180,a.u,a.v,0,d.u,d.v,0,d.u,d.v,-floorHeight(route,d.u,d.v)-180,
                  color(0,0,0),true);
             count=shell;
-            quad(a.u,a.v,-route.y-180,d.u,d.v,-route.y-180,
-                 c.u,c.v,-route.y-180,b.u,b.v,-route.y-180,color(122,139,134),true);
-            if(i==0)quad(a.u,a.v,-route.y-180,b.u,b.v,-route.y-180,
+            quad(a.u,a.v,-floorHeight(route,a.u,a.v)-180,d.u,d.v,-floorHeight(route,d.u,d.v)-180,
+                 c.u,c.v,-floorHeight(route,c.u,c.v)-180,b.u,b.v,-floorHeight(route,b.u,b.v)-180,color(122,139,134),true);
+            if(i==0)quad(a.u,a.v,-floorHeight(route,a.u,a.v)-180,b.u,b.v,-floorHeight(route,b.u,b.v)-180,
                  b.u,b.v,0,a.u,a.v,0,color(151,164,156),true);
-            if(i==n-2)quad(d.u,d.v,-route.y-180,d.u,d.v,0,
-                 c.u,c.v,0,c.u,c.v,-route.y-180,color(151,164,156),true);
+            if(i==n-2)quad(d.u,d.v,-floorHeight(route,d.u,d.v)-180,d.u,d.v,0,
+                 c.u,c.v,0,c.u,c.v,-floorHeight(route,c.u,c.v)-180,color(151,164,156),true);
             int before=count;
             quad(a.u,a.v,0,b.u,b.v,0,c.u,c.v,0,d.u,d.v,0,color(234,231,209),true);
             count=before; // floor collision; textured subdivisions below draw it
@@ -428,14 +676,14 @@ public:
         // A dressed-stone arch and abutments anchor the passage to each pier.
         surface=STONE;
         for(int side=-1;side<=1;side+=2) {
-            float v=side*392;
-            box(routeEnd-80,routeEnd+70,v-40,v+40,-440,266,color(235,228,199),false);
+            float v=side*392+bridgeOffset(routeEnd);
+            box(routeEnd-80,routeEnd+70,v-40,v+40,-floorHeight(route,routeEnd)-140,266,color(235,228,199),false);
             box(routeEnd-100,routeEnd+90,v-52,v+52,244,270,color(251,244,213),false);
         }
         for(int k=0;k<12;++k) {
             float a=k*3.14159265f/12,b=(k+1)*3.14159265f/12;
-            float v0=-360*cosf(a),v1=-360*cosf(b),h0=260+140*sinf(a),h1=260+140*sinf(b);
-            float vv0=-430*cosf(a),vv1=-430*cosf(b),hh0=260+210*sinf(a),hh1=260+210*sinf(b);
+            float v0=bridgeOffset(routeEnd)-360*cosf(a),v1=bridgeOffset(routeEnd)-360*cosf(b),h0=260+140*sinf(a),h1=260+140*sinf(b);
+            float vv0=bridgeOffset(routeEnd)-430*cosf(a),vv1=bridgeOffset(routeEnd)-430*cosf(b),hh0=260+210*sinf(a),hh1=260+210*sinf(b);
             quad(routeEnd-82,v0,h0,routeEnd-82,v1,h1,routeEnd-82,vv1,hh1,routeEnd-82,vv0,hh0,color(244,236,210),false);
             quad(routeEnd-82,vv0,hh0,routeEnd-82,vv1,hh1,routeEnd+20,vv1,hh1,routeEnd+20,vv0,hh0,color(206,205,183),false);
             surface=PLAIN;
@@ -470,14 +718,26 @@ public:
         default: return "\0\0\0\0\0\0\0";
         }
     }
-    void label(const char* text) {
-        float size=8, start=765-(float)strlen(text)*6*size/2.0f;
-        for (int n=0;text[n];++n) {
+    void buildSign() {
+        // Keep Harbor's board inland on the quay and outside the camera's
+        // approach orbit. The seaward side leaves its supports over water.
+        float center=connectedCoast() && route.stage==HARBOR?-1550.f:765.f;
+        surface=PLAIN;
+        box(60,100,center-335,center-305,-350,350,color(75,89,92),false);
+        box(60,100,center+305,center+335,-350,350,color(75,89,92),false);
+        box(60,100,center-335,center+335,220,380,color(35,87,117),false);
+        label(route.stage==PLAZA?"RICCO HARBOR":"DELFINO PLAZA",center,false);
+        if(connectedCoast())label(route.stage==PLAZA?"DELFINO PLAZA":"RICCO HARBOR",center,true);
+    }
+    void label(const char* text,float center,bool back) {
+        float size=8,start=-(float)strlen(text)*6*size/2.0f;
+        float direction=back?-1.f:1.f,u=back?101.f:59.f;
+        for(int n=0;text[n];++n) {
             const char* rows=glyph(text[n]);
-            for (int y=0;y<7;++y) for (int x=0;x<5;++x) {
-                if (!(rows[y] & (16>>x))) continue;
-                float v=start+(n*6+x)*size,h=340-y*size;
-                quad(59,v,h,59,v+size,h,59,v+size,h-size,59,v,h-size,
+            for(int y=0;y<7;++y)for(int x=0;x<5;++x) {
+                if(!(rows[y] & (16>>x)))continue;
+                float v=center+direction*(start+(n*6+x)*size),h=340-y*size;
+                quad(u,v,h,u,v+direction*size,h,u,v+direction*size,h-size,u,v,h-size,
                      color(250,247,213),false);
             }
         }
@@ -485,8 +745,9 @@ public:
     void tri(const JGeometry::TVec3<f32>& a,const JGeometry::TVec3<f32>& b,
              const JGeometry::TVec3<f32>& c,GXColor col,bool solid)
     {
-        if (count>=12288 || (solid && collisionCount>=512)) {
-            OSReport("[open-world] geometry capacity exceeded\n"); abort();
+        if(farBridge)solid=false;
+        if (count>=16384 || (solid && collisionCount>=1024)) {
+            OSReport("[open-world] geometry capacity exceeded render=%d collision=%d\n",count,collisionCount); abort();
         }
         if (solid) {
             TBGCheckData& d=collision[collisionCount++];
@@ -495,7 +756,7 @@ public:
         // Fold shared texture coordinates at the exchange centre. Split the
         // rendered face at each fold so interpolation stays linear, including
         // diagonal paving and the curved ceiling; keep collision unsplit.
-        if(surface>=STONE) {
+        if(surface>=STONE && surface<=ROOF) {
             JGeometry::TVec3<f32> vertices[3]={a,b,c};
             for(int axis=0;axis<2;++axis) {
                 float distance[3],lo=1e30f,hi=-1e30f;
@@ -529,7 +790,7 @@ public:
         float nv=(b.y-a.y)*(cu-au)-(bu-au)*(c.y-a.y);
         float nh=(bu-au)*(cv-av)-(bv-av)*(cu-au);
         for(int k=0;k<3;++k) {
-            float u,v;local(route,t.v[k],u,v);float h=t.v[k].y-route.y;
+            float u,v;local(route,t.v[k],u,v);float h=t.v[k].y-floorHeight(route,u,v);
             float light=1;
             if(surface>=STONE && surface<=SHARED_PAVING && h>=0 && h<=passageHeight
                 && u>=routeEnd) {
@@ -541,7 +802,7 @@ public:
                 light=1-shade*(1-enclosed);
             }
             t.color[k]=color(col.r*light,col.g*light,col.b*light);
-            if(surface>=STONE) {u=fabsf(u-triggerAt);v=fabsf(v-seamV);}
+            if(surface>=STONE && surface<=ROOF) {u=fabsf(u-triggerAt);v=fabsf(v-seamV);}
             if(fabsf(nh)>=fabsf(nu) && fabsf(nh)>=fabsf(nv)) {t.uv[k][0]=u/256;t.uv[k][1]=v/256;}
             else {t.uv[k][0]=(fabsf(nu)>fabsf(nv)?v:u)/256;t.uv[k][1]=h/256;}
         }
@@ -549,8 +810,38 @@ public:
     void quad(float a,float b,float c,float d,float e,float f,
               float g,float h,float i,float j,float k,float l,GXColor col,bool solid)
     {
-        JGeometry::TVec3<f32> p=point(route,a,b,c),q=point(route,d,e,f),
-            r=point(route,g,h,i),s=point(route,j,k,l);
+        if(bendingBridge && connectedCoast()) {
+            // Subdivide in local space before bending. The rendered surface,
+            // handrails and collision slab must follow the same gentle curve.
+            JGeometry::TVec3<f32> original[4]={JGeometry::TVec3<f32>(a,b,c),
+                JGeometry::TVec3<f32>(d,e,f),JGeometry::TVec3<f32>(g,h,i),JGeometry::TVec3<f32>(j,k,l)};
+            float low=fminf(fminf(a,d),fminf(g,j)),high=fmaxf(fmaxf(a,d),fmaxf(g,j));
+            if(high-low>130.f) {
+                for(float cut=low;cut<high-.001f;cut+=130.f) {
+                    JGeometry::TVec3<f32> poly[8],next[8];int count=4;
+                    for(int v=0;v<4;++v)poly[v]=original[v];
+                    for(int plane=0;plane<2;++plane) {
+                        float limit=plane?fminf(cut+130.f,high):cut,sign=plane?-1.f:1.f;int n=0;
+                        for(int v=0;v<count;++v) {
+                            int w=(v+1)%count;float x=(poly[v].x-limit)*sign,y=(poly[w].x-limit)*sign;
+                            if(x>=0)next[n++]=poly[v];
+                            if((x>0 && y<0) || (x<0 && y>0)) {
+                                float t=x/(x-y);
+                                next[n++].set(poly[v].x+t*(poly[w].x-poly[v].x),
+                                    poly[v].y+t*(poly[w].y-poly[v].y),poly[v].z+t*(poly[w].z-poly[v].z));
+                            }
+                        }
+                        count=n;for(int v=0;v<n;++v)poly[v]=next[v];
+                    }
+                    for(int v=1;v+1<count;++v)
+                        tri(vertex(poly[0].x,poly[0].y,poly[0].z),
+                            vertex(poly[v].x,poly[v].y,poly[v].z),vertex(poly[v+1].x,poly[v+1].y,poly[v+1].z),col,solid);
+                }
+                return;
+            }
+        }
+        JGeometry::TVec3<f32> p=vertex(a,b,c),q=vertex(d,e,f),
+            r=vertex(g,h,i),s=vertex(j,k,l);
         tri(p,q,r,col,solid);tri(p,r,s,col,solid);
     }
     void box(float a,float b,float c,float d,float e,float f,GXColor col,bool solid)
@@ -577,6 +868,7 @@ public:
         // This performer runs at the end of the opaque stage draw, ahead of
         // GX Post's UI. Restore the stage camera, use vertex colors only.
         gpCamera->perform(CUE_CALC_VIEW|CUE_SET_PROJECTION,graphics);
+        drawNeighbor(graphics);
         GXSetViewport(0,0,SMSGetGameRenderWidth(),SMSGetGameRenderHeight(),0,1);
         GXSetClipMode(GX_CLIP_ENABLE);
         GXSetZTexture(GX_ZT_DISABLE,GX_TF_Z24X8,0);
@@ -627,11 +919,13 @@ public:
     }
 };
 Walkway* walkway;
+Walkway* scenicWalkway;
 class CoastalDraw : public JDrama::TViewObj {
 public:
     CoastalDraw() : JDrama::TViewObj("Coastal geometry") {}
     virtual void perform(u32 cue,JDrama::TGraphics* graphics) {
         if (walkway) walkway->perform(cue,graphics);
+        if (scenicWalkway) scenicWalkway->perform(cue,graphics);
         sms_sea_draw(cue,graphics);
     }
 };
@@ -655,9 +949,9 @@ void passageCamera(const Route& r,TMario* m)
 {
     float u,v;local(r,m->mPosition,u,v);
     if (u<routeEnd-600) {passageFacing=1;return;}
-    if (m->mPosition.y>r.y+750) return;
+    if (m->mPosition.y>floorHeight(r,u,v)+750) return;
     const int n=sizeof(passage)/sizeof(passage[0])+1;
-    Bend path[n];path[0].u=routeEnd-1100;path[0].v=0;
+    Bend path[n];path[0].u=routeEnd-1100;path[0].v=bridgeOffset(path[0].u);
     for(int i=1;i<n;++i) path[i]=passage[i-1];
     float lengths[n-1],best=1e30f,along=0,total=0;
     for(int i=0;i<n-1;++i) {
@@ -717,6 +1011,30 @@ JDrama::TViewObj* sms_open_world_draw_object()
     return new CoastalDraw;
 }
 
+void sms_open_world_harbor_transform(float matrix[3][4]) {
+    const Route& plaza=*routeFor(PLAZA);
+    const Route& harbor=*routeFor(HARBOR);
+    JGeometry::TVec3<f32> anchor=point(plaza,2*triggerAt,2*seamV,0);
+    C_MTXIdentity(matrix);
+    matrix[0][0]=-plaza.dx*harbor.dx-plaza.dz*harbor.dz;
+    matrix[0][2]=-plaza.dx*harbor.dz+plaza.dz*harbor.dx;
+    matrix[2][0]=-plaza.dz*harbor.dx+plaza.dx*harbor.dz;
+    matrix[2][2]=-plaza.dz*harbor.dz-plaza.dx*harbor.dx;
+    matrix[0][3]=anchor.x-matrix[0][0]*harbor.x-matrix[0][2]*harbor.z;
+    matrix[2][3]=anchor.z-matrix[2][0]*harbor.x-matrix[2][2]*harbor.z;
+}
+
+void sms_open_world_filter_map() {
+    if(!sms_open_world_enabled() || !connectedCoast() || !walkway || !gpMap)return;
+    J3DModel* m=gpMap->getModelManager()->getJointModel(0)->getModel();
+    J3DModelData* data=m->getModelData();
+    for(unsigned i=0;i<data->getShapeNum();++i) {
+        bool replace=walkway->route.stage==PLAZA?i==19:
+            (i==8 || i==14 || i==17 || i==25 || i==26 || i==27 || i==28);
+        if(replace){data->getShapeNodePointer(i)->onFlag(J3DShpFlag_Visible);m->getShapePacket(i)->hide();}
+    }
+}
+
 extern "C" int sms_open_world_enabled()
 {
     static int enabled=-1;
@@ -735,15 +1053,29 @@ void sms_open_world_profile(const char* phase)
 
 void sms_open_world_setup(TMarDirector* d)
 {
-    walkway=0;
+    walkway=scenicWalkway=0;
+    configureGeography();
     testPadActive=false;
     sms_sea_setup(d);
     if (!sms_open_world_enabled()) return;
     const Route* r=routeFor(d->mMap);
-    if (!r) { pendingStage=-1;return; }
+    if (!r) {
+        if(connectedCoast() && sms_sea_mainland_model()) {
+            scenicWalkway=new Walkway(*routeFor(PLAZA),true,sms_sea_mainland_model(),sms_sea_harbor_model());
+            Mtx transform;sms_sea_world_to_native(transform);
+            for(int i=0;i<scenicWalkway->count;++i)for(int k=0;k<3;++k) {
+                JGeometry::TVec3<f32> p=scenicWalkway->tris[i].v[k];
+                MTXMultVec(transform,&p,&scenicWalkway->tris[i].v[k]);
+            }
+        }
+        pendingStage=-1;return;
+    }
     if (d->mMap==PLAZA) plazaEpisode=d->unk7D;
     else harborEpisode=d->unk7D;
+    if(connectedCoast() && r->stage==HARBOR)
+        sms_open_world_trim_harbor_map(gpMap->getModelManager()->getJointModel(0)->getModel());
     walkway=new Walkway(*r);
+    testPath[0].u=connectedCoast()?-650:-300;
     OSReport("[open-world] collision grid extent=(%.0f,%.0f) lists=%u/%u\n",
              gpMapCollisionData->mGridExtentX,gpMapCollisionData->mGridExtentY,
              gpMapCollisionData->unk38,gpMapCollisionData->unk20);
@@ -773,7 +1105,8 @@ void sms_open_world_start_wipe(unsigned int type,float time,bool entering)
 JGeometry::TVec3<f32> transferPoint(const Route& to,const JGeometry::TVec3<f32>& p)
 {
     float u,v;local(savedPose.from,p,u,v);
-    return point(to,2*triggerAt-u,2*seamV-v,p.y-savedPose.from.y);
+    float targetU=2*triggerAt-u;
+    return point(to,targetU,2*seamV-v,p.y-floorHeight(to,targetU,2*seamV-v));
 }
 
 bool sms_open_world_arriving(TMarDirector* d)
@@ -902,7 +1235,7 @@ void sms_open_world_tick(TMarDirector* d)
         OSReport("[open-world] position stage=%d xyz=(%.1f,%.1f,%.1f) u=%.1f v=%.1f status=%x\n",
                  d->mMap,m->mPosition.x,m->mPosition.y,m->mPosition.z,u,v,m->mStatus);
     if (!walkway->armed || crossingDistance<0 || crossingDistance>250 || fabsf(crossingLateral)>halfWidth-35
-        || m->mPosition.y<walkway->route.y-20 || m->mPosition.y>walkway->route.y+650
+        || m->mPosition.y<floorHeight(walkway->route,u,v)-20 || m->mPosition.y>floorHeight(walkway->route,u,v)+650
         || m->mHealth<=0) return;
     int target=d->mMap==PLAZA?HARBOR:PLAZA;
     int episode=target==PLAZA?plazaEpisode:harborEpisode;
@@ -1035,20 +1368,28 @@ void sms_open_world_boat_probe(TFruitsBoat* boat)
             hullMin.x=fminf(hullMin.x,v.x);hullMin.y=fminf(hullMin.y,v.y);hullMin.z=fminf(hullMin.z,v.z);
             hullMax.x=fmaxf(hullMax.x,v.x);hullMax.y=fmaxf(hullMax.y,v.y);hullMax.z=fmaxf(hullMax.z,v.z);
         }
-        for(int i=0;i<walkway->count;++i) {
-            const ProbeVec* triangle=walkway->tris[i].v;
+        for(int i=0;i<walkway->count+walkway->neighborProbeCount/3;++i) {
+            const ProbeVec* triangle=i<walkway->count?walkway->tris[i].v:
+                walkway->neighborProbe+(i-walkway->count)*3;
             if(fmaxf(triangle[0].x,fmaxf(triangle[1].x,triangle[2].x))<hullMin.x
                 || fminf(triangle[0].x,fminf(triangle[1].x,triangle[2].x))>hullMax.x
                 || fmaxf(triangle[0].z,fmaxf(triangle[1].z,triangle[2].z))<hullMin.z
                 || fminf(triangle[0].z,fminf(triangle[1].z,triangle[2].z))>hullMax.z)continue;
             ProbeVec v[3];
             for(int k=0;k<3;++k) {
-                MTXMultVec(inverse,&walkway->tris[i].v[k],&v[k]);
+                MTXMultVec(inverse,&triangle[k],&v[k]);
                 v[k].x=v[k].x/boat->mScaling.x-center.x;
                 v[k].y=v[k].y/boat->mScaling.y-center.y;
                 v[k].z=v[k].z/boat->mScaling.z-center.z;
             }
-            if(probeTriangleBox(v,half)){++p->overlaps;break;}
+            if(probeTriangleBox(v,half)){
+                if(p->overlaps<3)OSReport("[boat-probe] overlap route=%s mesh=%s face=%d boat=(%.0f,%.0f,%.0f) triangle=(%.0f,%.0f,%.0f;%.0f,%.0f,%.0f;%.0f,%.0f,%.0f)\n",
+                    route,i<walkway->count?"walkway":"neighbor",i<walkway->count?i:i-walkway->count,
+                    boat->mPosition.x,boat->mPosition.y,boat->mPosition.z,
+                    triangle[0].x,triangle[0].y,triangle[0].z,triangle[1].x,triangle[1].y,triangle[1].z,
+                    triangle[2].x,triangle[2].y,triangle[2].z);
+                ++p->overlaps;break;
+            }
         }
     }
     if(loop || !(p->ticks%600))

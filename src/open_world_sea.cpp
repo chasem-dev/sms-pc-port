@@ -50,14 +50,17 @@ namespace {
 const int PLAZA=1;
 int pinnaStage=5,parkStage=13,plazaEpisode=2,pinnaEpisode=0,currentStage=-1,pendingStage=-1;
 const float rotation=.7853981634f,cs=.7071067812f,sn=.7071067812f;
-const float islandX=-43000,islandZ=-26000;
+float islandX=-43000,islandZ=-26000;
+bool geography(){const char* value=getenv("SMS_OPEN_WORLD_TEST_GEOGRAPHY");return !value || strcmp(value,"0")!=0;}
 struct P { float x,z; };
 P toWorld(int stage,P p) {
     if(stage==PLAZA)return p;
+    if(stage==3 && geography()){Mtx m;sms_open_world_harbor_transform(m);P q={m[0][0]*p.x+m[0][2]*p.z+m[0][3],m[2][0]*p.x+m[2][2]*p.z+m[2][3]};return q;}
     P q={islandX+cs*p.x+sn*p.z,islandZ-sn*p.x+cs*p.z};return q;
 }
 P fromWorld(int stage,P p) {
     if(stage==PLAZA)return p;
+    if(stage==3 && geography()){Mtx m;sms_open_world_harbor_transform(m);float x=p.x-m[0][3],z=p.z-m[2][3];P q={m[0][0]*x+m[2][0]*z,m[0][2]*x+m[2][2]*z};return q;}
     float x=p.x-islandX,z=p.z-islandZ;P q={cs*x-sn*z,sn*x+cs*z};return q;
 }
 JGeometry::TVec3<f32> world(int stage,const JGeometry::TVec3<f32>& p) {
@@ -71,8 +74,9 @@ int direction=1,rideCount,crossings,cooldown,releaseFrames;float landingCamera,s
 bool active,ready,releasePending,testSpawnUsed,testDone,testPadActive;
 signed char testStickX,testStickY;unsigned short testButtons;int testPulse;
 MActor *squid,*idleSquid;J3DModel* scenery;
+J3DModel* harborScenery;
 J3DDrawBuffer *opa,*xlu;
-GXTexObj water;bool hasWater;
+GXTexObj water;bool hasWater;float waterTime;
 JGeometry::TVec3<f32> seaEye,seaAt,savedPos,savedEye,savedAt,savedVel;
 float savedSpeed,savedFov,savedAnimFrame,savedSquidFrame,rideElapsed;bool testHopSent,testTurnSent;
 s16 savedYaw,savedHealth;int savedWater;u8 savedNozzle,savedSecond;
@@ -84,6 +88,12 @@ void initPath() {
     controls[0].x=-11400;controls[0].z=1650;
     controls[1].x=-15000;controls[1].z=4500;
     controls[2].x=-27000;controls[2].z=-7000;
+    if(geography()) {
+        islandX=-46000;islandZ=19000;
+        controls[0].x=-10000;controls[0].z=-6600;
+        controls[1].x=-16300;controls[1].z=-4000;
+        controls[2].x=-20500;controls[2].z=10000;
+    }
     P a={6000,12500},b={6000,7800},c={6000,6500};
     controls[3]=toWorld(pinnaStage,a);controls[4]=toWorld(pinnaStage,b);controls[5]=toWorld(pinnaStage,c);
     lengths[0]=0;
@@ -97,7 +107,7 @@ void initPath() {
     routeLength=lengths[400];
     // Exchange after clearing the Plaza waterfront, while Pinna is still
     // offshore. Its native shoreline and actors are ready for the approach.
-    swapDistance=lengths[100];
+    swapDistance=lengths[geography()?140:100];
 }
 P sample(float along,P* tangent=0) {
     if(along<0)along=0;if(along>routeLength)along=routeLength;
@@ -208,6 +218,117 @@ void retainPlazaCoast(J3DModel* model) {
     OSReport("[sea-route] mainland triangles retained=%u replaced=%u\n",retained,removed);
 }
 
+void cropNeighbor(J3DModel* model,bool plaza,bool preview=true) {
+    if(!model)return;
+    J3DModelData* data=model->getModelData();
+    const GXVtxAttrFmtList* fmt=data->getVertexData().getVtxAttrFmtList();
+    while(fmt->attr!=GX_VA_NULL && fmt->attr!=GX_VA_POS)++fmt;
+    if(fmt->attr!=GX_VA_POS || fmt->type!=GX_F32 || fmt->cnt!=GX_POS_XYZ)return;
+    const Vec* positions=(const Vec*)data->getVtxPosArray();
+    unsigned removed=0,retained=0;
+    int bodyShape=-1,wallShape=-1;
+    if(!plaza && data->getMaterialName()) {
+        int material=data->getMaterialName()->getIndex("_MainBody_m");
+        if(material>=0 && material<data->getMaterialNum())bodyShape=data->getMaterialNodePointer(material)->getShape()->getIndex();
+        material=data->getMaterialName()->getIndex("_o8985");
+        if(material>=0 && material<data->getMaterialNum())wallShape=data->getMaterialNodePointer(material)->getShape()->getIndex();
+    }
+    for(unsigned shapeIndex=0;shapeIndex<data->getShapeNum();++shapeIndex) {
+        if(!preview && int(shapeIndex)!=bodyShape && int(shapeIndex)!=wallShape)continue;
+        J3DShape* shape=data->getShapeNodePointer(shapeIndex);
+        if(shape->checkFlag(J3DShpFlag_Visible))continue;
+        unsigned stride=0,posOffset=0,posBytes=0;
+        for(const GXVtxDescList* v=shape->getVtxDesc();v->attr!=GX_VA_NULL;++v) {
+            unsigned size=v->type==GX_NONE?0:v->type==GX_INDEX16?2:1;
+            if(v->type==GX_DIRECT && v->attr>=GX_VA_POS)return;
+            if(v->attr==GX_VA_POS){posOffset=stride;posBytes=size;}
+            stride+=size;
+        }
+        if(!stride || !posBytes)return;
+        for(unsigned group=0;group<shape->getMtxGroupNum();++group) {
+            J3DShapeDraw* draw=shape->getShapeDraw(group);
+            const u8* begin=draw->getDisplayList();const u8* end=begin+draw->getDisplayListSize();
+            // Count surviving triangles first: the 32-bit stage heap cannot
+            // afford worst-case display-list buffers for two neighboring maps.
+            u8* out=0;unsigned bytes=0;bool valid=true;
+            for(int pass=0;pass<2 && valid;++pass) {
+                u8* dest=out;u8* header=0;
+                unsigned primitiveVertices=0;int format=-1;
+                for(const u8* p=begin;p<end;) {
+                    u8 command=*p++;if(!command)continue;
+                    if(end-p<2){valid=false;break;}
+                    unsigned count=(p[0]<<8)|p[1];p+=2;
+                    unsigned primitive=command&0xf8;
+                    if(p+count*stride>end || (primitive!=GX_TRIANGLESTRIP && primitive!=GX_TRIANGLEFAN
+                        && primitive!=GX_TRIANGLES && primitive!=GX_QUADS)){valid=false;break;}
+                    unsigned triangles=primitive==GX_QUADS?count/4*2:primitive==GX_TRIANGLES?count/3:count>2?count-2:0;
+                    for(unsigned t=0;t<triangles;++t) {
+                        unsigned index[3];
+                        if(primitive==GX_TRIANGLES){index[0]=t*3;index[1]=t*3+1;index[2]=t*3+2;}
+                        else if(primitive==GX_QUADS){index[0]=t/2*4;index[1]=index[0]+1+t%2;index[2]=index[1]+1;}
+                        else if(primitive==GX_TRIANGLEFAN){index[0]=0;index[1]=t+1;index[2]=t+2;}
+                        else {index[0]=t+(t&1);index[1]=t+1-(t&1);index[2]=t+2;}
+                        bool mainland=!preview,backdropFloor=int(shapeIndex)==bodyShape,outsideBacking=false,nearWall=true,backHill=true,rightBacking=int(shapeIndex)==bodyShape;
+                        bool vesselRigging=preview && !plaza && shapeIndex==6;
+                        float lowY=1e30f,highY=-1e30f;
+                        for(int k=0;k<3;++k) {
+                            const u8* v=p+index[k]*stride+posOffset;
+                            unsigned id=posBytes==2?(v[0]<<8)|v[1]:v[0];
+                            if(id>=data->getVtxNum()){valid=false;break;}
+                            const Vec& p=positions[id];
+                            if(p.x< -20500.f || p.x>15401.f || p.z< -3500.f || p.z>4452.f
+                                || p.y< -1200.f || p.y>1700.f)nearWall=false;
+                            if(p.x< -20500.f || p.x>10000.f || p.z< -16000.f || p.z>0.f
+                                || p.y< -1200.f || p.y>18000.f)backHill=false;
+                            lowY=fminf(lowY,p.y);highY=fmaxf(highY,p.y);
+                            if(p.x<14899.f || p.x>15401.f || p.z<99.f || p.z>4452.f || p.y>1620.f)rightBacking=false;
+                            if(p.y>65.f)backdropFloor=false;
+                            if(p.z< -3500.f)outsideBacking=true;
+                            if(p.x<16000.f || p.x>20000.f || p.z<10000.f || p.z>12600.f
+                               || p.y<1000.f || p.y>3000.f)vesselRigging=false;
+                            if(p.y>=-5.f && p.y<=(plaza?35000.f:7500.f)
+                                && p.x>=(plaza?-24000.f:-20500.f) && p.x<=(plaza?28000.f:30000.f)
+                                && p.z>=(plaza?-60000.f:-3500.f) && p.z<=(plaza?14000.f:20000.f))mainland=true;
+                        }
+                        if(!valid)break;
+                        // These faces form the old northern backdrop's water-level base,
+                        // not the playable quay. Its top otherwise spans the Plaza
+                        // boat lane after rotating the Harbor into the shared coast.
+                        if(backdropFloor && (outsideBacking || highY> -100.f))mainland=false;
+                        if(rightBacking && lowY< -500.f && highY>=1500.f)mainland=false;
+                        if(int(shapeIndex)==wallShape)mainland=(nearWall || backHill) && highY>=250.f;
+                        // The map contains two curved fittings belonging to a
+                        // separate vessel actor. Without that actor in the
+                        // distant preview they hang unsupported in the sky.
+                        if(vesselRigging)mainland=false;
+                        if(!mainland){if(!pass)++removed;continue;}
+                        // Merge compatible triangles into one GX primitive;
+                        // thousands of tiny headers waste per-frame CPU work.
+                        bool newPrimitive=format!=(command&7) || primitiveVertices+3>65535;
+                        if(newPrimitive){format=command&7;primitiveVertices=0;}
+                        primitiveVertices+=3;
+                        if(!pass){++retained;bytes+=3*stride+(newPrimitive?3:0);continue;}
+                        if(newPrimitive){header=dest;*dest++=GX_TRIANGLES|format;dest+=2;}
+                        header[1]=primitiveVertices>>8;header[2]=primitiveVertices&255;
+                        for(int k=0;k<3;++k){memcpy(dest,p+index[k]*stride,stride);dest+=stride;}
+                    }
+                    if(!valid)break;
+                    p+=count*stride;
+                }
+                if(valid && !pass) {
+                    unsigned capacity=(bytes+31)&~31u;if(!capacity)capacity=32;
+                    out=(u8*)JKRHeap::alloc(capacity,32,0);if(!out)return;
+                } else if(valid) {
+                    while((dest-out)&31)*dest++=0;
+                    draw->mDisplayList=out;draw->mDisplayListSize=dest-out;
+                }
+            }
+            if(!valid){if(out)JKRHeap::free(out,0);OSReport("[sea-route] unsupported coast display list\n");}
+        }
+    }
+    OSReport("[coast-geography] preview triangles retained=%u removed=%u\n",retained,removed);
+}
+
 // Despite its name, setting J3DShpFlag_Visible suppresses native entry.
 void hideScenery(J3DModel* m,bool plaza) {
     if(!m)return;
@@ -244,7 +365,28 @@ void cameraMatrices(bool previous=false) {
     C_MTXLookAt(gpCamera->unk1EC,&gpCamera->unk124,&gpCamera->mUp,&gpCamera->unk148);
     if(previous){MTXCopy(gpCamera->unk1EC,gpCamera->unk21C);memcpy(gpCamera->unk1AC,gpCamera->unk16C,sizeof gpCamera->unk16C);}
 }
+void keepCameraClear(JGeometry::TVec3<f32>& eye,const JGeometry::TVec3<f32>& at) {
+    if(!geography() || !gpMapCollisionData || currentStage!=PLAZA || progress>2000.f)return;
+    const TMapCollisionData* map=gpMapCollisionData;
+    // The native line query assumes both endpoints are inside its grid.
+    // Offshore cameras need no terrain test and may lie beyond that grid.
+    if(fabsf(at.x)>=map->mGridExtentX-1 || fabsf(eye.x)>=map->mGridExtentX-1
+       || fabsf(at.z)>=map->mGridExtentY-1 || fabsf(eye.z)>=map->mGridExtentY-1)return;
+    for(int i=0;i<8;++i) {
+        JGeometry::TVec3<f32> hit;
+        if(!map->intersectLine(at,eye,false,&hit))break;
+        float x=hit.x-at.x,y=hit.y-at.y,z=hit.z-at.z;
+        float distance=sqrtf(x*x+y*y+z*z);
+        float scale=distance>45.f?(distance-45.f)/distance:0.f;
+        eye.set(at.x+x*scale,at.y+y*scale,at.z+z*scale);
+        if(distance<=45.f)break;
+    }
+}
 P station() {return currentStage==PLAZA?controls[0]:controls[4];}
+JGeometry::TVec3<f32> plazaLanding() {
+    return geography()?JGeometry::TVec3<f32>(-9300.f,400.f,-6800.f)
+                      :JGeometry::TVec3<f32>(-11000.f,400.f,1400.f);
+}
 bool nearStation() {
     if(!ready || !gpMarioOriginal)return false;
     JGeometry::TVec3<f32> p=world(currentStage,gpMarioOriginal->mPosition);P s=station();
@@ -264,18 +406,18 @@ void board() {
     float cameraX=rider.x-seaEye.x,cameraZ=rider.z-seaEye.z;
     cameraHeading=atan2f(cameraX,cameraZ);cameraRadius=sqrtf(cameraX*cameraX+cameraZ*cameraZ);
     savedFov=55.f;
-    m->mSurfGesso=squid;m->mSurfGessoType=TMario::SURF_GESSO_TYPE_GREEN;
-    m->changePlayerStatus(MARIO_STATUS_SURF,0,true);m->mStatusTimer=0;
-    m->setAnimation(TMario::ANIM_RIDE_SHELL,1.0f);
+    m->mSurfGesso=geography()?0:squid;m->mSurfGessoType=TMario::SURF_GESSO_TYPE_GREEN;
+    m->changePlayerStatus(geography()?MARIO_STATUS_JUMP:MARIO_STATUS_SURF,0,true);m->mStatusTimer=0;
+    m->setAnimation(geography()?TMario::ANIM_JUMP:TMario::ANIM_RIDE_SHELL,1.0f);
     OSReport("[sea-route] boarded stage=%d ride=%d progress=%.1f\n",currentStage,rideCount,progress);
 }
 void land() {
     TMario* m=gpMarioOriginal;
-    JGeometry::TVec3<f32> p=currentStage==PLAZA?JGeometry::TVec3<f32>(-11000,400,1400):JGeometry::TVec3<f32>(6000,200,6500);
+    JGeometry::TVec3<f32> p=currentStage==PLAZA?plazaLanding():JGeometry::TVec3<f32>(6000,200,6500);
     const TBGCheckData* ground;
     float y=gpMapCollisionData->checkGround(p.x,p.y+300,p.z,0,&ground);
     p.y=fmaxf(y,100.f)+5;
-    m->waitingStart(&p,currentStage==PLAZA?90:180);m->mPosition=p;m->mVel.zero();m->mForwardVel=0;
+    m->waitingStart(&p,currentStage==PLAZA?(geography()?45:90):(geography()?-115:180));m->mPosition=p;m->mVel.zero();m->mForwardVel=0;
     m->mGroundPlane=ground;m->mFloorPosition.set(p.x,y,p.z);m->mSurfGesso=0;m->resetHistory();
     active=false;dockMode=0;cooldown=60;landingCamera=60;
     OSReport("[sea-route] landed stage=%d ride=%d xyz=(%.1f,%.1f,%.1f) health=%d water=%d\n",currentStage,rideCount,p.x,p.y,p.z,m->mHealth,m->mWaterGun?m->mWaterGun->mCurrentWater:0);
@@ -349,9 +491,34 @@ void cross(TMarDirector* d) {
     d->onFlag(TMarDirector::DIRECTOR_FLAG_STAGE_TRANSITION_PENDING);
 }
 }
+void sms_open_world_trim_harbor_map(J3DModel* m){cropNeighbor(m,false,false);}
+void sms_open_world_crop_model(J3DModel* m,bool plaza) {
+    if(plaza){hideScenery(m,true);retainPlazaCoast(m);}
+    if(m && !plaza) {
+        const unsigned hidden[]={8,14,17,25,26,27,28,29};
+        for(unsigned i=0;i<sizeof(hidden)/sizeof(hidden[0]);++i)
+            if(hidden[i]<m->getModelData()->getShapeNum()) {
+                m->getModelData()->getShapeNodePointer(hidden[i])->onFlag(J3DShpFlag_Visible);
+                m->getShapePacket(hidden[i])->hide();
+            }
+    }
+    cropNeighbor(m,plaza);
+}
+J3DModel* sms_open_world_load_model(const char* archive,const char* name) {
+    return model(archive,name);
+}
+J3DModel* sms_sea_mainland_model(){return currentStage==pinnaStage?scenery:0;}
+J3DModel* sms_sea_harbor_model(){return currentStage==pinnaStage?harborScenery:0;}
+void sms_sea_world_to_native(float matrix[3][4]) {
+    C_MTXIdentity(matrix);
+    if(currentStage==pinnaStage) {
+        matrix[0][0]=cs;matrix[0][2]=-sn;matrix[2][0]=sn;matrix[2][2]=cs;
+        matrix[0][3]=-cs*islandX+sn*islandZ;matrix[2][3]=-sn*islandX-cs*islandZ;
+    }
+}
 void sms_sea_setup(TMarDirector* d) {
     testPadActive=false;
-    ready=false;scenery=0;squid=idleSquid=0;hasWater=false;currentStage=d->mMap;
+    ready=false;scenery=harborScenery=0;squid=idleSquid=0;hasWater=false;currentStage=d->mMap;
     if(!sms_open_world_enabled())return;
     if(gpApplication.unk30)for(unsigned i=0;i<gpApplication.unk30->getChildren().size();++i) {
         TNameRefAryT<TScenarioArchiveName>* n=gpApplication.unk30->getChildren()[i];
@@ -360,37 +527,66 @@ void sms_sea_setup(TMarDirector* d) {
     }
     sms_open_world_profile("sea setup begin");
     initPath();
-    if(currentStage!=PLAZA && currentStage!=pinnaStage){active=false;pendingStage=-1;return;}
-    if(currentStage==PLAZA)plazaEpisode=d->unk7D;else pinnaEpisode=d->unk7D;
+    bool harbor=geography() && currentStage==3;
+    if(currentStage!=PLAZA && currentStage!=pinnaStage && !harbor){active=false;pendingStage=-1;return;}
+    if(currentStage==PLAZA)plazaEpisode=d->unk7D;else if(!harbor)pinnaEpisode=d->unk7D;
     if(pendingStage!=currentStage){pendingStage=-1;active=false;landingCamera=0;dockMode=0;}
     opa=new J3DDrawBuffer(512);xlu=new J3DDrawBuffer(512);opa->setNonSort();xlu->setNonSort();
-    squid=makeSquid();idleSquid=makeSquid();
+    if(!harbor){squid=makeSquid();idleSquid=makeSquid();}
     sms_open_world_profile("sea squids ready");
     char sceneryArchive[128];
-    bool haveScenery=stageArchive(currentStage==PLAZA?pinnaStage:PLAZA,
-        currentStage==PLAZA?pinnaEpisode:plazaEpisode,sceneryArchive,sizeof sceneryArchive);
+    bool haveScenery=stageArchive(currentStage==PLAZA || harbor?pinnaStage:PLAZA,
+        currentStage==PLAZA || harbor?pinnaEpisode:plazaEpisode,sceneryArchive,sizeof sceneryArchive);
     scenery=haveScenery?model(sceneryArchive,"map.bmd"):0;
     sms_open_world_profile("sea scenery ready");
-    hideScenery(scenery,currentStage!=PLAZA);
-    if(currentStage!=PLAZA)retainPlazaCoast(scenery);
+    hideScenery(scenery,currentStage!=PLAZA && !harbor);
+    if(currentStage!=PLAZA && !harbor) {
+        if(geography())sms_open_world_crop_model(scenery,true);
+        else retainPlazaCoast(scenery);
+    }
     if(scenery) {
+        int source=currentStage==PLAZA || harbor?pinnaStage:PLAZA;
+        P zero={0,0};P o=fromWorld(currentStage,toWorld(source,zero));
         Mtx transform;C_MTXIdentity(transform);
-        if(currentStage==PLAZA){transform[0][0]=cs;transform[0][2]=sn;transform[2][0]=-sn;transform[2][2]=cs;transform[0][3]=islandX;transform[2][3]=islandZ;}
-        else {transform[0][0]=cs;transform[0][2]=-sn;transform[2][0]=sn;transform[2][2]=cs;transform[0][3]=-cs*islandX+sn*islandZ;transform[2][3]=-sn*islandX-cs*islandZ;}
+        transform[0][0]=cs;transform[2][2]=cs;
+        transform[0][2]=source==pinnaStage?sn:-sn;
+        transform[2][0]=source==pinnaStage?-sn:sn;
+        transform[0][3]=o.x;transform[2][3]=o.z;
+        if(harbor) {
+            Mtx harborWorld,inverse,pinnaWorld;sms_open_world_harbor_transform(harborWorld);
+            MTXInverse(harborWorld,inverse);C_MTXIdentity(pinnaWorld);
+            pinnaWorld[0][0]=cs;pinnaWorld[0][2]=sn;pinnaWorld[2][0]=-sn;pinnaWorld[2][2]=cs;
+            pinnaWorld[0][3]=islandX;pinnaWorld[2][3]=islandZ;
+            MTXConcat(inverse,pinnaWorld,transform);
+        }
         scenery->setBaseTRMtx(transform);
     }
-    // Replace only the baked distant counterpart. The nearby native map is untouched.
-    J3DModel* nativeMap=gpMap->getModelManager()->getJointModel(0)->getModel();
-    J3DModelData* map=nativeMap->getModelData();
-    if(currentStage==PLAZA)retainPlazaCoast(nativeMap);
-    if(currentStage==PLAZA && map->getShapeNum()>22){map->getShapeNodePointer(22)->onFlag(J3DShpFlag_Visible);nativeMap->getShapePacket(22)->hide();}
-    if(currentStage==pinnaStage && map->getShapeNum()>1){map->getShapeNodePointer(1)->onFlag(J3DShpFlag_Visible);nativeMap->getShapePacket(1)->hide();}
+    if(geography() && currentStage==pinnaStage) {
+        char archive[128];
+        if(stageArchive(3,0,archive,sizeof archive))harborScenery=model(archive,"map.bmd");
+        if(harborScenery) {
+            sms_open_world_crop_model(harborScenery,false);
+            Mtx harborWorld,inverse,transform;sms_open_world_harbor_transform(harborWorld);
+            C_MTXIdentity(inverse);inverse[0][0]=cs;inverse[0][2]=-sn;
+            inverse[2][0]=sn;inverse[2][2]=cs;
+            inverse[0][3]=-cs*islandX+sn*islandZ;inverse[2][3]=-sn*islandX-cs*islandZ;
+            MTXConcat(inverse,harborWorld,transform);
+            harborScenery->setBaseTRMtx(transform);
+        }
+    }
     const ResTIMG* t=(ResTIMG*)resource("/data/scene/dolpic0.szs","wave.bti");
     if(t) {
         GXInitTexObj(&water,(u8*)t+t->imageDataOffset,t->width,t->height,(GXTexFmt)t->format,GX_REPEAT,GX_REPEAT,GX_FALSE);
         GXInitTexObjLOD(&water,GX_LINEAR,GX_LINEAR,0,0,0,GX_FALSE,GX_FALSE,GX_ANISO_1);hasWater=true;
         OSReport("[sea-route] water texture %dx%d format=%d\n",t->width,t->height,t->format);
     }
+    if(harbor)return;
+    // Replace only the baked distant counterpart. The nearby native map is untouched.
+    J3DModel* nativeMap=gpMap->getModelManager()->getJointModel(0)->getModel();
+    J3DModelData* map=nativeMap->getModelData();
+    if(currentStage==PLAZA)retainPlazaCoast(nativeMap);
+    if(currentStage==PLAZA && map->getShapeNum()>22){map->getShapeNodePointer(22)->onFlag(J3DShpFlag_Visible);nativeMap->getShapePacket(22)->hide();}
+    if(currentStage==pinnaStage && map->getShapeNum()>1){map->getShapeNodePointer(1)->onFlag(J3DShpFlag_Visible);nativeMap->getShapePacket(1)->hide();}
     // Warm both immutable host copies before departure, not during the swap.
     char nativeArchive[128];
     if(stageArchive(currentStage,d->unk7D,nativeArchive,sizeof nativeArchive))
@@ -429,7 +625,7 @@ void sms_sea_arrive(TMarDirector* d) {
         OSReport("[sea-route] arrived stage=%d episode=%d crossing=%d elapsed_ms=%u speed=%.2f -> %.2f squid_frame=%.2f health=%d water=%d\n",currentStage,d->unk7D,crossings,(unsigned)(port_open_world_milliseconds()-crossingStart),savedSpeed,m->mForwardVel,savedSquidFrame,m->mHealth,savedWater);
         OSReport("[sea-route] animation mario=%.2f -> %.2f blooper=%.2f -> %.2f hop=%.2f lateral=%.2f\n",savedAnimFrame,m->getMotionFrameCtrl().getFrame(),savedSquidFrame,squid->getFrameCtrl(0)->getFrame(),hop,lateral);
     } else {
-        JGeometry::TVec3<f32> p=currentStage==PLAZA?JGeometry::TVec3<f32>(-11000,330,1400):JGeometry::TVec3<f32>(6000,120,7300);
+        JGeometry::TVec3<f32> p=currentStage==PLAZA?plazaLanding():JGeometry::TVec3<f32>(6000,120,7300);
         m->waitingStart(&p,currentStage==PLAZA?-90:0);m->mPosition=p;m->mVel.zero();m->resetHistory();testSpawnUsed=true;
         Vec eye={p.x+(currentStage==PLAZA?-850:0),p.y+450,p.z+(currentStage==PLAZA?0:-850)},at={p.x,p.y+120,p.z};
         gpCamera->endDemoCamera();gpCamera->warpPosAndAt(eye,at);cameraMatrices(true);
@@ -440,8 +636,12 @@ void sms_sea_arrive(TMarDirector* d) {
 void sms_sea_tick(TMarDirector* d) {
     testPadActive=false;testButtons=0;testStickX=testStickY=0;
     if(!sms_open_world_enabled() || pendingStage!=-1 || d->mState!=TMarDirector::STATE_UNK4 || d->unk124 || d->unk4C&0x1ff)return;
+    if(geography() && hasWater)waterTime+=.5f;
     if(testParkWalk(d) || !ready)return;
-    TMario* m=gpMarioOriginal;TMarioGamePad* pad=m->getGamePad();float dt=port_fps60_active?.5f:1.f;
+    TMario* m=gpMarioOriginal;TMarioGamePad* pad=m->getGamePad();
+    // The director runs 120 simulation ticks per second at either display
+    // rate. Use 60th-second ride units so timing and steering agree at 30/60.
+    float dt=geography()?.5f:(port_fps60_active?.5f:1.f);
     if(cooldown>0)--cooldown;
     if(getenv("SMS_SEA_TEST_RIDES") && !testDone) {
         // Store scalar inputs for PADRead; never dereference stage objects there.
@@ -477,8 +677,9 @@ void sms_sea_tick(TMarDirector* d) {
     if(!dockMode && (progress>=routeLength || progress<=0)) {
         progress=fmaxf(0,fminf(routeLength,progress));
         if(currentStage==PLAZA && direction<0) {
-            const TBGCheckData* ground;float y=gpMapCollisionData->checkGround(-11000,650,1400,0,&ground);
-            dockMode=-1;dockRemaining=30;dockFrom=world(currentStage,m->mPosition);dockTo.set(-11000.f,fmaxf(y,100.f)+5.f,1400.f);
+            JGeometry::TVec3<f32> landing=plazaLanding();
+            const TBGCheckData* ground;float y=gpMapCollisionData->checkGround(landing.x,650,landing.z,0,&ground);
+            dockMode=-1;dockRemaining=30;dockFrom=world(currentStage,m->mPosition);dockTo.set(landing.x,fmaxf(y,100.f)+5.f,landing.z);
         } else {land();return;}
     }
     if(remaining<1500)lateral*=powf(.96f,dt);
@@ -499,14 +700,17 @@ void sms_sea_tick(TMarDirector* d) {
     const TBGCheckData* plane;float ground=gpMapCollisionData->checkGround(next.x,next.y+300,next.z,0,&plane);
     if(ground>height && ground<200)next.y=ground+5;
     m->mPosition=next;m->mGroundPlane=plane;m->mFloorPosition.set(next.x,ground,next.z);
-    m->mSurfGesso=squid;m->mSurfGessoType=TMario::SURF_GESSO_TYPE_GREEN;
-    if(m->mStatus!=MARIO_STATUS_SURF)m->changePlayerStatus(MARIO_STATUS_SURF,0,true);
-    m->mStatusTimer=0;m->setAnimation(TMario::ANIM_RIDE_SHELL,1.f);
-    float angle=atan2f(tangent.x*direction,tangent.z*direction)-(currentStage==PLAZA?0:rotation);
+    bool boarding=geography() && dockMode!=0;
+    m->mSurfGesso=boarding?0:squid;m->mSurfGessoType=TMario::SURF_GESSO_TYPE_GREEN;
+    unsigned status=boarding?MARIO_STATUS_JUMP:MARIO_STATUS_SURF;
+    if(m->mStatus!=status)m->changePlayerStatus(status,0,true);
+    m->mStatusTimer=0;m->setAnimation(boarding?TMario::ANIM_JUMP:TMario::ANIM_RIDE_SHELL,1.f);
+    float angle=(boarding?atan2f(dockTo.x-dockFrom.x,dockTo.z-dockFrom.z)
+        :atan2f(tangent.x*direction,tangent.z*direction))-(currentStage==PLAZA?0:rotation);
     m->mFaceAngle.y=s16(int(angle*65536.f/6.283185307f));m->mModelFaceAngle=m->mFaceAngle.y;m->mIntendedYaw=m->mFaceAngle.y;
-    P velocity={tangent.x*direction*speed,tangent.z*direction*speed};
+    P velocity={boarding?0.f:tangent.x*direction*speed,boarding?0.f:tangent.z*direction*speed};
     if(currentStage!=PLAZA){float x=cs*velocity.x-sn*velocity.z,z=sn*velocity.x+cs*velocity.z;velocity.x=x;velocity.z=z;}
-    m->mVel.set(velocity.x,0.f,velocity.z);m->mForwardVel=speed;m->mSlideVelX=velocity.x;m->mSlideVelZ=velocity.z;
+    m->mVel.set(velocity.x,0.f,velocity.z);m->mForwardVel=boarding?0.f:speed;m->mSlideVelX=velocity.x;m->mSlideVelZ=velocity.z;
     d->mConsole->startDisappearTelop();
     static int logTimer;
     if(getenv("SMS_OPEN_WORLD_LOG") && (++logTimer%60)==0)OSReport("[sea-route] position stage=%d progress=%.1f lateral=%.1f xyz=(%.1f,%.1f,%.1f) speed=%.2f status=%x\n",currentStage,progress,lateral,next.x,next.y,next.z,speed,m->mStatus);
@@ -527,7 +731,9 @@ bool sms_sea_camera() {
         savedFov+=(gpCamera->mFovy-savedFov)*blend;gpCamera->mFovy=savedFov;
         seaEye.x+=(e.x-seaEye.x)*blend;seaEye.y+=(e.y-seaEye.y)*blend;seaEye.z+=(e.z-seaEye.z)*blend;
         seaAt.x+=(a.x-seaAt.x)*blend;seaAt.y+=(a.y-seaAt.y)*blend;seaAt.z+=(a.z-seaAt.z)*blend;
-        gpCamera->warpPosAndAt(native(currentStage,seaEye),native(currentStage,seaAt));cameraMatrices();return true;
+        JGeometry::TVec3<f32> eye=native(currentStage,seaEye),at=native(currentStage,seaAt);
+        keepCameraClear(eye,at);
+        gpCamera->warpPosAndAt(eye,at);cameraMatrices();return true;
     }
     gpCamera->mFovy=savedFov;
     P tangent;sample(progress,&tangent);
@@ -536,27 +742,53 @@ bool sms_sea_camera() {
     // positions through a turn-back would pull the camera through the rider.
     float dt=port_fps60_active?.5f:1.f,blend=1-powf(.9f,dt);
     float desired=atan2f(tangent.x*direction,tangent.z*direction);
+    if(geography()) {
+        // Keep the destination in view during the offshore detour, while
+        // retaining some travel heading so steering remains easy to read.
+        P destination=direction>0?controls[4]:controls[0];
+        float remaining=direction>0?routeLength-progress:progress;
+        float toward=atan2f(destination.x-player.x,destination.z-player.z);
+        float difference=toward-desired;
+        while(difference>3.14159265f)difference-=6.283185307f;
+        while(difference< -3.14159265f)difference+=6.283185307f;
+        float offshore=fminf(1.f,fmaxf(0.f,(remaining-2500.f)/5000.f));
+        desired+=difference*.65f*offshore;
+        if(currentStage==pinnaStage && direction>0 && remaining<1400.f) {
+            P gate={-3500,2500};gate=toWorld(pinnaStage,gate);
+            toward=atan2f(gate.x-player.x,gate.z-player.z);difference=toward-desired;
+            while(difference>3.14159265f)difference-=6.283185307f;
+            while(difference< -3.14159265f)difference+=6.283185307f;
+            float arrival=1.f-fmaxf(0.f,remaining)/1400.f;
+            desired+=difference*arrival*arrival*(3.f-2.f*arrival);
+        }
+    }
     float turn=desired-cameraHeading;
     while(turn>3.14159265f)turn-=6.283185307f;
     while(turn<-3.14159265f)turn+=6.283185307f;
     cameraHeading+=turn*blend;cameraRadius+=(650.f-cameraRadius)*blend;
     seaEye.x=player.x-sinf(cameraHeading)*cameraRadius;
     seaEye.z=player.z-cosf(cameraHeading)*cameraRadius;
-    seaEye.y+=(player.y+260-seaEye.y)*blend;
-    seaAt.x=player.x;seaAt.z=player.z;seaAt.y+=(player.y+110-seaAt.y)*blend;
+    float shoreLift=geography() && currentStage==PLAZA?
+        400.f*(1.f-fminf(1.f,progress/1600.f)):0.f;
+    seaEye.y+=(player.y+260+shoreLift-seaEye.y)*blend;
+    seaAt.x=player.x;seaAt.z=player.z;seaAt.y=player.y+110;
     JGeometry::TVec3<f32> e=native(currentStage,seaEye),a=native(currentStage,seaAt);
+    keepCameraClear(e,a);
     gpCamera->warpPosAndAt(e,a);gpCamera->unk258=s16(int(atan2f(e.x-a.x,e.z-a.z)*65536.f/6.283185307f));cameraMatrices();return true;
 }
 void sms_sea_draw(unsigned cue,JDrama::TGraphics* graphics) {
-    if(!(cue&CUE_DRAW) || !sms_open_world_enabled() || !ready)return;
+    if(!(cue&CUE_DRAW) || !sms_open_world_enabled() || !scenery)return;
     gpCamera->perform(CUE_CALC_VIEW|CUE_SET_PROJECTION,graphics);
     drawModel(scenery,graphics);
-    if(!active) {
+    drawModel(harborScenery,graphics);
+    if(ready && (!active || (geography() && dockMode!=0))) {
         P p=fromWorld(currentStage,station());Mtx transform;C_MTXIdentity(transform);transform[0][3]=p.x;transform[1][3]=10+4*sinf(rideTime*.05f);transform[2][3]=p.z;
         idleSquid->getModel()->setBaseTRMtx(transform);idleSquid->frameUpdate();idleSquid->calc();drawModel(idleSquid->getModel(),graphics);
     }
-    if(active) {
-        // Identical world-space ocean texture and phase on both maps.
+    bool farWater=geography() && hasWater && !active && gpCamera->mPosition.y>5.f;
+    if(active || farWater) {
+        // Identical world-space ocean texture and phase on all coastal maps.
+        float phase=geography()?waterTime:rideTime;
         JGeometry::TVec3<f32> center=world(currentStage,gpMarioOriginal->mPosition);
         GXLoadPosMtxImm(graphics->getViewMtx(),GX_PNMTX0);GXSetCurrentMtx(GX_PNMTX0);GXClearVtxDesc();
         GXSetVtxDesc(GX_VA_POS,GX_DIRECT);GXSetVtxDesc(GX_VA_CLR0,GX_DIRECT);GXSetVtxDesc(GX_VA_TEX0,GX_DIRECT);
@@ -566,20 +798,37 @@ void sms_sea_draw(unsigned cue,JDrama::TGraphics* graphics) {
         GXSetNumTevStages(1);GXSetTevOrder(GX_TEVSTAGE0,GX_TEXCOORD0,GX_TEXMAP0,GX_COLOR0A0);GXSetTevColor(GX_TEVREG0,(GXColor){28,140,195,255});GXSetTevColor(GX_TEVREG1,(GXColor){85,220,238,255});
         GXSetTevColorIn(GX_TEVSTAGE0,GX_CC_C0,GX_CC_C1,GX_CC_TEXC,GX_CC_ZERO);
         GXSetTevColorOp(GX_TEVSTAGE0,GX_TEV_ADD,GX_TB_ZERO,GX_CS_SCALE_1,GX_TRUE,GX_TEVPREV);
-        GXSetTevAlphaIn(GX_TEVSTAGE0,GX_CA_ZERO,GX_CA_ZERO,GX_CA_ZERO,GX_CA_A0);
+        GXSetTevAlphaIn(GX_TEVSTAGE0,GX_CA_ZERO,GX_CA_ZERO,GX_CA_ZERO,farWater?GX_CA_RASA:GX_CA_A0);
         GXSetTevAlphaOp(GX_TEVSTAGE0,GX_TEV_ADD,GX_TB_ZERO,GX_CS_SCALE_1,GX_TRUE,GX_TEVPREV);
         GXSetTevSwapMode(GX_TEVSTAGE0,GX_TEV_SWAP0,GX_TEV_SWAP0);GXSetNumIndStages(0);GXSetTevDirect(GX_TEVSTAGE0);
-        GXSetZTexture(GX_ZT_DISABLE,GX_TF_Z24X8,0);GXSetZMode(GX_TRUE,GX_LEQUAL,GX_TRUE);GXSetZCompLoc(GX_TRUE);GXSetCullMode(GX_CULL_NONE);GXSetFog(GX_FOG_NONE,0,1,0,1,(GXColor){0,0,0,255});
-        GXSetColorUpdate(GX_TRUE);GXSetAlphaUpdate(GX_TRUE);GXSetBlendMode(GX_BM_NONE,GX_BL_ONE,GX_BL_ZERO,GX_LO_COPY);GXSetAlphaCompare(GX_ALWAYS,0,GX_AOP_AND,GX_ALWAYS,0);
-        const int grid=24;const float extent=100000,step=2*extent/grid;
-        GXBegin(GX_QUADS,GX_VTXFMT7,grid*grid*4);
-        for(int z=0;z<grid;++z)for(int x=0;x<grid;++x)for(int k=0;k<4;++k) {
-            float wx=center.x-extent+(x+(k==2 || k==3))*step,wz=center.z-extent+(z+(k==1 || k==2))*step;
-            JGeometry::TVec3<f32> p=native(currentStage,JGeometry::TVec3<f32>(wx,2.f,wz));
-            GXPosition3f32(p.x,p.y,p.z);GXColor4u8(55,205,220,235);GXTexCoord2f32(wx/1600+rideTime*.004f,wz/1600+rideTime*.002f);
+        GXSetZTexture(GX_ZT_DISABLE,GX_TF_Z24X8,0);GXSetZMode(GX_TRUE,GX_LEQUAL,farWater?GX_FALSE:GX_TRUE);GXSetZCompLoc(GX_TRUE);GXSetCullMode(GX_CULL_NONE);GXSetFog(GX_FOG_NONE,0,1,0,1,(GXColor){0,0,0,255});
+        GXSetColorUpdate(GX_TRUE);GXSetAlphaUpdate(GX_TRUE);GXSetBlendMode(farWater?GX_BM_BLEND:GX_BM_NONE,farWater?GX_BL_SRCALPHA:GX_BL_ONE,farWater?GX_BL_INVSRCALPHA:GX_BL_ZERO,GX_LO_COPY);GXSetAlphaCompare(GX_ALWAYS,0,GX_AOP_AND,GX_ALWAYS,0);
+        if(farWater) {
+            // Leave nearby native waves and underwater visibility intact.
+            // Fade the same open-sea surface in beyond their short draw range.
+            const float radius[]={2200,3400,6500,12000,100000};
+            const u8 opacity[]={0,110,235,255,255};
+            const int segments=64;
+            GXBegin(GX_QUADS,GX_VTXFMT7,4*segments*4);
+            for(int ring=0;ring<4;++ring)for(int segment=0;segment<segments;++segment)for(int k=0;k<4;++k) {
+                int r=ring+(k==1 || k==2);float angle=(segment+(k>=2))*(6.283185307f/segments);
+                float wx=center.x+radius[r]*sinf(angle),wz=center.z+radius[r]*cosf(angle);
+                JGeometry::TVec3<f32> p=native(currentStage,JGeometry::TVec3<f32>(wx,2.f,wz));
+                GXPosition3f32(p.x,p.y,p.z);GXColor4u8(55,205,220,opacity[r]);GXTexCoord2f32(wx/1600+phase*.004f,wz/1600+phase*.002f);
+            }
+            GXEnd();
+        } else {
+            const int grid=24;const float extent=100000,step=2*extent/grid;
+            GXBegin(GX_QUADS,GX_VTXFMT7,grid*grid*4);
+            for(int z=0;z<grid;++z)for(int x=0;x<grid;++x)for(int k=0;k<4;++k) {
+                float wx=center.x-extent+(x+(k==2 || k==3))*step,wz=center.z-extent+(z+(k==1 || k==2))*step;
+                JGeometry::TVec3<f32> p=native(currentStage,JGeometry::TVec3<f32>(wx,2.f,wz));
+                GXPosition3f32(p.x,p.y,p.z);GXColor4u8(55,205,220,235);GXTexCoord2f32(wx/1600+phase*.004f,wz/1600+phase*.002f);
+            }
+            GXEnd();
         }
-        GXEnd();
     }
+    if(!ready)return;
     if(releasePending && gpApplication.mFader->isFullyFadedIn() && --releaseFrames<=0) {
         if(GXPC_CoastalHold)GXPC_CoastalHold(0);releasePending=false;
         sms_open_world_profile("ferry frame ready");
@@ -600,7 +849,7 @@ void sms_sea_draw(unsigned cue,JDrama::TGraphics* graphics) {
         const char* title=active?(direction>0?"To Pinna Beach":"To Delfino Plaza")
             :justLanded?(currentStage==PLAZA?"Delfino Plaza":"Pinna Beach")
             :(currentStage==PLAZA?"Blooper ride to Pinna Beach":"Blooper ride to Delfino Plaza");
-        const char* hint=active?"Stick: Steer   A: Hop   B: Turn back"
+        const char* hint=active?(geography() && dockMode?(dockMode>0?"All aboard!":"Back to shore") : "Stick: Steer   A: Hop   B: Turn back")
             :justLanded?(currentStage==PLAZA?"Back at the waterfront":"Follow the beach left to the park entrance.")
             :"X: Board";
         gpSystemFont->setCharColor(JUtility::TColor(22,54,69,255));
@@ -618,6 +867,7 @@ extern "C" int sms_sea_test_pad(signed char* x,signed char* y,unsigned short* bu
 }
 
 void sms_sea_filter_map() {
+    sms_open_world_filter_map();
     if(!ready || !sms_open_world_enabled() || !gpMap)return;
     J3DModel* m=gpMap->getModelManager()->getJointModel(0)->getModel();
     J3DModelData* d=m->getModelData();
@@ -625,12 +875,13 @@ void sms_sea_filter_map() {
     // land and Pinna's sand. A large bounding box alone does not distinguish
     // a background card from a shape that also contains playable terrain.
     for(unsigned i=0;i<d->getShapeNum();++i) {
-        bool replace=currentStage==PLAZA?i==22:i==1;
+        bool replace=currentStage==PLAZA?(i==22 || (geography() && i==19)):i==1;
         bool background=currentStage==PLAZA?(i==11 || i==12 || i==19):(i<9 && i!=7);
         bool hide=replace || (active && currentStage!=PLAZA && background);
         if(hide){d->getShapeNodePointer(i)->onFlag(J3DShpFlag_Visible);m->getShapePacket(i)->hide();}
         else if(background){d->getShapeNodePointer(i)->offFlag(J3DShpFlag_Visible);m->getShapePacket(i)->show();}
     }
+    sms_open_world_filter_map();
 }
 
 // Both stages use the same sky asset. Align it with the common island axes

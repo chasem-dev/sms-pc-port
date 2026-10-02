@@ -4,6 +4,33 @@ This document preserves the implementation history and measurements from earlier
 For current launch instructions, route locations, controls, and known limitations, use the [player guide](OPEN_WORLD.md).
 Measurements below belong to their named version; the multi-second v5 ferry pauses were reduced in v6.
 
+## v9 connected coastline
+
+The normal enabled mod now uses the connected geographic layout. No experimental environment variable is needed. `SMS_OPEN_WORLD_TEST_GEOGRAPHY=0` retains the previous layout for comparison; it is a diagnostic override, not a player setup step.
+
+The Plaza entrance is at (-10000, 400, -8300), facing northwest. The Harbor entrance is at (14500, 1503, 3950) in its native coordinates. A shared transform positions the Harbor beside the Plaza. The outdoor approaches bend smoothly and the passage grades between their heights. Rendered surfaces, handrails, and floor collision use the same curve. A bounded opening in the Harbor's invisible arena wall preserves the surrounding boundary.
+
+Neighboring static map models and both bridge mouths remain visible across the Plaza, Harbor, and beach views. Preview display lists are cropped in two passes with exact allocations, then batched into compatible triangle primitives. The 32-bit enabled mod uses 40 MiB of MEM1 for the additional resident scenery; the unmodified game retains 24 MiB and an explicit `SMS_MEM_MB` override takes precedence.
+
+The ferry's simulation step is now independent of rendering at 30 or 60 fps. It departs from the bell-tower promenade, follows an island-clear route, swaps farther offshore, and points its final beach camera toward the park gate. Boarding uses Mario's jump animation while the Blooper waits at the berth. The camera collision query is limited to the Plaza shore, where its native collision grid is valid and visible architecture can obstruct the view; offshore invisible arena boundaries must not pull the camera into the rider.
+
+The source of the decomp dependency is unchanged and publicly available at the pinned commit. This pass changes the root port only.
+
+### Validation on Linux
+
+- `walk32-default-final`: eight crossings at 60 fps with audio and FLUDD spray; both native land joins, health/water, speed, episode selection, materials, and archive reuse passed. Arrival callbacks took 95–167 ms locally. This stress run preceded the final visual-only inland sign relocation.
+- `walk64-final`: recorded round trip at 30 fps after relocating the sign; both landings passed and the sign no longer fills the arrival camera. Arrival callbacks took 105/179 ms.
+- `ferry64-verified`: recorded 30 fps round trip with audio, steering, and hopping; both exchanges retained animation, health, water, and speed, with no black ferry frames. First destination frames were ready at 185/303 ms. This run preceded the visual-only sign relocation and the default-layout switch; it explicitly enabled the same geographic layout.
+- `ferry32-reversal-final`: 60 fps with audio; reversed after the offshore exchange and returned to the Plaza. Destination frames were ready at 226/211 ms.
+- `park-player-settings-final`: 60 fps with the saved resolution, installed 2,171-texture pack, and audio. Ferry frame readiness was 159 ms; the native gate entered Pinna Park and controller input moved Mario inside with full health.
+- `handoff-harbor-final`: 60 fps Harbor-to-Plaza close-up; speed carried, no black frames, first-frame RGB difference 14.97/255 and brightness change 0.82/255. Starting in Harbor produced a 450 ms arrival callback, so the hold is still perceptible in this case.
+- `disabled-final`: the native Plaza rendered with no walkway or ferry setup when `SMS_OPEN_WORLD=0`.
+- `boats-smooth-coast`: all three native boats completed full circuits with the 100-unit hull margin, including neighboring Harbor geometry. Subsequent scenery edits removed unsupported preview pieces; the sign was moved farther inland.
+
+These are local replay measurements, not a controlled performance benchmark or a promise of zero loading time. Player-facing limitations remain in the [review](OPEN_WORLD_PLAYER_REVIEW.md). Both Linux standalone bundles were rebuilt; executable prefixes, embedded-disc identifiers, offsets, and trailer sizes were checked against the rebuilt executables. The public `decomp` pin remains `3370b47b45f3a8982ffe50bfdb317f8a9daa21f1`.
+
+Actual gameplay previews are `sunshine-connected-coast-v9.png` and `.mp4` in FileBrowser's `Render-Previews` folder. The video contains the complete recorded walking round trip followed by the ferry round trip; it includes the captured handoff frames.
+
 ## v8 architecture and review tools
 
 The walking passage retains its working position and collision path.

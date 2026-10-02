@@ -3,7 +3,7 @@
 Walk between **Delfino Plaza and Ricco Harbor**, or ride a **Blooper across the water to Pinna Beach** and continue into the amusement park.
 These optional routes are included in the `mod-open-world` branch.
 
-This is a playable prototype. The ferry has a closer camera and an earlier offshore exchange, but some scenery still appears or changes during travel. The Harbor passage works in both directions; its placement and abrupt exterior end still need work.
+This is a playable prototype. The Harbor now sits along the Plaza coast, with a curved, graded walking connection. The Blooper leaves from the bell-tower waterfront and approaches the same Pinna island you can see from shore. Small scenery changes and a brief loading hold can still be visible.
 
 ## Start playing
 
@@ -26,9 +26,9 @@ There is no additional mod archive to install and nothing to copy into `mods/`.
 
 | Journey | Where to go | What to do |
 | --- | --- | --- |
-| Plaza → Ricco Harbor | The western wooden pier beside the fruit market. Find the tiled extension and **RICCO HARBOR** sign. | Follow the covered curve and keep walking until you reach the Harbor quay. |
-| Harbor → Plaza | The timber extension beside the crate stacks, marked **DELFINO PLAZA**. | Follow the passage back to the Plaza waterfront. |
-| Plaza → Pinna Beach | The western waterfront, near the waiting Blooper. | Approach until **X: Board** appears, then press **X**. |
+| Plaza → Ricco Harbor | The waterfront beside the red-roofed bell tower on the west side of the Plaza. Follow the shore uphill to the **RICCO HARBOR** sign. | Follow the covered curve and keep walking until you reach the Harbor quay. |
+| Harbor → Plaza | The raised quay at the east end of the Harbor buildings, marked **DELFINO PLAZA**. | Follow the passage back to the Plaza waterfront. |
+| Plaza → Pinna Beach | The promenade around the red-roofed bell tower. Look over the seawall for the waiting Blooper. | Approach until **X: Board** appears, then press **X**. |
 | Pinna Beach → Plaza | The waiting Blooper at the beach landing. | Approach and press **X** when prompted. |
 
 The Blooper lands on **Pinna Beach**. Follow the beach left toward the stairs and the amusement park entrance. Entering the park uses the game's normal gate transition.
@@ -52,7 +52,7 @@ The walking connection is also intended for Mario on foot; carried actors and Yo
 - The routes remember the last visited Plaza, Harbor, and beach episodes for the current session. They do not add free-order Shine collection or change the game's progression and saving rules.
 - The ferry avoids a tunnel. A short pause can still occur while the next area loads; timing depends on your machine and settings.
 - Some distant objects appear at the exchange, and the return view of the city still needs polish. The route is not yet visually seamless everywhere.
-- All three moving Plaza boats cleared the Harbor structure with its added masonry during full circuits in the dry-Plaza episode. The walkway's shoreline fit remains unfinished.
+- All three moving Plaza boats cleared the connected Harbor scenery and walkway during full circuits in the dry-Plaza episode.
 - Flooded Plaza, replacement level geometry such as Eclipse, and other disc regions have not been validated with these routes.
 
 The [player experience review](OPEN_WORLD_PLAYER_REVIEW.md) tracks the remaining visual and usability work. Detailed replay results and implementation history are in the [development notes](OPEN_WORLD_DEVELOPMENT.md).

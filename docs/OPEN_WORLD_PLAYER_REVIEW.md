@@ -1,36 +1,22 @@
 # Open-world player experience review
 
-The connection works, but the current journey still looks unfinished to a player.
-Successful arrival, preserved health, and an absence of black frames do not establish that the world feels continuous.
-The highest priority is a believable departure and arrival, followed by uninterrupted movement and clear orientation.
+## Current coastal layout (v9)
 
-**v6 follow-up:** the missing beach sand has been restored, the map exchange moved offshore, and the unrelated cannon departure sequence removed from ferry travel.
-Recorded outbound trigger-to-arrival time dropped to 59 ms in the 64-bit replay and 67 ms in the 32-bit, 60 fps replay with audio.
-A subsequent run with saved graphics settings and the installed texture pack measured 115 ms outbound and 173 ms return until the destination frame was ready to display.
-The findings below describe the reviewed v5 baseline; return-skyline continuity and Harbor placement remain open. Boat clearance was subsequently verified in v7, as described below.
+The Harbor now occupies a consistent position beside the Plaza coast. Both shores show the neighboring map and both ends of the walking connection. The approaches follow broad curves, and the covered passage climbs between the native waterfront heights. Two-sided signs identify the destination on entry and the current area on arrival.
+
+The Blooper boards from the red-roofed bell-tower promenade. Mario hops down to the waiting Blooper, and hops ashore on the return trip. The departure camera rises above the seawall and avoids the bell dome. Offshore framing keeps the destination visible; the final beach approach turns toward the amusement park entrance. The route passes around the small island and exchanges maps offshore.
+
+The scenery pass removes obsolete backdrops, unsupported preview fittings, and exposed backing surfaces. The neighboring Harbor uses its native hills, and the newly exposed quay has a masonry face. A shared distant water surface joins the native near-shore waves. The original Plaza secret-pipe platforms and their supporting cliff were preserved.
+
+This remains a prototype. Static map previews do not reproduce every native actor, so some objects still appear at an exchange. The brief loading hold and small camera/pose differences have not disappeared. The Harbor exterior remains a constructed connection, and ordinary-spawn captures do not establish that a first-time player can discover it unaided.
+
+Recorded walking and ferry round trips, an eight-crossing 32-bit stress run, a reversal after the offshore swap, and a saved-settings journey through the native park gate passed. The relocated Harbor sign no longer blocks the reviewed arrival camera. Detailed configurations and local timings are in the [development notes](OPEN_WORLD_DEVELOPMENT.md).
+
+The current player guide describes the new entrances. Earlier findings below are retained as versioned history, not as a description of the current route locations.
 
 ## v8 architecture review
 
-Reviewed the working Harbor route from inside the passage and from a fixed waterfront camera, plus native views of alternative Plaza and Harbor shoreline locations.
-A relocation beside the Plaza bell platform and the Harbor's eastern quay was rejected: the same long shell still projected over the water, and the Harbor end intersected the native cliff backdrop.
-The working entrance positions remain in place. A relocation needs a coherent terrain and scenery solution, not another coordinate change.
-
-The retained architecture pass uses native roof tiles, masonry extending to the water, continuous stone ribs down the passage walls, and softer interior shading.
-Mario and the curve ahead are easier to distinguish from the ceiling and walls.
-The exterior still exposes the route's abrupt end; new materials do not resolve its geographic fit.
-The first-time discovery review and missing scenery across the ferry exchange remain open.
-A close review of the Harbor-to-Plaza handoff also shows a small camera/pose change when drawing resumes; passing the continuity threshold does not make that change invisible.
-
-The player guide now puts launching, visible route locations, Blooper controls, and current limitations before build instructions.
-Implementation history and old performance measurements have moved to `OPEN_WORLD_DEVELOPMENT.md`, where their version is explicit.
-This prevents obsolete multi-second loading notes from appearing as current launch guidance.
-
-Native walking replays passed both directions at 30 and 60 fps, including water consumption and audio on the 32-bit run.
-The 32-bit capture completed all checks before its harness exited with a termination signal; its saved captures and log were validated separately.
-All three native boat routes also completed full circuits with no contact against the expanded masonry; the existing 100-unit hull margin was retained.
-A subsequent swimming replay confirmed that Mario stops against the new foundation instead of passing through its visible wall.
-Evidence: `build/open-world/v8/architecture64`, `architecture32`, `architecture-exterior`, `boats-final`, `swim-foundation`, and `transition-final32`.
-The review image and continuous walking capture are `harbor-architecture-review-v8.png` and `.mp4` in FileBrowser's `Render-Previews` folder.
+The previous pass introduced native roofing, masonry foundations, wall ribs, and interior shading. It improved readability but retained the old route location. Its walking, boat-clearance, and swimming evidence remains in `build/open-world/v8/`.
 
 ## v7 review findings
 
