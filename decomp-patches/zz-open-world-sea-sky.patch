@@ -1,0 +1,12 @@
+Reason: align shared sky orientation and cloud phase across the optional ferry
+--- a/src/Map/Sky.cpp
++++ b/src/Map/Sky.cpp
+@@ -1,2 +1,3 @@
++#include <sms_open_world_sea.h>
+ #include <Map/Sky.hpp>
+ #include <Map/Map.hpp>
+@@ -58,3 +59,4 @@
+ 		}
++		sms_sea_sky(getMActor(), local_BC);
+ 		MTXCopy(local_BC, getMActor()->getModel()->getBaseTRMtx());
+ 	}

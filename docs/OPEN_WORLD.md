@@ -7,6 +7,43 @@ The ferry approaches the actual Pinna coastline without a tunnel.
 The [player experience review](OPEN_WORLD_PLAYER_REVIEW.md) records the remaining visual and usability problems, their priority, and the small instruction improvements made after reviewing actual gameplay.
 The current connection remains a prototype; successful crossings do not mean the scenery, shoreline, or loading pause is fully polished.
 
+## Player-facing ferry polish (v7)
+
+The departure curve now goes around the small sand island instead of carrying Mario across it.
+The chase camera follows Mario’s travel directly and smooths changes in its viewing offset, keeping the rider centered and making the Blooper and steering easier to read.
+The Plaza and beach skies share a world orientation and cloud animation phase across the exchange.
+This removes the sudden cloud rotation and shortens the old 0.6-second crossfade to about 0.067 seconds, reducing the visible trails of doubled scenery.
+Turning back rotates the camera around the rider at a steady distance, instead of pulling it through Mario.
+The ferry holds its camera field of view through the first destination frame and blends back on landing, preventing a brief 60 fps zoom-in.
+The distant map now uses the remembered destination episode rather than always loading its first episode.
+
+The Plaza's near cliffs are retained on both sides of the exchange.
+Only the western portion of the shared cliff mesh is removed to make room for the actual Pinna island; restoring that entire mesh put the old distant terrain through the ferry approach.
+The native underground room is identified by material name because its shape number changes between Plaza episodes.
+
+The Plaza boats have been observed through full native circuits alongside the walking addition.
+All three moving routes cleared the rendered structure with an expanded hull in the dry-Plaza episode tested.
+This settles the obstruction check for that configuration; the entrance still looks awkward and needs architectural and geographic work.
+Small distant actor pop-ins, the flat return-city view, and first-time route discovery also remain unfinished.
+
+To repeat the boat clearance check:
+
+```sh
+python3 tools/open_world/boats.py --iso "/path/to/your/GMSE01.iso" \
+  --seed-card "$HOME/.local/share/sms-port/card-a" --out build/open-world/boat-check
+```
+
+This diagnostic uses a private card copy and a fixed overview camera, leaving native boat movement intact.
+It follows both forward and reverse spline wraps and checks the tilted hull against the addition.
+The `SMS_OPEN_WORLD_TEST_BOATS` hook is inactive during normal play.
+Evidence is in `build/open-world/v7/`.
+The final 64-bit recorded round trip (`orbit64-final`) measured 139 ms outbound and 272 ms return until the destination frame was ready.
+The final 32-bit, 60 fps reversal after the exchange (`orbit32-final`) measured 191 ms and 437 ms with audio and recording enabled.
+A saved-settings run with the installed texture pack and audio (`park-final64`, before the final camera-orbit refinement) reached the beach in 115 ms to frame readiness, entered the native park gate, and demonstrated movement inside the park.
+These local measurements use different replay configurations and should not be compared as a performance benchmark.
+Both Linux standalone bundles were rebuilt and their embedded executable prefixes verified against the current builds.
+The continuous round-trip video and illustrated review are `concepts/sunshine-player-polish-v7.mp4` and `.png`, also copied to FileBrowser's `Render-Previews` folder.
+
 ## Offshore transition polish (v6)
 
 The ferry now exchanges maps shortly after leaving the Plaza waterfront, while Pinna is still offshore.

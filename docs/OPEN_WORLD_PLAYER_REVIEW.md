@@ -9,6 +9,37 @@ Recorded outbound trigger-to-arrival time dropped to 59 ms in the 64-bit replay 
 A subsequent run with saved graphics settings and the installed texture pack measured 115 ms outbound and 173 ms return until the destination frame was ready to display.
 The findings below describe the reviewed v5 baseline; return-skyline continuity, Harbor placement, and actual boat clearance remain open.
 
+## v7 review findings
+
+An uninterrupted crossing review exposed a route problem that the arrival checks missed: the ferry drove across a small sand island.
+The departure curve now passes around it, and the native Plaza collision survey found no raised-ground intersections at the centerline or either 350-unit steering limit after departure.
+The chase camera follows travel directly while smoothing its viewing offset, preventing the rider from receding toward the top of the picture at speed.
+
+Both maps use identical sky resources, but their different coordinate directions made the clouds rotate at the exchange.
+The shared sky orientation and carried cloud phase allow the previous 0.6-second dissolve to be shortened to about 0.067 seconds.
+The brief blend softens remaining small scenery and pose changes without leaving the previous long trails of double images.
+The load hold remains until the restored rider pose has passed through native drawing.
+Turning back now eases the orbit angle at a steady distance, addressing the camera moving too close to Mario during reversal.
+The ferry holds its camera field of view through the first destination frame and blends back on landing, preventing a brief 60 fps zoom-in.
+The distant map also follows the destination episode.
+
+Restoring the entire Plaza backdrop was rejected after seeing oversized cliffs intersect the park approach.
+A selective mainland mesh filter preserves the near cliffs while replacing the distant western terrain with the native Pinna island.
+This is still a partial geographic integration: small actor pop-ins and the flat city approach need more work.
+
+The boat concern was checked separately from the scenery impression.
+All three moving native Plaza boats completed full circuits in the dry Plaza with no contact against the added geometry, including a 100-unit expanded hull and the boats' actual tilt.
+The fixed-camera footage still shows the connection as a long, exposed structure with a cut-off end.
+Boat clearance is verified for that episode; the Harbor entrance's appearance and placement are not resolved.
+
+Final v7 validation includes the recorded 64-bit round trip at 30 fps and a recorded 32-bit reversal after crossing at 60 fps with audio.
+Both retained health, water, speed, and controllable travel, with no black ferry frames.
+The saved-settings park-entry replay also reached the native gate and moved inside the park; the subsequent camera-orbit refinement was checked in the recorded ferry replays.
+The final orbit reversal keeps Mario at a steady viewing distance.
+The short blend still briefly mixes the two views; it does not make missing distant actors into a continuous simulation.
+Evidence: `build/open-world/v7/orbit64-final`, `orbit32-final`, `park-final64`, and `boats-complete`.
+The phone preview is `sunshine-player-polish-v7.png` and its uninterrupted `.mp4` in FileBrowser's `Render-Previews` folder.
+
 ## What was reviewed
 
 Reviewed native gameplay captures across the complete Plaza–Pinna Beach–park journey, the return ferry footage, and the Plaza–Harbor walking route.

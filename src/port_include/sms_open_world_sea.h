@@ -1,6 +1,7 @@
 #ifndef SMS_OPEN_WORLD_SEA_H
 #define SMS_OPEN_WORLD_SEA_H
 class TMarDirector;
+class MActor;
 namespace JDrama { class TGraphics; }
 void sms_sea_setup(TMarDirector*);
 bool sms_sea_arriving(TMarDirector*);
@@ -11,4 +12,5 @@ bool sms_sea_pending();
 bool sms_sea_active();
 void sms_sea_draw(unsigned int,JDrama::TGraphics*);
 void sms_sea_filter_map();
+void sms_sea_sky(MActor*,float [3][4]);
 #endif
