@@ -30,6 +30,7 @@
 #include <JSystem/J3D/J3DGraphBase/J3DSys.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DAnimation.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DJoint.hpp>
 #include <JSystem/JUtility/JUTResFont.hpp>
 #include <JSystem/J2D/J2DOrthoGraph.hpp>
 #include <GC2D/ScrnFader.hpp>
@@ -82,6 +83,9 @@ J3DModel* harborScenery;
 const unsigned maxSceneryObjects=64;
 J3DModel* sceneryObjects[maxSceneryObjects];unsigned sceneryObjectCount;
 GXColor monumentColor;
+struct PreviewBounds {Vec low,high;bool visible,valid;};
+struct PreviewCache {J3DModel* model;PreviewBounds* bounds;unsigned count;bool staticJoints;};
+PreviewCache previewCache[4];unsigned previewCacheCount;
 J3DDrawBuffer *opa,*xlu;
 GXTexObj water;bool hasWater;float waterTime,drawnWaterTime;
 JGeometry::TVec3<f32> seaEye,seaAt,savedPos,savedEye,savedAt,savedVel;
@@ -423,12 +427,89 @@ void hideScenery(J3DModel* m,bool plaza) {
         for(int i=0;i<9 && i<d->getShapeNum();++i)if(i!=7){d->getShapeNodePointer(i)->onFlag(J3DShpFlag_Visible);m->getShapePacket(i)->hide();}
     }
 }
-void drawModel(J3DModel* m,JDrama::TGraphics* g) {
-    if(!m)return;
+PreviewCache* cachePreview(J3DModel* m) {
+    for(unsigned i=0;i<previewCacheCount;++i)if(previewCache[i].model==m)return &previewCache[i];
+    if(previewCacheCount==4)return 0;
+    PreviewCache& cache=previewCache[previewCacheCount++];cache.model=m;cache.bounds=0;
+    J3DModelData* data=m->getModelData();cache.count=data->getShapeNum();cache.staticJoints=true;
+    for(unsigned i=0;i<data->getJointNum();++i) {
+        const J3DTransformInfo& t=data->getJointNodePointer(i)->getTransformInfo();
+        if(t.mScale.x!=1 || t.mScale.y!=1 || t.mScale.z!=1 || t.mRotation.x || t.mRotation.y || t.mRotation.z
+            || t.mTranslate.x || t.mTranslate.y || t.mTranslate.z)cache.staticJoints=false;
+    }
+    if(!cache.staticJoints)return &cache;
+    cache.bounds=new PreviewBounds[cache.count];
+    const GXVtxAttrFmtList* fmt=data->getVertexData().getVtxAttrFmtList();
+    while(fmt->attr!=GX_VA_NULL && fmt->attr!=GX_VA_POS)++fmt;
+    bool positionsValid=fmt->attr==GX_VA_POS && fmt->type==GX_F32 && fmt->cnt==GX_POS_XYZ;
+    const Vec* positions=(const Vec*)data->getVtxPosArray();
+    for(unsigned i=0;i<cache.count;++i) {
+        PreviewBounds& b=cache.bounds[i];J3DShape* shape=data->getShapeNodePointer(i);
+        b.visible=m->getShapePacket(i)->isVisible() && !shape->checkFlag(J3DShpFlag_Visible);b.valid=false;
+        if(!positionsValid || !b.visible)continue;
+        b.low=(Vec){1e30f,1e30f,1e30f};b.high=(Vec){-1e30f,-1e30f,-1e30f};
+        unsigned stride=0,posOffset=0,posBytes=0;bool valid=true;unsigned vertices=0;
+        for(const GXVtxDescList* v=shape->getVtxDesc();v->attr!=GX_VA_NULL;++v) {
+            unsigned bytes=v->type==GX_NONE?0:v->type==GX_INDEX16?2:1;
+            if(v->type==GX_DIRECT && v->attr>=GX_VA_POS){valid=false;break;}
+            if(v->attr==GX_VA_POS){posOffset=stride;posBytes=bytes;}stride+=bytes;
+        }
+        if(!valid || !stride || !posBytes)continue;
+        for(unsigned group=0;valid && group<shape->getMtxGroupNum();++group) {
+            J3DShapeDraw* draw=shape->getShapeDraw(group);const u8* p=draw->getDisplayList();const u8* end=p+draw->getDisplayListSize();
+            while(p<end) {
+                unsigned command=*p++;if(!command)continue;
+                if(end-p<2){valid=false;break;}
+                unsigned count=sceneU16(p);p+=2;unsigned primitive=command&0xf8;
+                if(count>unsigned(end-p)/stride || (primitive!=GX_TRIANGLES && primitive!=GX_TRIANGLESTRIP
+                    && primitive!=GX_TRIANGLEFAN && primitive!=GX_QUADS)){valid=false;break;}
+                for(unsigned k=0;k<count;++k) {
+                    const u8* index=p+k*stride+posOffset;unsigned id=posBytes==2?sceneU16(index):*index;
+                    if(id>=data->getVtxNum()){valid=false;break;}
+                    const Vec& v=positions[id];
+                    if(!isfinite(v.x) || !isfinite(v.y) || !isfinite(v.z)){valid=false;break;}
+                    b.low.x=fminf(b.low.x,v.x);b.low.y=fminf(b.low.y,v.y);b.low.z=fminf(b.low.z,v.z);
+                    b.high.x=fmaxf(b.high.x,v.x);b.high.y=fmaxf(b.high.y,v.y);b.high.z=fmaxf(b.high.z,v.z);++vertices;
+                }
+                p+=count*stride;
+            }
+        }
+        b.valid=valid && vertices;
+    }
+    return &cache;
+}
+bool boxInView(const Vec& low,const Vec& high,const Mtx view) {
+    float vertical=tanf(gpCamera->mFovy*(3.141592654f/360.f)),horizontal=vertical*gpCamera->mAspect;
+    if(!(horizontal>0) || !(vertical>0))return true;
+    unsigned outside=63;
+    for(unsigned k=0;k<8 && outside;++k) {
+        Vec local={k&1?high.x:low.x,k&2?high.y:low.y,k&4?high.z:low.z},v;
+        MTXMultVec(view,&local,&v);float depth=-v.z;
+        float planes[]={depth-gpCamera->mNear,gpCamera->mFar-depth,v.x+depth*horizontal,depth*horizontal-v.x,v.y+depth*vertical,depth*vertical-v.y};
+        unsigned mask=0;for(unsigned p=0;p<6;++p)if(planes[p]<-8.f)mask|=1<<p;
+        outside&=mask;
+    }
+    return !outside;
+}
+bool previewInView(J3DModel* m,JDrama::TGraphics* g) {
+    m->calc();
+    const char* test=getenv("SMS_OPEN_WORLD_TEST_CULL");if(test && !strcmp(test,"0"))return true;
+    PreviewCache* cache=cachePreview(m);if(!cache || !cache->staticJoints)return true;
+    Mtx view;MTXConcat(g->getViewMtx(),m->getAnmMtx(0),view);
+    bool any=false;
+    for(unsigned i=0;i<cache->count;++i) {
+        const PreviewBounds& b=cache->bounds[i];bool visible=b.visible;
+        if(visible && b.valid)visible=boxInView(b.low,b.high,view);
+        if(visible){m->getShapePacket(i)->show();any=true;}else m->getShapePacket(i)->hide();
+    }
+    return any;
+}
+void drawModel(J3DModel* m,JDrama::TGraphics* g,bool preview=false) {
+    if(!m || (preview && !previewInView(m,g)))return;
     J3DDrawBuffer* old0=j3dSys.getDrawBuffer(0),*old1=j3dSys.getDrawBuffer(1);
     opa->frameInit();xlu->frameInit();j3dSys.setDrawBuffer(opa,0);j3dSys.setDrawBuffer(xlu,1);
     j3dSys.setViewMtx(g->getViewMtx());opa->setZMtx(g->getViewMtx());xlu->setZMtx(g->getViewMtx());
-    m->calc();m->viewCalc();m->entry();SMS_DrawInit();opa->draw();xlu->draw();
+    if(!preview)m->calc();m->viewCalc();m->entry();SMS_DrawInit();opa->draw();xlu->draw();
     j3dSys.setDrawBuffer(old0,0);j3dSys.setDrawBuffer(old1,1);SMS_DrawInit();
 }
 void drawSceneryObjects(JDrama::TGraphics* g) {
@@ -595,6 +676,11 @@ J3DModel* sms_open_world_load_model(const char* archive,const char* name) {
 J3DModel* sms_sea_mainland_model(){return currentStage==pinnaStage?scenery:0;}
 J3DModel* sms_sea_harbor_model(){return currentStage==pinnaStage?harborScenery:0;}
 void sms_open_world_preview_objects(const char* archive,const float transform[3][4]){loadSceneryObjects(archive,transform);}
+bool sms_open_world_cull_preview(J3DModel* m,JDrama::TGraphics* g){return m && previewInView(m,g);}
+bool sms_open_world_box_visible(const float low[3],const float high[3],JDrama::TGraphics* g) {
+    const char* test=getenv("SMS_OPEN_WORLD_TEST_CULL");if(test && !strcmp(test,"0"))return true;
+    Vec a={low[0],low[1],low[2]},b={high[0],high[1],high[2]};return boxInView(a,b,g->getViewMtx());
+}
 void sms_sea_world_to_native(float matrix[3][4]) {
     C_MTXIdentity(matrix);
     if(currentStage==pinnaStage) {
@@ -604,7 +690,7 @@ void sms_sea_world_to_native(float matrix[3][4]) {
 }
 void sms_sea_setup(TMarDirector* d) {
     testPadActive=false;
-    ready=false;scenery=harborScenery=0;sceneryObjectCount=0;squid=idleSquid=0;hasWater=false;currentStage=d->mMap;
+    ready=false;scenery=harborScenery=0;sceneryObjectCount=0;previewCacheCount=0;squid=idleSquid=0;hasWater=false;currentStage=d->mMap;
     if(!sms_open_world_enabled())return;
     if(gpApplication.unk30)for(unsigned i=0;i<gpApplication.unk30->getChildren().size();++i) {
         TNameRefAryT<TScenarioArchiveName>* n=gpApplication.unk30->getChildren()[i];
@@ -874,8 +960,8 @@ bool sms_sea_camera() {
 void sms_sea_draw(unsigned cue,JDrama::TGraphics* graphics) {
     if(!(cue&CUE_DRAW) || !sms_open_world_enabled() || !scenery)return;
     gpCamera->perform(CUE_CALC_VIEW|CUE_SET_PROJECTION,graphics);
-    drawModel(scenery,graphics);
-    drawModel(harborScenery,graphics);
+    drawModel(scenery,graphics,true);
+    drawModel(harborScenery,graphics,true);
     drawSceneryObjects(graphics);
     if(ready && (!active || (geography() && dockMode!=0))) {
         P p=fromWorld(currentStage,station());Mtx transform;C_MTXIdentity(transform);transform[0][3]=p.x;transform[1][3]=10+4*sinf(rideTime*.05f);transform[2][3]=p.z;

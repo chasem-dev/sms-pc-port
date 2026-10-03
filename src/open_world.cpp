@@ -244,10 +244,13 @@ public:
     J3DDrawBuffer *neighborOpa,*neighborXlu;
     JGeometry::TVec3<f32>* neighborProbe;
     int neighborProbeCount;
+    struct RenderChunk {float low[3],high[3];bool visible;};
+    RenderChunk renderChunks[128];int sortedTriangles[16384],surfaceFirst[SURFACE_COUNT+1];
+    bool renderBoundsReady;
     bool armed, bendingBridge, farBridge;
     Walkway(const Route& r,bool sceneryOnly=false,J3DModel* localModel=0,J3DModel* remoteModel=0) : JDrama::TViewObj("Coastal Walkway"), route(r),
         count(0), collisionCount(0), surface(PLAIN), neighbor(remoteModel),
-        neighborOpa(0),neighborXlu(0),neighborProbe(0),neighborProbeCount(0),armed(false),bendingBridge(false),farBridge(false)
+        neighborOpa(0),neighborXlu(0),neighborProbe(0),neighborProbeCount(0),renderBoundsReady(false),armed(false),bendingBridge(false),farBridge(false)
     {
         if(connectedCoast() && !sceneryOnly)setupNeighbor();
         setupSurfaces(r.stage,localModel,neighbor);
@@ -364,13 +367,13 @@ public:
         OSReport("[boat-probe] neighboring visible mesh triangles=%d\n",neighborProbeCount/3);
     }
     void drawNeighbor(JDrama::TGraphics* graphics) {
-        if(!neighbor)return;
+        if(!neighbor || !sms_open_world_cull_preview(neighbor,graphics))return;
         J3DDrawBuffer *old0=j3dSys.getDrawBuffer(0),*old1=j3dSys.getDrawBuffer(1);
         neighborOpa->frameInit();neighborXlu->frameInit();
         j3dSys.setDrawBuffer(neighborOpa,0);j3dSys.setDrawBuffer(neighborXlu,1);
         j3dSys.setViewMtx(graphics->getViewMtx());
         neighborOpa->setZMtx(graphics->getViewMtx());neighborXlu->setZMtx(graphics->getViewMtx());
-        neighbor->calc();neighbor->viewCalc();neighbor->entry();
+        neighbor->viewCalc();neighbor->entry();
         SMS_DrawInit();neighborOpa->draw();neighborXlu->draw();
         j3dSys.setDrawBuffer(old0,0);j3dSys.setDrawBuffer(old1,1);SMS_DrawInit();
     }
@@ -857,6 +860,26 @@ public:
         quad(b,c,e,b,c,f,b,d,f,b,d,e,shade,solid);
         quad(a,c,e,b,c,e,b,d,e,a,d,e,shade,solid);
     }
+    void updateRenderChunks(JDrama::TGraphics* graphics) {
+        if(!renderBoundsReady) {
+            int sizes[SURFACE_COUNT]={0};
+            for(int i=0;i<count;++i)++sizes[tris[i].surface];
+            surfaceFirst[0]=0;int write[SURFACE_COUNT];
+            for(int s=0;s<SURFACE_COUNT;++s){surfaceFirst[s+1]=surfaceFirst[s]+sizes[s];write[s]=surfaceFirst[s];}
+            for(int i=0;i<count;++i)sortedTriangles[write[tris[i].surface]++]=i;
+            for(int chunk=0;chunk*128<count;++chunk) {
+                RenderChunk& b=renderChunks[chunk];for(int a=0;a<3;++a){b.low[a]=1e30f;b.high[a]=-1e30f;}
+                for(int i=chunk*128;i<count && i<(chunk+1)*128;++i)for(int k=0;k<3;++k) {
+                    const JGeometry::TVec3<f32>& v=tris[i].v[k];float values[]={v.x,v.y,v.z};
+                    for(int a=0;a<3;++a){b.low[a]=fminf(b.low[a],values[a]);b.high[a]=fmaxf(b.high[a],values[a]);}
+                }
+            }
+            renderBoundsReady=true;
+        }
+        for(int chunk=0;chunk*128<count;++chunk) {
+            RenderChunk& b=renderChunks[chunk];b.visible=sms_open_world_box_visible(b.low,b.high,graphics);
+        }
+    }
     virtual void perform(u32 cue,JDrama::TGraphics* graphics)
     {
         if (!(cue&CUE_DRAW)) return;
@@ -870,6 +893,7 @@ public:
         // This performer runs at the end of the opaque stage draw, ahead of
         // GX Post's UI. Restore the stage camera, use vertex colors only.
         gpCamera->perform(CUE_CALC_VIEW|CUE_SET_PROJECTION,graphics);
+        updateRenderChunks(graphics);
         drawNeighbor(graphics);
         GXSetViewport(0,0,SMSGetGameRenderWidth(),SMSGetGameRenderHeight(),0,1);
         GXSetClipMode(GX_CLIP_ENABLE);
@@ -902,15 +926,17 @@ public:
                 textured?GX_TEXMAP0:GX_TEXMAP_NULL,GX_COLOR0A0);
             GXSetTevOp(GX_TEVSTAGE0,textured?GX_MODULATE:GX_PASSCLR);
             if(textured) GXLoadTexObj(&surfaces[material].texture,GX_TEXMAP0);
-            int num=0;for(int i=0;i<count;++i)if(tris[i].surface==material)++num;
+            int num=0;for(int n=surfaceFirst[material];n<surfaceFirst[material+1];++n)if(renderChunks[sortedTriangles[n]/128].visible)++num;
             if(!num)continue;
             GXBegin(GX_TRIANGLES,GX_VTXFMT0,num*3);
-            for(int i=0;i<count;++i)if(tris[i].surface==material)
+            for(int n=surfaceFirst[material];n<surfaceFirst[material+1];++n) {
+                int i=sortedTriangles[n];if(!renderChunks[i/128].visible)continue;
                 for(int j=0;j<3;++j) {
                     GXPosition3f32(tris[i].v[j].x,tris[i].v[j].y,tris[i].v[j].z);
                     GXColor4u8(tris[i].color[j].r,tris[i].color[j].g,tris[i].color[j].b,255);
                     GXTexCoord2f32(tris[i].uv[j][0],tris[i].uv[j][1]);
                 }
+            }
             GXEnd();
         }
         if (releaseFramePending && gpApplication.mFader->isFullyFadedIn()) {
