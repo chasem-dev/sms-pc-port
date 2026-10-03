@@ -87,6 +87,7 @@ int crossings;
 bool releaseFramePending;
 int passageFacing=1;
 float passageBlend=0;
+bool approachCameraRecovering=false;
 struct CrossingPose {
     Route from;
     JGeometry::TVec3<f32> pos, vel, eye, at;
@@ -946,20 +947,30 @@ void refreshCameraMatrices(bool resetPrevious)
 // waterfront. Keep the player visible while returning control on the apron.
 void clearApproachCamera(const Route& r,TMario* m,float u,float v)
 {
-    if(!connectedCoast() || !gpMapCollisionData || u< -1200
+    if(!connectedCoast() || !gpMapCollisionData || gpCamera->isDemoCamera()
+        || gpCamera->isTalkCameraSpecifyMode(gpCamera->getCamMode())
+        || gpCamera->isLButtonCamera() || gpCamera->isLButtonCameraInbetween() || u< -1200
         || fabsf(v-bridgeOffset(u))>halfWidth+200
-        || m->mPosition.y>floorHeight(r,u,v)+750)return;
+        || m->mPosition.y>floorHeight(r,u,v)+750) {
+        approachCameraRecovering=false;return;
+    }
     const TMapCollisionData* map=gpMapCollisionData;
     JGeometry::TVec3<f32> at=m->mPosition;at.y+=150;
     JGeometry::TVec3<f32> eye=gpCamera->mPosition,hit;
     bool atInside=fabsf(at.x)<map->mGridExtentX-1 && fabsf(at.z)<map->mGridExtentY-1;
     bool inside=atInside && fabsf(eye.x)<map->mGridExtentX-1 && fabsf(eye.z)<map->mGridExtentY-1;
     bool blocked=inside && map->intersectLine(at,eye,false,&hit);
-    if(eye.y>=m->mPosition.y+250 && !blocked)return;
-    float yaw=m->mFaceAngle.y*(6.283185307f/65536.f);
-    float behind=sinf(yaw)*r.dx+cosf(yaw)*r.dz>=0?-650.f:650.f;
-    float eyeU=u+behind;
-    eye=point(r,eyeU,bridgeOffset(eyeU),0);eye.y=m->mPosition.y+450;
+    if(!approachCameraRecovering && eye.y>=m->mPosition.y+250 && !blocked)return;
+    if(!approachCameraRecovering) {
+        float yaw=m->mFaceAngle.y*(6.283185307f/65536.f);
+        float behind=sinf(yaw)*r.dx+cosf(yaw)*r.dz>=0?-650.f:650.f;
+        float eyeU=u+behind;
+        eye=point(r,eyeU,bridgeOffset(eyeU),0);
+    }
+    // Once native control loses the view, maintain clearance through the
+    // apron. Releasing at a height threshold makes it fall and recover again.
+    // Retain native horizontal movement so its orbit controls still work.
+    approachCameraRecovering=true;eye.y=m->mPosition.y+450;
     inside=atInside && fabsf(eye.x)<map->mGridExtentX-1 && fabsf(eye.z)<map->mGridExtentY-1;
     if(inside)for(int i=0;i<8;++i) {
         if(!map->intersectLine(at,eye,false,&hit))break;
@@ -981,6 +992,7 @@ void passageCamera(const Route& r,TMario* m)
 {
     float u,v;local(r,m->mPosition,u,v);
     if (u<routeEnd-600) {clearApproachCamera(r,m,u,v);passageFacing=1;return;}
+    approachCameraRecovering=false;
     if (m->mPosition.y>floorHeight(r,u,v)+750) return;
     const int n=sizeof(passage)/sizeof(passage[0])+1;
     Bend path[n];path[0].u=routeEnd-1100;path[0].v=bridgeOffset(path[0].u);
@@ -1085,6 +1097,7 @@ void sms_open_world_profile(const char* phase)
 
 void sms_open_world_setup(TMarDirector* d)
 {
+    approachCameraRecovering=false;
     walkway=scenicWalkway=0;
     configureGeography();
     testPadActive=false;

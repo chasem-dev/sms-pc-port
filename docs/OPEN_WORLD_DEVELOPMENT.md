@@ -10,7 +10,7 @@ Guided sea travel bypasses native `playerControl`, which ordinarily updates Mari
 
 The native Plaza billboard still calls `THPPlayerInit`, opens its video, supplies the buffer, and calls `THPPlayerPrepare`, including its decoder-readiness wait. `zz-open-world-thp-wait.patch` skips only the subsequent fixed half-second game-clock buffering loop while an enabled coastal exchange is pending. Ordinary entries retain that loop. The patch uses the header inserted earlier by `zz-open-world-profile.patch`; the public decomp pin is unchanged.
 
-The exterior approach now corrects native camera views that fall too low or become obstructed near the added route. It leaves unobstructed views alone and clips the recovery boom against the native collision grid. A recorded walking run exposed the seawall occlusion after returning to the Plaza; the recovery is compiled in both word sizes, with its final stability replay still in progress.
+The exterior approach corrects native camera views that fall too low or become obstructed near the added route. Once correction is needed, clearance persists through the apron while retaining native horizontal camera movement; releasing at a height threshold caused repeated recovery and visible bobbing. The boom clips against native collision. Leaving the apron, re-entering the passage, or changing stages clears recovery. Native demo, conversation, and L-button cameras retain control.
 
 The ferry replay supports `--native-movies` to keep THP decoding enabled. Its runtime assertions now check carried rider lean alongside animation, health, water, and speed. The recorded direct-cut experiment failed the existing first-live-frame check on the Plaza return and showed a visible view jump; it was rejected. The existing approximately 67 ms background blend and two restored draw passes remain.
 
@@ -18,7 +18,14 @@ The ferry replay supports `--native-movies` to keep THP decoding enabled. Its ru
 
 - `ferry64-final`: recorded 30 fps round trip with audio, steering, hopping, and native THP decoding. Arrival callbacks took 77/101 ms; complete destination frames were ready at 183/151 ms. First displayed frame RGB changes were 5.36/5.76 out of 255, with Mario visible and no black ferry frames. Rider lean carried exactly across both exchanges.
 - `reversal32-final`: recorded 60 fps 32-bit run with audio and native THP decoding; reversed after swapping offshore and returned to the Plaza. Arrival callbacks took 130/115 ms; frame readiness was 298/176 ms. First displayed frame RGB changes were 5.24/6.15 out of 255, with Mario visible and no black ferry frames.
-- `walk32-final`: recorded 60 fps walking round trip with audio and spent FLUDD water. Both native land joins, passage bends, episode selection, speed, health/water carry, retained materials, and archive reuse passed; arrival callbacks took 114/117 ms.
+- `walk32-recovery-final`: recorded 60 fps walking round trip with audio and spent FLUDD water. Both land joins, passage bends, episode selection, speed, health/water carry, retained materials, and archive reuse passed; arrival callbacks took 113/116 ms. Native rendered footage exposed seawall occlusion in the preceding run; the corrected return remains readable through the stationary ending. Camera trace height remains at 750 rather than oscillating. This replay preceded only the guard that leaves demo, talk, and L-button cameras alone.
+
+- `harbor-return64-final`: cold Harbor-to-Plaza handoff at 60 fps; arrival callback took 158 ms. First destination frame RGB change was 14.95/255, brightness change 0.78/255; speed carried with no black frames. This preceded the exterior camera recovery, which does not run inside the handoff passage.
+- `disabled-video-final`: native Plaza with THP decoding enabled and the mod disabled; rendered gameplay, no walkway or ferry setup, no runtime/resource failures.
+
+Both Linux executables and standalone bundles were rebuilt after the final camera guards. Each embedded executable prefix, aligned disc offset, GMSE01 identifier, image magic, and trailer size passed verification. The decomp pin remains `3370b47b45f3a8982ffe50bfdb317f8a9daa21f1`.
+
+Actual gameplay previews are `sunshine-coastal-polish-v10.png` and `.mp4` in FileBrowser's `Render-Previews` folder. The video keeps the complete recorded walking round trip with the camera recovery followed by the ferry round trip, including the captured loading holds.
 
 ## v9 connected coastline
 

@@ -6,7 +6,7 @@ Mario now keeps a natural riding pose offshore instead of leaning continuously a
 
 Returning to the Plaza no longer waits for an extra fixed billboard-video buffering delay during a coastal exchange. The video still initializes and prepares normally. The recorded 64-bit round trip with native movie decoding enabled resumed at 183 ms outbound and 151 ms returning. These are local replay measurements, not guaranteed timings.
 
-A walking replay also caught the camera dropping behind the Plaza seawall after returning. The approach now includes a camera recovery for low or obstructed views; its final stability replay is still in progress.
+A walking replay also caught the camera dropping behind the Plaza seawall after returning. The approach now recovers low or obstructed views and keeps Mario visible on the promenade. The recorded 32-bit round trip and stationary ending show a readable, stable view. Native conversations and L-button cameras retain control.
 
 The short background blend remains. Removing it exposed a visible return-view jump in the recorded test, so that experiment was rejected. This pass improves rider stability and the return hold; it does not eliminate every scenery pop-in or establish unaided route discovery.
 
