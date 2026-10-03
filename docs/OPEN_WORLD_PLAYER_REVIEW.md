@@ -1,5 +1,13 @@
 # Open-world player experience review
 
+## Rendering performance (v12)
+
+The added terrain and walkway now skip sections outside the camera view, and bridge surfaces are grouped once instead of repeatedly scanning every triangle. Visible scenery retains its existing detail. This is camera culling, rather than a lower-detail replacement for distant landmarks.
+
+A normal-clock Plaza benchmark on the local GTX 1060 measured about 30 FPS before and 60 FPS after, using the player's saved resolution and 2,171-texture pack. A matched Harbor benchmark improved from about 30 to 59 FPS. Unpaced benchmarks also reduced frame time toward Pinna and from the Harbor. These fixed-view measurements establish an improvement in the tested views, not a guarantee of 60 FPS throughout the game; cold texture uploads and some ferry approaches still exceed the frame budget.
+
+Both Linux builds passed. The 32-bit eight-crossing walking replay and 64-bit saved-settings ferry round trip retained speed, animation, health, water, and usable landings. The captured approaches, passage bends, shorelines, and return view were inspected for missing geometry. Matching deterministic Harbor and park-facing views were pixel-identical to the previous build.
+
 ## Static scenery continuity (v11)
 
 Palms now remain visible before a neighboring level becomes active: 23 Plaza palms, including the cliff palms, and five Pinna Beach palms use the destination episode's saved placement. The Plaza's Shine monument also remains visible. The same preview is used while looking back from the Harbor connection. Recorded native views were checked for grounded trees and shore support.

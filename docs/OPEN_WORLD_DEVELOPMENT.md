@@ -4,6 +4,45 @@ This document preserves the implementation history and measurements from earlier
 For current launch instructions, route locations, controls, and known limitations, use the [player guide](OPEN_WORLD.md).
 Measurements below belong to their named version; the multi-second v5 ferry pauses were reduced in v6.
 
+## v12 coastal rendering performance
+
+Inactive map previews cache per-shape bounds from their cropped display lists. The camera frustum selects visible shapes before draw-buffer submission, and a wholly invisible preview skips submission. Bounds use the model's calculated root transform and the widescreen camera aspect, with a conservative margin. Unsupported vertex layouts or non-identity joint transforms keep the original rendering path. Cache pointers reset with the stage heap. Active native maps, actor animation, collision, and static object placement keep their existing behavior.
+
+The walkway builds bounds for groups of 128 triangles after its final geographic transform and skips groups outside the view. A stable material index replaces the previous repeated full-triangle scans. Visible sections keep their original vertices, UVs, colors, and collision. There is no mesh LOD or distance-driven reduction in landmark detail.
+
+Paired fixed-camera measurements use Linux 64-bit, the local NVIDIA GTX 1060 6 GB, saved resolution 2, widescreen, and the 2,171-texture pack. Warm samples exclude windows with shader compilation or texture uploads. The baseline executable was retained from `d7782b0`; the optimized source is `feb9ac5`.
+
+| View / clock | Before | After | Interpretation |
+| --- | --- | --- | --- |
+| Plaza inland, normal clock with native movies | 33.45 ms | 16.76 ms | About 30 → 60 delivered FPS in this view |
+| Harbor inland, normal clock | 33.45 ms | 16.81 ms | About 30 → 59 FPS across the matched longer interval |
+| Plaza toward Pinna, unpaced | 14.84 ms | 10.96 ms | 26% less frame time; 22% fewer submitted vertices |
+| Harbor inland, unpaced | 20.45 ms | 13.73 ms | 33% less frame time; 61% fewer submitted vertices |
+
+The unpaced runs measure headroom, not displayed FPS. These are local headless measurements, not a promise of a locked frame rate elsewhere. Texture uploads and some moving ferry views still take longer than 16.7 ms.
+
+A paired saved-settings ferry round trip averaged 24.27 → 20.67 ms across nine 120-frame travel windows (15% less frame time), with 356,380 → 237,785 submitted vertices per frame. Both runs used audio, native movies, steering, hopping, and the same capture interval. This unpaced comparison includes texture uploads, shader compilation, and capture overhead; it is not a live FPS measurement. Individual return windows varied and did not all improve.
+
+The [measurement report](OPEN_WORLD_PERFORMANCE_V12.json) retains executable hashes, configurations, counter windows, and gameplay results. The phone preview is `sunshine-coastal-fps-v12.png` in FileBrowser's `Render-Previews` folder.
+
+Reproduce a normal-clock view from the repository root with a private copy of the card:
+
+```sh
+python3 tools/open_world/performance.py \
+  --iso "/path/to/GMSE01.iso" --seed-card "/path/to/card-a" \
+  --view harbor-inland --out build/open-world/perf-harbor
+```
+
+Use `--exe` to select the comparison build, `--unpaced` for rendering headroom, and `--view plaza-inland` or `--view plaza-park` for the other views. The output records the chosen executable, clock, counters, warm samples, and rendered frames. `--disable-culling` provides a diagnostic comparison on the same optimized build; material indexing remains enabled in that comparison.
+
+Gameplay evidence in `build/open-world/v12/`:
+
+- `walk32-culling-stress`: 60 fps configuration, audio, spent water, eight crossings, both land joins and passage bends, preserved state and archive reuse. Arrival callbacks took 210, 116, 115, 97, 99, 148, 96, and 99 ms.
+- `ferry64-culling-player`: 60 fps configuration, saved resolution and texture settings, audio, native movies, steering, hopping, and both ferry directions. Arrival callbacks took 134/85 ms; destination frames were ready at 204/298 ms. No black ferry frames were captured.
+- Deterministic `chunks-plaza-park` and `chunks-harbor-inland` field 5400 comparisons against the baseline have zero changed pixels. The earlier map-only inland comparison is also pixel-identical. Moving walkway and ferry captures were checked for missing preview sections and grounded shores.
+
+Both Linux executables were built after the final culling and material-index changes. Both standalone bundles were regenerated; each executable prefix matches the tested executable, disc offsets are aligned, the GMSE01 identifier and disc magic match, and payload lengths and hashes agree. Normal `run-open-world.sh --headless` launches without a disc argument reached rendered Plaza gameplay after the intro with the coastal geometry and Blooper loaded in both word sizes; controller movement also passed. The private saves were used for every replay. Raw moving captures were archived as PNGs only after verifying exact decoded RGB equality; the walking review video decoded fully without errors. The final preview was inspected, copied to FileBrowser with mode 0644, compared by SHA-256, and verified readable by its container user.
+
 ## v11 static scene continuity
 
 Distant scenery now includes normal palms, cliff palms, beach palms, and the Plaza's Shine monument. A bounded reader extracts their saved SRT from the remembered destination episode's `scene.bin`; it validates record lengths, type/name keys, finite transforms, light-map records, and the known object key. The same geographic transform positions both terrain and objects. Preview instances share model data, use native map-object lighting, and register no actors, managers, or collision. The monument uses the native save flag and pollution color callback. Counts reset with the stage heap, so previews cannot retain pointers into a previous stage.

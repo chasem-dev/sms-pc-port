@@ -1,0 +1,458 @@
+{
+  "version": "v12",
+  "date": "2026-10-02",
+  "baseline_commit": "d7782b050031b64b8f8f4aeeef4a000270297fe5",
+  "optimized_commit": "feb9ac53f0e56868bf33fb667043bd370275eaa9",
+  "baseline_executable_sha256": "fed22dea1176f5ba7590bd6e2ffe8b327666635096cd75efd8d8e18b9baaab7e",
+  "optimized_executable_sha256": {
+    "linux64": "cb5df68414df3662862e7493d1d43880ae3ab6041d6c8416c59af99c243ebc7c",
+    "linux32": "d8b20f010811101164df1c18561cc69c5dc133cbbbaa5c8f3b574f55ebc07acc"
+  },
+  "configuration": {
+    "platform": "Linux, 64-bit, headless EGL",
+    "gpu": "NVIDIA GeForce GTX 1060 6GB",
+    "driver": "580.178.04",
+    "resolution_scale": 2,
+    "widescreen": true,
+    "texture_pack_entries": 2171,
+    "requested_fps": 60,
+    "normal_clock_native_movies": true,
+    "normal_clock_audio": false,
+    "unpaced_skip_movies": true
+  },
+  "method": "Warm fixed-view windows after field 4800, excluding shader compilation and texture uploads. Counters are frame-weighted. Normal clock includes VI idle; unpaced data measures headroom, not displayed FPS.",
+  "fixed_views": [
+    {
+      "view": "plaza-inland",
+      "clock": "normal",
+      "capture_end_field": 5400,
+      "warm_start_field": 4800,
+      "before": {
+        "samples": 2,
+        "measured_frames": 240,
+        "draws": 992.75,
+        "vertices": 336261.0,
+        "total_ms": 33.45,
+        "gx_ms": 11.4,
+        "run": "real-baseline-plaza-inland",
+        "fps": 29.89536621823617,
+        "counter_windows": [
+          "[sms_gx] stats: 120 frames, 992.4 draws/frame, 336683 vertices/frame, 0 shader compiles, 0 texture uploads, 33.5 ms/frame total, 11.4 ms/frame in sms_gx (textures 1.0, batches 3.6, copies 1.8, peeks 0.0, GPU waits 0.1), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 993.1 draws/frame, 335839 vertices/frame, 0 shader compiles, 0 texture uploads, 33.4 ms/frame total, 11.4 ms/frame in sms_gx (textures 0.9, batches 3.6, copies 1.8, peeks 0.0, GPU waits 0.1), 0.0 synchronous GPU reads/frame"
+        ]
+      },
+      "after": {
+        "samples": 5,
+        "measured_frames": 600,
+        "draws": 924.3,
+        "vertices": 181523.0,
+        "total_ms": 16.76,
+        "gx_ms": 8.48,
+        "run": "real-culled-plaza-inland",
+        "fps": 59.665871121718375,
+        "counter_windows": [
+          "[sms_gx] stats: 120 frames, 928.1 draws/frame, 181952 vertices/frame, 0 shader compiles, 0 texture uploads, 17.0 ms/frame total, 8.5 ms/frame in sms_gx (textures 0.6, batches 2.8, copies 1.8, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 926.4 draws/frame, 181868 vertices/frame, 0 shader compiles, 0 texture uploads, 16.7 ms/frame total, 8.6 ms/frame in sms_gx (textures 0.6, batches 2.8, copies 1.8, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 926.1 draws/frame, 181701 vertices/frame, 0 shader compiles, 0 texture uploads, 16.7 ms/frame total, 8.5 ms/frame in sms_gx (textures 0.6, batches 2.8, copies 1.8, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 921.3 draws/frame, 181223 vertices/frame, 0 shader compiles, 0 texture uploads, 16.7 ms/frame total, 8.4 ms/frame in sms_gx (textures 0.6, batches 2.8, copies 1.8, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 919.6 draws/frame, 180871 vertices/frame, 0 shader compiles, 0 texture uploads, 16.7 ms/frame total, 8.4 ms/frame in sms_gx (textures 0.6, batches 2.8, copies 1.7, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame"
+        ]
+      }
+    },
+    {
+      "view": "harbor-inland",
+      "clock": "normal",
+      "capture_end_field": 6600,
+      "warm_start_field": 4800,
+      "before": {
+        "samples": 6,
+        "measured_frames": 720,
+        "draws": 826.2,
+        "vertices": 371034.6666666667,
+        "total_ms": 33.45,
+        "gx_ms": 13.133333333333333,
+        "run": "real-baseline-harbor-extended",
+        "fps": 29.89536621823617,
+        "counter_windows": [
+          "[sms_gx] stats: 120 frames, 816.2 draws/frame, 370849 vertices/frame, 0 shader compiles, 0 texture uploads, 33.4 ms/frame total, 13.2 ms/frame in sms_gx (textures 0.9, batches 3.1, copies 4.2, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 836.4 draws/frame, 371418 vertices/frame, 0 shader compiles, 0 texture uploads, 33.5 ms/frame total, 13.0 ms/frame in sms_gx (textures 1.0, batches 3.1, copies 4.2, peeks 0.0, GPU waits 0.1), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 834.3 draws/frame, 371307 vertices/frame, 0 shader compiles, 0 texture uploads, 33.4 ms/frame total, 12.9 ms/frame in sms_gx (textures 0.9, batches 3.0, copies 4.2, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 824.8 draws/frame, 370882 vertices/frame, 0 shader compiles, 0 texture uploads, 33.6 ms/frame total, 13.3 ms/frame in sms_gx (textures 0.9, batches 3.2, copies 4.3, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 823.0 draws/frame, 370876 vertices/frame, 0 shader compiles, 0 texture uploads, 33.4 ms/frame total, 13.0 ms/frame in sms_gx (textures 0.9, batches 3.1, copies 4.2, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 822.5 draws/frame, 370876 vertices/frame, 0 shader compiles, 0 texture uploads, 33.4 ms/frame total, 13.4 ms/frame in sms_gx (textures 1.0, batches 3.2, copies 4.3, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame"
+        ]
+      },
+      "after": {
+        "samples": 14,
+        "measured_frames": 1680,
+        "draws": 719.75,
+        "vertices": 145864.57142857142,
+        "total_ms": 16.814285714285713,
+        "gx_ms": 9.557142857142857,
+        "run": "real-chunks-harbor-extended",
+        "fps": 59.473237043330506,
+        "counter_windows": [
+          "[sms_gx] stats: 120 frames, 733.6 draws/frame, 146143 vertices/frame, 0 shader compiles, 0 texture uploads, 17.0 ms/frame total, 9.5 ms/frame in sms_gx (textures 0.6, batches 2.2, copies 4.3, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 733.0 draws/frame, 146141 vertices/frame, 0 shader compiles, 0 texture uploads, 17.0 ms/frame total, 9.6 ms/frame in sms_gx (textures 0.7, batches 2.2, copies 4.3, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 725.5 draws/frame, 145889 vertices/frame, 0 shader compiles, 0 texture uploads, 16.7 ms/frame total, 9.4 ms/frame in sms_gx (textures 0.6, batches 2.2, copies 4.1, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 723.0 draws/frame, 145815 vertices/frame, 0 shader compiles, 0 texture uploads, 16.8 ms/frame total, 9.5 ms/frame in sms_gx (textures 0.6, batches 2.3, copies 4.2, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 722.5 draws/frame, 145815 vertices/frame, 0 shader compiles, 0 texture uploads, 16.7 ms/frame total, 9.6 ms/frame in sms_gx (textures 0.6, batches 2.3, copies 4.1, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 721.9 draws/frame, 145842 vertices/frame, 0 shader compiles, 0 texture uploads, 17.1 ms/frame total, 9.8 ms/frame in sms_gx (textures 0.7, batches 2.3, copies 4.3, peeks 0.0, GPU waits 0.1), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 722.6 draws/frame, 145874 vertices/frame, 0 shader compiles, 0 texture uploads, 16.8 ms/frame total, 9.7 ms/frame in sms_gx (textures 0.7, batches 2.2, copies 4.3, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 722.9 draws/frame, 145856 vertices/frame, 0 shader compiles, 0 texture uploads, 16.8 ms/frame total, 9.7 ms/frame in sms_gx (textures 0.7, batches 2.2, copies 4.3, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 724.0 draws/frame, 145881 vertices/frame, 0 shader compiles, 0 texture uploads, 16.7 ms/frame total, 9.4 ms/frame in sms_gx (textures 0.6, batches 2.2, copies 4.2, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 718.7 draws/frame, 145798 vertices/frame, 0 shader compiles, 0 texture uploads, 16.7 ms/frame total, 9.5 ms/frame in sms_gx (textures 0.6, batches 2.2, copies 4.3, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 706.0 draws/frame, 145750 vertices/frame, 0 shader compiles, 0 texture uploads, 17.0 ms/frame total, 9.5 ms/frame in sms_gx (textures 0.7, batches 2.2, copies 4.2, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 706.4 draws/frame, 145750 vertices/frame, 0 shader compiles, 0 texture uploads, 16.7 ms/frame total, 9.4 ms/frame in sms_gx (textures 0.6, batches 2.2, copies 4.2, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 708.2 draws/frame, 145758 vertices/frame, 0 shader compiles, 0 texture uploads, 16.7 ms/frame total, 9.6 ms/frame in sms_gx (textures 0.6, batches 2.2, copies 4.2, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 708.2 draws/frame, 145792 vertices/frame, 0 shader compiles, 0 texture uploads, 16.7 ms/frame total, 9.6 ms/frame in sms_gx (textures 0.6, batches 2.2, copies 4.4, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame"
+        ]
+      }
+    },
+    {
+      "view": "plaza-park",
+      "clock": "unpaced",
+      "capture_end_field": 5400,
+      "warm_start_field": 4800,
+      "before": {
+        "samples": 5,
+        "measured_frames": 600,
+        "draws": 444.06,
+        "vertices": 274133.4,
+        "total_ms": 14.84,
+        "gx_ms": 8.26,
+        "run": "baseline-plaza-park",
+        "counter_windows": [
+          "[sms_gx] stats: 120 frames, 445.5 draws/frame, 274265 vertices/frame, 0 shader compiles, 0 texture uploads, 15.2 ms/frame total, 8.3 ms/frame in sms_gx (textures 0.7, batches 2.1, copies 1.7, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 446.9 draws/frame, 274268 vertices/frame, 0 shader compiles, 0 texture uploads, 14.7 ms/frame total, 8.2 ms/frame in sms_gx (textures 0.7, batches 2.0, copies 1.7, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 445.2 draws/frame, 274201 vertices/frame, 0 shader compiles, 0 texture uploads, 14.8 ms/frame total, 8.3 ms/frame in sms_gx (textures 0.7, batches 2.1, copies 1.7, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 441.9 draws/frame, 273967 vertices/frame, 0 shader compiles, 0 texture uploads, 14.6 ms/frame total, 8.2 ms/frame in sms_gx (textures 0.7, batches 2.0, copies 1.7, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 440.8 draws/frame, 273966 vertices/frame, 0 shader compiles, 0 texture uploads, 14.9 ms/frame total, 8.3 ms/frame in sms_gx (textures 0.7, batches 2.1, copies 1.7, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame"
+        ]
+      },
+      "after": {
+        "samples": 5,
+        "measured_frames": 600,
+        "draws": 420.06,
+        "vertices": 212765.4,
+        "total_ms": 10.96,
+        "gx_ms": 7.4,
+        "run": "chunks-plaza-park",
+        "counter_windows": [
+          "[sms_gx] stats: 120 frames, 421.5 draws/frame, 212897 vertices/frame, 0 shader compiles, 0 texture uploads, 11.3 ms/frame total, 7.5 ms/frame in sms_gx (textures 0.6, batches 1.8, copies 1.7, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 422.9 draws/frame, 212900 vertices/frame, 0 shader compiles, 0 texture uploads, 10.9 ms/frame total, 7.4 ms/frame in sms_gx (textures 0.6, batches 1.8, copies 1.7, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 421.2 draws/frame, 212833 vertices/frame, 0 shader compiles, 0 texture uploads, 10.8 ms/frame total, 7.3 ms/frame in sms_gx (textures 0.6, batches 1.8, copies 1.7, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 417.9 draws/frame, 212599 vertices/frame, 0 shader compiles, 0 texture uploads, 10.9 ms/frame total, 7.4 ms/frame in sms_gx (textures 0.6, batches 1.8, copies 1.7, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 416.8 draws/frame, 212598 vertices/frame, 0 shader compiles, 0 texture uploads, 10.9 ms/frame total, 7.4 ms/frame in sms_gx (textures 0.6, batches 1.8, copies 1.7, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame"
+        ]
+      }
+    },
+    {
+      "view": "harbor-inland",
+      "clock": "unpaced",
+      "capture_end_field": 5400,
+      "warm_start_field": 4800,
+      "before": {
+        "samples": 4,
+        "measured_frames": 480,
+        "draws": 823.05,
+        "vertices": 370914.5,
+        "total_ms": 20.45,
+        "gx_ms": 12.825,
+        "run": "baseline-harbor-inland",
+        "counter_windows": [
+          "[sms_gx] stats: 120 frames, 823.7 draws/frame, 370977 vertices/frame, 0 shader compiles, 0 texture uploads, 20.6 ms/frame total, 12.9 ms/frame in sms_gx (textures 0.9, batches 3.1, copies 4.2, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 821.9 draws/frame, 370874 vertices/frame, 0 shader compiles, 0 texture uploads, 20.4 ms/frame total, 12.8 ms/frame in sms_gx (textures 0.9, batches 3.0, copies 4.1, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 823.3 draws/frame, 370929 vertices/frame, 0 shader compiles, 0 texture uploads, 20.5 ms/frame total, 12.9 ms/frame in sms_gx (textures 0.9, batches 3.0, copies 4.2, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 823.3 draws/frame, 370878 vertices/frame, 0 shader compiles, 0 texture uploads, 20.3 ms/frame total, 12.7 ms/frame in sms_gx (textures 0.9, batches 3.0, copies 4.1, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame"
+        ]
+      },
+      "after": {
+        "samples": 4,
+        "measured_frames": 480,
+        "draws": 723.05,
+        "vertices": 145853.5,
+        "total_ms": 13.725,
+        "gx_ms": 9.6,
+        "run": "chunks-harbor-inland",
+        "counter_windows": [
+          "[sms_gx] stats: 120 frames, 723.7 draws/frame, 145916 vertices/frame, 0 shader compiles, 0 texture uploads, 13.8 ms/frame total, 9.7 ms/frame in sms_gx (textures 0.7, batches 2.3, copies 4.2, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 721.9 draws/frame, 145813 vertices/frame, 0 shader compiles, 0 texture uploads, 13.7 ms/frame total, 9.6 ms/frame in sms_gx (textures 0.6, batches 2.3, copies 4.2, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 723.3 draws/frame, 145868 vertices/frame, 0 shader compiles, 0 texture uploads, 13.8 ms/frame total, 9.6 ms/frame in sms_gx (textures 0.7, batches 2.3, copies 4.2, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame",
+          "[sms_gx] stats: 120 frames, 723.3 draws/frame, 145817 vertices/frame, 0 shader compiles, 0 texture uploads, 13.6 ms/frame total, 9.5 ms/frame in sms_gx (textures 0.6, batches 2.3, copies 4.2, peeks 0.0, GPU waits 0.0), 0.0 synchronous GPU reads/frame"
+        ]
+      }
+    }
+  ],
+  "ferry_replay": {
+    "method": "Same 60 fps unpaced controller round trip with audio, native movies, saved resolution and textures, PPM captures every 20 retraces. Includes all upload/compile windows whose last captured field is 4200\u20135200, and capture overhead; frame cost is not live FPS.",
+    "before": {
+      "samples": 9,
+      "measured_frames": 1080,
+      "draws": 648.9333333333333,
+      "vertices": 356380.0,
+      "total_ms": 24.266666666666666,
+      "gx_ms": 14.28888888888889,
+      "windows": [
+        {
+          "last_captured_field": 4200,
+          "frames": 120,
+          "draws": 346.9,
+          "vertices": 268213.0,
+          "compiles": 0,
+          "uploads": 0,
+          "total_ms": 24.6,
+          "gx_ms": 15.0
+        },
+        {
+          "last_captured_field": 4320,
+          "frames": 120,
+          "draws": 725.2,
+          "vertices": 383031.0,
+          "compiles": 29,
+          "uploads": 206,
+          "total_ms": 37.7,
+          "gx_ms": 26.6
+        },
+        {
+          "last_captured_field": 4440,
+          "frames": 120,
+          "draws": 800.8,
+          "vertices": 396159.0,
+          "compiles": 1,
+          "uploads": 5,
+          "total_ms": 26.3,
+          "gx_ms": 16.0
+        },
+        {
+          "last_captured_field": 4560,
+          "frames": 120,
+          "draws": 872.6,
+          "vertices": 405807.0,
+          "compiles": 0,
+          "uploads": 0,
+          "total_ms": 23.1,
+          "gx_ms": 13.0
+        },
+        {
+          "last_captured_field": 4680,
+          "frames": 120,
+          "draws": 754.8,
+          "vertices": 397885.0,
+          "compiles": 1,
+          "uploads": 11,
+          "total_ms": 21.3,
+          "gx_ms": 11.5
+        },
+        {
+          "last_captured_field": 4800,
+          "frames": 120,
+          "draws": 635.7,
+          "vertices": 380766.0,
+          "compiles": 0,
+          "uploads": 0,
+          "total_ms": 18.7,
+          "gx_ms": 9.5
+        },
+        {
+          "last_captured_field": 4920,
+          "frames": 120,
+          "draws": 614.5,
+          "vertices": 374224.0,
+          "compiles": 0,
+          "uploads": 0,
+          "total_ms": 19.0,
+          "gx_ms": 9.6
+        },
+        {
+          "last_captured_field": 5040,
+          "frames": 120,
+          "draws": 577.7,
+          "vertices": 315313.0,
+          "compiles": 1,
+          "uploads": 5,
+          "total_ms": 22.5,
+          "gx_ms": 12.3
+        },
+        {
+          "last_captured_field": 5160,
+          "frames": 120,
+          "draws": 512.2,
+          "vertices": 286022.0,
+          "compiles": 1,
+          "uploads": 5,
+          "total_ms": 25.2,
+          "gx_ms": 15.1
+        }
+      ]
+    },
+    "after": {
+      "samples": 9,
+      "measured_frames": 1080,
+      "draws": 601.3666666666667,
+      "vertices": 237784.77777777778,
+      "total_ms": 20.666666666666668,
+      "gx_ms": 12.455555555555556,
+      "windows": [
+        {
+          "last_captured_field": 4200,
+          "frames": 120,
+          "draws": 319.6,
+          "vertices": 186733.0,
+          "compiles": 0,
+          "uploads": 0,
+          "total_ms": 18.8,
+          "gx_ms": 12.3
+        },
+        {
+          "last_captured_field": 4320,
+          "frames": 120,
+          "draws": 646.2,
+          "vertices": 156263.0,
+          "compiles": 26,
+          "uploads": 161,
+          "total_ms": 15.5,
+          "gx_ms": 7.8
+        },
+        {
+          "last_captured_field": 4440,
+          "frames": 120,
+          "draws": 718.8,
+          "vertices": 161610.0,
+          "compiles": 1,
+          "uploads": 5,
+          "total_ms": 15.4,
+          "gx_ms": 8.4
+        },
+        {
+          "last_captured_field": 4560,
+          "frames": 120,
+          "draws": 798.8,
+          "vertices": 196539.0,
+          "compiles": 5,
+          "uploads": 22,
+          "total_ms": 21.3,
+          "gx_ms": 13.3
+        },
+        {
+          "last_captured_field": 4680,
+          "frames": 120,
+          "draws": 706.3,
+          "vertices": 268255.0,
+          "compiles": 4,
+          "uploads": 38,
+          "total_ms": 24.7,
+          "gx_ms": 16.8
+        },
+        {
+          "last_captured_field": 4800,
+          "frames": 120,
+          "draws": 624.4,
+          "vertices": 367950.0,
+          "compiles": 0,
+          "uploads": 0,
+          "total_ms": 21.1,
+          "gx_ms": 11.9
+        },
+        {
+          "last_captured_field": 4920,
+          "frames": 120,
+          "draws": 598.5,
+          "vertices": 345708.0,
+          "compiles": 0,
+          "uploads": 0,
+          "total_ms": 21.1,
+          "gx_ms": 11.7
+        },
+        {
+          "last_captured_field": 5040,
+          "frames": 120,
+          "draws": 543.9,
+          "vertices": 265721.0,
+          "compiles": 2,
+          "uploads": 16,
+          "total_ms": 27.5,
+          "gx_ms": 17.7
+        },
+        {
+          "last_captured_field": 5160,
+          "frames": 120,
+          "draws": 455.8,
+          "vertices": 191284.0,
+          "compiles": 1,
+          "uploads": 5,
+          "total_ms": 20.6,
+          "gx_ms": 12.2
+        }
+      ]
+    }
+  },
+  "visual_checks": {
+    "chunks-plaza-park": {
+      "field": 5400,
+      "width": 1708,
+      "height": 896,
+      "changed_pixels": 0,
+      "maximum_channel_error": 0
+    },
+    "chunks-harbor-inland": {
+      "field": 5400,
+      "width": 1708,
+      "height": 896,
+      "changed_pixels": 0,
+      "maximum_channel_error": 0
+    }
+  },
+  "gameplay_checks": {
+    "walk_linux32": "PASS: 60 fps, 8 crossings, both land joins and passage bends, continuous speed, saved episode, health/water carry, archive cache, retained native materials.\nTrigger-to-arrival ms: 210, 116, 115, 97, 99, 148, 96, 99\nEvidence: build/open-world/v12/walk32-culling-stress\n",
+    "ferry_linux64": "PASS: 60 fps, 2 Blooper rides, offshore stage swaps, continuous speed/animation/health/water, beach/pier landings, no black ferry frames.\nTrigger-to-arrival ms: 134, 85\nTrigger-to-frame-ready ms: 204, 298\n",
+    "review": "Moving-camera captures inspected at both passage bends, Harbor joins, beach and Plaza approaches. Moving ferry views are not all pixel-identical; the paired views retain their visible shore geometry."
+  },
+  "limits": "Local captured replays and fixed views do not establish a locked frame rate throughout the game. Cold textures and some ferry approaches still exceed 16.7 ms.",
+  "bundle_checks": [
+    {
+      "arch": 32,
+      "executable_sha256": "d8b20f010811101164df1c18561cc69c5dc133cbbbaa5c8f3b574f55ebc07acc",
+      "payload_offset": 63810304,
+      "payload_bytes": 1175811712,
+      "bundle_bytes": 1239622048,
+      "payload_sha256": "e82ad43653cd31fd0547a013a60373a14177ed3a994dd178792cca259119fdc2",
+      "executable_prefix_matches": true,
+      "disc_id": "GMSE01",
+      "disc_magic": "C2339F3D",
+      "executable_mode": "0o775"
+    },
+    {
+      "arch": 64,
+      "executable_sha256": "cb5df68414df3662862e7493d1d43880ae3ab6041d6c8416c59af99c243ebc7c",
+      "payload_offset": 67857312,
+      "payload_bytes": 1175811712,
+      "bundle_bytes": 1243669056,
+      "payload_sha256": "e82ad43653cd31fd0547a013a60373a14177ed3a994dd178792cca259119fdc2",
+      "executable_prefix_matches": true,
+      "disc_id": "GMSE01",
+      "disc_magic": "C2339F3D",
+      "executable_mode": "0o775"
+    }
+  ],
+  "bundle_launch_checks": [
+    {
+      "arch": 64,
+      "launch": "./run-open-world.sh --headless; no disc argument",
+      "disc": "bundled with the executable",
+      "captured_field": 4800,
+      "coastal_geometry_loaded": true,
+      "blooper_loaded": true,
+      "controller_movement_units": 2144.3
+    },
+    {
+      "arch": 32,
+      "launch": "./run-open-world.sh --headless; no disc argument",
+      "disc": "bundled with the executable",
+      "captured_field": 4800,
+      "coastal_geometry_loaded": true,
+      "blooper_loaded": true,
+      "controller_movement_units": 2144.3
+    }
+  ]
+}
