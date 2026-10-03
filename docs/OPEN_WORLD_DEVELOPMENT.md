@@ -22,6 +22,7 @@ The ferry replay supports `--native-movies` to keep THP decoding enabled. Its ru
 
 - `harbor-return64-final`: cold Harbor-to-Plaza handoff at 60 fps; arrival callback took 158 ms. First destination frame RGB change was 14.95/255, brightness change 0.78/255; speed carried with no black frames. This preceded the exterior camera recovery, which does not run inside the handoff passage.
 - `disabled-video-final`: native Plaza with THP decoding enabled and the mod disabled; rendered gameplay, no walkway or ferry setup, no runtime/resource failures.
+- `normal-clock-video-final`: ordinary Plaza entry with native THP decoding, routes enabled, and the normal clock instead of the accelerated deterministic replay clock. THP initialization retained its 500 ms buffering wait; native gameplay rendered with no runtime/resource failures.
 
 Both Linux executables and standalone bundles were rebuilt after the final camera guards. Each embedded executable prefix, aligned disc offset, GMSE01 identifier, image magic, and trailer size passed verification. The decomp pin remains `3370b47b45f3a8982ffe50bfdb317f8a9daa21f1`.
 
