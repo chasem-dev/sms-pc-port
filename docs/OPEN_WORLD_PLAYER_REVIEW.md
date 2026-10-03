@@ -1,5 +1,13 @@
 # Open-world player experience review
 
+## Static scenery continuity (v11)
+
+Palms now remain visible before a neighboring level becomes active: 23 Plaza palms, including the cliff palms, and five Pinna Beach palms use the destination episode's saved placement. The Plaza's Shine monument also remains visible. The same preview is used while looking back from the Harbor connection. Recorded native views were checked for grounded trees and shore support.
+
+The 32-bit, 60 fps ferry round trip and walking round trip passed with audio and native state carried across both directions. The 64-bit saved-settings run also reached Pinna Park and proved controller movement inside. The updated phone preview is `sunshine-coastal-scenery-v11.png` and `.mp4`; the video keeps both full recorded round trips and their loading holds.
+
+Moving boats, park rides, and other scene actors can still appear at an exchange. The low return camera can show the upper Ferris cabins without enough of their supporting ride in frame; a wider native view confirmed that the geometry is present. This pass does not establish seamless moving-ride continuity or unaided route discovery.
+
 ## Rider and return-load polish (v10)
 
 Mario now keeps a natural riding pose offshore instead of leaning continuously as though turning sharply. The ferry carries the torso lean across the exchange; ordinary walking crossings also preserve facing and lean. The shared ocean animation pauses with the held view.

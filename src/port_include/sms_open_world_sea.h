@@ -7,6 +7,7 @@ class J3DModel;
 J3DModel* sms_sea_mainland_model();
 J3DModel* sms_sea_harbor_model();
 void sms_sea_world_to_native(float[3][4]);
+void sms_open_world_preview_objects(const char*,const float[3][4]);
 void sms_sea_setup(TMarDirector*);
 bool sms_sea_arriving(TMarDirector*);
 void sms_sea_arrive(TMarDirector*);

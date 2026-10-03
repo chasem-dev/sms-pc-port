@@ -7,6 +7,7 @@
 #include <System/MarioGamePad.hpp>
 #include <System/ScenarioArchiveName.hpp>
 #include <System/Resolution.hpp>
+#include <System/FlagManager.hpp>
 #include <Strategic/NameRefPtrAry.hpp>
 #include <Player/Mario.hpp>
 #include <Player/WaterGun.hpp>
@@ -17,6 +18,9 @@
 #include <M3DUtil/MActor.hpp>
 #include <M3DUtil/MActorData.hpp>
 #include <MarioUtil/DrawUtil.hpp>
+#include <MarioUtil/LightUtil.hpp>
+#include <MarioUtil/MathUtil.hpp>
+#include <MarioUtil/PacketUtil.hpp>
 #include <JSystem/JKernel/JKRHeap.hpp>
 #include <JSystem/J3D/J3DGraphLoader/J3DModelLoader.hpp>
 #include <JSystem/J3D/J3DGraphBase/J3DTexture.hpp>
@@ -75,6 +79,9 @@ bool active,ready,releasePending,testSpawnUsed,testDone,testPadActive;
 signed char testStickX,testStickY;unsigned short testButtons;int testPulse;
 MActor *squid,*idleSquid;J3DModel* scenery;
 J3DModel* harborScenery;
+const unsigned maxSceneryObjects=64;
+J3DModel* sceneryObjects[maxSceneryObjects];unsigned sceneryObjectCount;
+GXColor monumentColor;
 J3DDrawBuffer *opa,*xlu;
 GXTexObj water;bool hasWater;float waterTime,drawnWaterTime;
 JGeometry::TVec3<f32> seaEye,seaAt,savedPos,savedEye,savedAt,savedVel;
@@ -150,6 +157,69 @@ bool stageArchive(int stage,int episode,char* path,unsigned size) {
     if(episode<0 || episode>=names->size())return false;
     snprintf(path,size,"/data/scene/%s",names->getChildren()[episode].mArcName);
     char* ext=strstr(path,".arc");if(ext)strcpy(ext,".szs");return true;
+}
+unsigned sceneU16(const u8* p){return (unsigned(p[0])<<8)|p[1];}
+unsigned sceneU32(const u8* p){return (unsigned(p[0])<<24)|(unsigned(p[1])<<16)|(unsigned(p[2])<<8)|p[3];}
+bool sceneString(const u8*& p,const u8* end,const u8*& string,unsigned& size) {
+    if(end-p<2)return false;
+    size=sceneU16(p);p+=2;if(unsigned(end-p)<size)return false;
+    string=p;p+=size;return true;
+}
+bool sceneEquals(const u8* string,unsigned size,const char* value) {
+    return size==strlen(value) && !memcmp(string,value,size);
+}
+// Read only known, stationary scene objects. Native actor constructors would
+// register their collisions and managers in the currently active stage.
+// The preview instead uses the destination episode's exact saved SRT and
+// shares model data between instances, with no gameplay actors or collisions.
+void loadSceneryObjects(const char* archive,const Mtx stageTransform) {
+    const char* types[]={"Palm","PalmLeaf","PalmNatume","MonumentShine"};
+    const char* objects[]={"palmNormal","palmLeaf","palmNatume","monumentshine"};
+    const char* models[]={"palmnormal.bmd","palmleaf.bmd","palmnatume.bmd","monumentshine.bmd"};
+    J3DModelData* cache[4]={0,0,0,0};
+    unsigned size=port_open_world_resource(archive,"scene.bin",0,0);
+    if(!size || size>1024*1024)return;
+    u8* bytes=(u8*)JKRHeap::alloc(size,32,0);if(!bytes)return;
+    if(port_open_world_resource(archive,"scene.bin",bytes,size)!=size){JKRHeap::free(bytes,0);return;}
+    unsigned before=sceneryObjectCount;
+    for(unsigned offset=0;offset+16<size && sceneryObjectCount<maxSceneryObjects;++offset) {
+        const u8* node=bytes+offset;unsigned length=sceneU32(node),typeLength=sceneU16(node+6);
+        if(length<16 || length>size-offset || typeLength>length-8)continue;
+        int type=-1;for(int i=0;i<4;++i)if(sceneEquals(node+8,typeLength,types[i])){type=i;break;}
+        if(type<0 || sceneU16(node+4)!=JDrama::TNameRef::calcKeyCode(types[type]))continue;
+        const u8* end=node+length;const u8* p=node+8+typeLength;
+        if(end-p<4)continue;
+        unsigned nameKey=sceneU16(p);p+=2;const u8* name;unsigned nameLength;
+        if(!sceneString(p,end,name,nameLength))continue;
+        unsigned key=0;for(unsigned i=0;i<nameLength;++i)key=(key*3+name[i])&65535;
+        if(key!=nameKey || end-p<36)continue;
+        float srt[9];bool valid=true;
+        for(int i=0;i<9;++i){unsigned bits=sceneU32(p+i*4);memcpy(&srt[i],&bits,4);if(!isfinite(srt[i]) || fabsf(srt[i])>1000000)valid=false;}
+        p+=36;if(!valid || srt[6]<=0 || srt[7]<=0 || srt[8]<=0)continue;
+        const u8* text;unsigned textLength;
+        if(!sceneString(p,end,text,textLength) || end-p<4)continue;
+        unsigned lights=sceneU32(p);p+=4;if(lights>8)continue;
+        for(unsigned i=0;i<lights;++i){if(end-p<4){valid=false;break;}p+=4;if(!sceneString(p,end,text,textLength)){valid=false;break;}}
+        if(!valid || !sceneString(p,end,text,textLength))continue;
+        // The scene instantiates both normal and cliff palms as class Palm.
+        if(type==0 && sceneEquals(text,textLength,"palmLeaf"))type=1;
+        if(!sceneEquals(text,textLength,objects[type]))continue;
+        J3DModel* instance;
+        if(!cache[type]){instance=model(archive,models[type]);if(!instance)continue;cache[type]=instance->getModelData();}
+        else {instance=new J3DModel(cache[type],0,1);SMS_MakeDLAndLock(instance);}
+        Mtx local,transform;
+        MsMtxSetXYZRPH(local,srt[0],srt[1],srt[2],srt[3],srt[4],srt[5]);
+        MTXConcat(stageTransform,local,transform);instance->setBaseTRMtx(transform);
+        instance->setBaseScale(JGeometry::TVec3<f32>(srt[6],srt[7],srt[8]));
+        if(type==3) {
+            monumentColor=(GXColor){255,255,255,u8(TFlagManager::getInstance()->getFlag(0x10063)?0:100)};
+            SMS_InitPacket_OneTevKColor(instance,0,GX_KCOLOR0,&monumentColor);
+        }
+        sceneryObjects[sceneryObjectCount++]=instance;
+        offset+=length-1;
+    }
+    JKRHeap::free(bytes,0);
+    OSReport("[sea-route] scene objects archive=%s count=%u\n",archive,sceneryObjectCount-before);
 }
 void prefetch(int stage,int episode,int slot) {
     char path[128];if(stageArchive(stage,episode,path,sizeof path))port_open_world_prefetch(path,slot);
@@ -361,6 +431,16 @@ void drawModel(J3DModel* m,JDrama::TGraphics* g) {
     m->calc();m->viewCalc();m->entry();SMS_DrawInit();opa->draw();xlu->draw();
     j3dSys.setDrawBuffer(old0,0);j3dSys.setDrawBuffer(old1,1);SMS_DrawInit();
 }
+void drawSceneryObjects(JDrama::TGraphics* g) {
+    if(!sceneryObjectCount)return;
+    J3DDrawBuffer* old0=j3dSys.getDrawBuffer(0),*old1=j3dSys.getDrawBuffer(1);
+    opa->frameInit();xlu->frameInit();j3dSys.setDrawBuffer(opa,0);j3dSys.setDrawBuffer(xlu,1);
+    j3dSys.setViewMtx(g->getViewMtx());opa->setZMtx(g->getViewMtx());xlu->setZMtx(g->getViewMtx());
+    for(unsigned i=0;i<sceneryObjectCount;++i){J3DModel* m=sceneryObjects[i];m->calc();m->viewCalc();m->entry();}
+    SMS_DrawInit();
+    if(gpLightManager)gpLightManager->getLightSet(LIGHT_TYPE_MAPOBJECT)->getLightDrawBuffer(0)->perform(CUE_LIGHT,g);
+    opa->draw();xlu->draw();j3dSys.setDrawBuffer(old0,0);j3dSys.setDrawBuffer(old1,1);SMS_DrawInit();
+}
 void cameraMatrices(bool previous=false) {
     C_MTXPerspective(gpCamera->unk16C,gpCamera->mFovy,gpCamera->mAspect,gpCamera->mNear,gpCamera->mFar);
     C_MTXLookAt(gpCamera->unk1EC,&gpCamera->unk124,&gpCamera->mUp,&gpCamera->unk148);
@@ -514,6 +594,7 @@ J3DModel* sms_open_world_load_model(const char* archive,const char* name) {
 }
 J3DModel* sms_sea_mainland_model(){return currentStage==pinnaStage?scenery:0;}
 J3DModel* sms_sea_harbor_model(){return currentStage==pinnaStage?harborScenery:0;}
+void sms_open_world_preview_objects(const char* archive,const float transform[3][4]){loadSceneryObjects(archive,transform);}
 void sms_sea_world_to_native(float matrix[3][4]) {
     C_MTXIdentity(matrix);
     if(currentStage==pinnaStage) {
@@ -523,7 +604,7 @@ void sms_sea_world_to_native(float matrix[3][4]) {
 }
 void sms_sea_setup(TMarDirector* d) {
     testPadActive=false;
-    ready=false;scenery=harborScenery=0;squid=idleSquid=0;hasWater=false;currentStage=d->mMap;
+    ready=false;scenery=harborScenery=0;sceneryObjectCount=0;squid=idleSquid=0;hasWater=false;currentStage=d->mMap;
     if(!sms_open_world_enabled())return;
     if(gpApplication.unk30)for(unsigned i=0;i<gpApplication.unk30->getChildren().size();++i) {
         TNameRefAryT<TScenarioArchiveName>* n=gpApplication.unk30->getChildren()[i];
@@ -565,6 +646,8 @@ void sms_sea_setup(TMarDirector* d) {
             MTXConcat(inverse,pinnaWorld,transform);
         }
         scenery->setBaseTRMtx(transform);
+        loadSceneryObjects(sceneryArchive,transform);
+        sms_open_world_profile("sea scene objects ready");
     }
     if(geography() && currentStage==pinnaStage) {
         char archive[128];
@@ -793,6 +876,7 @@ void sms_sea_draw(unsigned cue,JDrama::TGraphics* graphics) {
     gpCamera->perform(CUE_CALC_VIEW|CUE_SET_PROJECTION,graphics);
     drawModel(scenery,graphics);
     drawModel(harborScenery,graphics);
+    drawSceneryObjects(graphics);
     if(ready && (!active || (geography() && dockMode!=0))) {
         P p=fromWorld(currentStage,station());Mtx transform;C_MTXIdentity(transform);transform[0][3]=p.x;transform[1][3]=10+4*sinf(rideTime*.05f);transform[2][3]=p.z;
         idleSquid->getModel()->setBaseTRMtx(transform);idleSquid->frameUpdate();idleSquid->calc();drawModel(idleSquid->getModel(),graphics);

@@ -51,7 +51,7 @@ The walking connection is also intended for Mario on foot; carried actors and Yo
 - Health, FLUDD water, and ordinary nozzle selection carry across the added connections.
 - The routes remember the last visited Plaza, Harbor, and beach episodes for the current session. They do not add free-order Shine collection or change the game's progression and saving rules.
 - The ferry avoids a tunnel. A short pause can still occur while the next area loads; timing depends on your machine and settings.
-- Some distant objects appear at the exchange, and the return view of the city still needs polish. The route is not yet visually seamless everywhere.
+- Palms and the Plaza's Shine monument remain visible in distant previews, using the destination episode's saved positions. Moving boats, park rides, and other actors can still appear at the exchange. The route is not yet visually seamless everywhere.
 - All three moving Plaza boats cleared the connected Harbor scenery and walkway during full circuits in the dry-Plaza episode.
 - Flooded Plaza, replacement level geometry such as Eclipse, and other disc regions have not been validated with these routes.
 

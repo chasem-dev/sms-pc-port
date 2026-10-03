@@ -4,6 +4,25 @@ This document preserves the implementation history and measurements from earlier
 For current launch instructions, route locations, controls, and known limitations, use the [player guide](OPEN_WORLD.md).
 Measurements below belong to their named version; the multi-second v5 ferry pauses were reduced in v6.
 
+## v11 static scene continuity
+
+Distant scenery now includes normal palms, cliff palms, beach palms, and the Plaza's Shine monument. A bounded reader extracts their saved SRT from the remembered destination episode's `scene.bin`; it validates record lengths, type/name keys, finite transforms, light-map records, and the known object key. The same geographic transform positions both terrain and objects. Preview instances share model data, use native map-object lighting, and register no actors, managers, or collision. The monument uses the native save flag and pollution color callback. Counts reset with the stage heap, so previews cannot retain pointers into a previous stage.
+
+The tested Plaza episode contains 23 palms and one monument; Pinna Beach contains five palms. Plaza objects are also visible from the Harbor's walking connection. Moving boats and park rides are not represented by this static preview. A wide native beach survey confirmed the Ferris ride's support geometry remains present; the low return camera can still make its upper cabins appear detached. That framing remains open.
+
+Validation against the final gameplay source, with native THP decoding enabled for ferry runs:
+
+- `v11/ferry32-palms-final`: recorded 60 fps round trip with audio, steering, and hopping. Both swaps retained animation, health, water, and speed, with no black ferry frames. Arrival callbacks took 217/132 ms; first destination frames were ready at 374/198 ms. First-live RGB differences were 5.23/6.32 per channel out of 255. Rendered before/after views were inspected for palm placement and supported shorelines.
+- `v11/walk32-palms-final`: recorded 60 fps walking round trip with audio and spent FLUDD water. Both land joins, passage bends, episode selection, state carry, native materials, and cache reuse passed. Harbor setup loaded the five beach palms and all 24 Plaza objects without exceeding the enabled mod's existing 40 MiB heap. Arrival callbacks took 209/121 ms.
+- `v11/park64-player-settings-final`: saved resolution and 2,171-texture pack, audio, native THP decoding, and controller input. The ferry's destination frame was ready at 254 ms. The normal gate entered stage 13, and Mario moved 125.8 units inside Pinna Park with full health.
+- The initial `v11/ferry64-statics` round trip tested the normal palms and monument at 30 fps before correcting the five cliff palms' shared actor class. It passed with destination frame readiness of 235/152 ms; the saved-settings 64-bit run above includes the correction.
+
+These are local replay measurements, not a guarantee of loading time on other machines. The retained gameplay videos include captured loading holds. The native scene archives and executable bundles remain local, using the player's disc; they are not GitHub deliverables. The public decomp pin is unchanged.
+
+Both Linux builds passed after removing the temporary fixed-camera survey override. Both standalone bundles were regenerated and checked for a matching executable prefix, aligned disc offset, GMSE01 identifier, disc magic, trailer length, and executable mode. The preview video decoded completely without errors; the PNG/MP4 deliveries were compared by SHA-256 and verified readable through FileBrowser.
+
+Actual gameplay previews are `sunshine-coastal-scenery-v11.png` and `.mp4` in FileBrowser's `Render-Previews` folder.
+
 ## v10 rider pose and Plaza return
 
 Guided sea travel bypasses native `playerControl`, which ordinarily updates Mario's previous yaw (`unk9C`). A stale shore-facing yaw made `considerWaist` interpret the journey as one continuous sharp turn. The guided tick now records the previous yaw before applying the new heading. Ferry exchanges preserve previous yaw, face roll, waist pitch, and waist roll; walking exchanges also preserve model yaw and face pitch. Ocean texture time remains at the last drawn phase while the destination frame is held.

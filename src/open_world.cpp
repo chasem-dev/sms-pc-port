@@ -313,6 +313,7 @@ public:
         transform[1][3]=0;
         transform[2][3]=anchor.z-zx*other.x-zz*other.z;
         neighbor->setBaseTRMtx(transform);
+        if(stage==PLAZA)sms_open_world_preview_objects(archive,transform);
         if(getenv("SMS_OPEN_WORLD_TEST_BOATS"))setupNeighborProbe();
         neighborOpa=new J3DDrawBuffer(512);neighborXlu=new J3DDrawBuffer(512);
         neighborOpa->setNonSort();neighborXlu->setNonSort();
