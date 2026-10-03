@@ -1,0 +1,136 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 880" width="1200" height="880" role="img" aria-labelledby="title description">
+  <title id="title">GMSE01 matching breakdown across Game, JSystem, SDK, and Total</title>
+  <desc id="description">Verified 2026-09-29 from the GMSE01 build report at revision 3370b47b. Each category has separate fuzzy similarity, byte-perfect code, and source-linked code tracks. Fuzzy similarity is an approximate score, not exact byte coverage.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#0F202C"/><stop offset="1" stop-color="#19333C"/></linearGradient>
+    <linearGradient id="fuzzy"><stop stop-color="#30BFD6"/><stop offset="1" stop-color="#8AF4D5"/></linearGradient>
+    <linearGradient id="exact"><stop stop-color="#E99A56"/><stop offset="1" stop-color="#FFE589"/></linearGradient>
+    <linearGradient id="linked"><stop stop-color="#F07B84"/><stop offset="1" stop-color="#FFC18A"/></linearGradient>
+    <pattern id="grid" width="36" height="36" patternUnits="userSpaceOnUse"><path d="M36 0H0V36" fill="none" stroke="#B8ECE8" stroke-opacity=".045"/></pattern>
+    <pattern id="ticks" width="10.9" height="13" patternUnits="userSpaceOnUse"><path d="M10.4 0V13" stroke="#102635" stroke-width="1" stroke-opacity=".52"/></pattern>
+    <style>
+      .sans { font-family: 'DejaVu Sans', Arial, sans-serif; }
+      .mono { font-family: 'DejaVu Sans Mono', 'Courier New', monospace; font-weight: 700; letter-spacing: .8px; }
+    </style>
+  </defs>
+  <rect x="1" y="1" width="1198" height="878" rx="25" fill="url(#background)" stroke="#487783" stroke-width="2"/>
+  <rect x="2" y="2" width="1196" height="876" rx="24" fill="url(#grid)"/>
+  <path d="M34 202H1166" stroke="#81BEBD" stroke-opacity=".3"/>
+  <rect x="50" y="37" width="12" height="12" rx="2" fill="#8AEAD8"/>
+  <text x="74" y="48" fill="#95D4D3" font-size="14" class="mono">GMSE01 / MATCH PROFILE</text>
+  <text x="50" y="110" fill="#FBF7EC" font-size="46" font-weight="800" class="sans" letter-spacing="-1.7">Where the match lives.</text>
+  <text x="52" y="147" fill="#B7D1D1" font-size="17" class="sans">Game · JSystem · SDK · measured code total</text>
+  <circle cx="1017" cy="92" r="63" fill="none" stroke="#E9BB77" stroke-opacity=".35" stroke-width="2"/>
+  <circle cx="1017" cy="92" r="43" fill="none" stroke="#FFD993" stroke-opacity=".52" stroke-width="2"/>
+  <circle cx="1017" cy="92" r="20" fill="#FFE0A0" opacity=".9"/>
+  <path d="M1017 12v14M1017 158v14M937 92h14M1083 92h14M961 36l10 10M1063 138l10 10M1073 36l-10 10M971 138l-10 10" stroke="#FFD48F" stroke-opacity=".55" stroke-width="2.5" stroke-linecap="round"/>
+  <text x="51" y="187" fill="#88ADB1" font-size="12" class="mono">CODE FAMILY / SIZE</text>
+  <text x="459" y="187" fill="#88ADB1" font-size="12" class="mono">THREE DISTINCT MEASURES</text>
+  <text x="1149" y="187" text-anchor="end" fill="#88ADB1" font-size="12" class="mono">PERCENT</text>
+  <rect x="36" y="220" width="1128" height="136" rx="18" fill="#152D38" stroke="#315864" stroke-width="1"/>
+  <rect x="36" y="240" width="5" height="96" rx="2.5" fill="#618B95"/>
+  <text x="62" y="263" fill="#FBF7EC" font-size="25" font-weight="800" class="sans">GAME</text>
+  <text x="63" y="289" fill="#AFCACD" font-size="14" class="sans">Game code</text>
+  <text x="63" y="327" fill="#91BEC1" font-size="12" class="mono">2.85 MB  ·  79.0% OF CODE</text>
+  <circle cx="348" cy="251.5" r="4" fill="#83F2DF"/>
+  <text x="365" y="256" fill="#CEE3E4" font-size="12" class="mono">FUZZY</text>
+  <rect x="460" y="245" width="545" height="13" rx="6.5" fill="#28434C"/>
+  <rect x="460" y="245" width="542.37" height="13" rx="6.5" fill="url(#fuzzy)"/>
+  <rect x="460" y="245" width="545" height="13" fill="url(#ticks)"/>
+  <path d="M1002.37 242v19" stroke="#83F2DF" stroke-width="2" opacity=".9"/>
+  <text x="1135" y="257" text-anchor="end" fill="#83F2DF" font-size="17" class="mono">99.52%</text>
+  <circle cx="348" cy="288.5" r="4" fill="#FFE18A"/>
+  <text x="365" y="293" fill="#CEE3E4" font-size="12" class="mono">EXACT</text>
+  <rect x="460" y="282" width="545" height="13" rx="6.5" fill="#28434C"/>
+  <rect x="460" y="282" width="369.25" height="13" rx="6.5" fill="url(#exact)"/>
+  <rect x="460" y="282" width="545" height="13" fill="url(#ticks)"/>
+  <path d="M829.25 279v19" stroke="#FFE18A" stroke-width="2" opacity=".9"/>
+  <text x="1135" y="294" text-anchor="end" fill="#FFE18A" font-size="17" class="mono">67.75%</text>
+  <circle cx="348" cy="325.5" r="4" fill="#FFAF91"/>
+  <text x="365" y="330" fill="#CEE3E4" font-size="12" class="mono">LINKED</text>
+  <rect x="460" y="319" width="545" height="13" rx="6.5" fill="#28434C"/>
+  <rect x="460" y="319" width="113.56" height="13" rx="6.5" fill="url(#linked)"/>
+  <rect x="460" y="319" width="545" height="13" fill="url(#ticks)"/>
+  <path d="M573.56 316v19" stroke="#FFAF91" stroke-width="2" opacity=".9"/>
+  <text x="1135" y="331" text-anchor="end" fill="#FFAF91" font-size="17" class="mono">20.84%</text>
+  <rect x="36" y="372" width="1128" height="136" rx="18" fill="#18313B" stroke="#315864" stroke-width="1"/>
+  <rect x="36" y="392" width="5" height="96" rx="2.5" fill="#618B95"/>
+  <text x="62" y="415" fill="#FBF7EC" font-size="25" font-weight="800" class="sans">JSystem</text>
+  <text x="63" y="441" fill="#AFCACD" font-size="14" class="sans">Middleware</text>
+  <text x="63" y="479" fill="#91BEC1" font-size="12" class="mono">0.50 MB  ·  14.0% OF CODE</text>
+  <circle cx="348" cy="403.5" r="4" fill="#83F2DF"/>
+  <text x="365" y="408" fill="#CEE3E4" font-size="12" class="mono">FUZZY</text>
+  <rect x="460" y="397" width="545" height="13" rx="6.5" fill="#28434C"/>
+  <rect x="460" y="397" width="544.45" height="13" rx="6.5" fill="url(#fuzzy)"/>
+  <rect x="460" y="397" width="545" height="13" fill="url(#ticks)"/>
+  <path d="M1004.45 394v19" stroke="#83F2DF" stroke-width="2" opacity=".9"/>
+  <text x="1135" y="409" text-anchor="end" fill="#83F2DF" font-size="17" class="mono">99.90%</text>
+  <circle cx="348" cy="440.5" r="4" fill="#FFE18A"/>
+  <text x="365" y="445" fill="#CEE3E4" font-size="12" class="mono">EXACT</text>
+  <rect x="460" y="434" width="545" height="13" rx="6.5" fill="#28434C"/>
+  <rect x="460" y="434" width="512.01" height="13" rx="6.5" fill="url(#exact)"/>
+  <rect x="460" y="434" width="545" height="13" fill="url(#ticks)"/>
+  <path d="M972.01 431v19" stroke="#FFE18A" stroke-width="2" opacity=".9"/>
+  <text x="1135" y="446" text-anchor="end" fill="#FFE18A" font-size="17" class="mono">93.95%</text>
+  <circle cx="348" cy="477.5" r="4" fill="#FFAF91"/>
+  <text x="365" y="482" fill="#CEE3E4" font-size="12" class="mono">LINKED</text>
+  <rect x="460" y="471" width="545" height="13" rx="6.5" fill="#28434C"/>
+  <rect x="460" y="471" width="442.65" height="13" rx="6.5" fill="url(#linked)"/>
+  <rect x="460" y="471" width="545" height="13" fill="url(#ticks)"/>
+  <path d="M902.65 468v19" stroke="#FFAF91" stroke-width="2" opacity=".9"/>
+  <text x="1135" y="483" text-anchor="end" fill="#FFAF91" font-size="17" class="mono">81.22%</text>
+  <rect x="36" y="524" width="1128" height="136" rx="18" fill="#152D38" stroke="#315864" stroke-width="1"/>
+  <rect x="36" y="544" width="5" height="96" rx="2.5" fill="#618B95"/>
+  <text x="62" y="567" fill="#FBF7EC" font-size="25" font-weight="800" class="sans">SDK</text>
+  <text x="63" y="593" fill="#AFCACD" font-size="14" class="sans">Platform code</text>
+  <text x="63" y="631" fill="#91BEC1" font-size="12" class="mono">0.25 MB  ·  7.0% OF CODE</text>
+  <circle cx="348" cy="555.5" r="4" fill="#83F2DF"/>
+  <text x="365" y="560" fill="#CEE3E4" font-size="12" class="mono">FUZZY</text>
+  <rect x="460" y="549" width="545" height="13" rx="6.5" fill="#28434C"/>
+  <rect x="460" y="549" width="544.99" height="13" rx="6.5" fill="url(#fuzzy)"/>
+  <rect x="460" y="549" width="545" height="13" fill="url(#ticks)"/>
+  <path d="M1004.99 546v19" stroke="#83F2DF" stroke-width="2" opacity=".9"/>
+  <text x="1135" y="561" text-anchor="end" fill="#83F2DF" font-size="17" class="mono">100.00%</text>
+  <circle cx="348" cy="592.5" r="4" fill="#FFE18A"/>
+  <text x="365" y="597" fill="#CEE3E4" font-size="12" class="mono">EXACT</text>
+  <rect x="460" y="586" width="545" height="13" rx="6.5" fill="#28434C"/>
+  <rect x="460" y="586" width="543.42" height="13" rx="6.5" fill="url(#exact)"/>
+  <rect x="460" y="586" width="545" height="13" fill="url(#ticks)"/>
+  <path d="M1003.42 583v19" stroke="#FFE18A" stroke-width="2" opacity=".9"/>
+  <text x="1135" y="598" text-anchor="end" fill="#FFE18A" font-size="17" class="mono">99.71%</text>
+  <circle cx="348" cy="629.5" r="4" fill="#FFAF91"/>
+  <text x="365" y="634" fill="#CEE3E4" font-size="12" class="mono">LINKED</text>
+  <rect x="460" y="623" width="545" height="13" rx="6.5" fill="#28434C"/>
+  <rect x="460" y="623" width="542.51" height="13" rx="6.5" fill="url(#linked)"/>
+  <rect x="460" y="623" width="545" height="13" fill="url(#ticks)"/>
+  <path d="M1002.51 620v19" stroke="#FFAF91" stroke-width="2" opacity=".9"/>
+  <text x="1135" y="635" text-anchor="end" fill="#FFAF91" font-size="17" class="mono">99.54%</text>
+  <rect x="36" y="676" width="1128" height="136" rx="18" fill="#1D3941" stroke="#79CED0" stroke-width="2"/>
+  <rect x="36" y="696" width="5" height="96" rx="2.5" fill="#A5E8D9"/>
+  <text x="62" y="719" fill="#FBF7EC" font-size="27" font-weight="800" class="sans">TOTAL</text>
+  <text x="63" y="745" fill="#AFCACD" font-size="14" class="sans">All measured code</text>
+  <text x="63" y="783" fill="#91BEC1" font-size="12" class="mono">3.60 MB  ·  100.0% OF CODE</text>
+  <circle cx="348" cy="707.5" r="4" fill="#83F2DF"/>
+  <text x="365" y="712" fill="#CEE3E4" font-size="12" class="mono">FUZZY</text>
+  <rect x="460" y="701" width="545" height="13" rx="6.5" fill="#28434C"/>
+  <rect x="460" y="701" width="542.85" height="13" rx="6.5" fill="url(#fuzzy)"/>
+  <rect x="460" y="701" width="545" height="13" fill="url(#ticks)"/>
+  <path d="M1002.85 698v19" stroke="#83F2DF" stroke-width="2" opacity=".9"/>
+  <text x="1135" y="713" text-anchor="end" fill="#83F2DF" font-size="17" class="mono">99.60%</text>
+  <circle cx="348" cy="744.5" r="4" fill="#FFE18A"/>
+  <text x="365" y="749" fill="#CEE3E4" font-size="12" class="mono">EXACT</text>
+  <rect x="460" y="738" width="545" height="13" rx="6.5" fill="#28434C"/>
+  <rect x="460" y="738" width="401.40" height="13" rx="6.5" fill="url(#exact)"/>
+  <rect x="460" y="738" width="545" height="13" fill="url(#ticks)"/>
+  <path d="M861.40 735v19" stroke="#FFE18A" stroke-width="2" opacity=".9"/>
+  <text x="1135" y="750" text-anchor="end" fill="#FFE18A" font-size="17" class="mono">73.65%</text>
+  <circle cx="348" cy="781.5" r="4" fill="#FFAF91"/>
+  <text x="365" y="786" fill="#CEE3E4" font-size="12" class="mono">LINKED</text>
+  <rect x="460" y="775" width="545" height="13" rx="6.5" fill="#28434C"/>
+  <rect x="460" y="775" width="189.58" height="13" rx="6.5" fill="url(#linked)"/>
+  <rect x="460" y="775" width="545" height="13" fill="url(#ticks)"/>
+  <path d="M649.58 772v19" stroke="#FFAF91" stroke-width="2" opacity=".9"/>
+  <text x="1135" y="787" text-anchor="end" fill="#FFAF91" font-size="17" class="mono">34.79%</text>
+  <text x="51" y="855" fill="#A5C3C4" font-size="12" class="sans">Fuzzy is approximate similarity; exact and linked are shares of code bytes.</text>
+  <text x="1149" y="855" text-anchor="end" fill="#8FAFB2" font-size="11" class="mono">2026-09-29  ·  3370b47b  ·  CONCEPT V1</text>
+</svg>
