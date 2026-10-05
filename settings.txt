@@ -13,7 +13,7 @@ texture_packs = on
 widescreen = on
 # With widescreen, where the gameplay HUD goes: centre (with the menus), or
 # edges (counters to the left edge, the water gauge to the right one).
-# widescreen_hud = centre
+widescreen_hud = edges
 
 # Frame rate during gameplay: 30 (the game's own) or 60. Logos, menus and
 # movies stay at 30. 60 draws twice as many frames, so it needs a GPU.
@@ -23,7 +23,7 @@ frame_rate = 60
 # mod = none
 
 # Internal resolution: 1 is the GameCube's 640x528, 2 twice that, and so on.
-# resolution = 1
+resolution = 2
 # Window size, in multiples of 640x480.
 # window_scale = 1
 # Wait for the display's refresh when presenting.
@@ -36,3 +36,9 @@ frame_rate = 60
 
 # save_dir = /path/to/memory/card/folder
 # disc_image = /path/to/GMSE01.iso
+
+# Minecraft crossover: Steve, tools, crafting, grid building and persistent chests.
+minecraft = on
+
+# Clean the plaza monument and remove the plaza darkness overlay.
+clean_shine_gate = on

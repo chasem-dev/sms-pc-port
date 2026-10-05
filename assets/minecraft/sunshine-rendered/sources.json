@@ -1,0 +1,25 @@
+{
+  "source": "Native J3D render of original GMSE01 pickup models with shared nozzleItem.bmt; isometric yaw 2.35619449, pitch 0.61547971 radians",
+  "material_sha256": "62506b187b939f52917d09975c65cbb28698cefc44a979f5e71e27810e356a26",
+  "renderer": "src/minecraft/nozzle_preview.cpp",
+  "assets": [
+    {
+      "path": "sunshine-rendered/hover-nozzle.png",
+      "sha256": "ff00819bad9c3459e27de3a1f89bfa5c84c5c37f94df7a06f79bbd58adc465b9",
+      "model": "normal_nozzle_item.bmd",
+      "model_sha256": "3b632fcfd95b40393f7d2053a137a68e786ca182f23c7279a133dbc36963207a"
+    },
+    {
+      "path": "sunshine-rendered/rocket-nozzle.png",
+      "sha256": "589edabfb722f7a902dc34c7ad02752b2dc677903a0266aa0f4ab135704e87da",
+      "model": "rocket_nozzle_item.bmd",
+      "model_sha256": "2507195159405c3a8f34bee2fc63d6f092fd058feaca22fcb610373b6c51c5a8"
+    },
+    {
+      "path": "sunshine-rendered/turbo-nozzle.png",
+      "sha256": "3ca1f6b8c1e3c24f5422e4915987c5cad742fd1729f9afb7f8fe9e8063db842e",
+      "model": "back_nozzle_item.bmd",
+      "model_sha256": "394e03cef165b5d6292d4b26a1b31d17021c31fedb3d6d7d04c051924e90ab73"
+    }
+  ]
+}

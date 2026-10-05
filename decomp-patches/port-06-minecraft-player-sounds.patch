@@ -1,0 +1,67 @@
+Reason: port: Minecraft-only original hurt samples on health loss, suppress native damage voices and goo slide sounds; preserve native sound paths when disabled
+--- a/src/Player/MarioCollision.cpp
++++ b/src/Player/MarioCollision.cpp
+@@ -1,3 +1,4 @@
++#include "minecraft/minecraft.h"
+ #include <Player/Mario.hpp>
+ 
+ #include <M3DUtil/M3UModelMario.hpp>
+@@ -70,6 +71,7 @@
+ 		return;
+ 	}
+ 
++	sms_minecraft_damage(this, hp);
+ 	mHealth -= hp;
+ 	if (0 >= getHealth()) {
+ 		mHealth = 0;
+--- a/src/MSound/MSound.cpp
++++ b/src/MSound/MSound.cpp
+@@ -1,3 +1,5 @@
++#include "minecraft/minecraft.h"
++#include "minecraft/sound.h"
+ #include <MSound/MSound.hpp>
+ #include <string.h>
+ #include <MSound/MSRandVol.hpp>
+@@ -965,6 +967,8 @@
+ //                                         nested fork-in-binder is +8)
+ u32 MSound::startMarioVoice(u32 param_1, s16 param_2, u8 param_3)
+ {
++	if (sms_minecraft_enabled() && param_3 == 0 && minecraft::replacedDamageVoice(param_1))
++		return -1;
+ 	if (((param_3 & 0x1) ? true : false) == 1)
+ 		return 0;
+ 
+--- a/src/MSound/MSoundSE.cpp
++++ b/src/MSound/MSoundSE.cpp
+@@ -1,3 +1,5 @@
++#include "minecraft/minecraft.h"
++#include "minecraft/sound.h"
+ #include <MSound/MSoundSE.hpp>
+ #include <MSound/MSound.hpp>
+ #include <MSound/MSHandle.hpp>
+@@ -654,6 +656,8 @@
+                                          JAIActor* actor, u32 fade,
+                                          u8 camera_idx)
+ {
++	if (sms_minecraft_enabled() && minecraft::mutedNativeEffect(id))
++		return nullptr;
+ 	u32 uVar2 = MSound::getBstSwitch(id);
+ 	if (actor != (JAIActor*)0xffffffff) {
+ 		switch (MSGMSound->getUnkCD()) {
+--- a/src/Player/MarioRun.cpp
++++ b/src/Player/MarioRun.cpp
+@@ -1,3 +1,4 @@
++#include "minecraft/minecraft.h"
+ #include <Player/Mario.hpp>
+ #include <Player/WaterGun.hpp>
+ #include <Player/NozzleTrigger.hpp>
+@@ -1387,7 +1388,8 @@
+ 	} else {
+ 		setAnimation(ANIM_RUN2,
+ 		             0.5f * mIntendedMag * mDirtyParams.mSlipAnmSpeed.get());
+-		startVoiceIfNoVoice(MSD_SE_MV28_SPRISE_SMALL_01);
++		if (!sms_minecraft_enabled())
++			startVoiceIfNoVoice(MSD_SE_MV28_SPRISE_SMALL_01);
+ 		SMSGetMSound()->startSoundActor(MSD_SE_MA_SLIP_POLLUT, &mPosition);
+ 	}
+ 

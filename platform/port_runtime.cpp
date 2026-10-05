@@ -414,6 +414,8 @@ static const struct {
 	{ "hd_cutscenes", "SMS_HD_CUTSCENES" }, // follows HD textures; 0 disables
 	{ "widescreen", "SMS_WIDESCREEN" },
 	{ "widescreen_hud", "SMS_WIDESCREEN_HUD" }, // centre or edges
+	{ "clean_shine_gate", "SMS_CLEAN_SHINE_GATE" },
+	{ "minecraft", "SMS_MINECRAFT" },          // Steve, hotbar and plaza chopping
 	{ "frame_rate", "SMS_FRAME_RATE" },         // 30 or 60
 	{ "mod", "SMS_MOD" },
 	{ "resolution", "SMS_GX_SCALE" },

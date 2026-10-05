@@ -1,0 +1,33 @@
+Reason: port: opt-in clean Shine Gate and bright plaza overlay without changing collected Shines or card progression
+--- a/src/MoveBG/MapObjDolpic.cpp
++++ b/src/MoveBG/MapObjDolpic.cpp
+@@ -1,3 +1,4 @@
++#include "plaza_hacks.h"
+ #include <MoveBG/MapObjDolpic.hpp>
+ #include <MoveBG/ItemManager.hpp>
+ #include <Player/MarioAccess.hpp>
+@@ -50,7 +51,7 @@
+ 	unk138.g = 0xFF;
+ 	unk138.b = 0xFF;
+ 
+-	if (TFlagManager::getInstance()->getFlag(0x10063) != 0) {
++	if (sms_force_clean_plaza() || TFlagManager::getInstance()->getFlag(0x10063) != 0) {
+ 		unk138.a = 0;
+ 		unk13C   = 0;
+ 		unk149   = 1;
+--- a/src/GC2D/SunGlass.cpp
++++ b/src/GC2D/SunGlass.cpp
+@@ -1,3 +1,4 @@
++#include "plaza_hacks.h"
+ #include <GC2D/SunGlass.hpp>
+ #include <Camera/SunMgr.hpp>
+ #include <JSystem/JParticle/JPAEmitterManager.hpp>
+@@ -117,6 +118,8 @@
+ // it is left out; see docs/catalog/frame-gaps.md "The dead low region".
+ u8 TSunGlass::getShineAlpha()
+ {
++	if (sms_force_clean_plaza() && SMSGetMarDirector()->getCurrentMap() == 1)
++		return 0;
+ 	u8 alpha = 0;
+ 	if (SMSGetMarDirector()->getCurrentMap() == 1)
+ 		alpha = (u8)((f32)(unk1E - unk1F)

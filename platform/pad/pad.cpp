@@ -8,6 +8,7 @@
 // SDL headers or library: the 32-bit build works without i386 SDL packages.
 #include "port_compat.h"
 #include "port_platform.h"
+#include "minecraft/minecraft.h"
 #include <dolphin/pad.h>
 #include <string.h>
 #include <strings.h>
@@ -172,6 +173,16 @@ void parse_bindings(const char* text, const char* source)
 void on_event(const union SDL_Event* ev)
 {
 	u32 type = *(const u32*)ev;
+	// Releases always clear held state, even while a container owns input.
+	if (type == sdl::KEYUP) {
+		int code = ((const sdl::KeyboardEvent*)ev)->scancode;
+		if (code >= 0 && code < 512) g_key[code] = false;
+	}
+	if (type == sdl::CBUTTONUP) {
+		int button = ((const sdl::ControllerButtonEvent*)ev)->button;
+		if (button < 21) g_cbtn[button] = false;
+	}
+	if (sms_minecraft_event(ev)) return;
 	switch (type) {
 	case sdl::KEYDOWN:
 	case sdl::KEYUP: {
@@ -255,7 +266,7 @@ void init()
 // control's first bound key is pushed with SDL_PushEvent. Without SDL the key
 // state is set directly.
 struct AutoPress {
-	int control;
+	int control, scancode, wheel, button, mx, my;
 	u32 at, until;
 	bool down, done;
 };
@@ -268,7 +279,7 @@ void autopress_init()
 	const char* e = getenv("SMS_AUTOPRESS");
 	if (!e || !*e)
 		return;
-	char buf[1024];
+	char buf[8192];
 	strncpy(buf, e, sizeof buf - 1);
 	buf[sizeof buf - 1] = 0;
 	for (char* tok = strtok(buf, ","); tok; tok = strtok(NULL, ",")) {
@@ -284,11 +295,18 @@ void autopress_init()
 		for (int i = 0; i < C_COUNT; i++)
 			if (strcasecmp(kControlNames[i], tok) == 0)
 				c = i;
-		if (c < 0 || g_nbind[c] == 0) {
+		int scancode = -1, wheel = 0, button = 0, mx = 0, my = 0;
+		if (sscanf(tok, "MOUSE_MOVE_%d_%d", &mx, &my) == 2) button = -1;
+		if (sscanf(tok, "MOUSE_LEFT_%d_%d", &mx, &my) == 2) button = 1;
+		if (sscanf(tok, "MOUSE_RIGHT_%d_%d", &mx, &my) == 2) button = 3;
+		if (strncasecmp(tok, "KEY_", 4) == 0) scancode = key_code(tok + 4);
+		if (strcasecmp(tok, "WHEEL_UP") == 0) wheel = 1;
+		if (strcasecmp(tok, "WHEEL_DOWN") == 0) wheel = -1;
+		if ((c < 0 || g_nbind[c] == 0) && scancode < 0 && !wheel && !button) {
 			port_log("[pad] SMS_AUTOPRESS: unknown or unbound control '%s'\n", tok);
 			continue;
 		}
-		AutoPress a = { c, (u32)atoi(at + 1), 0, false, false };
+		AutoPress a = { c, scancode, wheel, button, mx, my, (u32)atoi(at + 1), 0, false, false };
 		a.until     = a.at + hold;
 		g_auto.push_back(a);
 	}
@@ -301,19 +319,32 @@ void autopress_init()
 
 void send_key(int scancode, bool down)
 {
-	if (g_push) {
-		union {
-			sdl::KeyboardEvent k;
-			u8 raw[56];
-		} ev;
-		memset(&ev, 0, sizeof ev);
-		ev.k.type     = down ? sdl::KEYDOWN : sdl::KEYUP;
-		ev.k.state    = down ? 1 : 0;
-		ev.k.scancode = scancode;
-		if (g_push(&ev) >= 0)
-			return;
-	}
-	g_key[scancode] = down;
+	union { sdl::KeyboardEvent k; u8 raw[56]; } ev;
+	memset(&ev, 0, sizeof ev);
+	ev.k.type = down ? sdl::KEYDOWN : sdl::KEYUP;
+	ev.k.state = down ? 1 : 0;
+	ev.k.scancode = scancode;
+	if (g_push && g_push(&ev) >= 0) return;
+	// Use the live event route in headless tests too, including mod controls.
+	on_event((const union SDL_Event*)&ev);
+}
+void send_mouse(int button,int x,int y,bool down) {
+    u32 ev[14] = {};ev[0]=down?0x401:0x402;ev[4]=button|((down?1u:0u)<<8);ev[5]=x;ev[6]=y;
+    if(g_push&&g_push(ev)>=0)return;
+    on_event((const union SDL_Event*)ev);
+}
+void send_pointer(int x,int y) {
+    uint32_t ev[14] = {};ev[0]=0x400;ev[5]=x;ev[6]=y;
+    if(g_push&&g_push(ev)>=0)return;
+    on_event((const union SDL_Event*)ev);
+}
+void send_wheel(int delta)
+{
+	u32 ev[14] = {};
+	ev[0] = 0x403; // SDL_MOUSEWHEEL
+	ev[5] = delta;
+	if (g_push && g_push(ev) >= 0) return;
+	on_event((const union SDL_Event*)ev);
 }
 
 } // namespace
@@ -326,11 +357,22 @@ extern "C" void port_pad_autopress_field(u32 field)
 			continue;
 		if (!a.down && field >= a.at) {
 			a.down = true;
-			port_log("[pad] autopress %s down at field %u\n", kControlNames[a.control], field);
-			send_key(g_bind[a.control][0], true);
+			port_log("[pad] autopress %s down at field %u\n",
+			         a.control >= 0 ? kControlNames[a.control] : a.wheel ? "mouse wheel" : "raw key", field);
+			if (a.button<0) send_pointer(a.mx,a.my);
+			else if (a.button) {
+                send_mouse(a.button,a.mx,a.my,true);
+                // A zero-length scripted click shares one event pump, just
+                // like a physical press/release between gameplay updates.
+                if (a.until<=field) {send_mouse(a.button,a.mx,a.my,false);a.done=true;}
+            }
+			else if (a.wheel) send_wheel(a.wheel);
+			else send_key(a.scancode >= 0 ? a.scancode : g_bind[a.control][0], true);
 		} else if (a.down && field >= a.until) {
 			a.done = true;
-			send_key(g_bind[a.control][0], false);
+			if (a.button<0) continue;
+			else if (a.button) send_mouse(a.button,a.mx,a.my,false);
+			else if (!a.wheel) send_key(a.scancode >= 0 ? a.scancode : g_bind[a.control][0], false);
 		}
 	}
 }
@@ -369,6 +411,7 @@ extern "C" u32 PADRead(PADStatus* status)
 		status[i].err = i == 0 ? PAD_ERR_NONE : PAD_ERR_NO_CONTROLLER;
 	}
 	PADStatus& s = status[0];
+	if (sms_minecraft_menu_open()) return PAD_CHAN0_BIT;
 	u16 b        = 0;
 	static const struct {
 		int control;

@@ -109,6 +109,10 @@ On Linux this is usually the 32-bit build without the GPU driver's 32-bit librar
 
 ## Controls
 
+The optional [Minecraft crossover](docs/MINECRAFT.md) replaces Mario with Steve, retains FLUDD and the third-person camera, and adds tools, a clickable inventory, crafting, grid placement, doors and persistent chests. Swing the diamond sword to attack nearby enemies with their native stomp reactions. Chop plaza palms for logs, craft planks and a table, then use the table to craft doors and chests.
+Use `./run-minecraft.sh`; select items with the mouse wheel or 1–9, swing with G or left click, open inventory with Tab, spray FLUDD with E, and place or interact with a table, chest or door using right click. Shift + right click places against an interactable block.
+The separate `clean_shine_gate = on` setting cleans the plaza monument and removes its darkness overlay without adding collected Shines. Set `SMS_CLEAN_SHINE_GATE=0` to temporarily disable it.
+
 Controller 1 reads the keyboard and any game controller SDL recognises (A/B/X/Y, Start, right shoulder = Z, triggers = L/R, sticks, d-pad).
 Keyboard defaults:
 

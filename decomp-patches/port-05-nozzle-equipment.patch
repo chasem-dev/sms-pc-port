@@ -1,0 +1,41 @@
+Reason: port: collect native nozzle drops into Minecraft inventory and keep the equipped chest attachment as the native secondary nozzle; original port behavior retained when disabled
+--- a/src/MoveBG/Item.cpp
++++ b/src/MoveBG/Item.cpp
+@@ -1,3 +1,4 @@
++#include "minecraft/minecraft.h"
+ #include <MoveBG/Item.hpp>
+ #include <MoveBG/ItemManager.hpp>
+ #include <Map/MapMirror.hpp>
+@@ -1288,6 +1289,7 @@
+ 
+ void TItemNozzle::touchPlayer(THitActor* param_1)
+ {
++	if (sms_minecraft_pickup_nozzle(this, param_1)) return;
+ 	if (isState(STATE_HOLDING))
+ 		return;
+ 
+@@ -1321,6 +1323,8 @@
+ 
+ BOOL TItemNozzle::receiveMessage(THitActor* sender, u32 message)
+ {
++	if ((message == HIT_MESSAGE_TAKE || message == HIT_MESSAGE_UNKB)
++	    && sms_minecraft_pickup_nozzle(this, sender)) return FALSE;
+ 	if (message == HIT_MESSAGE_TAKE) {
+ 		hold((TTakeActor*)sender);
+ 		return TRUE;
+--- a/src/Player/WaterGun.cpp
++++ b/src/Player/WaterGun.cpp
+@@ -1,3 +1,4 @@
++#include "minecraft/minecraft.h"
+ #include <Player/WaterGun.hpp>
+ #include <Player/NozzleTrigger.hpp>
+ #include <Player/NozzleBase.hpp>
+@@ -2060,6 +2061,8 @@
+ 
+ void TWaterGun::changeBackup()
+ {
++	int equipped = sms_minecraft_locked_nozzle(this);
++	if (equipped >= 0) mSecondNozzle = equipped;
+ 	// TODO: Missing stack space
+ 	// volatile u32 unused2[5];
+ 	if (WaterGunSwitchToSecondNozzleProgress(this) == 0.0f) {

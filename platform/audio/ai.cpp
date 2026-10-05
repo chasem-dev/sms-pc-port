@@ -20,6 +20,8 @@
 // SMS_NO_AUDIO (an empty sound configuration) leaves the DMA engine idle.
 // Pairs are (bus 2, bus 1) = (right, left) in DMA order; they are swapped for
 // SDL (SMS_AUDIO_SWAP=0 keeps DMA order).
+// Optional Minecraft one-shots are added after channel conversion, before
+// either the WAV recorder or SDL FIFO receives these samples.
 #include "port_compat.h"
 #include "port_os.h"
 #include "port_platform.h"
@@ -33,6 +35,7 @@
 #include <pthread.h>
 #include <time.h>
 #include <vector>
+#include "minecraft/sound.h"
 
 extern "C" int port_audio_dsp_frame_pending(void) __attribute__((weak));
 extern "C" int GXPC_GetSpeed(void) __attribute__((weak));
@@ -75,6 +78,7 @@ struct Ai {
 	// Output FIFO of stereo frames (L, R after swap).
 	std::mutex mu;
 	std::vector<int16_t> fifo;
+	std::vector<int16_t> mixed;
 	size_t head, count;
 	bool sdl;
 	s16 lastL, lastR;
@@ -240,6 +244,7 @@ void init_output()
 	e             = getenv("SMS_AUDIO_SWAP");
 	g.swap        = !(e && strcmp(e, "0") == 0);
 	g.fifo.assign(32768 * 2, 0);
+	g.mixed.reserve(32768 * 2);
 	g.head = g.count = 0;
 	if (!g.enabled) {
 		port_log("[audio] SMS_NO_AUDIO: AI DMA idle (no mixing, no output)\n");
@@ -281,15 +286,19 @@ void dma_block()
 	const int16_t* src = (const int16_t*)(uintptr_t)g.latchedStart;
 	size_t frames      = g.latchedLen / 4;
 	if (src && frames) {
-		if (g.wav) {
-			if (g.swap) {
-				for (size_t i = 0; i < frames; i++) {
-					int16_t lr[2] = { src[i * 2 + 1], src[i * 2] };
-					fwrite(lr, 2, 2, g.wav);
-				}
-			} else {
-				fwrite(src, 4, frames, g.wav);
+		// Convert to host L/R once, then mix crossover effects into the same
+		// samples sent to both recordings and the existing SDL device.
+		if (g.output) {
+			g.mixed.resize(frames * 2);
+			for (size_t i = 0; i < frames; i++) {
+				g.mixed[i * 2] = g.swap ? src[i * 2 + 1] : src[i * 2];
+				g.mixed[i * 2 + 1] = g.swap ? src[i * 2] : src[i * 2 + 1];
 			}
+			sms_minecraft_mix_audio(g.mixed.data(), (unsigned)frames, kRate);
+			src = g.mixed.data();
+		}
+		if (g.wav) {
+			fwrite(src, 4, frames, g.wav);
 			g.wavBytes += (u32)frames * 4;
 			if ((++g.blocks & 63) == 0) {
 				wav_header(g.wav, g.wavBytes);
@@ -301,8 +310,8 @@ void dma_block()
 			size_t cap = fifo_cap();
 			for (size_t i = 0; i < frames && g.count < cap; i++) {
 				size_t p         = (g.head + g.count) % cap;
-				g.fifo[p * 2]     = g.swap ? src[i * 2 + 1] : src[i * 2];
-				g.fifo[p * 2 + 1] = g.swap ? src[i * 2] : src[i * 2 + 1];
+				g.fifo[p * 2]     = src[i * 2];
+				g.fifo[p * 2 + 1] = src[i * 2 + 1];
 				g.count++;
 			}
 		}

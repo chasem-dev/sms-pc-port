@@ -1,0 +1,60 @@
+{
+  "version": "Minecraft Java Edition 1.11.2",
+  "commit": "2cec0600dccf4188597e7a24f76cb74d381f18a7",
+  "toast_uv": [
+    96,
+    202,
+    160,
+    32
+  ],
+  "font": "original ASCII font",
+  "requested_table_title": "Benchmaking",
+  "original_table_title": "Benchmarking",
+  "assets": [
+    {
+      "path": "legacy-achievements/textures/gui/achievement/achievement_background.png",
+      "url": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/2cec0600dccf4188597e7a24f76cb74d381f18a7/assets/minecraft/textures/gui/achievement/achievement_background.png",
+      "sha256": "75622e37b55ca5a77ab1e666621963c3c8d46c2351667a8296b6ae59223e12ba"
+    },
+    {
+      "path": "legacy-achievements/textures/items/book_normal.png",
+      "url": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/2cec0600dccf4188597e7a24f76cb74d381f18a7/assets/minecraft/textures/items/book_normal.png",
+      "sha256": "591d7f49985a5686b2e4e7af55be952612085918ff3a96790c021756a086d4bc"
+    },
+    {
+      "path": "legacy-achievements/textures/blocks/log_oak.png",
+      "url": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/2cec0600dccf4188597e7a24f76cb74d381f18a7/assets/minecraft/textures/blocks/log_oak.png",
+      "sha256": "6f24bf4e31b5f91d63da2e1543c1beafe8086d6a594d82abd834148c62670c21"
+    },
+    {
+      "path": "legacy-achievements/textures/blocks/log_oak_top.png",
+      "url": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/2cec0600dccf4188597e7a24f76cb74d381f18a7/assets/minecraft/textures/blocks/log_oak_top.png",
+      "sha256": "cdf166ff5ebef87dcd9b8d7fc71f577aac63de2569946a94d6a70af62c6f3679"
+    },
+    {
+      "path": "legacy-achievements/textures/blocks/crafting_table_top.png",
+      "url": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/2cec0600dccf4188597e7a24f76cb74d381f18a7/assets/minecraft/textures/blocks/crafting_table_top.png",
+      "sha256": "a4b61543dd73e8c73fd821243bc303d1ac1f0f0f667888457f24831a12a566a9"
+    },
+    {
+      "path": "legacy-achievements/textures/blocks/crafting_table_front.png",
+      "url": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/2cec0600dccf4188597e7a24f76cb74d381f18a7/assets/minecraft/textures/blocks/crafting_table_front.png",
+      "sha256": "2d26be595d1984df716ecf84e6a70cdbf219aefdf7494414bb1e2866954b43db"
+    },
+    {
+      "path": "legacy-achievements/textures/blocks/crafting_table_side.png",
+      "url": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/2cec0600dccf4188597e7a24f76cb74d381f18a7/assets/minecraft/textures/blocks/crafting_table_side.png",
+      "sha256": "c7927efa4b6da42653dec91e691f903ab33383626fbbb6c6bb8619cc370f2fd1"
+    },
+    {
+      "path": "legacy-achievements/textures/font/ascii.png",
+      "url": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/2cec0600dccf4188597e7a24f76cb74d381f18a7/assets/minecraft/textures/font/ascii.png",
+      "sha256": "8d3320e77d2449bc2311390fd452736c046298854377addc940e56ce4e7dda2b"
+    },
+    {
+      "path": "legacy-achievements/lang/en_us.lang",
+      "url": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/2cec0600dccf4188597e7a24f76cb74d381f18a7/assets/minecraft/lang/en_us.lang",
+      "sha256": "23de0e6404fc38bd2ba00bb069ae866e5b71e2b0881006fe427e6ba7452e7c08"
+    }
+  ]
+}

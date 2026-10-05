@@ -316,6 +316,20 @@ void GXPC_Present(const void* xfb) {
 #endif
 }
 
+int sms_gx_mouse_to_hud(int x,int y,float* hx,float* hy) {
+#ifdef SMS_GX_HAVE_SDL2
+    if(s_mode!=MODE_WINDOW||!s_window)return 0;
+    int w,h;SDL_GetWindowSize(s_window,&w,&h);
+    float factor=GXPC_GetWidescreen(),aspect=4.f/3.f*factor;
+    int vw=w,vh=h;if(float(vw)>float(vh)*aspect)vw=int(vh*aspect+.5f);else vh=int(vw/aspect+.5f);
+    int ox=(w-vw)/2,oy=(h-vh)/2;
+    *hx=320+((float(x-ox)/vw)-.5f)*640*factor;
+    *hy=float(y-oy)*480/vh;return 1;
+#else
+    (void)x;(void)y;(void)hx;(void)hy;return 0;
+#endif
+}
+
 void sms_gx_set_event_callback(void (*cb)(const union SDL_Event*)) {
 #ifdef SMS_GX_HAVE_SDL2
     s_eventCb = cb;

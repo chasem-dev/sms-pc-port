@@ -223,7 +223,10 @@ add_library(sms_game STATIC ${SMS_DECOMP_CXX_SOURCES} ${SMS_DECOMP_C_SOURCES})
 # Host THP decoders (the decomp's SDK decoder, patched; platform/thp).
 include(${CMAKE_CURRENT_SOURCE_DIR}/platform/thp/thp.cmake)
 # The SDK's PADClamp (dead zone / octagon), built from the decomp as C.
-target_sources(sms_game PRIVATE ${SMS_DECOMP}/libs/dolphin/src/pad/Padclamp.c)
+target_sources(sms_game PRIVATE ${SMS_DECOMP}/libs/dolphin/src/pad/Padclamp.c
+  ${SMS_PORT_SRC}/minecraft/minecraft.cpp
+  ${SMS_PORT_SRC}/minecraft/nozzle_preview.cpp
+  ${SMS_PORT_SRC}/plaza_hacks.cpp)
 # port_include must stay ahead of the game headers: its dolphin/types.h
 # overrides the decomp's (LP64 integer widths, weak AT_ADDRESS globals).
 if(DEFINED SMS_CP932_ROOT)
@@ -238,6 +241,7 @@ if(TARGET sms_gx AND SMS_GX_OVERRIDE_INCLUDE_DIR)
   # GXVert.h vertex writers become functions implemented by sms_gx.
   target_include_directories(sms_game BEFORE PRIVATE ${SMS_GX_OVERRIDE_INCLUDE_DIR})
 endif()
+target_include_directories(sms_game PRIVATE ${SMS_PORT_SRC})
 target_compile_definitions(sms_game PRIVATE ${SMS_COMMON_DEFS})
 target_compile_options(sms_game PRIVATE ${SMS_GAME_FLAGS})
 

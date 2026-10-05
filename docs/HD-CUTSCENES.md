@@ -58,6 +58,65 @@ Use a drive with enough free space for large movie and intermediate frame files.
 
 ## Generate from your disc
 
+### Batch 6× AI previews
+
+On the configured Linux machine, run this command to start the remaining scenes in the background:
+
+```sh
+/home/netflix/sms-port/upscale-remaining-cutscenes.sh --background
+```
+
+It prints the process ID and progress log path. You can close the terminal after it starts.
+To see the list and check the tools and original files without processing, use `--plan` instead.
+To watch progress in the foreground, omit `--background`.
+The local configuration skips the already completed airplane intro (`openingA.thp`) and processes the other 20 movies, shortest first.
+Rerunning the same command reuses verified completed movies and valid intermediate AI frames.
+Only missing, damaged, or unfinished AI frames are processed again.
+Stop a foreground run with Ctrl+C, or stop a background run with `kill PROCESS_ID`; rerun the command to resume.
+One batch can run at a time in the configured work folder.
+
+Each scene receives a **2× AI pass followed by a 3× AI pass**, using `realesr-animevideov3`.
+The video pipeline adds padding when needed and preserves the AI-generated pixels without an interpolation resize.
+Wide 640×320 scenes become 3840×1920 footage on a 3840×2160 canvas.
+Taller 640×448 scenes remain 3840×2688 so their framing is preserved.
+The 128×144 portal animation becomes a native 768×864 preview.
+Frame rate and original dialogue are retained; silent animations stay silent.
+Every movie is fully decoded and checked for its original frame count before it is marked complete or copied to FileBrowser.
+Temporary frame sequences are cleared after each successful movie to limit disk usage; interrupted scenes retain their work for resuming.
+The batch stops if either working drive has less than 3 GiB free.
+
+Local outputs go to `/mnt/1tbhdd2/sms-hd-cutscenes-v1/6x-ai-previews/`.
+Finished movies are also copied to **Render-Previews** in FileBrowser, named `sunshine-SCENE-6x-ai-v1.mp4`.
+The source disc, model files, generated movies, progress logs, and machine configuration remain outside Git.
+These are MP4 previews. In-game playback of 6× movies needs additional THP playback support.
+The intro took about 36 minutes on the GTX 1060 / i5-6600K; allow roughly **9–10 hours** for the remaining set, an estimate rather than a full-set measurement.
+
+The helper reads `build/media/6x-ai-config.json`, or the path in `SMS_AI_CUTSCENES_CONFIG`.
+To configure another Linux checkout, create that JSON file with these fields, pointing at the tools and originals described below:
+
+```json
+{
+  "manifest": "/path/to/cutscene-work/manifest.json",
+  "originals": "/path/to/cutscene-work/originals",
+  "output": "/path/to/local/6x-ai-previews",
+  "work": "/path/to/large-drive/6x-ai-work",
+  "ffmpeg": "/path/to/ffmpeg",
+  "realesrgan": "/path/to/realesrgan-ncnn-vulkan",
+  "models": "/path/to/models",
+  "gpu": "0",
+  "threads": 4,
+  "skip": ["openingA.thp"],
+  "minimum_free_gb": 3,
+  "keep_frames": false
+}
+```
+
+Add `"publish": "/path/to/FileBrowser/Render-Previews"` to copy verified movies there.
+The model folder must contain both the `.bin` and `.param` files for `realesr-animevideov3-x2` and `realesr-animevideov3-x3`.
+Use `--only SCENE.thp` to select one movie from the manifest.
+
+### Single movie previews and THP replacements
+
 Install Python 3 and FFmpeg.
 For AI processing, also obtain the executable and model files from the official [Real-ESRGAN project](https://github.com/xinntao/Real-ESRGAN) and [ncnn Vulkan releases](https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/releases).
 The release uses the ncnn executable from [v0.2.0](https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/releases/tag/v0.2.0), with the `realesr-animevideov3` models from the official [20220424 Ubuntu bundle](https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip), scale 3.

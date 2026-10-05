@@ -1,0 +1,191 @@
+Reason: port: optional Minecraft rendering, clickable inventory, crafting, grid world and persistent chests; custom ground support and detached palm collision only when enabled
+--- a/src/Player/MarioMain.cpp
++++ b/src/Player/MarioMain.cpp
+@@ -1,3 +1,4 @@
++#include "minecraft/minecraft.h"
+ #include <Player/Mario.hpp>
+ #include <Player/MarioCap.hpp>
+ #include <Player/WaterGun.hpp>
+@@ -154,6 +155,7 @@
+ 			moveParticle();
+ 		}
+ 
++		sms_minecraft_update(this);
+ 		thinkCube();
+ 		soundMovement();
+ 	}
+@@ -166,6 +168,7 @@
+ 		if (MarioMainGetFludd(this) != nullptr) {
+ 			MarioMainGetFludd(this)->setBaseTRMtx(
+ 			    getM3UModel()->getModel()->getAnmMtx(mJointIdChest));
++			sms_minecraft_attach_fludd(this);
+ 			MarioMainGetFludd(this)->perform(CUE_CALC_ANIM, graphics);
+ 		}
+ 
+@@ -242,6 +245,7 @@
+ 			j3dSys.setUnk4C(3);
+ 			unk394->draw();
+ 			mYoshi->unkA8->draw();
++			sms_minecraft_draw(this, graphics);
+ 		}
+ 	}
+ 
+--- a/src/Player/MarioDraw.cpp
++++ b/src/Player/MarioDraw.cpp
+@@ -1,3 +1,4 @@
++#include "minecraft/minecraft.h"
+ #include <Player/Mario.hpp>
+ #include <Player/MarioCap.hpp>
+ #include <Player/WaterGun.hpp>
+@@ -2186,6 +2187,7 @@
+ // finalDrawInitialize).
+ void TMario::entryModels(JDrama::TGraphics* graphics)
+ {
++	if (sms_minecraft_enabled()) return;
+ 	mModel->perform(CUE_ENTRY, graphics);
+ 	if (mHandModels[0][0] != nullptr) {
+ 		mHandModels[0][0]->entry();
+--- a/src/Player/MarioInit.cpp
++++ b/src/Player/MarioInit.cpp
+@@ -1,3 +1,4 @@
++#include "minecraft/minecraft.h"
+ #include <Player/Mario.hpp>
+ #include <Player/MarioAccess.hpp>
+ #include <Player/MarioCap.hpp>
+@@ -319,6 +320,7 @@
+ {
+ 	TTakeActor::load(stream);
+ 	mFaceAngle.x = 0;
++	sms_minecraft_reset_scene();
+ 	mFaceAngle.y = DEG2SHORTANGLE(mRotation.y);
+ 	mFaceAngle.z = 0;
+ 
+--- a/src/MoveBG/MapObjTree.cpp
++++ b/src/MoveBG/MapObjTree.cpp
+@@ -1,3 +1,4 @@
++#include "minecraft/minecraft.h"
+ #include <MoveBG/MapObjTree.hpp>
+ 
+ #include <stdio.h>
+@@ -107,6 +108,8 @@
+ 
+ void TMapObjTree::perform(u32 cue, JDrama::TGraphics* graphics)
+ {
++	sms_minecraft_register_tree(this);
++	if (sms_minecraft_tree_felled(this)) return;
+ 	if (!mFreezeLeaves && (cue & CUE_MOVE)) {
+ 		int count = 0;
+ 		for (int i = 0; i < mLeafNum; ++i)
+--- a/src/GC2D/GCConsole2.cpp
++++ b/src/GC2D/GCConsole2.cpp
+@@ -1,3 +1,4 @@
++#include "minecraft/minecraft.h"
+ #include <GC2D/GCConsole2.hpp>
+ #include <GC2D/BoundPane.hpp>
+ #include <GC2D/BlendPane.hpp>
+@@ -4603,14 +4604,32 @@
+ 	J2DOrthoGraph graph(graphics->getViewport());
+ 	graph.setup2D();
+ 
+-	if (console->unk46 || console->unk45)
++	if (!sms_minecraft_enabled() && (console->unk46 || console->unk45))
+ 		console->drawWaterBack();
+ 
+ 	graph.setup2D();
+ 
++	// The crossover supplies health, water and character UI; keep mission UI.
++	bool mc = sms_minecraft_enabled();
++	bool life = console->unk1C4->getPane()->isVisible();
++	bool mario = console->unk3A8->getPane()->isVisible();
++	bool water = console->unk2F8->getPane()->isVisible();
++	bool balloon = console->unk520->getPane()->isVisible();
++	if (mc) {
++		console->unk1C4->getPane()->hide();
++		console->unk3A8->getPane()->hide();
++		console->unk2F8->getPane()->hide();
++		console->unk520->getPane()->hide();
++	}
+ 	console->unkB0->draw(0, 0, &graph);
++	if (mc) {
++		if (life) console->unk1C4->getPane()->show();
++		if (mario) console->unk3A8->getPane()->show();
++		if (water) console->unk2F8->getPane()->show();
++		if (balloon) console->unk520->getPane()->show();
++	}
+ 
+-	if (console->unk44 && !console->unk43 && !console->unk42
++	if (!mc && console->unk44 && !console->unk43 && !console->unk42
+ 	    && console->unk520->getPane()->isVisible()) {
+ 		graphics->setScissor(JDrama::TRect(console->unk544.x1,
+ 		                                   console->unk544.y1,
+@@ -4653,7 +4672,7 @@
+ 			console->drawJuice(graph, 0);
+ 			break;
+ 		}
+-	} else if (console->unk2F8->getPane()->isVisible()) {
++	} else if (!mc && console->unk2F8->getPane()->isVisible()) {
+ 		console->drawWater(graph);
+ 	}
+ }
+@@ -4686,6 +4705,8 @@
+ 	if (flags & 2)
+ 		updateBalloon(this);
+ 
+-	if (flags & 8)
++	if (flags & 8) {
+ 		drawConsole(this, graphics);
++		sms_minecraft_hud(graphics);
++	}
+ }
+--- a/src/Map/MapCheck.cpp
++++ b/src/Map/MapCheck.cpp
+@@ -1,3 +1,4 @@
++#include "minecraft/minecraft.h"
+ #include <Map/MapCollisionData.hpp>
+ #include <Map/MapCollisionPlane.hpp>
+ #include <Map/MapData.hpp>
+@@ -136,6 +137,7 @@
+ 	while (param_1) {
+ 		r31 = param_1->unk8;
+ 		param_1           = param_1->mNext;
++		if (sms_minecraft_enabled() && r31->isIllegalData()) continue;
+ 
+ 		if (r31->mMinY > f27)
+ 			continue;
+@@ -195,6 +197,7 @@
+ 	while (head) {
+ 		const TBGCheckData* data = head->unk8;
+ 		head                     = head->mNext;
++		if (sms_minecraft_enabled() && data->isIllegalData()) continue;
+ 
+ 		if (param_4 & 0x4 && data->isWaterThrough())
+ 			continue;
+@@ -273,6 +276,7 @@
+ 	while (head) {
+ 		const TBGCheckData* data = head->unk8;
+ 		head                     = head->getNext();
++		if (sms_minecraft_enabled() && data->isIllegalData()) continue;
+ 
+ 		if (data->mMinY > y)
+ 			continue;
+@@ -360,10 +364,10 @@
+ 
+ 	if (dVar5 > dVar6) {
+ 		*result = local_60;
+-		return dVar5;
++		return sms_minecraft_ground(x,y,z,dVar5,result);
+ 	} else {
+ 		*result = local_64;
+-		return dVar6;
++		return sms_minecraft_ground(x,y,z,dVar6,result);
+ 	}
+ }
+ 
+@@ -453,6 +457,7 @@
+ 		TBGCheckData* data = head->unk8;
+ 		head               = head->mNext;
+ 
++		if (sms_minecraft_enabled() && data->isIllegalData()) continue;
+ 		if (bgIntersectLine(data, start, end, front_only, hit_pos))
+ 			return data;
+ 	}

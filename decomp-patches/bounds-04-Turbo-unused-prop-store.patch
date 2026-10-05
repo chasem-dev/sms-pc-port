@@ -1,0 +1,20 @@
+Reason: PC bounds: retail Turbo control stores into the abandoned TNozzleTurbo past the shipped TNozzleTrigger; the unused write corrupts unrelated host allocations (observed FLUDD animation vtable). Keep the matching source and console build unchanged.
+--- a/src/Player/MarioMove.cpp
++++ b/src/Player/MarioMove.cpp
+@@ -1597,6 +1597,7 @@
+ 			offFlag(MARIO_FLAG_FLUDD_EMITTING);
+ 		}
+ 
++#ifndef TARGET_PC
+ 		if ((s32)getFludd()->getCurrentNozzleIndex() == TWaterGun::Turbo
+ 		    && ((getStatus() + 0xF3C00000) == 0x201
+ 		        || ((getStatus() + 0xFC000000) & 0xFFFFFFFF) == 0x440)) {
+@@ -1608,6 +1609,8 @@
+ 			    ->unk714
+ 			    = propRot;
+ 		}
++
++#endif // Retail writes beyond TNozzleTrigger into unrelated PC heap memory.
+ 	}
+ 
+ 	// mInput bit synthesis

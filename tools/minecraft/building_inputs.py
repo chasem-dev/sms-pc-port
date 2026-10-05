@@ -1,0 +1,17 @@
+# Logical 640x480 mouse coordinates in the headless live SDL event route.
+p=['START@1400','STICK_LEFT@2000','A@2400','STICK_LEFT@3100','A@3250','A@3450','A@3800']
+def key(name,frame,hold=8):p.append('KEY_%s@%d+%d'%(name,frame,hold))
+def click(x,y,frame,right=False):p.append('MOUSE_%s_%d_%d@%d+2'%('RIGHT' if right else 'LEFT',x,y,frame))
+key('TAB',4800);click(284,366,4820);click(356,118,4840);key('LSHIFT',4860,45);click(468,138,4880)
+click(284,366,4920)
+for t,xy in zip(range(4940,5020,20),[(356,118),(392,118),(356,154),(392,154)]):click(*xy,t,True)
+click(284,366,5020);click(468,138,5040);click(320,366,5060);key('TAB',5080);key('5',5100);click(320,240,5120,True);click(320,240,5140,True)
+click(284,366,5160)
+for t,xy in zip(range(5180,5300,20),[(220,116),(256,116),(220,152),(256,152),(220,188),(256,188)]):click(*xy,t,True)
+click(284,366,5300);click(408,152,5320);click(320,366,5340);click(284,366,5360)
+for t,xy in zip(range(5380,5540,20),[(220,116),(256,116),(292,116),(220,152),(292,152),(220,188),(256,188),(292,188)]):click(*xy,t,True)
+click(284,366,5540);click(408,152,5560);click(356,366,5580);key('TAB',5600);key('6',5620);click(320,240,5640,True);click(320,240,5660,True)
+click(284,366,5680,True);click(176,118,5700);click(248,366,5720);click(212,118,5740);key('TAB',5760);key('5',5780);click(320,240,5800,True);click(320,240,5820,True);click(320,240,5840,True)
+key('4',5860);key('LSHIFT',5870,30);click(320,240,5880,True);click(320,240,5920,True);key('TAB',5960);key('TAB',5990)
+key('SPACE',6140,4);key('TAB',6280)
+print(','.join(p))

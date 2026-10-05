@@ -1,0 +1,267 @@
+{
+  "edition": "Minecraft Java Edition",
+  "version": "1.20.1",
+  "asset_index": {
+    "id": "5",
+    "sha1": "3d1e8e9cad62f188270564f4bdfd3a79df9be65a",
+    "size": 413067,
+    "totalSize": 650617398,
+    "url": "https://piston-meta.mojang.com/v1/packages/3d1e8e9cad62f188270564f4bdfd3a79df9be65a/5.json"
+  },
+  "event_definitions": {
+    "path": "sounds.json",
+    "url": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/af628ec0e7977ec2f07c917d51413b4618a8cfcc/assets/minecraft/sounds.json",
+    "sha256": "52131d187d88128bde6dcd808768213543f01503fab3ed6a51b2002d5a4c279c"
+  },
+  "events": {
+    "block.wood.hit": {
+      "sounds": [
+        "step/wood1",
+        "step/wood2",
+        "step/wood3",
+        "step/wood4",
+        "step/wood5",
+        "step/wood6"
+      ],
+      "subtitle": "subtitles.block.generic.hit"
+    },
+    "block.wood.break": {
+      "sounds": [
+        "dig/wood1",
+        "dig/wood2",
+        "dig/wood3",
+        "dig/wood4"
+      ],
+      "subtitle": "subtitles.block.generic.break"
+    },
+    "block.wood.place": {
+      "sounds": [
+        "dig/wood1",
+        "dig/wood2",
+        "dig/wood3",
+        "dig/wood4"
+      ],
+      "subtitle": "subtitles.block.generic.place"
+    },
+    "block.chest.open": {
+      "sounds": [
+        "block/chest/open"
+      ],
+      "subtitle": "subtitles.block.chest.open"
+    },
+    "block.chest.close": {
+      "sounds": [
+        "block/chest/close1",
+        "block/chest/close2",
+        "block/chest/close3"
+      ],
+      "subtitle": "subtitles.block.chest.close"
+    },
+    "block.wooden_door.open": {
+      "sounds": [
+        {
+          "name": "block/wooden_door/open1",
+          "volume": 0.9
+        },
+        {
+          "name": "block/wooden_door/open2",
+          "volume": 0.9
+        }
+      ],
+      "subtitle": "subtitles.block.door.toggle"
+    },
+    "block.wooden_door.close": {
+      "sounds": [
+        {
+          "name": "block/wooden_door/close1",
+          "volume": 0.9
+        },
+        {
+          "name": "block/wooden_door/close2",
+          "volume": 0.9
+        },
+        {
+          "name": "block/wooden_door/close3",
+          "volume": 0.9
+        }
+      ],
+      "subtitle": "subtitles.block.door.toggle"
+    },
+    "entity.item.pickup": {
+      "sounds": [
+        "random/pop"
+      ],
+      "subtitle": "subtitles.entity.item.pickup"
+    },
+    "entity.player.hurt": {
+      "sounds": [
+        "damage/hit1",
+        "damage/hit2",
+        "damage/hit3"
+      ],
+      "subtitle": "subtitles.entity.player.hurt"
+    }
+  },
+  "assets": [
+    {
+      "path": "block/chest/close1.ogg",
+      "url": "https://resources.download.minecraft.net/ed/eddb25d126a93fd0dd26e0dd9ac1c0ef094b79f6",
+      "sha1": "eddb25d126a93fd0dd26e0dd9ac1c0ef094b79f6",
+      "sha256": "40f0b3212c9a8dc835eb368f284485b2f2569c4339d36fda2ca82d0c750cace2",
+      "size": 17135
+    },
+    {
+      "path": "block/chest/close2.ogg",
+      "url": "https://resources.download.minecraft.net/85/8524cf7e2b56d165a1ff6e3a219d3d8c406e90b3",
+      "sha1": "8524cf7e2b56d165a1ff6e3a219d3d8c406e90b3",
+      "sha256": "08c2e383401fa27515e6ea25a771ed0cd85de5652860547183d7841f6bc305dc",
+      "size": 18271
+    },
+    {
+      "path": "block/chest/close3.ogg",
+      "url": "https://resources.download.minecraft.net/19/19786806146a50a06d8dbd36a033aefbb8fefd8a",
+      "sha1": "19786806146a50a06d8dbd36a033aefbb8fefd8a",
+      "sha256": "b54ef7661015c416de57d8398d5a3e5c75a68d3ddf20db1f765c605e9c6ed207",
+      "size": 16175
+    },
+    {
+      "path": "block/chest/open.ogg",
+      "url": "https://resources.download.minecraft.net/f9/f993dbcc8cdde669020b9f988f091d997006ce8b",
+      "sha1": "f993dbcc8cdde669020b9f988f091d997006ce8b",
+      "sha256": "6b9b0c3672b4bb8413ea0371c28d79ebad41e49ea03850251b4e16f5cb533612",
+      "size": 8916
+    },
+    {
+      "path": "block/wooden_door/close1.ogg",
+      "url": "https://resources.download.minecraft.net/6e/6e0d43b064fb69f7b63e0704d99a38bb2ebc19e0",
+      "sha1": "6e0d43b064fb69f7b63e0704d99a38bb2ebc19e0",
+      "sha256": "d77a889b0881364f6705558b82b3cd70c30f64350ac58c32606633ca88854313",
+      "size": 6504
+    },
+    {
+      "path": "block/wooden_door/close2.ogg",
+      "url": "https://resources.download.minecraft.net/4c/4cf6992a99518dfac836228cffbbc7e8344d969b",
+      "sha1": "4cf6992a99518dfac836228cffbbc7e8344d969b",
+      "sha256": "25122bcbf8511498fa0608f54618f6f78383fa4a924f1376df81f0a5ea83d730",
+      "size": 11754
+    },
+    {
+      "path": "block/wooden_door/close3.ogg",
+      "url": "https://resources.download.minecraft.net/73/73a3bfcb37099c49ac22e6fa308ca14a6e4f8347",
+      "sha1": "73a3bfcb37099c49ac22e6fa308ca14a6e4f8347",
+      "sha256": "4a84b8d55149c234a863f56db413458351e7d4c2ccc8cddf7c2e8c8412a278f8",
+      "size": 12570
+    },
+    {
+      "path": "block/wooden_door/open1.ogg",
+      "url": "https://resources.download.minecraft.net/d2/d2ba0797ca24fcf15d105c88899089e4af5cb9f4",
+      "sha1": "d2ba0797ca24fcf15d105c88899089e4af5cb9f4",
+      "sha256": "0f6799c9b410bfd11a44d185cc617e47316d885d6615b0882297af995c62959d",
+      "size": 6820
+    },
+    {
+      "path": "block/wooden_door/open2.ogg",
+      "url": "https://resources.download.minecraft.net/21/21464f4cfb0163f9071d2a84d818bd5ac5b6eee6",
+      "sha1": "21464f4cfb0163f9071d2a84d818bd5ac5b6eee6",
+      "sha256": "d051a29e4469c1433744825b63185dbfb59d62b89151a38ab96bfd3aa5125432",
+      "size": 7472
+    },
+    {
+      "path": "dig/wood1.ogg",
+      "url": "https://resources.download.minecraft.net/9b/9bc2a84d0aa98113fc52609976fae8fc88ea6333",
+      "sha1": "9bc2a84d0aa98113fc52609976fae8fc88ea6333",
+      "sha256": "cb6071c83a7f19ee555e9d661dc9e564c77ad9fcf2d1a6848aab21bc3b1c0289",
+      "size": 6541
+    },
+    {
+      "path": "dig/wood2.ogg",
+      "url": "https://resources.download.minecraft.net/98/98102533e6085617a2962157b4f3658f59aea018",
+      "sha1": "98102533e6085617a2962157b4f3658f59aea018",
+      "sha256": "59edca84840951f2d6f0ad9ff5fd439a6dc916b2cc50164569b94ee107b4bc3f",
+      "size": 6294
+    },
+    {
+      "path": "dig/wood3.ogg",
+      "url": "https://resources.download.minecraft.net/45/45b2aef7b5049e81b39b58f8d631563fadcc778b",
+      "sha1": "45b2aef7b5049e81b39b58f8d631563fadcc778b",
+      "sha256": "cf6be2314c08ea3fd311bdaebe14d0c73ca189bbbda09f96d26a3dea7e711cf6",
+      "size": 6604
+    },
+    {
+      "path": "dig/wood4.ogg",
+      "url": "https://resources.download.minecraft.net/dc/dc66978374a46ab2b87db6472804185824868095",
+      "sha1": "dc66978374a46ab2b87db6472804185824868095",
+      "sha256": "de868b3119b03ad42cbe502805e895a5fd8565f059f991f542b4ee68d6556bfe",
+      "size": 6817
+    },
+    {
+      "path": "step/wood1.ogg",
+      "url": "https://resources.download.minecraft.net/0a/0a417ba6a01b0552e7d15f5ef175ee9037405e58",
+      "sha1": "0a417ba6a01b0552e7d15f5ef175ee9037405e58",
+      "sha256": "9f6425b71baa08434a5ce20320b0cd3e4fb0648ca16a7c18a59f487e54a358fc",
+      "size": 17045
+    },
+    {
+      "path": "step/wood2.ogg",
+      "url": "https://resources.download.minecraft.net/de/de199b6c6f0f5ce2f653273d43f57979ee31c395",
+      "sha1": "de199b6c6f0f5ce2f653273d43f57979ee31c395",
+      "sha256": "5da109e455b3be43651167942c4d46a779e17a0500051f945b1daf8d1121380e",
+      "size": 18859
+    },
+    {
+      "path": "step/wood3.ogg",
+      "url": "https://resources.download.minecraft.net/20/20c0daaed4cc2a8b4dee028c8c85185e1322b003",
+      "sha1": "20c0daaed4cc2a8b4dee028c8c85185e1322b003",
+      "sha256": "dc6f1450bd37803208e5be17e9f00ab7c3438c37e0f51d13952ce5f94b192c30",
+      "size": 18392
+    },
+    {
+      "path": "step/wood4.ogg",
+      "url": "https://resources.download.minecraft.net/89/8989609f97122d2624e7db821e45e8da2352b025",
+      "sha1": "8989609f97122d2624e7db821e45e8da2352b025",
+      "sha256": "58375f561a2efaafb72bcfc371d62c5b9bb6fcd22449b412e7861fcc6e5a4b67",
+      "size": 19219
+    },
+    {
+      "path": "step/wood5.ogg",
+      "url": "https://resources.download.minecraft.net/3c/3c7e76b2eabe4f1199b94d308f1c763ccceac76c",
+      "sha1": "3c7e76b2eabe4f1199b94d308f1c763ccceac76c",
+      "sha256": "f950e9c5638398ea3119b9fe80b7a91d5e262099a54857b711396240ef23d417",
+      "size": 23537
+    },
+    {
+      "path": "step/wood6.ogg",
+      "url": "https://resources.download.minecraft.net/7f/7f9bcd1e3a182da70b32881a7fe92dc17d531824",
+      "sha1": "7f9bcd1e3a182da70b32881a7fe92dc17d531824",
+      "sha256": "38ad366819ad0533ff883b16fa17df64dbc1ed5e65f440a227bb0bb18782cde2",
+      "size": 19911
+    },
+    {
+      "path": "random/pop.ogg",
+      "url": "https://resources.download.minecraft.net/8f/8f45b5faf6dfae2065846d26612f7552b73640dd",
+      "sha1": "8f45b5faf6dfae2065846d26612f7552b73640dd",
+      "sha256": "5e3baf518a0104760dc06a2e0088b377433997b46511c1730db0e3ba6f2b0ca7"
+    },
+    {
+      "path": "damage/hit1.ogg",
+      "url": "https://resources.download.minecraft.net/87/8760ebb9d4b1fe9457ef272324ecd6b4329a593e",
+      "sha1": "8760ebb9d4b1fe9457ef272324ecd6b4329a593e",
+      "sha256": "5e190650c27cc38dce750ac7d5fb5044c3cf714bc116d0bdc3e9e93cdeffdc35",
+      "size": 6539
+    },
+    {
+      "path": "damage/hit2.ogg",
+      "url": "https://resources.download.minecraft.net/14/144867e8792415e2873293f06ecce85cd32bb4e8",
+      "sha1": "144867e8792415e2873293f06ecce85cd32bb4e8",
+      "sha256": "67ceec1f40e125adcfa44c2af4c66ca6f0278c6b8ac917c5a0f508bcc6af9091",
+      "size": 6227
+    },
+    {
+      "path": "damage/hit3.ogg",
+      "url": "https://resources.download.minecraft.net/c7/c73dcedde5031fcf242b08b3405f63098cd70641",
+      "sha1": "c73dcedde5031fcf242b08b3405f63098cd70641",
+      "sha256": "637b73c4218d190c0e405737f85b86ec5fae59ff0a211f5e7e2e005e887336e0",
+      "size": 7660
+    }
+  ]
+}

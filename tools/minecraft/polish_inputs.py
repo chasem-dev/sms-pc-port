@@ -1,0 +1,15 @@
+from record_demo import BOOT
+p=[BOOT]
+def key(name,f,d=8):p.append('KEY_%s@%d+%d'%(name,f,d))
+def click(x,y,f,right=False,d=2):p.append('MOUSE_%s_%d_%d@%d+%d'%('RIGHT' if right else 'LEFT',x,y,f,d))
+key('TAB',4800);key('TAB',4870)
+click(320,240,4910,d=30);click(320,240,4980,d=90)
+key('TAB',5120);click(284,366,5160);click(356,118,5180);key('LSHIFT',5200,35);click(468,138,5220)
+click(284,366,5260)
+for frame,xy in zip((5280,5300,5320,5340),((356,118),(392,118),(356,154),(392,154))):click(*xy,frame,True)
+click(284,366,5360);click(468,138,5380);click(320,366,5400);key('TAB',5460)
+key('5',5470);click(320,240,5480,True);click(320,240,5500,True);key('TAB',5580)
+click(320,240,5620,True);key('TAB',5700);key('2',5720)
+click(320,240,5730,d=10);click(320,240,5760,d=42)
+key('TAB',5910);click(250,360,5960,d=1);key('TAB',6010)
+print(','.join(p))
