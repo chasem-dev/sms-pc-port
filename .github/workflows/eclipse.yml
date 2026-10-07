@@ -1,12 +1,19 @@
 name: Eclipse build
 # Builds the 64-bit game with and without Super Mario Eclipse on each platform
 # and starts it far enough to see whether the mods' constructors were linked in
-# where platform/mods/modhooks.cpp finds them. No disc image is used.
+# where platform/mods/modhooks.cpp finds them. No disc image is used. It
+# builds with the toolsets SMS Launcher downloads for players
+# (chasem-dev/sms-launcher, src/build-tools.js), through tools/ci/launcher-tools.js.
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      launcher-ref:
+        description: sms-launcher branch, tag or commit to take the build tools from
+        type: string
+        default: main
 permissions:
   contents: read
 jobs:
@@ -16,54 +23,48 @@ jobs:
       matrix:
         eclipse: ['1', '0']
         os: [ubuntu-24.04, macos-15, windows-2025]
-        include:
-          - os: ubuntu-24.04
-            shell: bash
-          - os: macos-15
-            shell: bash
-          - os: windows-2025
-            shell: msys2 {0}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     defaults:
       run:
-        shell: ${{ matrix.shell }}
+        shell: node tools/ci/launcher-tools.js shell {0}
         working-directory: Eclipse CI with spaces/port
     name: ${{ matrix.os }}${{ matrix.eclipse == '1' && ' Eclipse' || ' Sunshine' }}
     env:
       SMS_ARCH: '64'
       SMS_ECLIPSE: ${{ matrix.eclipse }}
+      SMS_LAUNCHER_DIR: ${{ github.workspace }}/Eclipse CI with spaces/launcher
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
           path: Eclipse CI with spaces/port
-      - name: Install Linux tools
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake make python3 patch binutils g++ clang llvm libsdl2-dev libegl-dev libgl-dev
-      - name: Install Mac tools
-        if: runner.os == 'macOS'
-        run: |
-          brew install llvm
-          echo "SMS_LLVM_BIN=$(brew --prefix llvm)/bin" >> "$GITHUB_ENV"
-          sudo softwareupdate --install-rosetta --agree-to-license
-      - uses: msys2/setup-msys2@v2
-        if: runner.os == 'Windows'
+      - uses: actions/checkout@v4
         with:
-          msystem: MINGW64
-          update: true
-          install: >-
-            git patch mingw-w64-x86_64-gcc mingw-w64-x86_64-clang mingw-w64-x86_64-llvm-tools
-            mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-make
-            mingw-w64-x86_64-python mingw-w64-x86_64-SDL2
+          repository: chasem-dev/sms-launcher
+          ref: ${{ inputs.launcher-ref || 'main' }}
+          path: Eclipse CI with spaces/launcher
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Enable Intel execution on the Apple Silicon CI runner
+        if: runner.os == 'macOS'
+        shell: bash
+        run: sudo softwareupdate --install-rosetta --agree-to-license
+      - name: Install the launcher's build tools
+        shell: bash
+        run: |
+          npm ci --ignore-scripts --prefix "$SMS_LAUNCHER_DIR"
+          node tools/ci/launcher-tools.js prepare
       - name: Test partial-link response files with long paths
         run: |
           if [[ "$RUNNER_OS" == Windows ]]; then python tools/mods/tests/test_object_response.py
           else python3 tools/mods/tests/test_object_response.py; fi
       - name: Build Eclipse
         run: ./build.sh
+      - name: Check that the build used the launcher's compilers
+        shell: bash
+        run: node tools/ci/launcher-tools.js check build/*-64$([[ "$SMS_ECLIPSE" != 1 ]] || echo -eclipse)
       - name: Check whether the mods are linked in
         run: |
           if [[ "$RUNNER_OS" == Linux ]]; then os=linux; elif [[ "$RUNNER_OS" == macOS ]]; then os=macos; else os=windows; fi
