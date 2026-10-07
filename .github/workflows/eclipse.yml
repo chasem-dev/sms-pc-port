@@ -72,9 +72,11 @@ jobs:
           [[ "$os" != windows ]] || exe+=.exe
           head -c 32 /dev/zero > invalid.iso
           set +e
+          # The launcher's tools live under a path with spaces.
           limit=$(command -v timeout || command -v gtimeout || true)
+          limit=(${limit:+"$limit" 60})
           SMS_CODE_MODS=0 SMS_HEADLESS=1 SMS_SAVE_DIR="$PWD/test-saves" SMS_DISC_IMAGE="$PWD/invalid.iso" \
-            ${limit:+$limit 60} "$exe" "$PWD/invalid.iso" > start.log 2>&1
+            "${limit[@]}" "$exe" "$PWD/invalid.iso" > start.log 2>&1
           echo "exit status $?"
           set -e
           cat start.log
