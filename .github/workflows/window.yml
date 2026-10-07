@@ -1,9 +1,18 @@
 name: Game window settings
+# Builds the window tests with the toolsets SMS Launcher downloads for players
+# (chasem-dev/sms-launcher, src/build-tools.js), through tools/ci/launcher-tools.js.
+# The 32-bit build uses the launcher's i686 SDK and starts through its loader,
+# as run.sh does. Only the X server and the 64-bit Mesa drivers come from Ubuntu.
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      launcher-ref:
+        description: sms-launcher branch, tag or commit to take the build tools from
+        type: string
+        default: main
 permissions:
   contents: read
 jobs:
@@ -13,34 +22,57 @@ jobs:
       fail-fast: false
       matrix:
         arch: ['64', '32']
+    defaults:
+      run:
+        shell: node tools/ci/launcher-tools.js shell {0}
+        working-directory: port
+    env:
+      SMS_ARCH: ${{ matrix.arch }}
+      SMS_LAUNCHER_DIR: ${{ github.workspace }}/launcher
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
-      - name: Install SDL and software OpenGL
-        env:
-          ARCH: ${{ matrix.arch }}
+          path: port
+      - uses: actions/checkout@v4
+        with:
+          repository: chasem-dev/sms-launcher
+          ref: ${{ inputs.launcher-ref || 'main' }}
+          path: launcher
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install the launcher's build tools
+        shell: bash
         run: |
-          if [ "$ARCH" = 32 ]; then sudo dpkg --add-architecture i386; fi
+          npm ci --ignore-scripts --prefix "$SMS_LAUNCHER_DIR"
+          node tools/ci/launcher-tools.js prepare
+      - name: Install an X server and software OpenGL
+        shell: bash
+        run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake g++-multilib python3 patch binutils xvfb xauth openbox x11-utils libsdl2-dev libegl-dev libgl-dev libgl1-mesa-dri libegl-mesa0
-          # The port already supports 32-bit SDL using the host's headers and
-          # i386 runtime libraries. Avoid incompatible multiarch GLib dev tools.
-          if [ "$ARCH" = 32 ]; then
-            sudo apt-get install -y --no-install-recommends libsdl2-2.0-0:i386 libegl1:i386 libgl1:i386 libgl1-mesa-dri:i386 libegl-mesa0:i386
-          fi
+          sudo apt-get install -y --no-install-recommends xvfb xauth openbox x11-utils libgl1-mesa-dri libegl-mesa0
       - name: Build the game's window smoke test
-        env:
-          ARCH: ${{ matrix.arch }}
         run: |
-          cmake -S . -B build/window -DCMAKE_BUILD_TYPE=Release -DSMS_ARCH="$ARCH" -DSMS_GX_BUILD_TESTS=ON
+          cmake -S . -B build/window -DCMAKE_BUILD_TYPE=Release -DSMS_ARCH="$SMS_ARCH" -DSMS_GX_BUILD_TESTS=ON
           cmake --build build/window --target gx_windowtest gx_windowsmoke -j2
+      - name: Check that the build used the launcher's compilers
+        shell: bash
+        run: node tools/ci/launcher-tools.js check build/window
       - name: Check window placement, fullscreen, and headless rendering
         env:
           LIBGL_ALWAYS_SOFTWARE: '1'
         run: |
-          ctest --test-dir build/window/platform/gx -R '^gx_windowtest$' --output-on-failure
+          # 32-bit programs need the SDK's loader and libraries, as in run.sh.
+          if [[ "$SMS_ARCH" == 32 ]]; then
+            loader=("$SMS_LINUX32_ROOT/i686-buildroot-linux-gnu/sysroot/lib/ld-linux.so.2" --library-path "$SMS_LINUX32_LIBRARY_PATH")
+          else
+            loader=()
+          fi
+          tests=build/window/platform/gx
+          "${loader[@]}" "$tests/gx_windowtest"
           # SDL desktop fullscreen is managed by the desktop window manager.
+          # The loader, if any, is passed in as "$@".
           xvfb-run -a -s '-screen 0 1280x800x24' bash -e -c '
             openbox --sm-disable > build/window/window-manager.log 2>&1 &
             window_wm_pid=$!
@@ -50,8 +82,8 @@ jobs:
               sleep 0.05
             done
             xprop -root _NET_SUPPORTING_WM_CHECK | grep -q "window id #"
-            env -u SMS_FULLSCREEN build/window/platform/gx/gx_windowsmoke --window
-            SMS_FULLSCREEN=0 build/window/platform/gx/gx_windowsmoke --window
-            SMS_FULLSCREEN=1 build/window/platform/gx/gx_windowsmoke --fullscreen
-          '
-          SMS_FULLSCREEN=1 build/window/platform/gx/gx_windowsmoke --headless
+            env -u SMS_FULLSCREEN "$@" build/window/platform/gx/gx_windowsmoke --window
+            SMS_FULLSCREEN=0 "$@" build/window/platform/gx/gx_windowsmoke --window
+            SMS_FULLSCREEN=1 "$@" build/window/platform/gx/gx_windowsmoke --fullscreen
+          ' window-check "${loader[@]}"
+          SMS_FULLSCREEN=1 "${loader[@]}" "$tests/gx_windowsmoke" --headless

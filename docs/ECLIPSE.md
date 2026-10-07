@@ -41,7 +41,7 @@ Without it, the build is the plain port: every hook below is in the source but f
 
 `SMS_ECLIPSE=1 ./build.sh` does the same with the platform setup of `./build.sh`, into `build/<os>-<arch>-eclipse/`.
 It needs clang besides the usual tools: on Linux `clang`, on macOS Homebrew's LLVM (as for the plain build), on Windows `mingw-w64-x86_64-clang` in MINGW64.
-The [Eclipse build workflow](../.github/workflows/eclipse.yml) builds it 64-bit on Linux, macOS and Windows and checks that the game finds the mods' constructors (`SMS_CODE_MODS=0` reports `code mods linked in but switched off`).
+The [Eclipse build workflow](../.github/workflows/eclipse.yml) builds it 64-bit on Linux, macOS and Windows with the build tools SMS Launcher downloads for players (`tools/ci/launcher-tools.js`), and checks that the game finds the mods' constructors (`SMS_CODE_MODS=0` reports `code mods linked in but switched off`).
 
 ### Per platform
 

@@ -54,6 +54,10 @@ if(APPLE)
     target_include_directories(sms_gx PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 endif()
 target_compile_features(sms_gx PRIVATE cxx_std_17)
+# gx_hires.cpp's loader thread; glibc before 2.34 (the launcher's Linux
+# sysroot) keeps pthread_create out of libc.
+find_package(Threads REQUIRED)
+target_link_libraries(sms_gx PUBLIC Threads::Threads)
 # The SDK functions here that compute in floats round every operation as the
 # DOL's objects do, which MWCC built without contraction: no host compiler may
 # fuse a multiply-add (GCC and Clang do on arm64 by default; x86 builds
