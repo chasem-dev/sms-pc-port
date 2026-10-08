@@ -26,6 +26,12 @@ How the port is put together and where changes go. To build and play, see the [R
 - `-DSMS_ARCH=32` compiles with `-m32` (Linux: `gcc-multilib g++-multilib`; Windows: MINGW32).
   `-DSMS_ARCH=64` is a native 64-bit build that keeps game memory, static data and thread stacks below 4 GiB ([64-BIT.md](64-BIT.md)); it is what macOS builds.
 - Default build type `RelWithDebInfo` = `-O2 -g` for all targets (the fall-off-the-end functions got explicit returns, `ret-*` patches).
+- `SMS_COMPILER_CACHE=/absolute/path/to/sccache` (or `-DSMS_COMPILER_CACHE=...`)
+  enables compiler caching without changing the selected compiler or build flags.
+  Windows CI uses sccache's GitHub Actions backend and reports cache statistics.
+  The private 32-bit Windows cross compiler uses relative paths that both native
+  sccache and MSYS GCC can read; response-file compilations and paths on another
+  drive bypass caching. Link commands keep their existing path conversion.
 - The 32-bit Linux build compiles against the amd64 SDL2/EGL headers and links the i386 runtime libraries (`/usr/lib/i386-linux-gnu/libSDL2-2.0.so.0`, `libEGL.so.1`) directly, so no `:i386` `-dev` packages are needed.
 - The decomp keeps the game in `src/` and `include/`, and each library in `libs/<name>/src` and `libs/<name>/include` (`dolphin`, `JSystem`, `THPPlayer`, `PowerPC_EABI_Support`, `TRK_MINNOW_DOLPHIN`, `OdemuExi2`), as upstream `doldecomp/sms` does.
   The game sees the headers through the same roots in `configure.py`'s order (`include`, then each `libs/<name>/include`), except MSL's C and C++ headers: the port uses the host's.
@@ -242,6 +248,7 @@ The everyday options are in the [README](../README.md#options); this is the full
 | `SMS_FIELD_CLOCK=retrace` | shots/autopress count VI retraces (wall clock) instead of game fields (2 per display copy, the default) |
 | `SMS_VI_DETERMINISTIC=1` | virtual VI/OS clock: retraces fire when the game idles (or spins on `OSGetTick` for a whole field), `OSGetTime` follows them from a fixed date, AI DMA is paced by retraces (no output device); two runs with the same input give identical frames |
 | `SMS_VI_HZ=<rate>` | retrace rate override (benchmarking) |
+| `SMS_PRESENT_HZ=<rate>` | each swap also waits for the next refresh of a display at that rate, as a compositor that forces vsync does (frame pacing tests) |
 | `SMS_VI_FIELD_BASE=<n>` | the retrace counter starts at `n` (retail spends about 240 fields in IPL/apploader/DOL load before the game's first frame; 240 puts the Nintendo logo on retail's field 300) and selects game-frame parity |
 | `SMS_DVD_BPS`, `SMS_DVD_SEEK_MS`, `SMS_DVD_LOG=1` | drive timing model (reads occupy the drive for bytes/rate + seek, counted in fields; off by default) and a per-read log |
 | `SMS_MOVIE`, `SMS_TRACE_OUT` | `.dtm` movie input and retail-format field traces (`platform/trace`) |
@@ -305,7 +312,9 @@ Measured headless on the 32-bit Linux build (Mesa llvmpipe software GL), 2026-09
   `port_active_frame_rate` is the gameplay rate while `TMarDirector` runs, and 30 for logos, menus and movies.
   `SMSGetVSyncTimesPerSec` reports that rate, so animations and fades keep their real-time duration.
   The VI timer runs at 59.94 Hz for 30/60 configurations and 119.88 Hz for 120; the display waits two/one retraces at 30/60 and four/one for menus/gameplay with 120 configured.
-  This clock is independent of monitor refresh rate; host vsync can still limit presentation.
+  This clock is independent of monitor refresh rate.
+  Frames keep to a fixed schedule of retraces (`framerate-37`, `port_vi_frame_wait`): retail waits for one more retrace after a frame that ends past its own, which halves the game's speed wherever the host's present waits for the display (vsync, macOS, the Steam Deck's compositor), so a late frame starts the next at once instead, and one a whole frame behind is not presented (but one is at least every 0.05 s) when that lets the game keep time, i.e. presenting is slow (2 ms or more on average, `sms_gx`) and the frames' other work fits in their time, so a host too slow for the frame rate still shows every frame; a frame more than 0.1 s late starts a new schedule, and the deterministic clock keeps retail's wait.
+  `SMS_PRESENT_HZ=<rate>` makes each swap wait for a display at that rate, to try this without such a display.
   Movement keeps its 120 Hz ticks: `TMarDirector::direct` adds `600 / SMSGetVSyncTimesPerSec()` per frame and spends 5 per tick (four, two or one ticks per frame).
   The shared helpers in `src/port_include/port_framerate.h` scale visual steps by 30 / active rate, run native integer counters once per four movement ticks, and compensate tick animations by active rate / 30.
   Exponential chases use square roots at 60 and fourth roots at 120 to preserve their decay per second.
@@ -319,3 +328,20 @@ Measured headless on the 32-bit Linux build (Mesa llvmpipe software GL), 2026-09
   Retail capture/audio baselines explicitly use 30 fps; random choices can diverge at higher rates because random numbers are drawn per frame.
 - **Software GL.**
   The 32-bit Linux build without the GPU driver's `:i386` libraries renders with llvmpipe and cannot hold 30 fps in the plaza; the port logs a warning and the overlay says so.
+
+## Crash diagnostics
+
+The launcher captures stdout and stderr separately, keeps a full session log on disk, and reports a game's actual exit code or signal. Windows game executables run directly rather than through MSYS bash, which can translate native exception statuses to 127. Ordinary resource warnings and stage context are never used as a game crash explanation.
+
+The port installs crash reporting before boot and before switching onto its low stack. On Linux and macOS, fatal signals first write their name, number, signal code, fault address when applicable, and instruction address directly to stderr. Module base/offset, registers on Intel Mac, and the existing backtrace follow as best-effort diagnostics. Game threads get an alternate signal stack so stack exhaustion can still produce the first report. Linux retains signal termination; macOS keeps the existing `128 + signal` exit to avoid the Rosetta termination hang.
+
+Windows uses a vectored exception logger before stack unwinding. Its first-chance reports include the native exception code, address, thread, PC/SP/BP, module base/offset, and access target. It returns `EXCEPTION_CONTINUE_SEARCH` and does not turn hardware exceptions into CRT signals, preserving their exit statuses. A first-chance report can be followed by successful handling; it is not proof of a fatal crash. Fast-fail and some heap-corruption termination paths can bypass in-process handlers, so the direct process exit code and Windows Event Viewer remain useful. Fully exhausted custom Windows stacks may also prevent an in-process report.
+
+ROM-free Linux verification uses a configured game build's compilation settings and deliberate access violations, aborts, worker-thread faults and stack exhaustion:
+
+```sh
+python3 tools/test_crash_logging.py --build-directory build/linux-64 --arch 64
+python3 tools/test_crash_logging.py --build-directory build/linux-32 --arch 32
+```
+
+For native Windows verification, compile `platform/os/tests/crash_probe.cpp` with `platform/os/windows_crash.cpp`, the `src/` include directory, and (for 64-bit) `platform/os/windows_stack.cpp`. Then run `python tools/test_crash_logging.py PATH_TO_PROBE.exe --arch 64` or `--arch 32` from native Python. The 64-bit probe includes a fault on the custom low stack. The heap probe explicitly raises that status to test the logger; it does not guarantee the logger sees real heap corruption or fast-fail.

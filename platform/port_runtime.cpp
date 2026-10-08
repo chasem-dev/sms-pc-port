@@ -15,6 +15,8 @@
 #include <execinfo.h>
 #include "port_host.h"
 #include "disc/gcdisc.h"
+#include "os/crash.h"
+#include "os/crash_line.h"
 #ifdef _WIN32
 #include <windows.h>
 #include <io.h>
@@ -23,6 +25,9 @@
 #include <unistd.h>
 #include <dlfcn.h>
 #include <sys/wait.h>
+#ifndef __APPLE__
+#include <ucontext.h>
+#endif
 #ifdef __APPLE__
 #include <sys/ucontext.h>
 #endif
@@ -54,6 +59,9 @@ int port_disc_explicit = 0;
 // SMS_SKIP_MOVIES=1 reports every THP movie as finished at once (patch 0016).
 extern "C" int port_skip_movies;
 int port_skip_movies = 0;
+// SMS_HEAT_HAZE=0 turns off the heat-wave shimmer (patch zzz-heat-haze-01).
+extern "C" int port_heat_haze;
+int port_heat_haze = 1;
 // SMS_WIDESCREEN: the displayed width over the GameCube's 4:3 (1 when off);
 // the game camera (widescreen-01 patch) and sms_gx widen by it.
 extern "C" float port_widescreen;
@@ -175,7 +183,43 @@ static void crash_handler(int sig)
 #else
 static void crash_handler(int sig, siginfo_t* si, void* uc)
 {
-	port_log("\n[port] fatal signal %d (%s) at address %p\n", sig, strsignal(sig), si ? si->si_addr : nullptr);
+	// Write the actual signal, fault address and instruction address first,
+	// without stdio locks or allocation. Symbolisation below is best effort.
+	PortCrashLine line;
+	line.text("\n[port] fatal signal ");
+	const char* name = sig == SIGSEGV ? "SIGSEGV" : sig == SIGBUS ? "SIGBUS" : sig == SIGFPE ? "SIGFPE"
+	                 : sig == SIGILL ? "SIGILL" : sig == SIGABRT ? "SIGABRT" : "unknown";
+	line.text(name); line.text(" ("); line.number(sig, 10); line.text(")");
+	// For user-raised signals si_addr aliases the sender's PID, not a fault.
+	if (si && si->si_code > 0 && sig != SIGABRT) {
+		line.text(" at address "); line.hex((uintptr_t)si->si_addr);
+	}
+	if (si) {
+		line.text(" si_code ");
+		if (si->si_code < 0) line.text("-");
+		line.number(si->si_code < 0 ? -(int64_t)si->si_code : si->si_code, 10);
+	}
+	uintptr_t pc = 0;
+	if (uc) {
+#if defined(__APPLE__) && defined(__x86_64__)
+		pc = ((ucontext_t*)uc)->uc_mcontext->__ss.__rip;
+#elif defined(__APPLE__) && defined(__aarch64__)
+		pc = ((ucontext_t*)uc)->uc_mcontext->__ss.__pc;
+#elif defined(__linux__) && defined(__x86_64__)
+		pc = ((ucontext_t*)uc)->uc_mcontext.gregs[REG_RIP];
+#elif defined(__linux__) && defined(__i386__)
+		pc = ((ucontext_t*)uc)->uc_mcontext.gregs[REG_EIP];
+#elif defined(__linux__) && defined(__aarch64__)
+		pc = ((ucontext_t*)uc)->uc_mcontext.pc;
+#endif
+	}
+	line.text(" pc "); line.hex(pc); line.text("\n");
+	(void)write(STDERR_FILENO, line.bytes, line.length);
+	Dl_info fault_module;
+	if (pc && dladdr((void*)pc, &fault_module) && fault_module.dli_fbase)
+		port_log("[port] exception module %s base %p offset 0x%llx\n",
+		         fault_module.dli_fname ? fault_module.dli_fname : "<unknown>", fault_module.dli_fbase,
+		         (unsigned long long)(pc - (uintptr_t)fault_module.dli_fbase));
 #if defined(__APPLE__) && defined(__x86_64__)
 	if (uc) {
 		// No gdb on macOS and lldb needs developer-mode approval: print the
@@ -204,6 +248,36 @@ static void crash_handler(int sig, siginfo_t* si, void* uc)
 #endif
 }
 #endif
+
+void port_crash_thread_init()
+{
+#ifndef _WIN32
+	// A separate stack allows the first diagnostic to survive stack exhaustion.
+	alignas(16) static thread_local unsigned char crash_stack[64 * 1024];
+	stack_t stack = {};
+	stack.ss_sp = crash_stack;
+	stack.ss_size = sizeof crash_stack;
+	if (sigaltstack(&stack, nullptr) != 0)
+		port_log("[port] cannot install alternate crash stack\n");
+#endif
+}
+
+void port_install_crash_handlers()
+{
+#ifdef _WIN32
+	port_install_windows_exception_logger();
+	// Native hardware exceptions keep their Windows status. Translating them
+	// through a CRT signal handler would replace it with a generic abort code.
+	signal(SIGABRT, crash_handler);
+#else
+	struct sigaction sa = {};
+	sa.sa_sigaction = crash_handler;
+	sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+	for (int sig : {SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT})
+		if (sigaction(sig, &sa, nullptr) != 0) port_log("[port] cannot install crash handler for signal %d\n", sig);
+#endif
+	port_crash_thread_init();
+}
 
 // Emulated MEM1: the game's arena lives at the GameCube's own cached
 // addresses (0x80000000..), so OSPhysicalToCached/OSCachedToPhysical and the
@@ -465,8 +539,10 @@ static const struct {
 	{ "aspect", "SMS_ASPECT" },                 // keep, stretch or integer
 	{ "present_filter", "SMS_PRESENT_FILTER" }, // bilinear, sharp or nearest
 	{ "skip_movies", "SMS_SKIP_MOVIES" },
+	{ "heat_haze", "SMS_HEAT_HAZE" }, // the heat-wave shimmer, on by default
 	{ "audio", "SMS_AUDIO" },
 	{ "volume", "SMS_VOLUME" }, // master volume, 0 to 100
+	{ "soft_trigger", "SMS_SOFT_TRIGGER" }, // L_SOFT / R_SOFT press depth, percent
 	{ "overlay", "SMS_OVERLAY" },
 	{ "save_dir", "SMS_SAVE_DIR" },
 	{ "disc_image", "SMS_DISC_IMAGE" },
@@ -550,6 +626,10 @@ extern "C" void port_init(int argc, char** argv)
 	pick_glx_vendor();
 	if (const char* m = getenv("SMS_SKIP_MOVIES"))
 		port_skip_movies = *m && strcmp(m, "0") != 0;
+	if (const char* h = getenv("SMS_HEAT_HAZE"))
+		port_heat_haze = !*h || strcmp(h, "0") != 0;
+	if (!port_heat_haze)
+		port_log("[port] heat-wave shimmer off\n");
 	port_widescreen = parse_widescreen(getenv("SMS_WIDESCREEN"));
 	if (GXPC_SetWidescreen)
 		GXPC_SetWidescreen(port_widescreen);
@@ -578,17 +658,6 @@ extern "C" void port_init(int argc, char** argv)
 			port_disc_root     = argv[i];
 			port_disc_explicit = 1;
 		}
-#ifdef _WIN32
-	for (int sig : {SIGSEGV, SIGFPE, SIGILL, SIGABRT})
-		signal(sig, crash_handler);
-#else
-	struct sigaction sa;
-	memset(&sa, 0, sizeof sa);
-	sa.sa_sigaction = crash_handler;
-	sa.sa_flags = SA_SIGINFO;
-	for (int sig : {SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT})
-		sigaction(sig, &sa, nullptr);
-#endif
 	atexit(port_stub_report);
 	map_mem1();
 	if (sizeof(void*) == 4)
