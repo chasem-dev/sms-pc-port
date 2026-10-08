@@ -387,6 +387,7 @@ void dumpFrame(const void* xfb) {
 
 void onDisplayCopy(const void* xfb) {
     s_frame++;
+    GXPC_OverlayFrame();
     dumpFrame(xfb);
     const bool skip = s_skipPresent;
     s_skipPresent = false;
