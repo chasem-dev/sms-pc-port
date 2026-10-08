@@ -1,6 +1,9 @@
 // Register file, command-stream parser and vertex loader.
 #include "gx_internal.h"
 #include <time.h>
+#ifdef __APPLE__
+#include <mach/mach_time.h>
+#endif
 
 #include <string.h>
 #include <stdio.h>
@@ -17,6 +20,22 @@ extern uint32_t g_traceLastVat;
 void (*drawSyncCallback)(uint16_t) = nullptr;
 
 // ------------------------------------------------------------------ utilities
+double monoSeconds() {
+#ifdef __APPLE__
+    static double tick = 0;
+    if (tick == 0) {
+        mach_timebase_info_data_t tb;
+        mach_timebase_info(&tb);
+        tick = double(tb.numer) / double(tb.denom) * 1e-9;
+    }
+    return double(mach_absolute_time()) * tick;
+#else
+    timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return double(ts.tv_sec) + double(ts.tv_nsec) * 1e-9;
+#endif
+}
+
 void logmsg(const char* fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
@@ -837,13 +856,10 @@ static uint32_t parse(const uint8_t* p, uint32_t n, uint32_t* need) {
             if (avail < len) break;
             g_traceLastVat = op & 7;
             if (g_gxStats) {
-                timespec t0, t1;
                 double f0 = g_flushSeconds;  // a batch flushed inside counts as drawing
-                clock_gettime(CLOCK_MONOTONIC, &t0);
+                double t0 = monoSeconds();
                 decodeVertices(op & 0xF8, p + 3, cnt, L, op & 7);
-                clock_gettime(CLOCK_MONOTONIC, &t1);
-                g_decodeSeconds += double(t1.tv_sec - t0.tv_sec) + double(t1.tv_nsec - t0.tv_nsec) * 1e-9 -
-                                   (g_flushSeconds - f0);
+                g_decodeSeconds += monoSeconds() - t0 - (g_flushSeconds - f0);
             } else {
                 decodeVertices(op & 0xF8, p + 3, cnt, L, op & 7);
             }
