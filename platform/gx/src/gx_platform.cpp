@@ -40,6 +40,13 @@ Mode s_mode = MODE_NONE;
 int s_forceHeadless = -1;  // -1: decide from the environment
 bool s_autoPresent = true;
 bool s_skipPresent = false;
+// Average seconds a present takes (drawing the XFB, the overlay and the swap).
+// A skip request (GXPC_SkipNextPresent) is only followed when presenting is
+// that slow: then the swap waits for the display and skipping one catches the
+// game up; a quick present gains nothing by being left out.
+double s_presentCost = 0;
+const double kSkipPresentCost = 0.002;
+double s_lastPresent = 0;  // the last display copy's present, 0 when skipped
 int s_vsync = 0;
 uint32_t s_frame = 0;
 
@@ -389,8 +396,9 @@ void onDisplayCopy(const void* xfb) {
     s_frame++;
     GXPC_OverlayFrame();
     dumpFrame(xfb);
-    const bool skip = s_skipPresent;
+    const bool skip = s_skipPresent && s_presentCost >= kSkipPresentCost;
     s_skipPresent = false;
+    s_lastPresent = 0;
     if (!s_autoPresent) return;
     if (skip) sms_gx_pump_events();
     else GXPC_Present(xfb);
@@ -430,6 +438,7 @@ void GXPC_SetWindowIcon(const uint8_t* rgba, int w, int h) {
 }
 void GXPC_SetAutoPresent(int enable) { s_autoPresent = enable != 0; }
 void GXPC_SkipNextPresent(int skip) { s_skipPresent = skip != 0; }
+double GXPC_LastPresentSeconds(void) { return s_lastPresent; }
 int GXPC_MouseCaptured(void) {
 #ifdef SMS_GX_HAVE_SDL2
     return s_mouseCaptured;
@@ -500,6 +509,8 @@ void GXPC_Present(const void* xfb) {
         double t2 = nowSeconds();
         g_presentSeconds += t1 - t0;
         g_swapSeconds += t2 - t1;
+        s_lastPresent = t2 - t0;
+        s_presentCost += (s_lastPresent - s_presentCost) * 0.1;
         GXPC_EndPresent();
         sms_gx_pump_events();
     }

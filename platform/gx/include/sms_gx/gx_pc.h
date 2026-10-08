@@ -40,7 +40,8 @@ int GXPC_InitAuto(int efbScale);             /* 1 on success */
 int GXPC_IsHeadless(void);
 void GXPC_SetAutoPresent(int enable);
 void GXPC_Present(const void* xfb);          /* window mode: draw XFB, swap, pump events */
-void GXPC_SkipNextPresent(int skip);         /* the next GXCopyDisp is not presented (events still pumped) */
+void GXPC_SkipNextPresent(int skip);         /* the next GXCopyDisp is not presented (events still pumped), if presenting is slow */
+double GXPC_LastPresentSeconds(void);        /* the last GXCopyDisp's present, 0 if it was not presented */
 uint32_t GXPC_FrameCount(void);              /* display copies so far */
 /* Window (taskbar / Dock) icon: w x h RGBA8 pixels, copied. Applied to the
  * SDL window now, or when it opens; ignored without a window. */
