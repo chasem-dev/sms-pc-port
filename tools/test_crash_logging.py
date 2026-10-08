@@ -43,7 +43,7 @@ if args.build_directory:
 if not args.probe:
     parser.error("pass a probe executable or --build-directory")
 if os.name == "nt":
-    cases = [("access", 0xC0000005), ("heap", 0xC0000374)]
+    cases = [("access", 0xC0000005), ("heap", 0xC0000374), ("unwind", 0xC00000FF)]
     if args.arch == "64":
         cases.append(("low-stack", 0xC0000005))
 else:
@@ -56,6 +56,9 @@ for mode, expected in cases:
     if os.name == "nt":
         assert run.returncode & 0xFFFFFFFF == expected, (mode, run.returncode, run.stderr)
         assert "Windows exception 0x%X" % expected in run.stderr, (mode, run.stderr)
+        assert re.search(r"backtrace \(stack .*\n.*#0 0x[0-9A-F]+ .*\n.*#1 0x[0-9A-F]+ ", run.stderr), (mode, run.stderr)
+        if mode == "low-stack":
+            assert "backtrace stops: entry to the game thread's low stack" in run.stderr, (mode, run.stderr)
     else:
         # macOS exits with 128+signal to avoid Rosetta's fatal-signal exit hang.
         assert run.returncode in (-expected, 128 + expected), (mode, run.returncode, run.stderr)
