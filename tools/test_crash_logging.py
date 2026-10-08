@@ -30,15 +30,20 @@ if args.build_directory:
     entry = next(command for command in commands if command["file"].endswith("/platform/port_runtime.cpp"))
     temporary = tempfile.TemporaryDirectory(prefix="sms-crash-probe-")
     folder = pathlib.Path(temporary.name)
-    compile_args = shlex.split(entry["command"])
-    compile_args[compile_args.index("-o") + 1] = str(folder / "runtime.o")
-    compile_args.extend(["-ffunction-sections", "-fdata-sections"])
-    subprocess.run(compile_args, cwd=entry["directory"], check=True)
     root = pathlib.Path(__file__).resolve().parent.parent
+    # The build supplies the flags; the sources are this checkout's.
+    objects = []
+    for source in ("platform/port_runtime.cpp", "platform/os/crash_info.cpp"):
+        compile_args = shlex.split(entry["command"])
+        compile_args[compile_args.index("-o") + 1] = str(folder / (pathlib.Path(source).stem + ".o"))
+        compile_args[compile_args.index(entry["file"])] = str(root / source)
+        compile_args.extend(["-ffunction-sections", "-fdata-sections"])
+        subprocess.run(compile_args, cwd=entry["directory"], check=True)
+        objects.append(compile_args[compile_args.index("-o") + 1])
     args.probe = str(folder / "probe")
     subprocess.run([compile_args[0], "-m" + args.arch, "-std=c++11", "-fno-pie", "-no-pie", "-ffunction-sections", "-fdata-sections",
                     "-Wl,--gc-sections", "-I" + str(root / "src"),
-                    str(root / "platform/os/tests/crash_probe.cpp"), str(folder / "runtime.o"),
+                    str(root / "platform/os/tests/crash_probe.cpp"), *objects,
                     "-pthread", "-ldl", "-o", args.probe], check=True)
 if not args.probe:
     parser.error("pass a probe executable or --build-directory")
@@ -51,6 +56,11 @@ else:
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     cases = [("access", signal.SIGSEGV), ("abort", signal.SIGABRT),
              ("thread", signal.SIGSEGV), ("overflow", signal.SIGSEGV)]
+if os.name == "nt":
+    run = subprocess.run([args.probe, "report"], capture_output=True, text=True, timeout=30)
+    assert run.returncode == 0 and "[port] fatal: probe report" in run.stderr, (run.returncode, run.stderr)
+    assert "[port] registers:" in run.stderr and "[port] build: " in run.stderr, run.stderr
+    print("report: registers, backtrace and context without an exception")
 for mode, expected in cases:
     run = subprocess.run([args.probe, mode], capture_output=True, text=True, timeout=15)
     if os.name == "nt":
