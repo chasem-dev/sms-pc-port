@@ -10,7 +10,9 @@ option(SMS_GX_BUILD_TESTS "Build the headless self-test" ON)
 set(SMS_GX_SOURCES
     src/gl_loader.cpp
     src/gx_api.cpp
+    src/gx_bcenc.cpp
     src/gx_fifo.cpp
+    src/gx_glthread.cpp
     src/gx_hdr.cpp
     src/gx_hires.cpp
     src/gx_overlay.cpp
@@ -52,8 +54,10 @@ target_include_directories(sms_gx
     # port_fpu.h (the SDK's float-to-unsigned conversion, port_cvt_fp2unsigned)
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src)
 # macOS has no system GL/glcorearb.h; ship Khronos headers under third_party/.
+# The GL thread's waits run the main run loop there (CoreFoundation).
 if(APPLE)
     target_include_directories(sms_gx PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
+    target_link_libraries(sms_gx PUBLIC "-framework CoreFoundation")
 endif()
 target_compile_features(sms_gx PRIVATE cxx_std_17)
 # The SDK functions here that compute in floats round every operation as the
