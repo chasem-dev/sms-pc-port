@@ -5,6 +5,7 @@
 // surface.  GXInit brings this up automatically if the host has not called
 // GXPC_Init itself, and every GXCopyDisp presents the XFB to the window.
 #include "gx_internal.h"
+#include "gx_cheat_menu.h"
 #include "gx_glthread.h"
 #include "gx_window_layout.h"
 #include "sms_gx/gx_pc.h"
@@ -188,6 +189,25 @@ void setFullscreen(bool on) {
     }
     s_isFullscreen = on;
     SDL_ShowCursor(on ? SDL_DISABLE : SDL_ENABLE);
+}
+
+// The open cheat menu has a free cursor; closing it gives mouse look back the
+// capture it had.
+bool s_menuOpen = false, s_capturedBeforeMenu = false;
+
+void syncCheatMenuInput() {
+    const bool open = cheatMenuVisible();
+    if (open == s_menuOpen) return;
+    s_menuOpen = open;
+    if (open) {
+        s_capturedBeforeMenu = s_mouseCaptured;
+        captureMouse(false);
+        SDL_ShowCursor(SDL_ENABLE);
+        return;
+    }
+    SDL_SetCursor(SDL_GetDefaultCursor());
+    SDL_ShowCursor(s_isFullscreen ? SDL_DISABLE : SDL_ENABLE);
+    if (s_capturedBeforeMenu && (SDL_GetWindowFlags(s_window) & SDL_WINDOW_INPUT_FOCUS)) captureMouse(true);
 }
 
 void applyIcon() {
@@ -625,6 +645,7 @@ int GXPC_MouseCaptured(void) {
     return 0;
 #endif
 }
+int GXPC_GameInputBlocked(void) { return cheatMenuVisible(); }
 int GXPC_IsHeadless(void) { return s_mode != MODE_WINDOW; }
 uint32_t GXPC_FrameCount(void) { return s_frame; }
 
@@ -643,6 +664,7 @@ int GXPC_InitAuto(float efbScale) {
     if (!headless) {
         if (openWindowAnyBackend(efbScale)) {
             s_mode = MODE_WINDOW;
+            cheatMenuInit(s_window, s_glctx);
             return 1;
         }
         if (s_windowFailure == WF_WINDOW) {
@@ -694,6 +716,7 @@ void GXPC_Present(const void* xfb) {
             }
             GXPC_PresentXFB(xfb, w, h);
             GXPC_OverlayDraw(w, h);
+            cheatMenuRender();
             t1 = nowSeconds();
             if (hdr) hdrFramePresent(s_vsync != 0);
             else SDL_GL_SwapWindow(s_window);
@@ -705,6 +728,7 @@ void GXPC_Present(const void* xfb) {
             g_presentDrain += std::max(0.0, waited - (shown ? tSwapped - t0 : 0.0));
         }
         if (!shown) return;
+        syncCheatMenuInput();
         const double tBack = nowSeconds();
         waitSimulatedRefresh();
         double t2 = nowSeconds();
@@ -757,7 +781,7 @@ void sms_gx_pump_events(void) {
     if (s_mode != MODE_WINDOW) return;
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
-        noteInputDevice(ev);
+        if (!cheatMenuVisible()) noteInputDevice(ev);
         switch (ev.type) {
         case SDL_CONTROLLERDEVICEADDED:
             if (SDL_IsGameController(ev.cdevice.which)) {
@@ -780,7 +804,20 @@ void sms_gx_pump_events(void) {
             if (ev.type == SDL_KEYDOWN && !ev.key.repeat) GXPC_OverlayToggle();
             continue;
         }
-        if (s_mouseCamera) {
+        // F9 opens and closes the cheat menu and is kept from the pad layer
+        if ((ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) && ev.key.keysym.scancode == SDL_SCANCODE_F9 &&
+            cheatMenuAvailable()) {
+            if (ev.type == SDL_KEYDOWN && !ev.key.repeat) {
+                cheatMenuToggle();
+                syncCheatMenuInput();
+            }
+            continue;
+        }
+        // The pad layer still gets every event while the menu is open, so no
+        // key or button is left held, but reads as idle (GXPC_GameInputBlocked).
+        if (cheatMenuVisible()) {
+            cheatMenuProcessEvent(ev);
+        } else if (s_mouseCamera) {
             if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_FOCUS_LOST) captureMouse(false);
             if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_FOCUS_GAINED && !s_mouseReleased)
                 captureMouse(true);
@@ -814,6 +851,7 @@ void sms_gx_pump_events(void) {
         if (ev.type == SDL_QUIT ||
             (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_CLOSE)) {
             logmsg("window closed, exiting");
+            cheatMenuShutdown();
             GXPC_Shutdown();
             exit(0);
         }

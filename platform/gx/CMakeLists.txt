@@ -103,6 +103,26 @@ if(TARGET SDL2::SDL2)
     target_compile_definitions(sms_gx PRIVATE SMS_GX_HAVE_SDL2=1)
     target_link_libraries(sms_gx PUBLIC SDL2::SDL2)
     message(STATUS "sms_gx: SDL2 window support")
+    # The cheat menu (F9) in the window: Dear ImGui, a pinned submodule.
+    set(SMS_IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/imgui")
+    if(EXISTS "${SMS_IMGUI_DIR}/imgui.h")
+        add_library(sms_imgui STATIC
+            ${SMS_IMGUI_DIR}/imgui.cpp
+            ${SMS_IMGUI_DIR}/imgui_draw.cpp
+            ${SMS_IMGUI_DIR}/imgui_tables.cpp
+            ${SMS_IMGUI_DIR}/imgui_widgets.cpp
+            ${SMS_IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+            ${SMS_IMGUI_DIR}/backends/imgui_impl_sdl2.cpp)
+        target_include_directories(sms_imgui PUBLIC ${SMS_IMGUI_DIR} ${SMS_IMGUI_DIR}/backends)
+        target_link_libraries(sms_imgui PUBLIC SDL2::SDL2 ${CMAKE_DL_LIBS})
+        set_target_properties(sms_imgui PROPERTIES POSITION_INDEPENDENT_CODE ON)
+        target_sources(sms_gx PRIVATE src/gx_cheat_menu.cpp)
+        target_compile_definitions(sms_gx PRIVATE SMS_GX_HAVE_CHEAT_MENU=1)
+        target_link_libraries(sms_gx PRIVATE sms_imgui)
+        message(STATUS "sms_gx: cheat menu (Dear ImGui)")
+    else()
+        message(STATUS "sms_gx: third_party/imgui not checked out - no cheat menu")
+    endif()
 else()
     message(STATUS "sms_gx: SDL2 not found - no window support")
 endif()

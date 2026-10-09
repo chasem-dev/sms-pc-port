@@ -6,7 +6,8 @@
 # Output folders of earlier layouts.
 /build-*/
 /build32/
-/third_party/
+/third_party/*
+!/third_party/imgui
 .DS_Store
 # Optional mods (texture packs and the like), see mods/README.md.
 /mods/*

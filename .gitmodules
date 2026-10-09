@@ -2,3 +2,6 @@
 	path = decomp
 	url = https://github.com/chasem-dev/sms-english.git
 	branch = main
+[submodule "third_party/imgui"]
+	path = third_party/imgui
+	url = https://github.com/ocornut/imgui.git
