@@ -14,7 +14,10 @@ tools/audio-port/check.sh build/linux-32 32
 ```
 
 The test uses the real JAudio command queue and parameter setter, with interrupt and callback registration stubs.
+It also runs the real `outerInit` and `setSePortParameter` functions against a minimal track test double.
 It checks delayed music updates between SE commands, preservation of distinct dirty flags, the latest ramp endpoint, queue reuse, and replacement semantics for other U32 arguments.
+Additional cases cover all six scalar parameters (volume, pitch, pan, FX mix, Dolby and tempo), one-shot interrupt consumption, and rebinding a queued command without losing its neighbors.
+The rebinding case also checks first use on non-zero heap memory.
 
 For an integration check with your extracted disc files, run from the repository root:
 
