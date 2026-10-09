@@ -1,4 +1,4 @@
-Reason: port: God Mode (F9 menu): TMario::decHP takes no health from the player's Mario while port_cheat_god_mode is set (platform/misc/port_cheats.cpp); TEnemyMario is left alone through isMario()
+Reason: port: God Mode (F9 menu): TMario::decHP takes no health from the player's Mario, and thinkParams keeps it at mHPMax (not after game over), while port_cheat_god_mode is set (platform/misc/port_cheats.cpp); TEnemyMario is left alone through isMario()
 --- a/src/Player/MarioCollision.cpp
 +++ b/src/Player/MarioCollision.cpp
 @@ -7,6 +7,11 @@
@@ -22,4 +22,20 @@ Reason: port: God Mode (F9 menu): TMario::decHP takes no health from the player'
 +	// TEnemyMario shares this function: only the player's Mario is protected.
 +	if (port_cheat_god_mode && isMario())
 +		return;
++#endif
+--- a/src/Player/MarioMove.cpp
++++ b/src/Player/MarioMove.cpp
+@@ -2456,1 +2456,5 @@
+-void TMario::thinkParams()
++#ifdef TARGET_PC
++extern "C" int port_cheat_god_mode;
++#endif
++
++void TMario::thinkParams()
+@@ -2461,1 +2465,5 @@
+-	if (!checkFlag(MARIO_FLAG_GAME_OVER)) {
++	if (!checkFlag(MARIO_FLAG_GAME_OVER)) {
++#ifdef TARGET_PC
++		if (port_cheat_god_mode && isMario())
++			mHealth = mDeParams.mHPMax.get();
 +#endif

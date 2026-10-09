@@ -9,18 +9,35 @@
 #include "imgui_impl_sdl2.h"
 
 extern "C" int port_cheat_god_mode;
+extern "C" int port_cheat_movement_speed;
+extern "C" int port_cheat_jump_height;
+extern "C" int port_cheat_infinite_lives;
+extern "C" int port_cheat_infinite_fludd;
+extern "C" int port_cheat_coin_multiplier;
 
 namespace {
 
-// Placeholders: nothing reads them yet.
-struct CheatToggles {
-    bool infiniteLives, infiniteFludd;
-    bool movementSpeed2x, jumpHeight2x;
-};
-
-CheatToggles s_toggles;
 bool s_ready = false;
 bool s_visible = false;
+
+const char* const kMovementItems[] = {"OFF", "2x", "4x"};
+const int kMovementFactors[] = {1, 2, 4};
+const char* const kJumpItems[] = {"OFF", "2x", "4x", "6x"};
+const int kJumpFactors[] = {1, 2, 4, 6};
+const char* const kCoinItems[] = {"OFF", "2x", "5x", "10x"};
+const int kCoinFactors[] = {1, 2, 5, 10};
+
+void factorRow(const char* label, const char* id, int& factor, const char* const items[], const int factors[], int count) {
+    int index = 0;
+    for (int i = 0; i < count; i++)
+        if (factors[i] == factor) index = i;
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(label);
+    ImGui::SameLine(140.0f);
+    ImGui::SetNextItemWidth(90.0f);
+    if (ImGui::Combo(id, &index, items, count))
+        factor = factors[index];
+}
 
 // The menu sees no events while hidden, so it lets go of everything it held.
 void releaseInput() {
@@ -29,17 +46,6 @@ void releaseInput() {
     io.ClearEventsQueue();
     io.ClearInputKeys();
     io.ClearInputMouse();
-}
-
-// DEBUG_SAULO: the size and DPI scale the menu is laid out for
-void debugLogLayout() {
-    static float lastW = 0, lastH = 0, lastScale = 0;
-    const ImGuiIO& io = ImGui::GetIO();
-    if (io.DisplaySize.x == lastW && io.DisplaySize.y == lastH && io.DisplayFramebufferScale.x == lastScale) return;
-    lastW = io.DisplaySize.x;
-    lastH = io.DisplaySize.y;
-    lastScale = io.DisplayFramebufferScale.x;
-    gx::logmsg("DEBUG_SAULO cheat menu: window %gx%g, framebuffer scale %g", double(lastW), double(lastH), double(lastScale));
 }
 
 void drawMenu() {
@@ -54,11 +60,17 @@ void drawMenu() {
         bool godMode = port_cheat_god_mode != 0;
         if (ImGui::Checkbox("God Mode", &godMode))
             port_cheat_god_mode = godMode ? 1 : 0;
-        ImGui::Checkbox("Infinite Lives", &s_toggles.infiniteLives);
-        ImGui::Checkbox("Infinite FLUDD", &s_toggles.infiniteFludd);
+        bool infiniteLives = port_cheat_infinite_lives != 0;
+        if (ImGui::Checkbox("Infinite Lives", &infiniteLives))
+            port_cheat_infinite_lives = infiniteLives ? 1 : 0;
+        bool infiniteFludd = port_cheat_infinite_fludd != 0;
+        if (ImGui::Checkbox("Infinite FLUDD", &infiniteFludd))
+            port_cheat_infinite_fludd = infiniteFludd ? 1 : 0;
         ImGui::SeparatorText("MOVEMENT");
-        ImGui::Checkbox("Movement Speed 2x", &s_toggles.movementSpeed2x);
-        ImGui::Checkbox("Jump Height 2x", &s_toggles.jumpHeight2x);
+        factorRow("Movement Speed", "##movement", port_cheat_movement_speed, kMovementItems, kMovementFactors, 3);
+        factorRow("Jump Height", "##jump", port_cheat_jump_height, kJumpItems, kJumpFactors, 4);
+        ImGui::SeparatorText("ITEMS");
+        factorRow("Coin Multiplier", "##coins", port_cheat_coin_multiplier, kCoinItems, kCoinFactors, 4);
         ImGui::Separator();
         ImGui::TextDisabled("F9 Close Menu");
     }
@@ -128,7 +140,6 @@ void cheatMenuRender() {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
-    debugLogLayout();
     drawMenu();
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());

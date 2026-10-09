@@ -149,7 +149,7 @@ if(SMS_GX_BUILD_TESTS)
     # x86, never x87 extended precision, and no contraction. Source file
     # properties are per directory, so the tests' copy needs its own.
     set(SMS_GX_MSL_MATH ${CMAKE_CURRENT_SOURCE_DIR}/../misc/msl_math.c)
-    # The cheat menu reads port_cheat_god_mode, which the port defines (platform/misc).
+    # The cheat menu reads the port_cheat_* flags, which the port defines (platform/misc).
     set(SMS_GX_PORT_CHEATS ${CMAKE_CURRENT_SOURCE_DIR}/../misc/port_cheats.cpp)
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|i.86)$" OR CMAKE_OSX_ARCHITECTURES MATCHES "x86_64")
         set(_sms_gx_msl_opts "-msse2;-mfpmath=sse;-ffp-contract=off")
