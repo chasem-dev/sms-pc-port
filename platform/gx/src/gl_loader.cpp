@@ -319,9 +319,12 @@ void gx::glt::installProxies() {
     gx_glCompressedTexImage2D = &pxCompressedTexImage2D;
     gx_glReadPixels = &pxReadPixels;
     gx_glMultiDrawElementsBaseVertex = &pxMultiDrawElementsBaseVertex;
-    if (gx_glBufferStorage) {
-        real_glBufferStorage = gx_glBufferStorage;
-        gx_glBufferStorage = &Px<PFNGLBUFFERSTORAGEPROC>::call<&real_glBufferStorage>;
+#define SMS_GX_PROXY_OPTIONAL(type, name)                         \
+    if (gx_##name) {                                              \
+        real_##name = gx_##name;                                  \
+        gx_##name = &Px<type>::template call<&real_##name>;       \
     }
+    SMS_GX_GL_OPTIONAL_FUNCS(SMS_GX_PROXY_OPTIONAL)
+#undef SMS_GX_PROXY_OPTIONAL
 }
 #endif

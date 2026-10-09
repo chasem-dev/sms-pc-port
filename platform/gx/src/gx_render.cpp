@@ -1653,16 +1653,21 @@ static void statsFrame() {
         t0 = nowSeconds();
     }
     if (every <= 0) return;
+    static double last = 0, worst = 0;  // the slowest frame of the window
+    const double now = nowSeconds();
+    if (last > 0 && now - last > worst) worst = now - last;
+    last = now;
     frames++;
     draws += s_stats.draws;
     verts += s_stats.vertices;
     if (frames < uint32_t(every)) return;
     double t = nowSeconds();
     logmsg("stats: %u frames, %.1f draws/frame, %.0f vertices/frame, %u shader compiles, %u texture uploads, "
-           "%.1f ms/frame total, %.1f ms/frame in sms_gx (textures %.1f, batches %.1f, copies %.1f, peeks %.1f, "
+           "%.1f ms/frame total (slowest %.1f), %.1f ms/frame in sms_gx (textures %.1f, batches %.1f, copies %.1f, peeks %.1f, "
            "GPU waits %.1f), %.1f synchronous GPU reads/frame",
            frames, double(draws) / frames, double(verts) / frames, g_statShaderCompiles - compiles0,
-           g_statTexUploads - uploads0, (t - t0) * 1000.0 / frames, (s_gxSeconds + g_decodeSeconds - gx0) * 1000.0 / frames,
+           g_statTexUploads - uploads0, (t - t0) * 1000.0 / frames, worst * 1000.0,
+           (s_gxSeconds + g_decodeSeconds - gx0) * 1000.0 / frames,
            (s_texSeconds - tex0) * 1000.0 / frames, (g_flushSeconds - s_texSeconds - draw0) * 1000.0 / frames,
            (s_copySeconds - copy0) * 1000.0 / frames, (s_peekSeconds - peek0) * 1000.0 / frames,
            (s_waitSeconds - wait0) * 1000.0 / frames, double(s_syncReads - sync0) / frames);
@@ -1687,6 +1692,7 @@ static void statsFrame() {
     copy0 = s_copySeconds;
     peek0 = s_peekSeconds;
     frames = draws = verts = 0;
+    worst = 0;
     compiles0 = g_statShaderCompiles;
     uploads0 = g_statTexUploads;
     t0 = t;
