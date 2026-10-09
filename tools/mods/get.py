@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Download and install optional mods, fresh each time.
 
-    python3 tools/mods/get.py textures    the Super Mario Sunshine UHD Texture Pack
+    python3 tools/mods/get.py textures    the Super Mario Sunshine UHD Texture Pack, and the extras
+    python3 tools/mods/get.py extras      only the extras: HD textures the UHD pack lacks
     python3 tools/mods/get.py eclipse     Super Mario Eclipse (patched from your disc)
-    python3 tools/mods/get.py all         both
+    python3 tools/mods/get.py all         textures and Eclipse
 
 Each mod's previous install is removed first, then its release is downloaded
 from where its authors publish it, checked against a known checksum, and
-installed under mods/. Nothing of either mod is part of this repository.
+installed under mods/. None of them is part of this repository.
 
 Options:
     --iso PATH        your Super Mario Sunshine image (North America, the
@@ -27,6 +28,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -47,6 +49,17 @@ TEXTURES = {
     "size": 986431331,
     "unpacked": 3218563135,
     "install": os.path.join(MODS, "textures", "GMS"),
+}
+# HD textures the UHD pack lacks (the Pianta and balloon counter icons, ...),
+# made for this port with the scripts in that repository.
+EXTRAS = {
+    "name": "Super Mario Sunshine HD texture extras v1.0.0",
+    "page": "https://github.com/chasem-dev/sms-hd-texture-extras",
+    "url": "https://github.com/chasem-dev/sms-hd-texture-extras/releases/download/v1.0.0/sms-hd-texture-extras-1.0.0.zip",
+    "file": "sms-hd-texture-extras-1.0.0.zip",
+    "md5": "ac17df699e8e8ab3fe510c8d2fdd5086",
+    "size": 190171,
+    "install": os.path.join(MODS, "textures", "sms-hd-texture-extras"),
 }
 ECLIPSE = {
     "name": "Super Mario Eclipse v1.1.0 (Eclipse Team)",
@@ -217,8 +230,43 @@ def get_textures(keep):
         if not keep:
             remove(archive)
     say("Installed %d textures in %s." % (count, os.path.relpath(mod["install"], ROOT)))
+    try:
+        get_extras(keep)
+    except Failure as e:
+        say("warning: the UHD pack is installed, but not the extras (%s);"
+            " python3 tools/mods/get.py extras tries again" % e)
     say("The port uses them on its next start; see mods/README.md for the memory budget"
         " and SMS_GX_SCALE for a higher internal resolution.")
+
+
+def get_extras(keep):
+    mod = EXTRAS
+    say("== Texture extras: %s" % mod["name"])
+    if os.path.isdir(mod["install"]):
+        say("Removing the previous install, %s" % os.path.relpath(mod["install"], ROOT))
+        remove(mod["install"])
+    need_space(MODS, 2 * mod["size"] + (16 << 20))
+    archive = fetch(mod)
+    tmp = mod["install"] + ".part"
+    remove(tmp)
+    try:
+        # the zip holds GMS/<folders of tex1_* files>, as Dolphin's Load/Textures/ takes it
+        with zipfile.ZipFile(archive) as z:
+            names = [n for n in z.namelist() if not n.endswith("/")]
+            if not names or any(not n.startswith("GMS/") or ".." in n.split("/") for n in names):
+                raise Failure("the archive is not laid out as expected (GMS/...)")
+            z.extractall(tmp)
+        os.replace(os.path.join(tmp, "GMS"), mod["install"])
+        count = sum(1 for _, _, files in os.walk(mod["install"])
+                    for n in files if n.startswith("tex1_"))
+    except (OSError, zipfile.BadZipFile) as e:
+        remove(mod["install"])
+        raise Failure("could not unpack %s: %s" % (os.path.basename(archive), e))
+    finally:
+        remove(tmp)
+        if not keep:
+            remove(archive)
+    say("Installed %d textures in %s." % (count, os.path.relpath(mod["install"], ROOT)))
 
 
 def get_eclipse(keep, iso_arg):
@@ -283,13 +331,15 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter,
                                  epilog="\n\n".join(__doc__.split("\n\n")[1:]))
-    ap.add_argument("what", choices=["textures", "eclipse", "all"])
+    ap.add_argument("what", choices=["textures", "extras", "eclipse", "all"])
     ap.add_argument("--iso")
     ap.add_argument("--keep-download", action="store_true")
     args = ap.parse_args()
     try:
         if args.what in ("textures", "all"):
             get_textures(args.keep_download)
+        if args.what == "extras":
+            get_extras(args.keep_download)
         if args.what in ("eclipse", "all"):
             get_eclipse(args.keep_download, args.iso)
     except Failure as e:
