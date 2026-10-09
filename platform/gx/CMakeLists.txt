@@ -112,7 +112,7 @@ if(TARGET SDL2::SDL2)
             ${SMS_IMGUI_DIR}/imgui_tables.cpp
             ${SMS_IMGUI_DIR}/imgui_widgets.cpp
             ${SMS_IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
-            ${SMS_IMGUI_DIR}/backends/imgui_impl_sdl2.cpp)
+            src/gx_imgui_sdl2.cpp)
         target_include_directories(sms_imgui PUBLIC ${SMS_IMGUI_DIR} ${SMS_IMGUI_DIR}/backends)
         target_link_libraries(sms_imgui PUBLIC SDL2::SDL2 ${CMAKE_DL_LIBS})
         set_target_properties(sms_imgui PROPERTIES POSITION_INDEPENDENT_CODE ON)

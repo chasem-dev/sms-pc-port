@@ -13,16 +13,18 @@ Reason: port: God Mode (F9 menu): TMario::decHP takes no health from the player'
  #include <Player/WaterGun.hpp>
  #include <Camera/CameraShake.hpp>
  #include <System/Particles.hpp>
-@@ -56,2 +61,7 @@
--void TMario::decHP(int hp)
--{
-+void TMario::decHP(int hp)
-+{
+@@ -55,6 +60,11 @@
+ 
+ void TMario::decHP(int hp)
+ {
 +#ifdef TARGET_PC
 +	// TEnemyMario shares this function: only the player's Mario is protected.
 +	if (port_cheat_god_mode && isMario())
 +		return;
 +#endif
+ 	// volatile u32 padding[2];
+ 	if (isUnderWater() || checkFlag(MARIO_FLAG_HELMET_FLW_CAMERA)) {
+ 		mAir -= hp;
 --- a/src/Player/MarioMove.cpp
 +++ b/src/Player/MarioMove.cpp
 @@ -2456,1 +2456,5 @@
