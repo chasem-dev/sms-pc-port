@@ -31,13 +31,15 @@ RAWADDR_FIX = ("src/**/*.cpp", r"(\(\s*\([^;{}()]*\(\s*\*\s*\)\s*\([^;{}()]*\)\s
 
 # Game data by retail address, *(u32 **)0x8040E0BC: the port's object at that
 # address instead (platform/mods/eclipse/rawdata.cpp lists them).
-RAWDATA = "0x803ACA68|0x803ACAB0|0x803AFB48|0x803C0CC8|0x803C0CF0|0x803C0D18|0x803C0E30|0x803DF498|0x803DF4D8|0x803DFA00|0x8040DAB4|0x8040DABC|0x8040DFD4|0x8040DFE4|0x8040DFF4|0x8040E03C|0x8040E0BC|0x8040FA90"
+RAWDATA = "0x803ACA68|0x803ACAB0|0x803AFB48|0x803C0CC8|0x803C0CF0|0x803C0D18|0x803C0E30|0x803DF498|0x803DF4D8|0x803DFA00|0x8040DAB4|0x8040DABC|0x8040DFD4|0x8040DFE4|0x8040DFF4|0x8040E03C|0x8040E0BC|0x8040FA90|0x80412548|0x80415F4C|0x80415F68"
 RAWDATA_FIX = ("src/**/*.cpp", r"(\(\s*(?:const\s+)?[A-Za-z_][\w:<> ]*?\s*\*+\s*\))\s*(?i:(" + RAWDATA + r"))\b",
                lambda m: "%ssms_mod_rawdata(%s)" % (m.group(1), m.group(2)), "retail data addresses go to the port's objects")
 # The same through SMS_PORT_REGION(ntscu, pal, ntscj, ntsck), as BSE's
-# initAreaInfo names the game's shine and stage tables (area.cpp): unrouted,
-# it read the game's heap where the tables are on the console, and every area
-# of the base game had no scenarios and no shine select panes.
+# initAreaInfo names the game's shine and stage tables (area.cpp), BSE's boot
+# callback the glare's shine count and Eclipse's green Yoshi the tongue's
+# reach: unrouted, they read and wrote the game's heap, which the port keeps
+# where those are on the console (every area of the base game had no
+# scenarios and no shine select panes).
 RAWDATA_REGION_FIX = ("src/**/*.cpp", r"SMS_PORT_REGION\(\s*(?i:(" + RAWDATA + r"))\s*,[^()]*\)",
                       lambda m: "sms_mod_rawdata(%s)" % m.group(1), "retail data addresses go to the port's objects")
 
@@ -270,7 +272,7 @@ FRAME_RATE_FIXES = [
      "BSE reports the port's frame rate"),
 ]
 
-ECLIPSE_FIXES = optional(TEXTURE_FIXES) + CARD_IMAGE_FIXES + PARTICLE_FIXES + DEBS_FIXES + [RAWDATA_FIX] + BOOL_RET_FIXES + ECLIPSE_BE_FIXES + ECLIPSE_PATCH_TYPE_FIXES + [
+ECLIPSE_FIXES = optional(TEXTURE_FIXES) + CARD_IMAGE_FIXES + PARTICLE_FIXES + DEBS_FIXES + [RAWDATA_FIX, RAWDATA_REGION_FIX] + BOOL_RET_FIXES + ECLIPSE_BE_FIXES + ECLIPSE_PATCH_TYPE_FIXES + [
     # A retail function taking TVec3f references, called through a (...) cast:
     # on the GameCube an aggregate in a variable argument list is passed by
     # address, so the callee's references see the objects. Pass the addresses.
