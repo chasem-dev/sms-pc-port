@@ -1,11 +1,13 @@
-"""get.py's texture extras: installed from a local server, checked, and optional
-for `get.py textures`, whose UHD pack stays installed when they fail."""
+"""get.py's texture extras: installed from a local server, checked, recorded so
+--if-outdated (and SMS Launcher) installs them again only for a new release, and
+optional for `get.py textures`, whose UHD pack stays installed when they fail."""
 import contextlib
 import functools
 import hashlib
 import http.server
 import importlib.util
 import io
+import json
 import os
 import pathlib
 import shutil
@@ -77,9 +79,29 @@ class ExtrasTest(unittest.TestCase):
         (self.extras / 'tex1_old_5.png').write_bytes(b'stale')
         self.serve(self.get.EXTRAS, 'extras.zip', make_zip({'GMS/gui/icons/tex1_38x49_a_5.png': b'png'}))
         out = self.run_quietly(self.get.get_extras, False)
-        self.assertEqual(self.installed(self.extras), ['gui/icons/tex1_38x49_a_5.png'])
+        self.assertEqual(self.installed(self.extras), ['.release', 'gui/icons/tex1_38x49_a_5.png'])
         self.assertIn('Installed 1 textures in mods/textures/sms-hd-texture-extras.', out)
         self.assertFalse((self.mods / '.downloads' / 'extras.zip').exists())
+        record = json.loads((self.extras / '.release').read_text())
+        self.assertEqual(record['md5'], self.get.EXTRAS['md5'])
+
+    def test_if_outdated_installs_only_a_new_release(self):
+        self.serve(self.get.EXTRAS, 'v1.zip', make_zip({'GMS/tex1_a_5.png': b'one'}))
+        out = self.run_quietly(self.get.get_extras, False, True)  # nothing installed yet
+        self.assertIn('Installed 1 textures', out)
+        (self.served / 'v1.zip').unlink()  # a second download would fail
+        out = self.run_quietly(self.get.get_extras, False, True)
+        self.assertIn('The texture extras are up to date', out)
+        self.serve(self.get.EXTRAS, 'v2.zip', make_zip({'GMS/tex1_b_5.png': b'two'}))  # a new pin
+        out = self.run_quietly(self.get.get_extras, False, True)
+        self.assertIn('Installed 1 textures', out)
+        self.assertEqual(self.installed(self.extras), ['.release', 'tex1_b_5.png'])
+
+    def test_pin_file(self):
+        pin = json.loads((GET.parent / 'texture-extras.json').read_text())
+        self.assertEqual(sorted(pin), ['file', 'md5', 'name', 'page', 'size', 'url'])
+        self.assertTrue(pin['url'].endswith('/' + pin['file']))
+        self.assertRegex(pin['md5'], '^[0-9a-f]{32}$')
 
     def test_rejects_wrong_checksum(self):
         self.serve(self.get.EXTRAS, 'extras.zip', make_zip({'GMS/tex1_a_5.png': b'png'}), md5='0' * 32)
