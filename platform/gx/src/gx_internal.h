@@ -181,6 +181,7 @@ uint32_t primitiveIndices(uint8_t opcode, uint32_t count, uint32_t base, uint32_
 void appendDecoded(PrimClass cls, uint32_t fmt, uint32_t stride, const uint8_t* verts, uint32_t count,
                    const uint32_t* idx, uint32_t nidx);
 bool rendererReady();
+void releaseGlThread();  // gx_platform.cpp, for GXPC_Shutdown
 // Display-list arena: a GL buffer holding the vertices and indices of cached
 // display-list runs, which batches then draw in place (no per-frame copy).
 struct ArenaRef {

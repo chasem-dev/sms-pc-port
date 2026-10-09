@@ -549,6 +549,37 @@ void onDisplayCopy(const void* xfb) {
 }
 }  // namespace
 
+namespace gx {
+// GXPC_Shutdown: the GL thread ends and the context is current on the
+// calling thread again, so the caller may destroy it.
+void releaseGlThread() {
+    if (!glt::active()) return;
+#ifdef SMS_GX_HAVE_SDL2
+    if (s_mode == MODE_WINDOW && s_window) {
+        glt::sync([] { SDL_GL_MakeCurrent(s_window, nullptr); });
+        glt::stop();
+        SDL_GL_MakeCurrent(s_window, s_glctx);
+        return;
+    }
+#endif
+#ifdef SMS_GX_HAVE_EGL
+    EGLDisplay dpy = EGL_NO_DISPLAY;
+    EGLSurface surf = EGL_NO_SURFACE;
+    EGLContext ctx = EGL_NO_CONTEXT;
+    glt::sync([&] {
+        dpy = eglGetCurrentDisplay();
+        surf = eglGetCurrentSurface(EGL_DRAW);
+        ctx = eglGetCurrentContext();
+        if (dpy != EGL_NO_DISPLAY) eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    });
+    glt::stop();
+    if (dpy != EGL_NO_DISPLAY) eglMakeCurrent(dpy, surf, surf, ctx);
+#else
+    glt::stop();
+#endif
+}
+}  // namespace gx
+
 extern "C" {
 
 int GXPC_ParseArgs(int* argc, char** argv) {

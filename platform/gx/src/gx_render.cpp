@@ -2601,6 +2601,7 @@ void GXPC_Shutdown(void) {
     for (auto& kv : s_xfbs) glDeleteTextures(1, &kv.second.tex);
     s_xfbs.clear();
     s_ready = false;
+    releaseGlThread();
 }
 
 void GXPC_InvalidateRange(const void* p, uint32_t size) {
