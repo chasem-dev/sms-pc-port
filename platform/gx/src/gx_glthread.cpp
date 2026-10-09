@@ -218,7 +218,9 @@ bool start(void (*bind)(void*), void* arg) {
 }
 
 void stop() {
-    if (!s_running.load()) return;
+    // exit() can come on the GL thread too (a driver giving up): it cannot
+    // wait for itself, and the process ends anyway
+    if (!s_running.load() || t_onGl) return;
     finish();
     s_quit.store(true);
     wakeGl();
