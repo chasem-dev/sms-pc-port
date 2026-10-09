@@ -1338,10 +1338,19 @@ void callDisplayList(const uint8_t* data, uint32_t size) {
 // ------------------------------------------------------------------ write-gather pipe
 // Bytes written through the pipe collect here until they hold a whole
 // command (s_pipeNeed bytes), which is then executed.
-static uint8_t* s_pipeBuf = nullptr;
-static uint32_t s_pipeLen = 0, s_pipeCap = 0;
+static uint32_t s_pipeCap = 0;
 static uint32_t s_pipeNeed = 1;
 static uint8_t* s_redirect = nullptr;
+}  // namespace gx
+// the buffer, its length and how far the inline writers may fill it (gx_pc.h)
+extern "C" {
+uint8_t* GXPC_PipeBuf = nullptr;
+uint32_t GXPC_PipeLen = 0, GXPC_PipeFast = 0;
+}
+#define s_pipeBuf GXPC_PipeBuf
+#define s_pipeLen GXPC_PipeLen
+namespace gx {
+static void pipeFastUpdate() { GXPC_PipeFast = s_redirect ? 0 : std::min(s_pipeCap, s_pipeNeed - 1); }
 
 // Writes through a redirected pipe go to memory directly (uncached on the
 // GameCube, so the game flushes nothing): stamp them when the redirect ends.
@@ -1349,6 +1358,7 @@ static uint8_t* s_redirectStart = nullptr;
 void setPipeRedirect(uint8_t* dest) {
     if (s_redirectStart && s_redirect > s_redirectStart) memoryWritten(s_redirectStart, size_t(s_redirect - s_redirectStart));
     s_redirect = s_redirectStart = dest;
+    pipeFastUpdate();
 }
 uint8_t* getPipeRedirect() { return s_redirect; }
 bool pipeIdle() { return s_pipeLen == 0; }
@@ -1360,6 +1370,7 @@ static void pipeGrow(uint32_t need) {
     if (!b) fatal("out of memory growing the write-gather pipe");
     s_pipeBuf = b;
     s_pipeCap = cap;
+    pipeFastUpdate();
 }
 
 static void pipeRun() {
@@ -1373,6 +1384,7 @@ static void pipeRun() {
         s_pipeLen -= used;
         s_pipeNeed = need;
     }
+    pipeFastUpdate();
 }
 
 static inline void pipePut(const uint8_t* bytes, uint32_t n) {
