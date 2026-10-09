@@ -104,6 +104,9 @@ void* GXPC_PhysToPtr(uint32_t phys);
  * textures the CPU rewrote are re-decoded.  GXInvalidateTexAll re-checks every
  * cached texture's contents as well. */
 void GXPC_InvalidateRange(const void* ptr, uint32_t size);
+/* Something other than the CPU wrote game memory (DVD and ARAM transfers,
+ * DCZeroRange): cached display-list decodes reading it are checked again. */
+void GXPC_MemoryWritten(const void* ptr, uint32_t size);
 
 /* Byte order of indexed vertex / matrix arrays (GXSetArray).  Display lists and
  * pipe data are always big-endian; arrays default to host order because most
