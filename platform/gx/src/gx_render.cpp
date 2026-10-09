@@ -152,21 +152,41 @@ struct StreamBuffer {
     // writes go straight into it, without a map/unmap pair per batch.
     uint8_t* persistent = nullptr;
 
-    void init(size_t bytes) {
+    // `bytes` of ring, then `extra` bytes the ring does not use (the
+    // display-list arena), in the same buffer so draws from both share VAOs.
+    void init(size_t bytes, size_t extra) {
         size = bytes;
+        const size_t total = bytes + extra;
         glGenBuffers(1, &buf);
         glcBindArrayBuffer(buf);
         const char* e = getenv("SMS_GX_PERSISTENT_MAP");
         if (glBufferStorage && !(e && e[0] == '0')) {
             const GLbitfield flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
-            glBufferStorage(GL_ARRAY_BUFFER, GLsizeiptr(size), nullptr, flags);
-            persistent = static_cast<uint8_t*>(glMapBufferRange(GL_ARRAY_BUFFER, 0, GLsizeiptr(size), flags));
+            glBufferStorage(GL_ARRAY_BUFFER, GLsizeiptr(total), nullptr, flags);
+            persistent = static_cast<uint8_t*>(glMapBufferRange(GL_ARRAY_BUFFER, 0, GLsizeiptr(total), flags));
             if (persistent) return;
             glDeleteBuffers(1, &buf);  // immutable storage: start over with a plain buffer
             glGenBuffers(1, &buf);
             glcBindArrayBuffer(buf);
         }
-        glBufferData(GL_ARRAY_BUFFER, GLsizeiptr(size), nullptr, GL_STREAM_DRAW);
+        glBufferData(GL_ARRAY_BUFFER, GLsizeiptr(total), nullptr, GL_STREAM_DRAW);
+    }
+    // Writes bytes the GPU does not read now (nothing queued draws from them).
+    void writeAt(size_t at, const void* data, size_t n) {
+        if (!n) return;
+        if (persistent) {
+            memcpy(persistent + at, data, n);
+            return;
+        }
+        glcBindArrayBuffer(buf);
+        glt::postData(data, n, [at, n](const uint8_t* d) {
+            void* dst = glMapBufferRange(GL_ARRAY_BUFFER, GLintptr(at), GLsizeiptr(n),
+                                         GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT | GL_MAP_INVALIDATE_RANGE_BIT);
+            if (dst) {
+                memcpy(dst, d, n);
+                glUnmapBuffer(GL_ARRAY_BUFFER);
+            }
+        });
     }
     size_t unfenced = 0;  // first segment written since the last fence
 
@@ -242,6 +262,7 @@ struct StreamBuffer {
     }
 };
 static StreamBuffer s_stream;
+static const size_t kArenaBytes = size_t(64) << 20;  // the display-list arena after the ring
 static GLint s_uboAlign = 256;
 
 // One VAO per packed vertex format: attribute pointers into the vertex stream
@@ -1139,7 +1160,7 @@ void rendererInit(float efbScale) {
     glcInvalidate();
     glGenVertexArrays(1, &s_vao);
     glcBindVertexArray(s_vao);
-    s_stream.init(128u << 20);
+    s_stream.init(128u << 20, kArenaBytes);
     // Values of the attributes a packed format leaves out (see vaoForFormat):
     // the same defaults the loader used to write into every vertex.
     glVertexAttrib4f(1, 0.0f, 0.0f, 1.0f, 1.0f);  // normal
@@ -1270,14 +1291,13 @@ void appendDecoded(PrimClass cls, uint32_t fmt, uint32_t stride, const uint8_t* 
 }
 
 // ------------------------------------------------------------------ display-list arena
-// Cached display-list runs (gx_fifo.cpp) are stored once in s_arena, bump
-// allocated; when it fills up a new buffer replaces it (the old one is freed
-// once the GPU is done with it) and the runs are stored again as they are
-// drawn. SMS_GX_DL_ARENA=0 copies them into each batch instead.
-static GLuint s_arena = 0;
-static size_t s_arenaSize = 0, s_arenaPos = 0;
+// Cached display-list runs (gx_fifo.cpp) are stored once in the arena, the
+// part of the stream buffer after its ring (so batches draw them through the
+// same VAOs), bump allocated. When it fills up it starts over once the GPU
+// is done with it, and the runs are stored again as they are drawn.
+// SMS_GX_DL_ARENA=0 copies them into each batch instead.
+static size_t s_arenaPos = 0;  // from the arena's start
 static uint32_t s_arenaGen = 1;
-static std::unordered_map<uint32_t, GLuint> s_arenaVaos;
 
 bool arenaEnabled() {
     static int on = -1;
@@ -1289,37 +1309,23 @@ bool arenaEnabled() {
 }
 uint32_t arenaGeneration() { return s_arenaGen; }
 
-static GLuint arenaVao(uint32_t fmt) {
-    GLuint& vao = s_arenaVaos[fmt];
-    if (!vao) vao = makeVao(fmt, s_arena);
-    return vao;
-}
-
 bool arenaUpload(const uint8_t* verts, uint32_t n, uint32_t stride, const uint32_t* idx, uint32_t nidx, ArenaRef& out) {
-    const size_t kSize = size_t(64) << 20;
     const size_t vbytes = size_t(n) * stride, ibytes = size_t(nidx) * 4, need = vbytes + stride + ibytes + 4;
-    if (!s_ready || need > kSize / 8) return false;
-    if (!s_arena || s_arenaPos + need > s_arenaSize) {
-        if (s_arena) {
-            flushBatch();  // it may draw from the buffer being replaced
-            for (auto& kv : s_arenaVaos) glDeleteVertexArrays(1, &kv.second);
-            s_arenaVaos.clear();
-            glDeleteBuffers(1, &s_arena);
-            g_glc.vao = g_glc.arrayBuffer = ~0u;
-            s_arenaGen++;
-        }
-        glGenBuffers(1, &s_arena);
-        glcBindArrayBuffer(s_arena);
-        glBufferData(GL_ARRAY_BUFFER, GLsizeiptr(kSize), nullptr, GL_STATIC_DRAW);
-        s_arenaSize = kSize;
+    if (!s_ready || need > kArenaBytes / 8) return false;
+    if (s_arenaPos + need > kArenaBytes) {  // start over, once nothing drawn from the arena is pending
+        flushBatch();
+        GLsync done = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        glClientWaitSync(done, GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
+        glDeleteSync(done);
         s_arenaPos = 0;
+        s_arenaGen++;
     }
-    const size_t vOff = (s_arenaPos + stride - 1) / stride * stride;
+    const size_t base = s_stream.size;
+    const size_t vOff = (base + s_arenaPos + stride - 1) / stride * stride;
     const size_t iOff = (vOff + vbytes + 3) & ~size_t(3);
-    glcBindArrayBuffer(s_arena);
-    glBufferSubData(GL_ARRAY_BUFFER, GLintptr(vOff), GLsizeiptr(vbytes), verts);
-    glBufferSubData(GL_ARRAY_BUFFER, GLintptr(iOff), GLsizeiptr(ibytes), idx);
-    s_arenaPos = iOff + ibytes;
+    s_stream.writeAt(vOff, verts, vbytes);
+    s_stream.writeAt(iOff, idx, ibytes);
+    s_arenaPos = iOff + ibytes - base;
     out.gen = s_arenaGen;
     out.baseVertex = int32_t(vOff / stride);
     out.iOff = iOff;
@@ -2065,7 +2071,7 @@ void flushBatch() {
         ranges.push_back(Range{vaoForFormat(s_bfmt), iOff, GLsizei(s_bidx.size), streamBase});
     } else {
         for (const BatchSeg& sg : s_segs) {
-            if (sg.arena) ranges.push_back(Range{arenaVao(s_bfmt), sg.iOff, GLsizei(sg.count), sg.baseVertex});
+            if (sg.arena) ranges.push_back(Range{vaoForFormat(s_bfmt), sg.iOff, GLsizei(sg.count), sg.baseVertex});
             else ranges.push_back(Range{vaoForFormat(s_bfmt), iOff + size_t(sg.first) * 4, GLsizei(sg.count), streamBase});
         }
     }
