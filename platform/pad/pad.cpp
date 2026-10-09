@@ -58,6 +58,7 @@ __attribute__((weak)) void sms_gx_set_event_callback(void (*cb)(const union SDL_
 __attribute__((weak)) void sms_gx_pump_events(void);
 __attribute__((weak)) int GXPC_IsHeadless(void);
 __attribute__((weak)) int GXPC_MouseCaptured(void);
+__attribute__((weak)) int GXPC_GameInputBlocked(void);
 }
 
 // PC camera options, read by the camera code (decomp-patches/zzz-pc-camera.patch):
@@ -753,6 +754,8 @@ extern "C" u32 PADRead(PADStatus* status)
 		memset(&status[i], 0, sizeof status[i]);
 		status[i].err = i == 0 ? PAD_ERR_NONE : PAD_ERR_NO_CONTROLLER;
 	}
+	if (GXPC_GameInputBlocked && GXPC_GameInputBlocked())
+		return PAD_CHAN0_BIT;
 	PADStatus& s = status[0];
 	u16 b        = 0;
 	static const struct {
