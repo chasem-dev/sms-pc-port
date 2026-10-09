@@ -8,11 +8,13 @@
 #include "imgui_impl_opengl3.h"
 #include "imgui_impl_sdl2.h"
 
+extern "C" int port_cheat_god_mode;
+
 namespace {
 
 // Placeholders: nothing reads them yet.
 struct CheatToggles {
-    bool godMode, infiniteLives, infiniteFludd;
+    bool infiniteLives, infiniteFludd;
     bool movementSpeed2x, jumpHeight2x;
 };
 
@@ -49,7 +51,9 @@ void drawMenu() {
                                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
     if (ImGui::Begin("Cheats", &s_visible, flags)) {
         ImGui::SeparatorText("PLAYER");
-        ImGui::Checkbox("God Mode", &s_toggles.godMode);
+        bool godMode = port_cheat_god_mode != 0;
+        if (ImGui::Checkbox("God Mode", &godMode))
+            port_cheat_god_mode = godMode ? 1 : 0;
         ImGui::Checkbox("Infinite Lives", &s_toggles.infiniteLives);
         ImGui::Checkbox("Infinite FLUDD", &s_toggles.infiniteFludd);
         ImGui::SeparatorText("MOVEMENT");
