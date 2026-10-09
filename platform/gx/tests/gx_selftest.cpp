@@ -288,6 +288,25 @@ int main(int argc, char** argv) {
     GXSetAlphaCompare(GX_ALWAYS, 0, GX_AOP_AND, GX_ALWAYS, 0);
     GXSetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
 
+    // 6c. a quad exactly on the far plane is drawn (the episode select's
+    // gradient background: an ortho camera from -100 to 100, its quad at -100)
+    {
+        Mtx44 m;
+        memset(m, 0, sizeof(m));
+        float n = -100.0f, f = 100.0f, t = 1.0f / (f - n);  // as C_MTXOrtho
+        m[0][0] = 2.0f / 640;
+        m[0][3] = -1.0f;
+        m[1][1] = 2.0f / -480;
+        m[1][3] = 1.0f;
+        m[2][2] = -t;
+        m[2][3] = -f * t;
+        m[3][3] = 1.0f;
+        GXSetProjection(m, GX_ORTHOGRAPHIC);
+        colorQuad(130, 100, 180, 120, 0, 255, 255, 255, -100.0f);
+        expectPixel("quad on the far plane", 155, 110, 0, 255, 255);
+        setOrtho();
+    }
+
     // 7. display list built with GD: a TEV register write and a draw command
     {
         static u8 dl[512] __attribute__((aligned(32)));
@@ -393,7 +412,18 @@ int main(int argc, char** argv) {
         GXSetChanCtrl(GX_COLOR0A0, GX_FALSE, GX_SRC_REG, GX_SRC_REG, GX_LIGHT_NULL, GX_DF_NONE, GX_AF_NONE);
         GXSetFog(GX_FOG_LIN, 0.0f, 20.0f, n, f, fogc);
         quad(2, 1.5f, -10, 1);
+        // the same fog on a floor running from behind the camera to z = -90:
+        // fog follows each pixel's depth, half at distance 10, not a depth
+        // interpolated across the clipped polygon (fully fogged bands)
+        GXBegin(GX_QUADS, GX_VTXFMT2, 4);
+        GXPosition3f32(-3, -1.5f, 5); GXNormal3f32(0, 1, 0);
+        GXPosition3f32(3, -1.5f, 5); GXNormal3f32(0, 1, 0);
+        GXPosition3f32(3, -1.5f, -90); GXNormal3f32(0, 1, 0);
+        GXPosition3f32(-3, -1.5f, -90); GXNormal3f32(0, 1, 0);
+        GXEnd();
         GXSetFog(GX_FOG_NONE, 0, 1, 0.1f, 1, fogc);
+        expectPixel("linear fog on a floor reaching behind the camera", 320, int(240 + 240 * (1.5f * cot / 10)), 100, 50,
+                    153, 3);
         {
             // the game's underwater fog: near 1, far 33333, start -8.4, end 111.6
             Mtx44 p2;
