@@ -50,15 +50,16 @@ TEXTURES = {
     "unpacked": 3218563135,
     "install": os.path.join(MODS, "textures", "GMS"),
 }
-# HD textures the UHD pack lacks (the Pianta and balloon counter icons, ...),
-# made for this port with the scripts in that repository.
+# HD textures the UHD pack lacks (the boot logo, GAME OVER, the pause guide's
+# pictures, HUD icons, Peach, stage textures, ...), made for this port with the
+# scripts in that repository.
 EXTRAS = {
-    "name": "Super Mario Sunshine HD texture extras v1.0.0",
+    "name": "Super Mario Sunshine HD texture extras v1.1.0",
     "page": "https://github.com/chasem-dev/sms-hd-texture-extras",
-    "url": "https://github.com/chasem-dev/sms-hd-texture-extras/releases/download/v1.0.0/sms-hd-texture-extras-1.0.0.zip",
-    "file": "sms-hd-texture-extras-1.0.0.zip",
-    "md5": "ac17df699e8e8ab3fe510c8d2fdd5086",
-    "size": 190171,
+    "url": "https://github.com/chasem-dev/sms-hd-texture-extras/releases/download/v1.1.0/sms-hd-texture-extras-1.1.0.zip",
+    "file": "sms-hd-texture-extras-1.1.0.zip",
+    "md5": "9352b8c1462182ca1a5493eef4062f1e",
+    "size": 64965152,
     "install": os.path.join(MODS, "textures", "sms-hd-texture-extras"),
 }
 ECLIPSE = {
