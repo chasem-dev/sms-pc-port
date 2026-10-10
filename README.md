@@ -174,6 +174,8 @@ The launcher sets them from **Settings → Gameplay → Invert camera X / Y** (X
 
 `SMS_FREE_CAMERA=1` keeps the camera where you point it: it no longer swings back behind Mario by itself as he runs (L still recentres it). `SMS_CAMERA_SPEED=n` scales how fast the C-stick turns the camera, in percent (100 is the game's own; 10 to 400). `SMS_MOUSE_CAMERA=1` turns the camera with the mouse: the window captures the mouse while it has focus, F10 releases it and a click takes it back; `SMS_MOUSE_SENSITIVITY=n` sets its speed in percent. The invert settings apply to the mouse too.
 
+The game ignores the keyboard and controllers while another window has focus, so a controller used in another app (or in the launcher) does not also move Mario. Anything held is released when the window loses focus; a button still held when you come back counts once you press it again. `SMS_BACKGROUND_INPUT=1` (`background_input`) keeps input on in the background.
+
 On the file-select screen, walk Mario left under a block for about half a second and press A to jump into it.
 
 ## Repository layout

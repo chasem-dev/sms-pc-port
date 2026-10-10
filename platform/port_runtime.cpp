@@ -755,6 +755,7 @@ static const struct {
 	{ "free_camera", "SMS_FREE_CAMERA" },             // no automatic swing back
 	{ "mouse_camera", "SMS_MOUSE_CAMERA" },           // mouse look
 	{ "mouse_sensitivity", "SMS_MOUSE_SENSITIVITY" }, // percent
+	{ "background_input", "SMS_BACKGROUND_INPUT" },   // keep input while another window has focus
 };
 
 static void load_settings()
