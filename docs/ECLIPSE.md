@@ -91,6 +91,10 @@ For bisecting, `SMS_MOD_LIST=1` prints every registered patch and `SMS_MOD_DISAB
 
 ## Status (2026-10-01)
 
+- Piantissimo unlock continuation: BSE's pending-scene commit excluded custom contexts such as Eclipse's character select (11).
+  If a movie deferred the scene change, selecting a character could enter gameplay with the old scene, including an episode `0xFF` placeholder; `getStageName` then returned null and the parameter loader crashed.
+  `fixup_sources.py` commits the pending scene when a custom context returns to gameplay, preserving the last real previous scene, and makes a missing parameter archive name reset to defaults.
+  `python3 tools/mods/test_stage_transition.py BUILD/eclipse-src/bse --compiler clang++` checks the fetched, fixed-up transition and loader on both host widths, including preservation during additional movies and null/missing/present parameter names.
 - The 32- and 64-bit ports both run all three modules on the Eclipse disc: BSE's first-boot settings screen (saved to the memory card), Eclipse's title screen and file select, its Tutorial stage with its dialogue, HUD and the moveset, and its first stage.
   With the same input the two play the same run.
 - Rechecked after the maths, memory and decomp changes up to `a695da2`: a headless scripted run (`SMS_VI_DETERMINISTIC`, the settings saved by a first boot, then `SMS_AUTOPRESS` through the Tutorial's dialogue, a walk and a jump, the pause menu's Exit Area, and the title that follows) gives byte-identical frames in the 32- and 64-bit builds.
