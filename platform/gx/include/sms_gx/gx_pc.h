@@ -84,9 +84,12 @@ void GXPC_Shutdown(void);
 
 /* Before endian conversion, discover HD replacements in BTI, J3D TEX1 and
  * JPA resources. Thread-safe; hashes synchronously and keeps no game pointers.
- * PreloadTextures drains those requests on the GL thread before gameplay. */
+ * PreloadTextures drains those requests on the GL thread before gameplay.
+ * PrepareStage, as a stage finishes loading, first compiles the shader
+ * programs that stage is known to draw with (the warm-up), then preloads. */
 void GXPC_PrefetchResource(const void* data, uint32_t size, const char* name);
 void GXPC_PreloadTextures(void);
+void GXPC_PrepareStage(int stage);
 
 /* 32-bit "physical" addresses appear inside command streams: display lists
  * built by GD/J3D carry texture, TLUT, vertex-array and EFB-copy addresses.

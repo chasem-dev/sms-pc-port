@@ -20,6 +20,7 @@
 #include "gx_internal.h"
 #include "gl_funcs.h"
 #include "gx_glcache.h"
+#include "gx_glthread.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,6 +37,21 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <pthread.h>
+#include <sched.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#ifdef __linux__
+#include <sys/syscall.h>
+#endif
+#endif
 
 #define STBI_ONLY_PNG
 #define STBI_NO_STDIO_OVERRIDE
@@ -157,6 +173,8 @@ static void indexFile(const std::filesystem::path& p) {
 
 static void queryFormats();
 static void startWorker();
+static void requestPack();
+static int preloadMode();
 
 static void scan() {
     s_state = 0;
@@ -191,6 +209,7 @@ static void scan() {
     if (!s_index.empty()) {
         queryFormats();
         startWorker();
+        if (preloadMode() == 2) requestPack();
         s_state = 1;
     }
 }
@@ -421,19 +440,37 @@ struct Replacement {
 static size_t s_bytes = 0;     // all READY replacements
 static uint32_t s_frame = 0;   // display frames (hiresEndFrame)
 static std::unordered_map<std::string, Replacement> s_repl;  // render thread only
-// Never destroyed: the worker is still waiting on s_cv when the process
+// Never destroyed: the workers are still waiting on s_cv when the process
 // exits, and destroying a condition variable with a waiter blocks forever.
 static std::mutex& s_mu = *new std::mutex;
 static std::condition_variable& s_cv = *new std::condition_variable;
-struct Request { std::string name; uint32_t w, h; bool rest = false; };  // rest: completeLater's levels
+// What a request is for, in the order the decode worker takes them: a
+// texture a resource or a draw asked for, one of the whole pack
+// (SMS_TEXTURE_PACK_PRELOAD=all), or the levels completeLater makes (on the
+// completion worker).
+enum Kind { DEMAND, PACK, REST };
+struct Request { std::string name; uint32_t w, h; int kind = DEMAND; };
 struct Decoded { Request request; std::unique_ptr<Loaded> image; size_t bytes; };
 static std::deque<Request>& s_queue = *new std::deque<Request>;
-static std::deque<Request>& s_restQueue = *new std::deque<Request>;  // after s_queue
+static std::deque<Request>& s_packQueue = *new std::deque<Request>;  // after s_queue
 static std::deque<Decoded>& s_decoded = *new std::deque<Decoded>;
 static std::unordered_set<std::string>& s_requested = *new std::unordered_set<std::string>;
-static size_t s_decodedBytes = 0;
-static bool s_stop = false, s_busy = false, s_busyRest = false;
+static std::unordered_set<std::string>& s_packPending = *new std::unordered_set<std::string>;  // in s_packQueue
+static size_t s_decodedBytes = 0, s_decodedDemand = 0;
+static size_t s_decodedPack = 0, s_decodedPackBytes = 0;  // of those, the whole pack's (uploaded during loads)
+static std::atomic<bool> s_stop{false};
+static bool s_busy = false, s_busyPack = false, s_busyRest = false;
 static std::thread* s_worker = nullptr;
+static std::thread* s_completer = nullptr;
+// The completion worker's queue and results, apart from s_mu: outside loads
+// the render thread only try-locks s_restMu, so the idle-priority worker,
+// which a busy computer can leave waiting for long, never holds up a frame.
+static std::mutex& s_restMu = *new std::mutex;
+static std::condition_variable& s_restCv = *new std::condition_variable;
+static std::deque<Request>& s_restQueue = *new std::deque<Request>;
+static std::deque<Decoded>& s_restDone = *new std::deque<Decoded>;
+static size_t s_restDoneBytes = 0;
+static std::vector<std::string> s_restLater;  // render thread: completeLater's, not yet in s_restQueue
 
 static bool syncLoading() {
     static const bool sync = getenv("SMS_TEXTURE_PACK_SYNC") && atoi(getenv("SMS_TEXTURE_PACK_SYNC")) != 0;
@@ -448,18 +485,51 @@ static size_t pendingBudget() {
     return budget;
 }
 
-static void requestTexture(const std::string& name, uint32_t w, uint32_t h) {
+// A texture a stage asks for that the whole pack's queue still holds moves
+// ahead of it, so the stage's load waits for it.
+static void requestTexture(const std::string& name, uint32_t w, uint32_t h, int kind = DEMAND) {
     if (name.empty()) return;
     std::lock_guard<std::mutex> lk(s_mu);
     if (s_requested.insert(name).second) {
-        s_queue.push_back({name, w, h});
+        (kind == PACK ? s_packQueue : s_queue).push_back({name, w, h, kind});
+        if (kind == PACK) s_packPending.insert(name);
+        s_cv.notify_all();
+    } else if (kind == DEMAND && s_packPending.erase(name)) {
+        s_queue.push_back({name, w, h, DEMAND});
         s_cv.notify_all();
     }
 }
 
-static bool preloading() {
-    static const bool on = !getenv("SMS_TEXTURE_PACK_PRELOAD") || atoi(getenv("SMS_TEXTURE_PACK_PRELOAD")) != 0;
-    return on && !syncLoading();
+// SMS_TEXTURE_PACK_PRELOAD: 1 (the default) prepares the textures a stage's
+// resources name while it loads; all also reads the rest of the pack from the
+// start, sends it during loads (uploadPack) and keeps it (as Dolphin's
+// "Prefetch Custom Textures" does: the UHD pack takes about 4 GB of video
+// memory); 0 reads each texture when it is first drawn, showing the original
+// until it is ready.
+static int preloadMode() {
+    static const int mode = [] {
+        const char* e = getenv("SMS_TEXTURE_PACK_PRELOAD");
+        if (!e || !*e) return 1;
+        if (!strcmp(e, "all")) return 2;
+        return atoi(e) != 0 || !strcmp(e, "on") ? 1 : 0;
+    }();
+    return syncLoading() ? 0 : mode;
+}
+static bool preloading() { return preloadMode() != 0; }
+
+// The levels a pack leaves out are made at the lowest priority, of processor
+// and of disk (the completion worker and its helpers), so they wait for idle
+// time instead of slowing the game's frames or its disc reads.
+static void idlePriority() {
+#if defined(_WIN32)
+    SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);
+#elif defined(__APPLE__)
+    pthread_set_qos_class_self_np(QOS_CLASS_BACKGROUND, 0);
+#elif defined(__linux__)
+    sched_param p{};
+    pthread_setschedparam(pthread_self(), SCHED_IDLE, &p);
+    syscall(SYS_ioprio_set, 1 /* IOPRIO_WHO_PROCESS: this thread */, 0, 3 << 13 /* IOPRIO_CLASS_IDLE */);
+#endif
 }
 
 // Inspect resources before endian conversion. Only names/hashes are retained:
@@ -528,7 +598,7 @@ void hiresPrefetchResource(const void* ptr, uint32_t size, const char* name) {
 // 16384x16384 level never sits in memory as RGBA, and a large level's block
 // rows are shared between threads (an 8192x8192 BC7 file takes about a second
 // on four), leaving two cores to the game and render threads it runs beside.
-static std::vector<uint8_t> nextBlockLevel(int fmt, const std::vector<uint8_t>& src, int lw, int lh) {
+static std::vector<uint8_t> nextBlockLevel(int fmt, const std::vector<uint8_t>& src, int lw, int lh, bool idle) {
     int nw = std::max(1, lw / 2), nh = std::max(1, lh / 2);
     int sbw = (lw + 3) / 4, sbh = (lh + 3) / 4, dbw = (nw + 3) / 4, dbh = (nh + 3) / 4;
     size_t bsz = fmt == DDS_BC1 ? 8 : 16;
@@ -571,7 +641,11 @@ static std::vector<uint8_t> nextBlockLevel(int fmt, const std::vector<uint8_t>& 
         return dst;
     }
     std::vector<std::thread> pool;
-    for (int t = 1; t < threads; t++) pool.emplace_back(rows, dbh * t / threads, dbh * (t + 1) / threads);
+    for (int t = 1; t < threads; t++)
+        pool.emplace_back([&rows, idle, from = dbh * t / threads, to = dbh * (t + 1) / threads] {
+            if (idle) idlePriority();
+            rows(from, to);
+        });
     rows(0, dbh / threads);
     for (std::thread& t : pool) t.join();
     return dst;
@@ -584,7 +658,7 @@ static std::vector<uint8_t> nextBlockLevel(int fmt, const std::vector<uint8_t>& 
 // moves (Noki Bay's undersea walls, whose pack files have one level).
 // Compressed levels take a while to encode, so outside SMS_TEXTURE_PACK_SYNC
 // they follow the pack's own levels instead of delaying them (completeLater).
-static void completeChain(Loaded* L) {
+static void completeChain(Loaded* L, bool idle = false) {
     if (L->levels.empty()) return;
     int lw = L->w, lh = L->h;
     for (size_t i = 1; i < L->levels.size(); i++) {
@@ -593,7 +667,7 @@ static void completeChain(Loaded* L) {
     }
     if (L->compressed) {
         while (lw > 1 || lh > 1) {
-            L->levels.push_back(nextBlockLevel(L->blocks, L->levels.back(), lw, lh));
+            L->levels.push_back(nextBlockLevel(L->blocks, L->levels.back(), lw, lh, idle));
             lw = std::max(1, lw / 2);
             lh = std::max(1, lh / 2);
         }
@@ -619,9 +693,131 @@ static void completeChain(Loaded* L) {
     }
 }
 
+static int chainLength(int w, int h) {
+    int n = 1;
+    for (int m = std::max(w, h); m > 1; m >>= 1) n++;
+    return n;
+}
+
+// ------------------------------------------------------------------ completed levels on disk
+// The levels completeChain encodes for a compressed replacement are kept on
+// disk, so each is made once per computer instead of once per session (an
+// 8192x8192 BC7 file takes about a second of four cores). One file per
+// replacement, <name>.mips, under texture-mips/ beside the shader cache
+// (userCacheDir); a file is used only while its source keeps the size and
+// modification time it was made from. SMS_TEXTURE_PACK_CACHE=dir keeps them
+// there instead; =0 turns this off.
+static const char kMipsMagic[8] = {'S', 'M', 'S', 'M', 'I', 'P', 'S', '1'};
+struct MipsHeader {  // the same in 32- and 64-bit builds, which share the folder
+    char magic[8];
+    uint64_t size;
+    int64_t mtime;
+    uint32_t w, h, blocks, first, count, reserved;
+};
+static_assert(sizeof(MipsHeader) == 48, "MipsHeader has no padding");
+
+static const std::string& mipCacheDir() {
+    static const std::string dir = [] {
+        const char* e = getenv("SMS_TEXTURE_PACK_CACHE");
+        if (e && !strcmp(e, "0")) return std::string();
+        std::string d = e && *e ? std::string(e) : userCacheDir();
+        if (d.empty()) return d;
+        if (!(e && *e)) d += "/texture-mips";
+        std::error_code ec;
+        std::filesystem::create_directories(d, ec);
+        return ec ? std::string() : d;
+    }();
+    return dir;
+}
+
+static bool sourceStamp(const std::string& path, uint64_t* size, int64_t* mtime) {
+    std::error_code ec;
+    uint64_t n = std::filesystem::file_size(path, ec);
+    if (ec) return false;
+    auto t = std::filesystem::last_write_time(path, ec);
+    if (ec) return false;
+    *size = n;
+    *mtime = int64_t(t.time_since_epoch().count());
+    return true;
+}
+
+static size_t blockLevelBytes(int blocks, int w, int h) {
+    return size_t((w + 3) / 4) * size_t((h + 3) / 4) * (blocks == DDS_BC1 ? 8 : 16);
+}
+
+// Appends the cached levels after the pack's own, if the cache has them.
+static void loadCachedLevels(const std::string& name, const PackFile& f, Loaded* L) {
+    const std::string& dir = mipCacheDir();
+    const int first = int(L->levels.size()), full = chainLength(L->w, L->h);
+    if (dir.empty() || first >= full) return;
+    uint64_t size;
+    int64_t mtime;
+    if (!sourceStamp(f.path, &size, &mtime)) return;
+    FILE* in = fopen((dir + "/" + name + ".mips").c_str(), "rb");
+    if (!in) return;
+    MipsHeader hd;
+    std::vector<std::vector<uint8_t>> levels;
+    if (fread(&hd, sizeof hd, 1, in) == 1 && !memcmp(hd.magic, kMipsMagic, 8) && hd.size == size && hd.mtime == mtime &&
+        hd.w == uint32_t(L->w) && hd.h == uint32_t(L->h) && hd.blocks == uint32_t(L->blocks) &&
+        hd.first == uint32_t(first) && hd.count == uint32_t(full - first)) {
+        int lw = std::max(1, L->w >> first), lh = std::max(1, L->h >> first);
+        for (int i = first; i < full; i++) {
+            std::vector<uint8_t> lv(blockLevelBytes(L->blocks, lw, lh));
+            if (fread(lv.data(), lv.size(), 1, in) != 1) break;
+            levels.push_back(std::move(lv));
+            lw = std::max(1, lw / 2);
+            lh = std::max(1, lh / 2);
+        }
+    }
+    fclose(in);
+    if (int(levels.size()) != full - first) return;
+    for (auto& lv : levels) L->levels.push_back(std::move(lv));
+}
+
+// Keeps the levels a completion made (L->levels from L->first on).
+static void storeCachedLevels(const std::string& name, const PackFile& f, const Loaded& L) {
+    const std::string& dir = mipCacheDir();
+    MipsHeader hd{};
+    if (dir.empty() || L.levels.empty() || !sourceStamp(f.path, &hd.size, &hd.mtime)) return;
+    memcpy(hd.magic, kMipsMagic, 8);
+    hd.w = uint32_t(L.w);
+    hd.h = uint32_t(L.h);
+    hd.blocks = uint32_t(L.blocks);
+    hd.first = uint32_t(L.first);
+    hd.count = uint32_t(L.levels.size());
+    const std::string path = dir + "/" + name + ".mips", part = path + ".part";
+    FILE* out = fopen(part.c_str(), "wb");
+    if (!out) return;
+    bool ok = fwrite(&hd, sizeof hd, 1, out) == 1;
+    // A MiB at a time, at most 16 MiB a second, each pushed to the disk as it
+    // goes: written at once, a stage's levels (a few hundred MiB) would leave
+    // the disk busy enough to hold up the game's disc reads for whole frames.
+    using Clock = std::chrono::steady_clock;
+    const size_t kChunk = size_t(1) << 20;
+    size_t written = sizeof hd;
+    for (const auto& lv : L.levels)
+        for (size_t off = 0; ok && off < lv.size(); off += kChunk) {
+            if (s_stop) ok = false;  // shutting down: not worth the wait
+            const auto start = Clock::now();
+            const size_t n = std::min(kChunk, lv.size() - off);
+            ok = ok && fwrite(lv.data() + off, n, 1, out) == 1 && fflush(out) == 0;
+#ifdef __linux__
+            sync_file_range(fileno(out), off64_t(written), off64_t(n), SYNC_FILE_RANGE_WRITE);
+#endif
+            written += n;
+            std::this_thread::sleep_until(start + std::chrono::microseconds(n * 1000000 / (16u << 20)));
+        }
+    ok = fclose(out) == 0 && ok;
+    std::error_code ec;
+    if (ok) std::filesystem::rename(part, path, ec);
+    if (!ok || ec) std::filesystem::remove(part, ec);
+}
+
 // `whole`: also the compressed levels completeChain makes, else only the
-// pack's (RGBA images are always completed: they are decoded anyway).
-static Loaded* decode(const PackFile& f, bool whole) {
+// pack's and the cached ones (RGBA images are always completed: they are
+// decoded anyway).
+static Loaded* decode(const std::string& name, bool whole, bool cached = true) {
+    const PackFile& f = s_index.at(name);
     Loaded* L = new Loaded;
     L->arbitrary = f.arbitrary;
     if (endsWith(f.path, ".dds") || endsWith(f.path, ".DDS")) {
@@ -642,6 +838,7 @@ static Loaded* decode(const PackFile& f, bool whole) {
                 L->levels.push_back(std::move(mip.levels.front()));
             }
         }
+        if (cached && !L->failed && L->compressed) loadCachedLevels(name, f, L);
         if (whole || !L->compressed) completeChain(L);
         return L;
     }
@@ -671,35 +868,84 @@ static Loaded* decode(const PackFile& f, bool whole) {
     return L;
 }
 
+// The backlogs of decoded textures can exceed their byte budget by one
+// result, allowing even a single texture larger than the budget to make
+// progress. The whole pack's has its own: it waits for loads (uploadPack).
+static bool backlogFull() {
+    return s_decoded.size() - s_decodedPack >= 64 || s_decodedBytes - s_decodedPackBytes >= pendingBudget();
+}
+static bool packBacklogFull() { return s_decodedPack >= 64 || s_decodedPackBytes >= pendingBudget(); }
+
+static size_t levelBytes(const Loaded& L) {
+    size_t bytes = 0;
+    for (const auto& level : L.levels) bytes += level.size();
+    return bytes;
+}
+
+// The decode worker: what resources and draws ask for, then the whole pack.
 static void worker() {
     for (;;) {
         Request req;
         {
             std::unique_lock<std::mutex> lk(s_mu);
-            // The backlog can exceed its byte budget by one result, allowing
-            // even a single texture larger than the budget to make progress.
-            s_cv.wait(lk, [] { return s_stop || ((!s_queue.empty() || !s_restQueue.empty()) &&
-                s_decoded.size() < 64 && s_decodedBytes < pendingBudget()); });
+            s_cv.wait(lk, [] {
+                return s_stop || (!s_queue.empty() && !backlogFull()) || (!s_packQueue.empty() && !packBacklogFull());
+            });
             if (s_stop) return;
-            std::deque<Request>& q = s_queue.empty() ? s_restQueue : s_queue;
+            std::deque<Request>& q = !s_queue.empty() && !backlogFull() ? s_queue : s_packQueue;
             req = std::move(q.front());
             q.pop_front();
-            (req.rest ? s_busyRest : s_busy) = true;
+            if (req.kind == PACK && !s_packPending.erase(req.name)) continue;  // a stage took it first
+            (req.kind == DEMAND ? s_busy : s_busyPack) = true;
         }
-        std::unique_ptr<Loaded> L(decode(s_index.at(req.name), false));
-        if (req.rest && !L->failed) {  // only the levels the pack left out
-            L->first = int(L->levels.size());
-            completeChain(L.get());
-            L->levels.erase(L->levels.begin(), L->levels.begin() + L->first);
+        std::unique_ptr<Loaded> L(decode(req.name, false));
+        const size_t bytes = levelBytes(*L);
+        {
+            std::lock_guard<std::mutex> lk(s_mu);
+            (req.kind == DEMAND ? s_busy : s_busyPack) = false;
+            if (s_stop) return;
+            s_decodedBytes += bytes;
+            if (req.kind == DEMAND) s_decodedDemand++;
+            if (req.kind == PACK) {
+                s_decodedPack++;
+                s_decodedPackBytes += bytes;
+            }
+            s_decoded.push_back({std::move(req), std::move(L), bytes});
         }
-        size_t bytes = 0;
-        for (const auto& level : L->levels) bytes += level.size();
-        std::lock_guard<std::mutex> lk(s_mu);
-        (req.rest ? s_busyRest : s_busy) = false;
-        if (s_stop) return;
-        s_decodedBytes += bytes;
-        s_decoded.push_back({std::move(req), std::move(L), bytes});
         s_cv.notify_all();
+    }
+}
+
+// The completion worker, at idle priority: the levels a compressed
+// replacement's file leaves out, once its own levels are in GL. Each set it
+// makes is kept on disk (storeCachedLevels), so it is made once.
+static void completer() {
+    idlePriority();
+    for (;;) {
+        Request req;
+        {
+            std::unique_lock<std::mutex> lk(s_restMu);
+            s_restCv.wait(lk, [] {
+                return s_stop || (!s_restQueue.empty() && s_restDone.size() < 8 && s_restDoneBytes < pendingBudget());
+            });
+            if (s_stop) return;
+            req = std::move(s_restQueue.front());
+            s_restQueue.pop_front();
+            s_busyRest = true;
+        }
+        std::unique_ptr<Loaded> L(decode(req.name, false, false));
+        if (!L->failed) {  // only the levels the pack left out
+            L->first = int(L->levels.size());
+            completeChain(L.get(), true);
+            L->levels.erase(L->levels.begin(), L->levels.begin() + L->first);
+            storeCachedLevels(req.name, s_index.at(req.name), *L);
+        }
+        const size_t bytes = levelBytes(*L);
+        std::lock_guard<std::mutex> lk(s_restMu);
+        s_busyRest = false;
+        if (s_stop) return;
+        s_restDoneBytes += bytes;
+        s_restDone.push_back({std::move(req), std::move(L), bytes});
     }
 }
 
@@ -707,70 +953,181 @@ static void startWorker() {
     if (!syncLoading() && !s_worker) {
         s_stop = false;
         s_worker = new std::thread(worker);
+        s_completer = new std::thread(completer);
     }
 }
 
-// The worker makes the compressed levels a replacement's file leaves out
-// after its own levels are in GL, behind every replacement still to read.
-static void completeLater(const std::string& name) {
-    std::lock_guard<std::mutex> lk(s_mu);
-    s_restQueue.push_back({name, 0, 0, true});
-    s_cv.notify_all();
-}
-
-static void uploadRest(Replacement& r, Loaded* L, int unit) {
-    glcBindTexture(unit, r.tex);
-    int lw = std::max(1, r.w >> L->first), lh = std::max(1, r.h >> L->first);
-    int n = L->first;
-    for (const auto& lv : L->levels) {
-        glCompressedTexImage2D(GL_TEXTURE_2D, n++, L->compressed, lw, lh, 0, GLsizei(lv.size()), lv.data());
-        r.bytes += lv.size();
-        s_bytes += lv.size();
-        lw = std::max(1, lw / 2);
-        lh = std::max(1, lh / 2);
+// The whole pack, behind what stages ask for (SMS_TEXTURE_PACK_PRELOAD=all).
+static void requestPack() {
+    for (const auto& kv : s_index) {
+        unsigned w = 0, h = 0;
+        if (sscanf(kv.first.c_str(), "tex1_%ux%u", &w, &h) == 2 && w && h) requestTexture(kv.first, w, h, PACK);
     }
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, n - 1);
-    r.levels = n;
 }
 
-static int chainLength(int w, int h) {
-    int n = 1;
-    for (int m = std::max(w, h); m > 1; m >>= 1) n++;
-    return n;
+// The completion worker makes the compressed levels a replacement's file
+// leaves out after its own levels are in GL (handed over by exchangeRest).
+static void completeLater(const std::string& name) { s_restLater.push_back(name); }
+
+// GL texture names, made a batch at a time: glGenTextures returns them, so
+// with the GL thread each call waits for it to finish the frame's work.
+static std::vector<GLuint> s_names;
+static GLuint newTexture() {
+    if (s_names.empty()) {
+        s_names.resize(32);
+        glGenTextures(GLsizei(s_names.size()), s_names.data());
+    }
+    GLuint t = s_names.back();
+    s_names.pop_back();
+    return t;
 }
 
-static void upload(Replacement& r, Loaded* L, int unit, uint32_t gxW, uint32_t gxH, const std::string& name) {
-    if (L->failed) {
+// A decoded replacement (or completion) on its way into GL. A level larger
+// than a piece goes in as bands of glTex(Compressed)SubImage2D, each small
+// enough for the GL thread to copy rather than wait for (glt::kMaxInline),
+// and outside a load a frame sends SMS_TEXTURE_PACK_UPLOAD_MB (8 by default;
+// 0 for no limit) at most: a large texture arrives over a few frames instead
+// of stopping one. A replacement is sampled once all its levels are in.
+struct Upload {
+    Decoded item;
+    GLuint tex = 0;
+    size_t level = 0;   // the next of item.image->levels
+    size_t offset = 0;  // the bytes of it already sent
+};
+static std::deque<Upload>& s_uploads = *new std::deque<Upload>;  // render thread only
+static std::vector<GLuint> s_fresh;  // replacements prepared during the current load (touchFresh)
+static const size_t kPiece = size_t(4) << 20;
+uint64_t g_statHiresBytes = 0;
+
+static size_t frameUploadBudget() {
+    static const size_t budget = [] {
+        const char* e = getenv("SMS_TEXTURE_PACK_UPLOAD_MB");
+        int mb = e && *e ? atoi(e) : 8;
+        return mb > 0 ? size_t(mb) << 20 : SIZE_MAX;
+    }();
+    return budget;
+}
+
+// The replacement a completion's levels belong to, while it still has just
+// the levels before them (it may have been freed or reloaded meanwhile).
+static Replacement* completionTarget(const Upload& u) {
+    auto it = s_repl.find(u.item.request.name);
+    const Loaded* L = u.item.image.get();
+    if (it == s_repl.end() || it->second.state != Replacement::READY || it->second.levels != L->first || L->failed ||
+        L->levels.empty() || (u.tex && it->second.tex != u.tex))
+        return nullptr;
+    return &it->second;
+}
+
+// Sets up u's texture; false if there is nothing to send.
+static bool beginUpload(Upload& u) {
+    if (u.item.request.kind == REST) {
+        Replacement* r = completionTarget(u);
+        if (r) u.tex = r->tex;
+        return r != nullptr;
+    }
+    Replacement& r = s_repl[u.item.request.name];
+    if (u.item.image->failed) {
         r.state = Replacement::FAILED;
+        return false;
+    }
+    if (r.state != Replacement::QUEUED) return false;
+    if (!r.tex) r.tex = newTexture();
+    u.tex = r.tex;
+    return true;
+}
+
+// Sends u's levels, at least one piece and then while `sent` is under
+// `allowance`; true once they are all in. A completion's levels already have
+// their storage (finishUpload), so they only fill it.
+static bool sendLevels(Upload& u, int unit, size_t allowance, size_t* sent) {
+    Loaded* L = u.item.image.get();
+    const bool fill = u.item.request.kind == REST;
+    glcBindTexture(unit, u.tex);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    bool first = true;
+    while (u.level < L->levels.size()) {
+        if (!first && *sent >= allowance) return false;
+        first = false;
+        const std::vector<uint8_t>& lv = L->levels[u.level];
+        const int n = L->first + int(u.level);
+        const int lw = std::max(1, L->w >> n), lh = std::max(1, L->h >> n);
+        size_t bytes = lv.size();
+        if (u.offset == 0 && bytes <= kPiece && !fill) {
+            if (L->compressed)
+                glCompressedTexImage2D(GL_TEXTURE_2D, n, L->compressed, lw, lh, 0, GLsizei(bytes), lv.data());
+            else
+                glTexImage2D(GL_TEXTURE_2D, n, GL_RGBA8, lw, lh, 0, GL_RGBA, GL_UNSIGNED_BYTE, lv.data());
+        } else {
+            if (u.offset == 0 && !fill) {  // the level's storage, then its bands
+                if (L->compressed)
+                    glCompressedTexImage2D(GL_TEXTURE_2D, n, L->compressed, lw, lh, 0, GLsizei(lv.size()), nullptr);
+                else
+                    glTexImage2D(GL_TEXTURE_2D, n, GL_RGBA8, lw, lh, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            }
+            // rows of blocks, or of pixels
+            const int rowPixels = L->compressed ? 4 : 1;
+            const size_t rowBytes = lv.size() / size_t((lh + rowPixels - 1) / rowPixels);
+            const int y = int(u.offset / rowBytes) * rowPixels;
+            bytes = std::min(std::max<size_t>(1, kPiece / rowBytes) * rowBytes, lv.size() - u.offset);
+            const int h = std::min(int(bytes / rowBytes) * rowPixels, lh - y);
+            if (L->compressed)
+                glCompressedTexSubImage2D(GL_TEXTURE_2D, n, 0, y, lw, h, L->compressed, GLsizei(bytes), lv.data() + u.offset);
+            else
+                glTexSubImage2D(GL_TEXTURE_2D, n, 0, y, lw, h, GL_RGBA, GL_UNSIGNED_BYTE, lv.data() + u.offset);
+        }
+        u.offset += bytes;
+        *sent += bytes;
+        g_statHiresBytes += bytes;
+        if (u.offset == lv.size()) {
+            u.level++;
+            u.offset = 0;
+        }
+    }
+    return true;
+}
+
+static void finishUpload(Upload& u, int unit) {
+    const Loaded* L = u.item.image.get();
+    size_t bytes = 0;
+    for (const auto& lv : L->levels) bytes += lv.size();
+    const int levels = L->first + int(L->levels.size());
+    glcBindTexture(unit, u.tex);
+    if (u.item.request.kind == REST) {  // sampling reaches the new levels
+        Replacement* r = completionTarget(u);
+        if (!r) return;
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, levels - 1);
+        r->levels = levels;
+        r->bytes += bytes;
+        s_bytes += bytes;
         return;
     }
+    const std::string& name = u.item.request.name;
+    Replacement& r = s_repl[name];
     int scale = 0;
-    while (scale < 6 && (gxW << (scale + 1)) <= uint32_t(L->w) && (gxH << (scale + 1)) <= uint32_t(L->h)) scale++;
-    glGenTextures(1, &r.tex);
-    glcBindTexture(unit, r.tex);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-    int lw = L->w, lh = L->h, n = 0;
-    r.bytes = 0;
-    for (const auto& lv : L->levels) {
-        r.bytes += lv.size();
-        if (L->compressed)
-            glCompressedTexImage2D(GL_TEXTURE_2D, n, L->compressed, lw, lh, 0, GLsizei(lv.size()), lv.data());
-        else
-            glTexImage2D(GL_TEXTURE_2D, n, GL_RGBA8, lw, lh, 0, GL_RGBA, GL_UNSIGNED_BYTE, lv.data());
-        lw = std::max(1, lw / 2);
-        lh = std::max(1, lh / 2);
-        n++;
-    }
-    // Sampling stops at the last level until completeLater's arrive.
+    while (scale < 6 && (u.item.request.w << (scale + 1)) <= uint32_t(L->w) &&
+           (u.item.request.h << (scale + 1)) <= uint32_t(L->h))
+        scale++;
+    // Sampling stops at the last level until completeLater's arrive. Their
+    // storage is made now: adding levels to a texture in use later would make
+    // the driver remake (and copy) all of it.
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, int(L->levels.size()) - 1);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, levels - 1);
+    const int full = chainLength(L->w, L->h);
+    for (int n = levels; n < full && L->compressed; n++) {
+        const int lw = std::max(1, L->w >> n), lh = std::max(1, L->h >> n);
+        glCompressedTexImage2D(GL_TEXTURE_2D, n, L->compressed, lw, lh, 0, GLsizei(blockLevelBytes(L->blocks, lw, lh)),
+                               nullptr);
+    }
     r.w = L->w;
     r.h = L->h;
-    r.levels = int(L->levels.size());
-    if (r.levels < chainLength(L->w, L->h)) completeLater(name);
+    r.levels = levels;
+    r.bytes = bytes;
+    if (r.levels < full) completeLater(name);
     r.scale = scale;
     r.state = Replacement::READY;
-    s_bytes += r.bytes;
+    r.used = s_frame;  // keep preloaded textures through the first draw
+    s_bytes += bytes;
     s_uploaded++;
     extern uint32_t g_statTexUploads;
     g_statTexUploads++;
@@ -783,11 +1140,16 @@ static void upload(Replacement& r, Loaded* L, int unit, uint32_t gxW, uint32_t g
 GLuint hiresTexture(const std::string& name, int unit, uint32_t gxW, uint32_t gxH, int* scale) {
     auto it = s_repl.find(name);
     if (it == s_repl.end()) {
-        Replacement& r = s_repl[name];
+        s_repl[name];
         if (syncLoading()) {
-            Loaded* L = decode(s_index.at(name), true);
-            upload(r, L, unit, gxW, gxH, name);
-            delete L;
+            Upload u;
+            u.item.request = {name, gxW, gxH, DEMAND};
+            u.item.image.reset(decode(name, true));
+            size_t sent = 0;
+            if (beginUpload(u)) {
+                sendLevels(u, unit, SIZE_MAX, &sent);
+                finishUpload(u, unit);
+            }
         } else {
             requestTexture(name, gxW, gxH);
         }
@@ -799,35 +1161,159 @@ GLuint hiresTexture(const std::string& name, int unit, uint32_t gxW, uint32_t gx
     return it->second.tex;
 }
 
+// Hands completeLater's names to the completion worker and takes the levels
+// it has made; outside a load only when its lock is free.
+static void exchangeRest(bool block) {
+    std::unique_lock<std::mutex> lk(s_restMu, std::defer_lock);
+    if (block) lk.lock();
+    else if (!lk.try_lock()) return;
+    for (std::string& name : s_restLater) s_restQueue.push_back({std::move(name), 0, 0, REST});
+    bool notify = !s_restLater.empty() || !s_restDone.empty();
+    s_restLater.clear();
+    std::vector<Upload> done;
+    while (!s_restDone.empty()) {
+        done.emplace_back();
+        done.back().item = std::move(s_restDone.front());
+        s_restDone.pop_front();
+        s_restDoneBytes -= done.back().item.bytes;
+    }
+    lk.unlock();
+    if (notify) s_restCv.notify_all();
+    for (Upload& u : done)
+        if (beginUpload(u)) s_uploads.push_back(std::move(u));
+}
+
+// Takes the first decoded texture of the whole pack (`pack`), or of the rest.
+static bool takeDecoded(Upload& u, bool pack) {  // with s_mu held
+    auto it = std::find_if(s_decoded.begin(), s_decoded.end(),
+                           [&](const Decoded& d) { return (d.request.kind == PACK) == pack; });
+    if (it == s_decoded.end()) return false;
+    u.item = std::move(*it);
+    s_decoded.erase(it);
+    s_decodedBytes -= u.item.bytes;
+    if (u.item.request.kind == DEMAND) s_decodedDemand--;
+    if (pack) {
+        s_decodedPack--;
+        s_decodedPackBytes -= u.item.bytes;
+    }
+    s_cv.notify_all();
+    return true;
+}
+
+// Sends decoded textures into GL: all of the ones resources asked for when
+// `wait` (a load: until none is left to decode), else up to a frame's
+// allowance, or 2 ms. The whole pack's wait for loads (uploadPack).
 static void uploadPending(bool wait) {
     using Clock = std::chrono::steady_clock;
     const auto start = Clock::now();
-    size_t bytes = 0;
-    // Soft limits between textures: a single large upload cannot be interrupted.
-    do {
-        Decoded item;
-        {
-            std::unique_lock<std::mutex> lk(s_mu);
-            if (wait) s_cv.wait(lk, [] { return !s_decoded.empty() || (s_queue.empty() && !s_busy); });
-            if (s_decoded.empty()) break;
-            item = std::move(s_decoded.front());
-            s_decoded.pop_front();
-            s_decodedBytes -= item.bytes;
-            s_cv.notify_all();
-        }
-        bytes += item.bytes;
-        if (item.request.rest) {  // dropped if its replacement was freed or reloaded meanwhile
-            auto it = s_repl.find(item.request.name);
-            Loaded* L = item.image.get();
-            if (it != s_repl.end() && it->second.state == Replacement::READY && it->second.levels == L->first &&
-                !L->failed && !L->levels.empty())
-                uploadRest(it->second, L, 0);
+    const size_t allowance = wait ? SIZE_MAX : frameUploadBudget();
+    size_t sent = 0;
+    exchangeRest(wait);
+    for (;;) {
+        if (s_uploads.empty()) {
+            Upload u;
+            {
+                std::unique_lock<std::mutex> lk(s_mu, std::defer_lock);
+                if (wait) lk.lock();
+                else if (!lk.try_lock()) break;
+                auto loaded = [] { return s_decodedDemand == 0 && s_queue.empty() && !s_busy; };
+                if (wait) s_cv.wait(lk, [&] { return s_decoded.size() > s_decodedPack || loaded(); });
+                if ((wait && loaded()) || !takeDecoded(u, false)) break;
+            }
+            if (beginUpload(u)) s_uploads.push_back(std::move(u));
             continue;
         }
-        Replacement& r = s_repl[item.request.name];
-        upload(r, item.image.get(), 0, item.request.w, item.request.h, item.request.name);
-        r.used = s_frame;  // keep preloaded textures through the first draw
-    } while (wait || (bytes < (16u << 20) && Clock::now() - start < std::chrono::milliseconds(2)));
+        Upload& u = s_uploads.front();
+        if (u.item.request.kind == REST && !completionTarget(u)) {
+            s_uploads.pop_front();
+            continue;
+        }
+        if (sendLevels(u, 0, allowance, &sent)) {
+            finishUpload(u, 0);
+            if (wait && u.item.request.kind != REST) s_fresh.push_back(u.tex);
+            s_uploads.pop_front();
+        }
+        if (!wait && (sent >= allowance || Clock::now() - start >= std::chrono::milliseconds(2))) break;
+    }
+}
+
+// During a load, after the level's own: the whole pack's textures
+// (SMS_TEXTURE_PACK_PRELOAD=all) for up to `ms`, so over the first loads the
+// lot arrives without any frame sending it.
+static void uploadPack(double ms) {
+    using Clock = std::chrono::steady_clock;
+    const auto until = Clock::now() + std::chrono::microseconds(int64_t(ms * 1000));
+    size_t sent = 0;
+    for (;;) {
+        Upload u;
+        {
+            std::unique_lock<std::mutex> lk(s_mu);
+            auto done = [] { return s_packQueue.empty() && !s_busyPack; };
+            s_cv.wait_until(lk, until, [&] { return s_decodedPack > 0 || done(); });
+            if (!takeDecoded(u, true)) break;
+        }
+        if (beginUpload(u)) {
+            sendLevels(u, 0, SIZE_MAX, &sent);
+            finishUpload(u, 0);
+            s_fresh.push_back(u.tex);
+        }
+        if (Clock::now() >= until) break;
+    }
+}
+
+// The replacements a load prepared are each drawn from once, a point into a
+// 1x1 target, so the driver moves them into video memory during the load
+// instead of at the level's first frame (which otherwise waits for that:
+// about 60 ms for Delfino Plaza's on a GTX 1060).
+static GLuint s_touchProg = 0, s_touchFbo = 0, s_touchTarget = 0, s_touchVao = 0;
+
+static void touchFresh() {
+    if (s_fresh.empty()) return;
+    glcInvalidate();
+    GLint fbo = 0, vp[4] = {};
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fbo);
+    glGetIntegerv(GL_VIEWPORT, vp);
+    if (!s_touchProg) {
+        static const char* kVs = "#version 330 core\nvoid main() { gl_Position = vec4(0.0, 0.0, 0.0, 1.0); }\n";
+        static const char* kFs = "#version 330 core\nuniform sampler2D t;\nout vec4 o;\n"
+                                 "void main() { o = textureLod(t, vec2(0.5), 0.0); }\n";
+        GLuint v = glCreateShader(GL_VERTEX_SHADER), f = glCreateShader(GL_FRAGMENT_SHADER);
+        glShaderSource(v, 1, &kVs, nullptr);
+        glShaderSource(f, 1, &kFs, nullptr);
+        glCompileShader(v);
+        glCompileShader(f);
+        s_touchProg = glCreateProgram();
+        glAttachShader(s_touchProg, v);
+        glAttachShader(s_touchProg, f);
+        glBindFragDataLocation(s_touchProg, 0, "o");
+        glLinkProgram(s_touchProg);
+        glDeleteShader(v);
+        glDeleteShader(f);
+        glUseProgram(s_touchProg);
+        glUniform1i(glGetUniformLocation(s_touchProg, "t"), 0);
+        glGenTextures(1, &s_touchTarget);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, s_touchTarget);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glGenFramebuffers(1, &s_touchFbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, s_touchFbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s_touchTarget, 0);
+        glGenVertexArrays(1, &s_touchVao);
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, s_touchFbo);
+    glViewport(0, 0, 1, 1);
+    glUseProgram(s_touchProg);
+    glBindVertexArray(s_touchVao);
+    glActiveTexture(GL_TEXTURE0);
+    glBindSampler(0, 0);
+    for (GLuint t : s_fresh) {
+        glBindTexture(GL_TEXTURE_2D, t);
+        glDrawArrays(GL_POINTS, 0, 1);
+    }
+    s_fresh.clear();
+    glBindFramebuffer(GL_FRAMEBUFFER, GLuint(fbo));
+    glViewport(vp[0], vp[1], vp[2], vp[3]);
+    glcInvalidate();
 }
 
 void hiresPreload() {
@@ -835,6 +1321,11 @@ void hiresPreload() {
     const auto start = std::chrono::steady_clock::now();
     uint32_t before = s_uploaded;
     uploadPending(true);
+    if (preloadMode() == 2) uploadPack(1500);
+    // The GL thread takes what was sent while the level still loads, so the
+    // first frame does not wait for it.
+    touchFresh();
+    glt::finish();
     if (s_uploaded != before)
         logmsg("texture pack: prepared %u replacements before gameplay in %.1f ms (%zu MiB resident)",
                s_uploaded - before,
@@ -844,7 +1335,8 @@ void hiresPreload() {
 // Once a display frame: over the memory budget (SMS_TEXTURE_PACK_MB, 1536
 // by default), the replacements unused for longest are freed, down to three
 // quarters of it. One sampled since the previous frame is never freed; a
-// freed one is read again the next time its texture is.
+// freed one is read again the next time its texture is. The whole pack
+// (SMS_TEXTURE_PACK_PRELOAD=all) is kept.
 void hiresEndFrame() {
     if (s_state == 1 && !syncLoading()) uploadPending(false);
     s_frame++;
@@ -853,7 +1345,7 @@ void hiresEndFrame() {
         const char* e = getenv("SMS_TEXTURE_PACK_MB");
         budget = size_t(e && atoi(e) > 0 ? atoi(e) : 1536) << 20;
     }
-    if (s_bytes <= budget) return;
+    if (s_bytes <= budget || preloadMode() == 2) return;
     std::vector<std::pair<uint32_t, const std::string*>> old;
     for (auto& kv : s_repl)
         if (kv.second.state == Replacement::READY && kv.second.used + 1 < s_frame) old.emplace_back(kv.second.used, &kv.first);
@@ -882,20 +1374,29 @@ void hiresShutdown() {
     s_state = 0;
     {
         std::lock_guard<std::mutex> lk(s_mu);
+        std::lock_guard<std::mutex> lk2(s_restMu);
         s_stop = true;
-        s_cv.notify_all();
     }
-    if (s_worker) {
-        s_worker->join();
-        delete s_worker;
-        s_worker = nullptr;
-    }
+    s_cv.notify_all();
+    s_restCv.notify_all();
+    for (std::thread** t : {&s_worker, &s_completer})
+        if (*t) {
+            (*t)->join();
+            delete *t;
+            *t = nullptr;
+        }
     s_queue.clear();
+    s_packQueue.clear();
+    s_packPending.clear();
     s_restQueue.clear();
+    s_restDone.clear();
+    s_restLater.clear();
+    s_restDoneBytes = 0;
     s_decoded.clear();
+    s_uploads.clear();
     s_requested.clear();
-    s_decodedBytes = 0;
-    s_busy = s_busyRest = false;
+    s_decodedBytes = s_decodedDemand = s_decodedPack = s_decodedPackBytes = 0;
+    s_busy = s_busyPack = s_busyRest = false;
     s_bytes = 0;
     for (auto& kv : s_repl)
         if (kv.second.tex) {
@@ -903,6 +1404,16 @@ void hiresShutdown() {
             glDeleteTextures(1, &kv.second.tex);
         }
     s_repl.clear();
+    if (!s_names.empty()) glDeleteTextures(GLsizei(s_names.size()), s_names.data());
+    s_names.clear();
+    s_fresh.clear();
+    if (s_touchProg) {
+        glDeleteProgram(s_touchProg);
+        glDeleteFramebuffers(1, &s_touchFbo);
+        glDeleteTextures(1, &s_touchTarget);
+        glDeleteVertexArrays(1, &s_touchVao);
+        s_touchProg = s_touchFbo = s_touchTarget = s_touchVao = 0;
+    }
     s_index.clear();
     s_s3tc = s_bptc = false;
     s_state = -1;
@@ -912,10 +1423,14 @@ uint32_t hiresUploadedCount() { return s_uploaded; }
 
 HiresStats hiresStats() {
     std::lock_guard<std::mutex> lk(s_mu);
-    size_t rest = 0;
-    for (const Decoded& d : s_decoded) rest += d.request.rest;
-    return {s_bytes, s_decodedBytes, s_queue.size() + s_decoded.size() - rest + size_t(s_busy), s_uploaded,
-            s_restQueue.size() + rest + size_t(s_busyRest)};
+    std::lock_guard<std::mutex> lk2(s_restMu);
+    size_t restUploads = 0;
+    for (const Upload& u : s_uploads) restUploads += u.item.request.kind == REST;
+    return {s_bytes, s_decodedBytes + s_restDoneBytes,
+            s_queue.size() + s_packQueue.size() + s_decoded.size() + s_uploads.size() - restUploads + size_t(s_busy) +
+                size_t(s_busyPack),
+            s_uploaded,
+            s_restLater.size() + s_restQueue.size() + s_restDone.size() + restUploads + size_t(s_busyRest)};
 }
 
 }  // namespace gx

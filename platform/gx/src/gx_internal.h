@@ -243,6 +243,11 @@ uint32_t hiresUploadedCount();
 // compressed levels are still being made.
 struct HiresStats { size_t residentBytes, decodedBytes, pendingCount; uint32_t uploaded; size_t completing; };
 HiresStats hiresStats();
+extern uint64_t g_statHiresBytes;  // texture pack bytes sent to GL
+// The folder for the port's caches (shader programs, texture levels):
+// $XDG_CACHE_HOME/sms-port, ~/Library/Caches/sms-port, %LOCALAPPDATA%\sms-port
+// (made if missing), or empty.
+std::string userCacheDir();
 uint64_t xxh64(const void* data, size_t len, uint64_t seed);
 // Block compression (gx_bcenc.cpp) for the mip levels a texture pack leaves
 // out: one 4x4 block of RGBA pixels, row by row, into 8 bytes (BC1) or 16.
@@ -271,6 +276,7 @@ struct ShaderProgram {
 bool shaderHasEarlyFragmentTests();
 bool earlyZWritesRejected();
 const ShaderProgram* shaderForCurrentState(bool depthOnly = false);
+void shaderPrepareStage(int stage);  // while a stage loads: its programs (the warm-up)
 
 // ---------------------------------------------------------------- util
 uint64_t hashBytes(const void* data, size_t n, uint64_t seed = 0);

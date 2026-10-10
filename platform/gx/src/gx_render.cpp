@@ -42,12 +42,12 @@ double g_presentWaited = 0, g_presentDrain = 0;
 static double (*s_idleClock)(void) = nullptr;
 static double nowSeconds() { return monoSeconds(); }
 // The breakdown timers (textures, draws, copies, peeks, GPU waits, the vertex
-// loader) run with SMS_GX_STATS or while the overlay is open
-// (GXPC_SetDetailedTimers). Otherwise only the overall sms_gx time is
+// loader) run with SMS_GX_STATS or SMS_GX_HITCH_MS or while the overlay is
+// open (GXPC_SetDetailedTimers). Otherwise only the overall sms_gx time is
 // measured; the others cost a clock read per texture bind and per primitive.
 static bool statsEnv() {
     const char* e = getenv("SMS_GX_STATS");
-    return e && atoi(e) > 0;
+    return (e && atoi(e) > 0) || getenv("SMS_GX_HITCH_MS");
 }
 bool g_gxStats = statsEnv();
 struct GxTimer {
@@ -1711,6 +1711,34 @@ static void statsFrame() {
     gx0 = s_gxSeconds + g_decodeSeconds;
 }
 
+// SMS_GX_HITCH_MS=n: logs each display frame longer than n ms with what it
+// spent: draw-time shader compiles, texture uploads (and texture pack bytes
+// sent), time making batches (where compiles fall), and waiting for the GL
+// thread.
+static void hitchFrame() {
+    static double limit = -1, last = 0, flush0 = 0, wait0 = 0;
+    static uint32_t compiles0 = 0, uploads0 = 0;
+    static uint64_t hires0 = 0;
+    if (limit < 0) {
+        const char* e = getenv("SMS_GX_HITCH_MS");
+        limit = e ? atof(e) / 1000.0 : 0;
+    }
+    if (limit <= 0) return;
+    const double now = nowSeconds(), waited = glt::waitedSeconds();
+    if (last > 0 && now - last > limit)
+        logmsg("hitch: frame %u took %.1f ms: %u shader compiles, %u texture uploads (%.1f MiB from the texture pack), "
+               "%.1f ms in batches, %.1f ms waiting for the GL thread",
+               g_displayFrames, (now - last) * 1000.0, g_statShaderCompiles - compiles0, g_statTexUploads - uploads0,
+               double(g_statHiresBytes - hires0) / (1 << 20), (g_flushSeconds - flush0) * 1000.0,
+               (waited - wait0) * 1000.0);
+    last = now;
+    flush0 = g_flushSeconds;
+    wait0 = waited;
+    compiles0 = g_statShaderCompiles;
+    uploads0 = g_statTexUploads;
+    hires0 = g_statHiresBytes;
+}
+
 // Asynchronous GPU reads. Every synchronous read (glReadPixels into client
 // memory, a query result) makes the CPU wait for all queued GPU work, which on
 // a real GPU serialises the two. Reads the game makes every frame are answered
@@ -2559,6 +2587,7 @@ static void copyEfb(uint32_t ctrl) {
         g_displayFrames++;
         traceFrameAdvance();
         statsFrame();
+        hitchFrame();
         s_lastFrameStats = s_stats;
         s_stats.draws = s_stats.vertices = s_stats.efbCopies = 0;
     }
@@ -2604,6 +2633,14 @@ void GXPC_PreloadTextures(void) {
     if (!s_ready) return;
     flushBatch();
     glcInvalidate();
+    hiresPreload();
+}
+
+void GXPC_PrepareStage(int stage) {
+    if (!s_ready) return;
+    flushBatch();
+    glcInvalidate();
+    shaderPrepareStage(stage);
     hiresPreload();
 }
 

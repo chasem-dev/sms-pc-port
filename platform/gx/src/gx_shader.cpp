@@ -10,8 +10,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <chrono>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #ifdef _WIN32
 #include <direct.h>
@@ -32,6 +34,10 @@ struct ShaderKey {
     uint32_t swap[4];
     uint32_t iref, alphaFunc, fogType, earlyZ, depthOnly;
 };
+// The program keys' layout (ShaderKey and ProgramKey): bump it when a field
+// is added, removed or means something else, and remake gx_shader_keys.inc
+// (tools/gx/shader_keys.py), whose keys are kept in this layout.
+static const uint32_t kShaderKeyLayout = 1;
 
 // The qualifier is available in GL 4.2 and as an extension on GL 3.3.
 // Older contexts (including macOS) use the ordered depth pass in flushBatch.
@@ -571,11 +577,15 @@ static void bindAttributes(GLuint p) {
 }
 
 // A linked program's fixed bindings and uniform locations (on the GL thread).
-static void setupProgram(GLuint p, ShaderProgram& sp) {
+// `aside`: while the game's thread runs on, which expects the bound program
+// to be the one it bound (g_glc), so it is bound back afterwards.
+static void setupProgram(GLuint p, ShaderProgram& sp, bool aside = false) {
     sp.prog = p;
     sp.uc.init = false;
+    GLint bound = 0;
+    if (aside) glGetIntegerv(GL_CURRENT_PROGRAM, &bound);
     glUseProgram(p);
-    g_glc.prog = p;
+    if (!aside) g_glc.prog = p;
     GLuint blk = glGetUniformBlockIndex(p, "XFBlock");
     if (blk != GL_INVALID_INDEX) glUniformBlockBinding(p, blk, 0);
     GLint units[8] = {0, 1, 2, 3, 4, 5, 6, 7};
@@ -594,6 +604,7 @@ static void setupProgram(GLuint p, ShaderProgram& sp) {
     sp.uViewport = glGetUniformLocation(p, "u_vp");
     sp.uAmbMat = glGetUniformLocation(p, "u_chan");
     sp.uDstAlpha = -1;
+    if (aside) glUseProgram(GLuint(bound));
 }
 
 static uint64_t sourceHash(const std::string& vs, const std::string& fs) {
@@ -627,6 +638,20 @@ static void makeDirs(const std::string& path) {
         }
 }
 
+std::string userCacheDir() {
+    std::string base;
+#ifdef _WIN32
+    if (const char* x = getenv("LOCALAPPDATA")) base = std::string(x) + "/sms-port";
+#elif defined(__APPLE__)
+    if (const char* h = getenv("HOME")) base = std::string(h) + "/Library/Caches/sms-port";
+#else
+    if (const char* x = getenv("XDG_CACHE_HOME")) base = std::string(x) + "/sms-port";
+    else if (const char* h = getenv("HOME")) base = std::string(h) + "/.cache/sms-port";
+#endif
+    if (!base.empty()) makeDirs(base);
+    return base;
+}
+
 static uint64_t driverId() {
     std::string id;
     for (GLenum e : {GL_VENDOR, GL_RENDERER, GL_VERSION, GL_SHADING_LANGUAGE_VERSION}) {
@@ -651,17 +676,8 @@ static void programCacheLoad() {
     if (e && *e) {
         s_cachePath = e;
     } else {
-        std::string base;
-#ifdef _WIN32
-        if (const char* x = getenv("LOCALAPPDATA")) base = std::string(x) + "/sms-port";
-#elif defined(__APPLE__)
-        if (const char* h = getenv("HOME")) base = std::string(h) + "/Library/Caches/sms-port";
-#else
-        if (const char* x = getenv("XDG_CACHE_HOME")) base = std::string(x) + "/sms-port";
-        else if (const char* h = getenv("HOME")) base = std::string(h) + "/.cache/sms-port";
-#endif
+        std::string base = userCacheDir();
         if (base.empty()) return;
-        makeDirs(base);
         s_cachePath = base + (sizeof(void*) == 8 ? "/gx-programs-64.bin" : "/gx-programs-32.bin");
     }
     const uint64_t driver = driverId();
@@ -740,8 +756,243 @@ static void programCacheStore(const ProgramKey& key, uint64_t srcHash, GLuint p)
     fflush(s_cacheOut);
 }
 
+// ------------------------------------------------------------------ warm-up
+// A program is otherwise compiled when a draw first needs it, and a stage's
+// arrival needs dozens: the stutter of its first seconds. The program cache
+// makes that once per computer; the warm-up makes it before gameplay, from
+// the program keys the game's stages are known to draw with
+// (gx_shader_keys.inc, made by tools/gx/shader_keys.py from SMS_GX_SHADER_KEYS
+// recordings and kept in the key layout kShaderKeyLayout). While a stage loads
+// (shaderPrepareStage), its own programs are compiled, then the other known
+// ones for up to a second (a quarter without GL_KHR/ARB_parallel_shader_compile,
+// which compiles them together), so a computer's first loads make the lot.
+// Nothing is compiled between frames: with the driver compiling, the GPU
+// fences frames wait for (EFB copies) are held up for whole compiles.
+// Programs the cache already holds cost nothing. SMS_GX_SHADER_WARMUP=0 turns
+// it off.
+#include "gx_shader_keys.inc"
+
+static const int kStageBoot = 0xFE, kStageAny = 0xFF;
+static int s_stage = kStageBoot;  // the stage loaded last (shaderPrepareStage)
+static int s_warmState = -1;      // -1 not set up, 0 off, 1 on
+static bool s_parallel = false;   // the driver compiles in the background
+static std::vector<ProgramKey> s_warmKeys;                    // each once
+static std::unordered_map<int, std::vector<size_t>> s_stageKeys;  // a stage's, in s_warmKeys
+static std::unordered_set<ProgramKey, ProgramKeyHash> s_warmIssued;
+static size_t s_warmNext = 0;        // the next of the others to compile
+static uint32_t s_warmMade = 0;
+
+// On the GL thread, while the game's thread waits for it: the compiles in
+// flight, and the programs finished for the game's thread to take (warmDrain).
+struct WarmJob {
+    ProgramKey key;
+    std::string vs, fs;
+    GLuint prog = 0, v = 0, f = 0;
+};
+struct Warmed {
+    ProgramKey key;
+    ShaderProgram sp;
+    bool ok;
+};
+static std::vector<WarmJob*> s_inFlight;
+static std::vector<Warmed> s_warmed;
+
+static GLuint startCompile(GLenum type, const std::string& src) {
+    GLuint sh = glCreateShader(type);
+    const char* p = src.c_str();
+    glShaderSource(sh, 1, &p, nullptr);
+    glCompileShader(sh);
+    return sh;
+}
+
+static void warmIssue(WarmJob* j) {  // GL thread; with parallel compiles, returns before they end
+    j->v = startCompile(GL_VERTEX_SHADER, j->vs);
+    j->f = startCompile(GL_FRAGMENT_SHADER, j->fs);
+    j->prog = glCreateProgram();
+    glAttachShader(j->prog, j->v);
+    glAttachShader(j->prog, j->f);
+    bindAttributes(j->prog);
+    glLinkProgram(j->prog);
+    s_inFlight.push_back(j);
+}
+
+static void warmFinish(WarmJob* j) {  // GL thread
+    GLint ok = 0;
+    glGetProgramiv(j->prog, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        char log[4096];
+        glGetProgramInfoLog(j->prog, sizeof log, nullptr, log);
+        logmsg("shader warm-up: program link failed: %s", log);
+        glDeleteProgram(j->prog);
+    }
+    glDeleteShader(j->v);
+    glDeleteShader(j->f);
+    Warmed w{j->key, ShaderProgram(), ok != 0};
+    if (ok) {
+        setupProgram(j->prog, w.sp, true);
+        w.sp.id = 0;
+        programCacheStore(j->key, sourceHash(j->vs, j->fs), j->prog);
+    }
+    s_warmed.push_back(w);
+    delete j;
+}
+
+// GL thread: waits for the compiles in flight and takes them.
+static void warmPoll() {
+    for (WarmJob* j : s_inFlight) warmFinish(j);
+    s_inFlight.clear();
+}
+
+// Game thread: queues a compile of `key` for the GL thread.
+static void warmPost(const ProgramKey& key) {
+    if (!s_warmIssued.insert(key).second) return;
+    WarmJob* j = new WarmJob{key, genVS(key.k), genFS(key.k)};
+    struct Issue {
+        WarmJob* j;
+        void operator()() const { warmIssue(j); }
+    };
+    glt::post(Issue{j});
+}
+
+// Game thread: takes the finished programs.
+static void warmDrain() {
+    std::vector<Warmed> got;
+    got.swap(s_warmed);
+    for (Warmed& w : got) {
+        if (!w.ok) continue;
+        if (s_programs.count(w.key)) {  // a draw needed it first
+            glDeleteProgram(w.sp.prog);
+            continue;
+        }
+        s_programs.emplace(w.key, w.sp);
+        s_warmMade++;
+    }
+}
+
+static void warmSetup() {
+    s_warmState = 0;
+    const char* e = getenv("SMS_GX_SHADER_WARMUP");
+    if (e && (!strcmp(e, "0") || !strcmp(e, "off"))) return;
+    if (kWarmLayout != kShaderKeyLayout || kWarmKeySize != sizeof(ProgramKey) || kWarmFormat != 2) {
+        logmsg("shader warm-up: off (gx_shader_keys.inc is for key layout %u of %u bytes, not %u of %zu)",
+               unsigned(kWarmLayout), unsigned(kWarmKeySize), unsigned(kShaderKeyLayout), sizeof(ProgramKey));
+        return;
+    }
+    // The programs (each its count of nonzero words, then each as its index
+    // and its value, LEB128), then each stage's (its number, its count, their
+    // indices; 16 bits each but the number); tools/gx/shader_keys.py.
+    const bool early = shaderHasEarlyFragmentTests();
+    const uint8_t* p = kWarmKeys;
+    const uint8_t* const end = kWarmKeys + sizeof kWarmKeys;
+    auto u16 = [&] { uint32_t v = p + 2 <= end ? uint32_t(p[0]) | uint32_t(p[1]) << 8 : 0; p += 2; return v; };
+    const uint32_t count = u16();
+    for (uint32_t k = 0; k < count && p < end; k++) {
+        uint32_t words[sizeof(ProgramKey) / 4] = {};
+        for (int n = *p++; n > 0 && p < end; n--) {
+            const uint32_t i = *p++;
+            uint32_t v = 0;
+            for (int shift = 0; p < end; shift += 7) {
+                v |= uint32_t(*p & 0x7F) << shift;
+                if (!(*p++ & 0x80)) break;
+            }
+            if (i < sizeof(ProgramKey) / 4) words[i] = v;
+        }
+        ProgramKey key;
+        memcpy(&key, words, sizeof key);
+        if (!early) key.k.earlyZ = 0;  // as buildKey makes it on this driver
+        s_warmKeys.push_back(key);
+    }
+    while (p + 3 <= end) {
+        const int stage = *p++;
+        std::vector<size_t>& mine = s_stageKeys[stage];
+        for (uint32_t n = u16(); n > 0 && p + 2 <= end; n--) {
+            const uint32_t i = u16();
+            if (i < s_warmKeys.size()) mine.push_back(i);
+        }
+    }
+    glt::sync([] {
+        GLint n = 0;
+        glGetIntegerv(GL_NUM_EXTENSIONS, &n);
+        for (GLint i = 0; i < n; i++) {
+            const char* x = reinterpret_cast<const char*>(glGetStringi(GL_EXTENSIONS, GLuint(i)));
+            if (x && (!strcmp(x, "GL_KHR_parallel_shader_compile") || !strcmp(x, "GL_ARB_parallel_shader_compile")))
+                s_parallel = true;
+        }
+        if (s_parallel && glMaxShaderCompilerThreadsKHR) glMaxShaderCompilerThreadsKHR(0xFFFFFFFFu);
+    });
+    if (getenv("SMS_GX_SHADER_WARMUP_SERIAL")) s_parallel = false;  // as on drivers without it (tests)
+    size_t cached = 0;
+    for (const ProgramKey& k : s_warmKeys) cached += s_programs.count(k);
+    s_warmState = 1;
+    logmsg("shader warm-up: %zu known programs, %zu cached%s", s_warmKeys.size(), cached,
+           s_parallel ? ", compiled in parallel" : "");
+}
+
+// SMS_GX_SHADER_KEYS=file appends each program key a stage draws with, once
+// per stage and session, as a line "<stage> <word>=<hex value> ..." of its
+// nonzero words (tools/gx/shader_keys.py turns them into gx_shader_keys.inc).
+static void recordKey(const ProgramKey& key) {
+    static FILE* out = nullptr;
+    static int on = -1;
+    static std::unordered_set<uint64_t> seen;
+    if (on < 0) {
+        const char* e = getenv("SMS_GX_SHADER_KEYS");
+        out = e && *e ? fopen(e, "a") : nullptr;
+        on = out != nullptr;
+    }
+    if (!on || !seen.insert(hashBytes(&key, sizeof key, uint64_t(s_stage) + 1)).second) return;
+    uint32_t words[sizeof(ProgramKey) / 4];
+    memcpy(words, &key, sizeof key);
+    fprintf(out, "%d", s_stage);
+    for (size_t i = 0; i < sizeof(ProgramKey) / 4; i++)
+        if (words[i]) fprintf(out, " %zu=%x", i, words[i]);
+    fputc('\n', out);
+    fflush(out);
+}
+
+static void shaderSetup() {
+    glt::sync([] { programCacheLoad(); });
+    warmSetup();
+}
+
+// While a stage loads (before its first frame): its known programs, compiled
+// together (in parallel where the driver can), then others while time allows.
+void shaderPrepareStage(int stage) {
+    if (s_cacheState < 0) shaderSetup();
+    s_stage = stage & 0xFF;
+    s_lastProgram = nullptr;  // so the stage's first key is recorded
+    if (s_warmState != 1) return;
+    const auto start = std::chrono::steady_clock::now();
+    auto elapsed = [&] { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count(); };
+    auto finish = [] {
+        glt::sync([] { warmPoll(); });
+        warmDrain();
+    };
+    const uint32_t before = s_warmMade;
+    auto it = s_stageKeys.find(s_stage);
+    if (it != s_stageKeys.end())
+        for (size_t i : it->second)
+            if (!s_programs.count(s_warmKeys[i])) warmPost(s_warmKeys[i]);
+    finish();
+    const uint32_t own = s_warmMade - before;
+    const double budget = s_parallel ? 1000 : 250;
+    const int batch = s_parallel ? 32 : 1;
+    while (s_warmNext < s_warmKeys.size() && elapsed() < budget) {
+        for (int n = 0; n < batch && s_warmNext < s_warmKeys.size();) {
+            const ProgramKey& k = s_warmKeys[s_warmNext++];
+            if (s_programs.count(k) || s_warmIssued.count(k)) continue;
+            warmPost(k);
+            n++;
+        }
+        finish();
+    }
+    if (s_warmMade != before)
+        logmsg("shader warm-up: compiled %u programs for stage %d and %u others in %.1f ms%s", own, s_stage,
+               s_warmMade - before - own, elapsed(), s_warmNext < s_warmKeys.size() ? "" : " (all known programs made)");
+}
+
 const ShaderProgram* shaderForCurrentState(bool depthOnly) {
-    if (s_cacheState < 0) glt::sync([] { programCacheLoad(); });
+    if (s_cacheState < 0) shaderSetup();
     ProgramKey key;
     ShaderKey& k = key.k;
     buildKey(k);
@@ -750,6 +1001,7 @@ const ShaderProgram* shaderForCurrentState(bool depthOnly) {
     key.indScale[1] = k.numInd ? g.bp[BP_RAS1_SS0 + 1] : 0;
     // consecutive batches mostly share a program
     if (s_lastProgram && key == s_lastKey) return s_lastProgram;
+    recordKey(key);
     auto it = s_programs.find(key);
     if (it != s_programs.end()) {
         s_lastKey = key;
@@ -793,6 +1045,14 @@ const ShaderProgram* shaderForCurrentState(bool depthOnly) {
 }
 
 void shaderShutdown() {
+    glt::sync([] { warmPoll(); });
+    warmDrain();
+    s_warmState = -1;
+    s_warmKeys.clear();
+    s_stageKeys.clear();
+    s_warmIssued.clear();
+    s_warmNext = 0;
+    s_parallel = false;
     if (s_cacheOut) fclose(s_cacheOut);
     s_cacheOut = nullptr;
     s_cacheState = -1;
