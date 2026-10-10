@@ -81,7 +81,7 @@
  static f32 GetJAISoundSeInterVolume(JAISound *sound, u8 channel) {
 --- a/bse/src/p_settings.hxx
 +++ b/bse/src/p_settings.hxx
-@@ -1245,8 +1245,8 @@
+@@ -1246,8 +1246,8 @@
  
      static void valueChangedCB(void *old, void *cur, ValueKind kind) {
          OSReport("GammaSetting::valueChangedCB\n");
@@ -264,7 +264,7 @@
 \ No newline at end of file
 --- a/eclipse/src/camera/2d_camera.cpp
 +++ b/eclipse/src/camera/2d_camera.cpp
-@@ -40,15 +40,15 @@
+@@ -50,15 +50,15 @@
      camera->mTargetPos.z      = gpMarioPos->z;
      camera->mWorldTranslation = camera->mTranslation;
  
@@ -373,7 +373,7 @@
      }
 --- a/eclipse/src/darkness.cpp
 +++ b/eclipse/src/darkness.cpp
-@@ -202,10 +202,10 @@
+@@ -224,10 +224,10 @@
      }
      case TLightContext::ActiveType::FOLLOWCAMERA: {
          manager.mDarkLevel = sBrightLevel;
@@ -428,7 +428,7 @@
  }
 --- a/eclipse/src/enemy/firey_petey.cpp
 +++ b/eclipse/src/enemy/firey_petey.cpp
-@@ -80,11 +80,16 @@
+@@ -119,11 +119,16 @@
                  ((static_cast<float>(rand()) / static_cast<float>(0x7fff)) - 0.5f) * 10000.0f;
  
              if (target->_118 < target->_114) {
@@ -450,18 +450,18 @@
                  target->_118++;
              }
              target->mTarget = 0;
-@@ -317,7 +322,7 @@
-                         mFire->mVelocity.y = 0;
-                         mFire->mVelocity.z = 50.0f * cosf(angleToRadians(target->mRotation.y));
-                         mFire->mTranslation.set(
--                            *reinterpret_cast<TVec3f *>(((u8 *)emitterFire) + 0x15C));
-+                            *reinterpret_cast<TVec3f *>(((u8 *)emitterFire) + SMS_OFFSET(JPABaseEmitter, 0x15C)));
-                         mFire->mTranslation.y -= 237.5f;
-                         mFire->mLifetime = 30 * 4;
-                     }
+@@ -333,7 +338,7 @@
+ 
+                     JPABaseEmitter *emitterFireCb =
+                         gpMarioParticleManager->emitAndBindToMtxPtr(0x1a6, *fire_mtx, 1, target);
+-                    *(JPACallBackBase<> **)((u8 *)emitterFireCb + 0x110) =
++                    *(JPACallBackBase<> **)((u8 *)emitterFireCb + SMS_OFFSET(JPABaseEmitter, 0x110)) =
+                         target->m_fire_particle_callback;
+ 
+                     gpMarioParticleManager->emitAndBindToMtxPtr(0x1a5, *fire_mtx, 1, target);
 --- a/eclipse/src/menu/character_select.cpp
 +++ b/eclipse/src/menu/character_select.cpp
-@@ -559,7 +559,7 @@
+@@ -548,7 +548,7 @@
  static int flagCharacterSelectMenu(u8 state) {
      // Only here for time sake
      if (gpApplication.mContext == TApplication::CONTEXT_DIRECT_STAGE) {
@@ -481,6 +481,54 @@
      bool is_water_card    = director->mGCConsole->mIsWaterCard;
  
      AtomBalloonMessageViewer *message = AtomBalloonMessageViewer::peekMessage();
+--- a/eclipse/src/object/emario_portal.cpp
++++ b/eclipse/src/object/emario_portal.cpp
+@@ -10,17 +10,20 @@
+ #include "player.hxx"
+ 
+ // Exploits unused padding bytes in every actor
+-static bool IsLiveActor(JDrama::TActor *actor) { return ((bool *)actor)[0xE]; }
++// (the port: byte 0xE, after mPerformFlags, holds mPosition on 64-bit hosts;
++// the byte after mPlacementFlags, retail 0x1E, is padding in every layout)
++static bool &LiveActorFlag(JDrama::TActor *actor) { return ((bool *)&actor->mPlacementFlags)[2]; }
++static bool IsLiveActor(JDrama::TActor *actor) { return LiveActorFlag(actor); }
+ 
+ // Patching constructors
+ static JDrama::TFlagT<u16> *flagNotLiveActor(JDrama::TActor *actor) {
+-    ((bool *)actor)[0xE] = false;
++    LiveActorFlag(actor) = false;
+     return (JDrama::TFlagT<u16> *)&actor->mPerformFlags;
+ }
+ SMS_PATCH_BL(0x80223EAC, flagNotLiveActor);
+ 
+ static u32 flagLiveActor(THitActor *actor) {
+-    ((bool *)actor)[0xE] = true;
++    LiveActorFlag(actor) = true;
+     return 0x803AB71C;
+ }
+ SMS_PATCH_BL(0x80218E94, flagLiveActor);
+--- a/eclipse/src/object/star_bit.cpp
++++ b/eclipse/src/object/star_bit.cpp
+@@ -85,7 +85,7 @@
+ 
+     OSReport("Trying to set the TEV color!\n");
+ 
+-    J3DTevBlock *tevBlock = *(J3DTevBlock **)((u8 *)tevStage + 0x28);
++    J3DTevBlock *tevBlock = *(J3DTevBlock **)((u8 *)tevStage + SMS_OFFSET(J3DMaterial, 0x28));
+     tevBlock->setTevKColor(0, color);
+ 
+     gpItemManager->_70 = 5.0f;  // 2.0f rotation -> 5.0f rotation
+--- a/eclipse/src/player/init.cpp
++++ b/eclipse/src/player/init.cpp
+@@ -30,7 +30,7 @@
+     if (gSunglassSetting.getBool()) {
+         if (TFlagManager::smInstance->getFlag(0x3001B) != 0) {
+             /*player->wearGlass();*/
+-            ((u16 *)player->mCap)[2] |= 4;
++            *(u16 *)((u8 *)player->mCap + SMS_OFFSET(TMarioCap, 0x4)) |= 4;
+ 
+             if (TFlagManager::smInstance->getShineFlag(119)) {
+                 player->mAttributes.mIsShineShirt = true;
 --- a/eclipse/src/player/voice.cpp
 +++ b/eclipse/src/player/voice.cpp
 @@ -105,8 +105,8 @@
@@ -559,9 +607,20 @@
  
          health = 8;
          switch (soundID) {
+--- a/eclipse/src/stage.cpp
++++ b/eclipse/src/stage.cpp
+@@ -752,7 +752,7 @@
+ 
+ static void SME_extendedCorrectFlagsWithBetterSMSPatch(TFlagManager *manager) {
+     // Replicate the BetterSMS patch since we are clobbering it
+-    memset(((u8 *)manager) + 0x1F4, 0, 0x8C);
++    memset(((u8 *)manager) + SMS_OFFSET(TFlagManager, 0x1F4), 0, 0x8C);
+     // ==================
+ 
+     manager->correctFlag();
 --- a/eclipse/src/stage/behavior.cpp
 +++ b/eclipse/src/stage/behavior.cpp
-@@ -185,7 +185,7 @@
+@@ -189,7 +189,7 @@
          if (JDrama::TNameRef *p = name_ref->searchF(key_code, "LanciaLight")) {
              TGenericRailObj *light_obj = reinterpret_cast<TGenericRailObj *>(p);
              J3DTevStage *tev_stage     = light_obj->mActorData->mModel->mModelData->mStages[0];
@@ -570,7 +629,7 @@
              tev_block->setTevKColor(0, is_enabled ? enabled_color : disabled_color);
  
              if (is_enabled &&
-@@ -201,7 +201,7 @@
+@@ -205,7 +205,7 @@
          if (JDrama::TNameRef *p = name_ref->searchF(key_code, "VaporLight")) {
              TGenericRailObj *light_obj = reinterpret_cast<TGenericRailObj *>(p);
              J3DTevStage *tev_stage     = light_obj->mActorData->mModel->mModelData->mStages[0];
@@ -579,7 +638,7 @@
              tev_block->setTevKColor(0, is_enabled ? on_color : off_color);
  
              if (is_enabled &&
-@@ -218,7 +218,7 @@
+@@ -222,7 +222,7 @@
          if (JDrama::TNameRef *p = name_ref->searchF(key_code, "CityLight")) {
              TGenericRailObj *light_obj = reinterpret_cast<TGenericRailObj *>(p);
              J3DTevStage *tev_stage     = light_obj->mActorData->mModel->mModelData->mStages[0];
@@ -588,7 +647,7 @@
              tev_block->setTevKColor(0, is_enabled ? enabled_color : disabled_color);
  
              if (is_enabled &&
-@@ -235,7 +235,7 @@
+@@ -239,7 +239,7 @@
          if (JDrama::TNameRef *p = name_ref->searchF(key_code, "YoshiLight")) {
              TGenericRailObj *light_obj = reinterpret_cast<TGenericRailObj *>(p);
              J3DTevStage *tev_stage     = light_obj->mActorData->mModel->mModelData->mStages[0];
@@ -597,7 +656,7 @@
              tev_block->setTevKColor(0, is_enabled ? enabled_color : disabled_color);
  
              if (is_enabled &&
-@@ -252,7 +252,7 @@
+@@ -256,7 +256,7 @@
          if (JDrama::TNameRef *p = name_ref->searchF(key_code, "PeachLight")) {
              TGenericRailObj *light_obj = reinterpret_cast<TGenericRailObj *>(p);
              J3DTevStage *tev_stage     = light_obj->mActorData->mModel->mModelData->mStages[0];
@@ -606,7 +665,7 @@
              tev_block->setTevKColor(0, is_enabled ? enabled_color : disabled_color);
  
              if (is_enabled &&
-@@ -369,7 +369,7 @@
+@@ -395,7 +395,7 @@
          SME::TGlobals::sCharacterIDList[2] = SME::CharacterID::PIANTISSIMO;
          SME::TGlobals::sCharacterIDList[3] = SME::CharacterID::SHADOW_MARIO;
          TFlagManager::smInstance->resetCard();
@@ -615,7 +674,7 @@
          return;
      }
  
-@@ -395,9 +395,9 @@
+@@ -421,9 +421,9 @@
      // Force unlock all gates, yoshi, and nozzles post-corona mountain
      if (TFlagManager::smInstance->getBool(0x10077)) {
          // Set the nozzle flags
@@ -628,7 +687,7 @@
  
          TFlagManager::smInstance->setBool(true, 0x10384);  // Bianco gate
          TFlagManager::smInstance->setBool(true, 0x10385);  // M on statue
-@@ -456,12 +456,12 @@
+@@ -482,12 +482,12 @@
  s32 s_final_boss_debs_list[] = {20, 21, -1};
  
  static void setDolpic11DEBSList(TGCConsole2 *console2) {
