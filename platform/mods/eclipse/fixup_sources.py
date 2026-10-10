@@ -333,6 +333,23 @@ BSE_FIXES = TEXTURE_FIXES + CARD_IMAGE_FIXES + optional([RAWADDR_FIX]) + [RAWDAT
     # vector after a cutscene (Delfino Plaza's opening ended rolled).
     ("src/debug/freeflycam.cpp", r"return \(graphics->_00\[1\] & 1\);", r"return (*(u16 *)graphics->_00 & 1);",
      "TGraphics' first-tick flag is the game's u16"),
+    # BSE only commits pending scenes after its built-in contexts. Eclipse's
+    # character select is a custom context (11); when an additional movie
+    # defers a scene change, leaving that menu must commit the destination
+    # before the stage handler reads mCurrentScene.
+    ("src/application.cpp",
+     r"if \(!sIsAdditionalMovie && app->mContext <= TApplication::CONTEXT_DIRECT_LEVEL_SELECT\) \{",
+     "if ((!sIsAdditionalMovie && app->mContext <= TApplication::CONTEXT_DIRECT_LEVEL_SELECT) ||\n"
+     "            (app->mContext > TApplication::CONTEXT_DIRECT_LEVEL_SELECT &&\n"
+     "             delayContext == TApplication::CONTEXT_DIRECT_STAGE)) {",
+     "custom menus commit the pending scene before entering gameplay"),
+    # getStageName explicitly returns nullptr for an absent archive entry.
+    # Loading optional stage parameters must keep defaults in that case,
+    # rather than feeding nullptr to the path builder (unlock crash log).
+    ("src/stage.cpp",
+     r"(void BetterSMS::Stage::TStageParams::load\(const char \*stageName\) \{\n)",
+     r"\1    if (!stageName) {\n        reset();\n        return;\n    }\n\n",
+     "missing stage names retain default parameters"),
     # The object table holds pointers, not words.
     ("src/object.cpp", r"sizeof\(u32\) \* ObjDataTableSize\);", r"sizeof(ObjData *) * ObjDataTableSize);",
      "the object table is copied a pointer per entry"),
