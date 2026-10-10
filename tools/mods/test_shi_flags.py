@@ -48,6 +48,10 @@ LIGHT = {"mMaskObjects": "0x200", "mShowShadow": "0x100"}
 # TMarioGamePad::mFlags (u16).
 PAD = {"mDisable": "0x400", "mIsTalking": "0x40", "mReadInput": "0x2"}
 
+# J3DFrameCtrl's state (u8 at 0x5; the decomp's STATE_COMPLETED_ONCE 0x1 and
+# STATE_LOOPED_ONCE 0x2).
+FRAME = {"mIsAnmDead": "0x1", "mIsAnmReversed": "0x2"}
+
 FIELDS = r"((?:\s*(?:u8|u16|u32|bool) \w+\s*: \d+;\n)+)\s*"
 
 # header, declaration names (one per generated layout), storage type, masks
@@ -56,6 +60,7 @@ WORDS = [
     ("SMS/Strategic/LiveActor.hxx", ["asFlags"], "u32", LIVE),
     ("SMS/Manager/ModelWaterManager.hxx", ["LightType"], "u16", LIGHT),
     ("SMS/Player/MarioGamePad.hxx", ["mState", "mState"], "u16", PAD),
+    ("JSystem/J3D/J3DAnimation.hxx", ["mAnimFlags"], "u8", FRAME),
 ]
 
 

@@ -319,11 +319,6 @@ ECLIPSE_FIXES = optional(TEXTURE_FIXES) + CARD_IMAGE_FIXES + PARTICLE_FIXES + DE
      "Eclipse's settings group knows its module"),
     ("src/main.cpp", r"BetterSMS::registerModule\(sModuleInfo\);", r"BetterSMS::registerModule(moduleInfo());",
      "Eclipse's settings group knows its module"),
-
-    # SunshineHeaderInterface named obj_hit_info's third field (May 2026);
-    # Eclipse still initialises it by its old placeholder name.
-    ("src/*/*.cpp", r"(obj_hit_info\s+\w+\s*=?\s*\{[^}]*?)\._08(\s*=)", r"\1.mVisualOfsY\2",
-     "obj_hit_info._08 is mVisualOfsY"),
 ]
 BSE_FIXES = TEXTURE_FIXES + CARD_IMAGE_FIXES + optional([RAWADDR_FIX]) + [RAWDATA_FIX, RAWDATA_REGION_FIX] + BSE_BE_FIXES + PATCH_TYPE_FIXES + [
     # BSE's free-fly camera, in place of CPolarSubCamera::perform's test of
@@ -578,6 +573,11 @@ SHI_NATIVE_FLAG_FIXES = [
     # BetterSunshineEngine sets around its warps and menus.
     ("include/SMS/Player/MarioGamePad.hxx", r"struct \{\n" + FLAG_FIELDS + r"\} (?P<name>mState);",
      native_flags("u16"), "the game pad's flags use the game's numeric masks"),
+    # J3DFrameCtrl's u8 at 0x5 (mIsAnmDead 0x1, the game's
+    # STATE_COMPLETED_ONCE), which ends Eclipse's portal cast animation;
+    # natively it was 0x80, a bit the game never sets.
+    ("include/JSystem/J3D/J3DAnimation.hxx", r"struct \{\n" + FLAG_FIELDS + r"\} (?P<name>mAnimFlags);",
+     native_flags("u8"), "animation frame controls' flags use the game's numeric masks"),
 ]
 
 
