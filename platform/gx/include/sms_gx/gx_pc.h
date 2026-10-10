@@ -76,6 +76,9 @@ float GXPC_GetWidescreen(void);
 union SDL_Event;
 void sms_gx_set_event_callback(void (*cb)(const union SDL_Event* ev));
 void sms_gx_pump_events(void);
+/* Rumble on the game controller last used (0 stops it, 65535 is full); calls
+ * that change nothing are cheap.  Returns 0 without a controller. */
+int sms_gx_rumble(unsigned short strength);
 
 /* Call once with an OpenGL 3.3 core context current (SDL, EGL, ...), before the
  * game calls GXInit.  efbScale multiplies the 640x528 EFB (1 = native; FSR 1's

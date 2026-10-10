@@ -126,5 +126,11 @@ frame_rate = 60
 # (normally the game ignores them until it has focus again).
 # background_input = off
 
+# Controller rumble (on by default; the game's own Rumble option still applies)
+# and its strength in percent. The GameCube adapter rumbles at full strength
+# with its second (power) cable plugged in.
+# rumble = on
+# rumble_strength = 100
+
 # save_dir = /path/to/memory/card/folder
 # disc_image = /path/to/GMSE01.iso
