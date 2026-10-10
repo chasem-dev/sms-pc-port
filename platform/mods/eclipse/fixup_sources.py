@@ -272,6 +272,26 @@ FRAME_RATE_FIXES = [
      "BSE reports the port's frame rate"),
 ]
 
+# The widescreen is the port's (widescreen setting): it widens the frame and
+# maps the game's 4:3 coordinates into it, with the area beside them visible.
+# BSE's own Aspect Ratio setting widened its menus' and overlays' projections
+# and moved their contents out by getScreenRatioAdjustX for its widescreen
+# patches, which the port waives (tools/mods/not_ported.txt): any value but
+# 4:3 squeezed BSE's and Eclipse's menus into the 4:3 area and pushed their
+# HUD-side text (Eclipse's pause menu Shine and blue coin counts) off the
+# left of the frame. BSE now always lays out for 4:3, as with its setting at
+# 4:3; the setting stays in the save, so the card files keep their layout,
+# but is hidden from the menu.
+ASPECT_RATIO_FIXES = [
+    ("src/globals.cpp", r"(int BetterSMS::getScreenRenderWidth\(\) \{\n)\s*switch \(gAspectRatioSetting\.getInt\(\)\) \{",
+     r"\1    return 600;\n    switch (gAspectRatioSetting.getInt()) {", "BSE lays out for 4:3"),
+    ("src/globals.cpp", r"(int BetterSMS::getScreenOrthoWidth\(\) \{\n)\s*switch \(gAspectRatioSetting\.getInt\(\)\) \{",
+     r"\1    return 640;\n    switch (gAspectRatioSetting.getInt()) {", "BSE lays out for 4:3"),
+    ("src/p_settings.hxx", r"(\n(\s*)~AspectRatioSetting\(\) override \{\}\n)",
+     r"\1\2bool isUnlocked() const override { return false; }\n",
+     "BSE's aspect ratio setting is hidden"),
+]
+
 ECLIPSE_FIXES = optional(TEXTURE_FIXES) + CARD_IMAGE_FIXES + PARTICLE_FIXES + DEBS_FIXES + [RAWDATA_FIX, RAWDATA_REGION_FIX] + BOOL_RET_FIXES + ECLIPSE_BE_FIXES + ECLIPSE_PATCH_TYPE_FIXES + [
     # A retail function taking TVec3f references, called through a (...) cast:
     # on the GameCube an aggregate in a variable argument list is passed by
@@ -380,7 +400,7 @@ BSE_FIXES = TEXTURE_FIXES + CARD_IMAGE_FIXES + optional([RAWADDR_FIX]) + [RAWDAT
      "BSE's console log formats its arguments"),
     ("src/logging.cpp", r"\bOSReport\(msg, vargs\);", r"sms_mod_vreport(msg, vargs);",
      "BSE's console log formats its arguments"),
-] + FRAME_RATE_FIXES
+] + FRAME_RATE_FIXES + ASPECT_RATIO_FIXES
 MOVESET_FIXES = optional(TEXTURE_FIXES + [RAWADDR_FIX]) + CARD_IMAGE_FIXES
 SHI_FIXES = BOOL_RET_FIXES + SHI_WORD_FIXES + SHI_GAME_TYPES + [
     # The SDK's OSMessage is a void *, as the port's OS keeps it; declared u32,
