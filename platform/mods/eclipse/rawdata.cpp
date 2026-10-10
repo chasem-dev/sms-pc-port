@@ -14,6 +14,9 @@
 extern TRailNode sms_port_grDummyRail[3];
 extern const char* sms_port_streamMovies[20];
 extern "C" GXColor sms_port_emarioWaterColor;
+extern "C" f32 sms_port_sunGlassShineMax;
+extern "C" f32 sms_port_yoshiTongueRadius;
+extern "C" f32 sms_port_yoshiTongueTargetDist;
 extern "C" const u8* const* const sms_port_selectShineConvTable;
 extern "C" const u8* const* const sms_port_selectEtcShineConvTable;
 extern "C" const u32* const sms_port_selectScenarioNameTable;
@@ -75,6 +78,9 @@ extern "C" void* sms_mod_rawdata(unsigned int addr)
 	case 0x8040E03C: return (void*)&TNerveNPCMad::theNerve();                    // instance$2414
 	case 0x8040E0BC: return &gpScreenTexture;                                    // gpScreenTexture
 	case 0x8040FA90: return &sms_port_emarioWaterColor;                          // @3761 (TEnemyMario::drawHPMeter)
+	case 0x80412548: return &sms_port_sunGlassShineMax;                          // @1863 (TSunGlass's glare, 120 shines)
+	case 0x80415F4C: return &sms_port_yoshiTongueRadius;                         // @2833 (TYoshiTongue::movement)
+	case 0x80415F68: return &sms_port_yoshiTongueTargetDist;                     // @2942 (TYoshiTongue::findTarget)
 	}
 	fprintf(stderr, "[mod] retail data address %08x has no port object (platform/mods/eclipse/rawdata.cpp)\n", addr);
 	abort();
