@@ -278,6 +278,18 @@ bool earlyZWritesRejected();
 const ShaderProgram* shaderForCurrentState(bool depthOnly = false);
 void shaderPrepareStage(int stage);  // while a stage loads: its programs (the warm-up)
 
+// ---------------------------------------------------------------- overlay panels
+// Each slot keeps its own texture, so panels drawn in the same frame keep their
+// cached bitmaps. GXPC_DrawOverlay draws the debug overlay's slot.
+enum OverlaySlot { OVERLAY_DEBUG, OVERLAY_CHEAT_MENU, OVERLAY_SLOTS };
+void drawOverlayPanel(OverlaySlot slot, const uint8_t* rgba, int w, int h, int x, int y, int scale, int winW, int winH);
+// Panel bitmaps (gx_overlay.cpp): RGBA8, w x h, row 0 at the top. Text shares
+// one scratch buffer, so panels are rasterised on the GL thread only.
+void overlayFillRect(std::vector<uint8_t>& px, int w, int h, int x0, int y0, int x1, int y1, const uint8_t c[4]);
+// stb_easy_font with its top-left at (x, y), each font pixel scale x scale.
+void overlayText(std::vector<uint8_t>& px, int w, int h, int x, int y, const char* text, const uint8_t c[4], int scale = 1);
+int overlayTextWidth(const char* text);  // in font pixels
+
 // ---------------------------------------------------------------- util
 uint64_t hashBytes(const void* data, size_t n, uint64_t seed = 0);
 [[noreturn]] void fatal(const char* fmt, ...);

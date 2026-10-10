@@ -119,7 +119,7 @@ if [[ -n "$disc" ]]; then
   fi
 fi
 
-git submodule update --init decomp third_party/imgui
+git submodule update --init decomp
 cmake -S . -B "$bdir" ${cmake_args[@]+"${cmake_args[@]}"} \
   -DSMS_ARCH="$sms_arch" -DSMS_GX_BUILD_TESTS=OFF -DSMS_BUNDLE_DISC="$disc"
 cmake --build "$bdir" --target sms --parallel "$(sms_jobs)"

@@ -205,7 +205,6 @@ void syncCheatMenuInput() {
         SDL_ShowCursor(SDL_ENABLE);
         return;
     }
-    SDL_SetCursor(SDL_GetDefaultCursor());
     SDL_ShowCursor(s_isFullscreen ? SDL_DISABLE : SDL_ENABLE);
     if (s_capturedBeforeMenu && (SDL_GetWindowFlags(s_window) & SDL_WINDOW_INPUT_FOCUS)) captureMouse(true);
 }
@@ -664,7 +663,6 @@ int GXPC_InitAuto(float efbScale) {
     if (!headless) {
         if (openWindowAnyBackend(efbScale)) {
             s_mode = MODE_WINDOW;
-            cheatMenuInit(s_window, s_glctx);
             return 1;
         }
         if (s_windowFailure == WF_WINDOW) {
@@ -716,7 +714,7 @@ void GXPC_Present(const void* xfb) {
             }
             GXPC_PresentXFB(xfb, w, h);
             GXPC_OverlayDraw(w, h);
-            cheatMenuRender();
+            cheatMenuRender(w, h);
             t1 = nowSeconds();
             if (hdr) hdrFramePresent(s_vsync != 0);
             else SDL_GL_SwapWindow(s_window);
@@ -728,7 +726,6 @@ void GXPC_Present(const void* xfb) {
             g_presentDrain += std::max(0.0, waited - (shown ? tSwapped - t0 : 0.0));
         }
         if (!shown) return;
-        syncCheatMenuInput();
         const double tBack = nowSeconds();
         waitSimulatedRefresh();
         double t2 = nowSeconds();
@@ -805,19 +802,14 @@ void sms_gx_pump_events(void) {
             continue;
         }
         // F9 opens and closes the cheat menu and is kept from the pad layer
-        if ((ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) && ev.key.keysym.scancode == SDL_SCANCODE_F9 &&
-            cheatMenuAvailable()) {
+        if ((ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) && ev.key.keysym.scancode == SDL_SCANCODE_F9) {
             if (ev.type == SDL_KEYDOWN && !ev.key.repeat) {
                 cheatMenuToggle();
                 syncCheatMenuInput();
             }
             continue;
         }
-        // The pad layer still gets every event while the menu is open, so no
-        // key or button is left held, but reads as idle (GXPC_GameInputBlocked).
-        if (cheatMenuVisible()) {
-            cheatMenuProcessEvent(ev);
-        } else if (s_mouseCamera) {
+        if (s_mouseCamera && !cheatMenuVisible()) {
             if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_FOCUS_LOST) captureMouse(false);
             if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_FOCUS_GAINED && !s_mouseReleased)
                 captureMouse(true);
@@ -847,11 +839,15 @@ void sms_gx_pump_events(void) {
             if (!ev.key.repeat) GXPC_CycleSpeed();
             continue;
         }
+        // The cheat menu's own keys and clicks never reach the pad layer (Escape would quit)
+        if (cheatMenuHandleEvent(ev)) {
+            syncCheatMenuInput();
+            continue;
+        }
         if (s_eventCb) s_eventCb(&ev);
         if (ev.type == SDL_QUIT ||
             (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_CLOSE)) {
             logmsg("window closed, exiting");
-            cheatMenuShutdown();
             GXPC_Shutdown();
             exit(0);
         }

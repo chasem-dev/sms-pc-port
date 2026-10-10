@@ -1,31 +1,24 @@
-// In-game cheat menu (F9): Dear ImGui drawn over the presented frame in the
-// SDL window. Without Dear ImGui in the build these do nothing.
+// In-game cheat menu (F9), drawn with the debug overlay's renderer. It edits the
+// port_cheat_* flags (platform/misc/port_cheats.cpp).
 #ifndef SMS_GX_CHEAT_MENU_H
 #define SMS_GX_CHEAT_MENU_H
 
-struct SDL_Window;
 union SDL_Event;
 
 namespace gx {
 
-#ifdef SMS_GX_HAVE_CHEAT_MENU
-bool cheatMenuInit(SDL_Window* window, void* glContext);
-void cheatMenuShutdown();
-bool cheatMenuAvailable();
+#ifdef SMS_GX_HAVE_SDL2
 bool cheatMenuVisible();
 void cheatMenuToggle();
-void cheatMenuProcessEvent(const SDL_Event& ev);
-// Draws into the bound framebuffer, between presenting the frame and the
-// swap. Its close button can hide the menu.
-void cheatMenuRender();
+// True when the event was the menu's and must not reach the game.
+bool cheatMenuHandleEvent(const SDL_Event& ev);
+// On the GL thread, between presenting the frame and the swap.
+void cheatMenuRender(int winW, int winH);
 #else
-inline bool cheatMenuInit(SDL_Window*, void*) { return false; }
-inline void cheatMenuShutdown() {}
-inline bool cheatMenuAvailable() { return false; }
 inline bool cheatMenuVisible() { return false; }
 inline void cheatMenuToggle() {}
-inline void cheatMenuProcessEvent(const SDL_Event&) {}
-inline void cheatMenuRender() {}
+inline bool cheatMenuHandleEvent(const SDL_Event&) { return false; }
+inline void cheatMenuRender(int, int) {}
 #endif
 
 }  // namespace gx
