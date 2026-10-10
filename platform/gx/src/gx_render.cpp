@@ -123,8 +123,8 @@ static GLuint s_vao;
 static GLuint s_copyProg, s_copyVao;
 static GLint s_copyUMode, s_copyURect, s_copyUAlphaOne;
 static GLuint s_tmpFbo;
-static GLuint s_overlayTex;
-static int s_overlayW = 0, s_overlayH = 0;
+static GLuint s_overlayTex[OVERLAY_SLOTS];
+static int s_overlayW[OVERLAY_SLOTS], s_overlayH[OVERLAY_SLOTS];
 static GLuint s_overlayProg;
 static GLint s_overlayRect, s_overlayWindow;
 static GXPCStats s_lastFrameStats;
@@ -2648,10 +2648,13 @@ void GXPC_Shutdown(void) {
     if (!s_ready) return;
     textureShutdown();
     shaderShutdown();
-    if (s_overlayTex) glDeleteTextures(1, &s_overlayTex);
+    for (int i = 0; i < OVERLAY_SLOTS; i++) {
+        if (s_overlayTex[i]) glDeleteTextures(1, &s_overlayTex[i]);
+        s_overlayTex[i] = 0;
+        s_overlayW[i] = s_overlayH[i] = 0;
+    }
     if (s_overlayProg) glDeleteProgram(s_overlayProg);
-    s_overlayTex = s_overlayProg = 0;
-    s_overlayW = s_overlayH = 0;
+    s_overlayProg = 0;
     invalidateOverlay();
     for (auto& kv : s_xfbs) glDeleteTextures(1, &kv.second.tex);
     s_xfbs.clear();
@@ -2988,8 +2991,14 @@ void GXPC_SetDetailedTimers(int on) { g_gxStats = on || statsEnv(); }
 void GXPC_SetIdleClock(double (*idleSeconds)(void)) { s_idleClock = idleSeconds; }
 
 void GXPC_DrawOverlay(const uint8_t* rgba, int w, int h, int x, int y, int scale, int winW, int winH) {
+    drawOverlayPanel(OVERLAY_DEBUG, rgba, w, h, x, y, scale, winW, winH);
+}
+
+}  // extern "C"
+
+void gx::drawOverlayPanel(OverlaySlot slot, const uint8_t* rgba, int w, int h, int x, int y, int scale, int winW, int winH) {
     if (!s_ready || w <= 0 || h <= 0) return;
-    if (!rgba && (!s_overlayTex || w != s_overlayW || h != s_overlayH)) return;
+    if (!rgba && (!s_overlayTex[slot] || w != s_overlayW[slot] || h != s_overlayH[slot])) return;
     flushBatch();
     glcInvalidate();
     // glBlitFramebuffer ignores alpha, so draw the panel with source-alpha blending.
@@ -3044,19 +3053,19 @@ void main() { o_color = texture(u_color, v_uv); }
     glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &eqAlpha);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-    if (!s_overlayTex) {
-        glGenTextures(1, &s_overlayTex);
-        glBindTexture(GL_TEXTURE_2D, s_overlayTex);
+    if (!s_overlayTex[slot]) {
+        glGenTextures(1, &s_overlayTex[slot]);
+        glBindTexture(GL_TEXTURE_2D, s_overlayTex[slot]);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     } else {
-        glBindTexture(GL_TEXTURE_2D, s_overlayTex);
+        glBindTexture(GL_TEXTURE_2D, s_overlayTex[slot]);
     }
     if (rgba) {
-        if (w != s_overlayW || h != s_overlayH) {
+        if (w != s_overlayW[slot] || h != s_overlayH[slot]) {
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
-            s_overlayW = w;
-            s_overlayH = h;
+            s_overlayW[slot] = w;
+            s_overlayH[slot] = h;
         } else {
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
         }
@@ -3102,6 +3111,8 @@ void main() { o_color = texture(u_color, v_uv); }
     if (clip0) glEnable(GL_CLIP_DISTANCE0);
     if (clip1) glEnable(GL_CLIP_DISTANCE1);
 }
+
+extern "C" {
 
 void GXPC_GetStats(GXPCStats* out) {
     *out = s_stats;

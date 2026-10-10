@@ -84,7 +84,15 @@ struct FrameClock {
 
 std::string s_renderer;
 
-void fillRect(std::vector<uint8_t>& px, int w, int h, int x0, int y0, int x1, int y1, const uint8_t c[4]) {
+}  // namespace
+
+namespace gx {
+void invalidateOverlay() {
+    s_panelDirty = true;
+    s_renderer.clear();
+}
+
+void overlayFillRect(std::vector<uint8_t>& px, int w, int h, int x0, int y0, int x1, int y1, const uint8_t c[4]) {
     if (x0 < 0) x0 = 0;
     if (y0 < 0) y0 = 0;
     if (x1 > w) x1 = w;
@@ -94,9 +102,9 @@ void fillRect(std::vector<uint8_t>& px, int w, int h, int x0, int y0, int x1, in
 }
 
 // stb_easy_font emits axis-aligned quads (4 vertices of x, y, z, rgba).
-void drawText(std::vector<uint8_t>& px, int w, int h, int x, int y, const char* text, const uint8_t c[4]) {
+void overlayText(std::vector<uint8_t>& px, int w, int h, int x, int y, const char* text, const uint8_t c[4], int scale) {
     static char buf[256 * 1024];  // 64 bytes per quad
-    int quads = stb_easy_font_print(float(x), float(y), const_cast<char*>(text), nullptr, buf, sizeof buf);
+    int quads = stb_easy_font_print(0, 0, const_cast<char*>(text), nullptr, buf, sizeof buf);
     for (int q = 0; q < quads; q++) {
         const float* v = reinterpret_cast<const float*>(buf + q * 64);
         float minX = v[0], maxX = v[0], minY = v[1], maxY = v[1];
@@ -107,17 +115,12 @@ void drawText(std::vector<uint8_t>& px, int w, int h, int x, int y, const char* 
             if (p[1] < minY) minY = p[1];
             if (p[1] > maxY) maxY = p[1];
         }
-        fillRect(px, w, h, int(minX + 0.5f), int(minY + 0.5f), int(maxX + 0.5f), int(maxY + 0.5f), c);
+        overlayFillRect(px, w, h, x + int(minX + 0.5f) * scale, y + int(minY + 0.5f) * scale,
+                        x + int(maxX + 0.5f) * scale, y + int(maxY + 0.5f) * scale, c);
     }
 }
 
-}  // namespace
-
-namespace gx {
-void invalidateOverlay() {
-    s_panelDirty = true;
-    s_renderer.clear();
-}
+int overlayTextWidth(const char* text) { return stb_easy_font_width(const_cast<char*>(text)); }
 }
 
 extern "C" {
@@ -186,6 +189,7 @@ void GXPC_OverlayDraw(int winW, int winH) {
                  "L: Q     R: E     Start: Enter\n"
                  "D-pad: 1 2 3 4\n"
                  "`: this overlay     F7: speed x1/x2/x4/x10\n"
+                 "F9: cheat menu\n"
                  "Esc: quit",
                  s_clock.fps, s_clock.shownFps, s_clock.avgMs, s_clock.maxMs, GXPC_GetSpeed(), s_clock.gameMs, s_clock.per.gx,
                  s_clock.per.present, s_clock.per.swap, s_clock.per.idle, s_clock.per.vertices, s_clock.per.draws,
@@ -200,12 +204,12 @@ void GXPC_OverlayDraw(int winW, int winH) {
         const uint8_t bg[4] = {16, 16, 24, 128};
         const uint8_t fg[4] = {255, 255, 255, 255};
         const uint8_t hi[4] = {255, 220, 64, 255};
-        fillRect(px, w, h, 0, 0, w, h, bg);
+        gx::overlayFillRect(px, w, h, 0, 0, w, h, bg);
         // first line (the frame rate) highlighted, the rest plain
         const char* nl = strchr(text, '\n');
         std::string first(text, nl ? size_t(nl - text) : strlen(text));
-        drawText(px, w, h, pad, pad, first.c_str(), hi);
-        if (nl) drawText(px, w, h, pad, pad + 12, nl + 1, fg);
+        gx::overlayText(px, w, h, pad, pad, first.c_str(), hi);
+        if (nl) gx::overlayText(px, w, h, pad, pad + 12, nl + 1, fg);
 
         upload = px.data();
         lastUpdate = s_clock.last;
