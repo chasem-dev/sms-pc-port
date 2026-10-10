@@ -235,8 +235,8 @@ static float mipLevelDiff(const uint8_t* prev, uint32_t pw, uint32_t ph, const u
             const uint8_t* d = prev + (size_t(y1) * pw + x1) * 4;
             const uint8_t* o = cur + (size_t(y) * w + x) * 4;
             for (int i = 0; i < 4; i++) {
-                const int box = (a[i] + b[i] + c[i] + d[i] + 2) / 4;
-                sum += uint32_t(std::abs(box - int(o[i])));
+                const int diff = (a[i] + b[i] + c[i] + d[i] + 2) / 4 - int(o[i]);
+                sum += uint32_t(diff < 0 ? -diff : diff);
             }
         }
     }
