@@ -19,8 +19,14 @@
 // --- SDL2 event ABI (SDL_events.h, SDL_scancode.h, SDL_gamecontroller.h) ---
 namespace sdl {
 enum {
-	QUIT = 0x100, KEYDOWN = 0x300, KEYUP = 0x301, MOUSEMOTION = 0x400,
+	QUIT = 0x100, WINDOWEVENT = 0x200, KEYDOWN = 0x300, KEYUP = 0x301, MOUSEMOTION = 0x400,
 	CAXIS = 0x650, CBUTTONDOWN = 0x651, CBUTTONUP = 0x652
+};
+enum { WINDOWEVENT_FOCUS_GAINED = 12, WINDOWEVENT_FOCUS_LOST = 13 };
+struct WindowEvent {
+	u32 type, timestamp, windowID;
+	u8 event, p1, p2, p3;
+	s32 data1, data2;
 };
 struct MouseMotionEvent {
 	u32 type, timestamp, windowID, which, state;
@@ -366,6 +372,21 @@ bool g_invert_cx, g_invert_cy;
 // mouse look (see above): its speed, and the motion not yet given to the camera
 float g_mouseSens = 1.0f;
 int g_mouseDX, g_mouseDY;
+// Input is ignored while another window has focus: SDL still reports
+// controllers then (SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS), so a controller used
+// in another app would also play the game. Losing focus releases everything
+// held; a button still down when focus returns counts once pressed again.
+// SMS_BACKGROUND_INPUT=1 keeps input live without focus (scripted presses too).
+// Starts focused, so a window system that never reports focus changes nothing.
+bool g_focused = true, g_backgroundInput;
+
+void release_all()
+{
+	memset(g_key, 0, sizeof g_key);
+	memset(g_axis, 0, sizeof g_axis);
+	memset(g_cbtn, 0, sizeof g_cbtn);
+	g_mouseDX = g_mouseDY = 0;
+}
 
 bool env_on(const char* name)
 {
@@ -470,6 +491,20 @@ void parse_bindings(const char* text, const char* source)
 void on_event(const union SDL_Event* ev)
 {
 	u32 type = *(const u32*)ev;
+	if (type == sdl::WINDOWEVENT) {
+		const sdl::WindowEvent* w = (const sdl::WindowEvent*)ev;
+		if (w->event == sdl::WINDOWEVENT_FOCUS_LOST && g_focused && !g_backgroundInput) {
+			g_focused = false;
+			release_all();
+			port_log("[pad] window lost focus: ignoring input\n");
+		} else if (w->event == sdl::WINDOWEVENT_FOCUS_GAINED && !g_focused) {
+			g_focused = true;
+			port_log("[pad] window has focus: input back on\n");
+		}
+		return;
+	}
+	if (!g_focused)
+		return;
 	switch (type) {
 	case sdl::KEYDOWN:
 	case sdl::KEYUP: {
@@ -553,6 +588,9 @@ void init()
 	port_free_camera    = env_on("SMS_FREE_CAMERA");
 	port_camera_speed_x = port_camera_speed_y = env_percent("SMS_CAMERA_SPEED", 0.1f, 4.0f);
 	g_mouseSens         = env_percent("SMS_MOUSE_SENSITIVITY", 0.05f, 10.0f);
+	g_backgroundInput   = env_on("SMS_BACKGROUND_INPUT") || env_on("SMS_AUTOPRESS");
+	if (g_backgroundInput)
+		port_log("[pad] input stays on while the window is in the background\n");
 	if (const char* e = getenv("SMS_SOFT_TRIGGER"))
 		if (*e) {
 			// stays below the click (250), or it would no longer be a soft press
@@ -744,7 +782,7 @@ extern "C" u32 PADRead(PADStatus* status)
 #ifdef _WIN32
 	// Native GameCube adapter report (see gcad above): buttons, sticks, triggers.
 	int gcx = 0, gcy = 0, gccx = 0, gccy = 0;
-	if (gcad::g_state.present) {
+	if (gcad::g_state.present && g_focused) {
 		int b1 = gcad::g_state.b1, b2 = gcad::g_state.b2;
 		if (b1 & 0x01) b |= PAD_BUTTON_A;
 		if (b1 & 0x02) b |= PAD_BUTTON_B;
