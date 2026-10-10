@@ -113,5 +113,9 @@ frame_rate = 60
 # mouse_camera = off
 # mouse_sensitivity = 100
 
+# Keep reading the keyboard and controllers while another window has focus
+# (normally the game ignores them until it has focus again).
+# background_input = off
+
 # save_dir = /path/to/memory/card/folder
 # disc_image = /path/to/GMSE01.iso
