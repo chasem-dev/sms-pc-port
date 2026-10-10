@@ -76,6 +76,7 @@
     X(PFNGLDISABLEVERTEXATTRIBARRAYPROC, glDisableVertexAttribArray)                \
     X(PFNGLGENERATEMIPMAPPROC, glGenerateMipmap)                                    \
     X(PFNGLCOMPRESSEDTEXIMAGE2DPROC, glCompressedTexImage2D)                        \
+    X(PFNGLCOMPRESSEDTEXSUBIMAGE2DPROC, glCompressedTexSubImage2D)                  \
     X(PFNGLGETSTRINGIPROC, glGetStringi)                                            \
     X(PFNGLRENDERBUFFERSTORAGEMULTISAMPLEPROC, glRenderbufferStorageMultisample)    \
     X(PFNGLUNIFORM1FPROC, glUniform1f) X(PFNGLUNIFORM2FPROC, glUniform2f)
@@ -84,7 +85,7 @@
 // otherwise; macOS stops at 4.1): check before calling.
 #define SMS_GX_GL_OPTIONAL_FUNCS(X) X(PFNGLBUFFERSTORAGEPROC, glBufferStorage)                \
     X(PFNGLGETPROGRAMBINARYPROC, glGetProgramBinary) X(PFNGLPROGRAMBINARYPROC, glProgramBinary) \
-    X(PFNGLPROGRAMPARAMETERIPROC, glProgramParameteri)
+    X(PFNGLPROGRAMPARAMETERIPROC, glProgramParameteri) X(PFNGLMAXSHADERCOMPILERTHREADSKHRPROC, glMaxShaderCompilerThreadsKHR)
 
 #define SMS_GX_DECLARE(type, name) extern type gx_##name;
 extern "C++" {
@@ -210,10 +211,12 @@ SMS_GX_GL_OPTIONAL_FUNCS(SMS_GX_ALIAS)
 #define glDisableVertexAttribArray gx_glDisableVertexAttribArray
 #define glGenerateMipmap gx_glGenerateMipmap
 #define glCompressedTexImage2D gx_glCompressedTexImage2D
+#define glCompressedTexSubImage2D gx_glCompressedTexSubImage2D
 #define glGetStringi gx_glGetStringi
 #define glBufferStorage gx_glBufferStorage
 #define glGetProgramBinary gx_glGetProgramBinary
 #define glProgramBinary gx_glProgramBinary
 #define glProgramParameteri gx_glProgramParameteri
+#define glMaxShaderCompilerThreadsKHR gx_glMaxShaderCompilerThreadsKHR
 
 #endif

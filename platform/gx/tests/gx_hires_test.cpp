@@ -66,18 +66,33 @@ static size_t dds(const std::filesystem::path& path, int w, int h, int mips, boo
     return d.size()-header;
 }
 static PFNGLCOMPRESSEDTEXIMAGE2DPROC realCompressed;
+static PFNGLCOMPRESSEDTEXSUBIMAGE2DPROC realCompressedSub;
 static PFNGLTEXIMAGE2DPROC realImage;
+static PFNGLTEXSUBIMAGE2DPROC realImageSub;
 static PFNGLTEXPARAMETERIPROC realParam;
 static PFNGLGETINTEGERVPROC realGet;
+// Calls that send data (storage made without data is not counted), and the
+// largest single one.
 static int compressedCalls, rgbaCalls, maxLevel;
-static size_t uploadedBytes;
+static size_t uploadedBytes, largestCall;
+static void sentData(size_t n) { uploadedBytes += n; largestCall = std::max(largestCall, n); }
 static void APIENTRY recordCompressed(GLenum t, GLint l, GLenum f, GLsizei w, GLsizei h, GLint b, GLsizei n, const void* p) {
-    ++compressedCalls; uploadedBytes += n;
+    if (p) { ++compressedCalls; sentData(size_t(n)); }
     realCompressed(t,l,f,w,h,b,n,p);
 }
+static void APIENTRY recordCompressedSub(GLenum t, GLint l, GLint x, GLint y, GLsizei w, GLsizei h, GLenum f, GLsizei n,
+                                         const void* p) {
+    ++compressedCalls; sentData(size_t(n));
+    realCompressedSub(t,l,x,y,w,h,f,n,p);
+}
 static void APIENTRY recordImage(GLenum t, GLint l, GLint f, GLsizei w, GLsizei h, GLint b, GLenum fmt, GLenum ty, const void* p) {
-    ++rgbaCalls; uploadedBytes += size_t(w)*h*4;
+    if (p) { ++rgbaCalls; sentData(size_t(w)*h*4); }
     realImage(t,l,f,w,h,b,fmt,ty,p);
+}
+static void APIENTRY recordImageSub(GLenum t, GLint l, GLint x, GLint y, GLsizei w, GLsizei h, GLenum fmt, GLenum ty,
+                                    const void* p) {
+    ++rgbaCalls; sentData(size_t(w)*h*4);
+    realImageSub(t,l,x,y,w,h,fmt,ty,p);
 }
 static void APIENTRY recordParam(GLenum t, GLenum pname, GLint value) {
     if (pname == GL_TEXTURE_MAX_LEVEL) maxLevel = value;
@@ -88,7 +103,7 @@ static void APIENTRY noCompression(GLenum name, GLint* value) {
     else if (name == GL_MAJOR_VERSION || name == GL_MINOR_VERSION) *value = 3;
     else realGet(name,value);
 }
-static void resetRecord() { compressedCalls = rgbaCalls = 0; uploadedBytes = 0; maxLevel = -1; }
+static void resetRecord() { compressedCalls = rgbaCalls = 0; uploadedBytes = largestCall = 0; maxLevel = -1; }
 
 // Encodes a block for the levels a pack leaves out and decodes it with bcdec;
 // the largest difference of the checked channels (from `first`).
@@ -151,12 +166,15 @@ int main(int argc, char** argv) {
     const bool fallback = argc > 1 && std::strcmp(argv[1], "--fallback") == 0;
     const bool sync = argc > 1 && std::strcmp(argv[1], "--sync") == 0;
     const bool disabled = argc > 1 && std::strcmp(argv[1], "--no-preload") == 0;
+    const bool whole = argc > 1 && std::strcmp(argv[1], "--all") == 0;
     checkEncoder();
     env("SMS_TEXTURE_PACK_SYNC", sync ? "1" : "0");
-    env("SMS_TEXTURE_PACK_PRELOAD", disabled ? "0" : "1");
+    env("SMS_TEXTURE_PACK_PRELOAD", disabled ? "0" : whole ? "all" : "1");
+    env("SMS_TEXTURE_PACK_UPLOAD_MB", "4");
     auto dir = std::filesystem::temp_directory_path() /
         ("sms-hires-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directories(dir);
+    env("SMS_TEXTURE_PACK_CACHE", (dir / "cache").string());
     auto single = bti(1), partial = bti(2), bptc = bti(3), missing = bti(4), late = bti(5), external = bti(6);
     dds(dir/(textureName(single)+".dds"), 16, 8, 1);
     dds(dir/(textureName(partial)+".dds"), 32, 16, 3);
@@ -170,6 +188,8 @@ int main(int argc, char** argv) {
         many.push_back(bti(i));
         dds(dir/(textureName(many.back())+".dds"), 512, 512, 1);
     }
+    auto big = bti(7);
+    dds(dir/(textureName(big)+".dds"), 4096, 4096, 1);  // 8 MiB of blocks
     env("SMS_TEXTURE_PACKS", "0"); env("SMS_TEXTURE_PACK_PENDING_MB", "1"); env("SMS_TEXTURE_PACK_MB", "1");
     GXPC_SetHeadless(1); GXPC_SetAutoPresent(0);
     if (!GXPC_InitAuto(1)) { std::filesystem::remove_all(dir); return 77; }
@@ -180,8 +200,10 @@ int main(int argc, char** argv) {
     expect(gx::hiresEnabled(), "texture index starts after context initialization");
     gx::gl::gx_glGetIntegerv = realGet;
     realCompressed = gx::gl::gx_glCompressedTexImage2D; realImage = gx::gl::gx_glTexImage2D;
+    realCompressedSub = gx::gl::gx_glCompressedTexSubImage2D; realImageSub = gx::gl::gx_glTexSubImage2D;
     realParam = gx::gl::gx_glTexParameteri;
     gx::gl::gx_glCompressedTexImage2D = recordCompressed; gx::gl::gx_glTexImage2D = recordImage;
+    gx::gl::gx_glCompressedTexSubImage2D = recordCompressedSub; gx::gl::gx_glTexSubImage2D = recordImageSub;
     gx::gl::gx_glTexParameteri = recordParam;
     auto prepare = [&](const std::vector<uint8_t>& resource, const char* name) {
         resetRecord();
@@ -197,6 +219,22 @@ int main(int argc, char** argv) {
             GXPC_PreloadTextures(); std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     };
+    if (whole) {  // every readable file loads with nothing asking, during loads only, and stays past the budget
+        for (int i = 0; i < 200; ++i) {
+            gx::hiresEndFrame(); std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        expect(gx::hiresStats().uploaded == 0, "the whole pack is not sent during frames");
+        for (int i = 0; i < 5000 && (gx::hiresStats().pendingCount || gx::hiresStats().completing); ++i) {
+            GXPC_PreloadTextures(); gx::hiresEndFrame(); std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        for (int i = 0; i < 3; ++i) gx::hiresEndFrame();
+        int scale = 0;
+        expect(gx::hiresStats().uploaded >= 30 && gx::hiresTexture(textureName(late), 0, 8, 4, &scale) != 0,
+            "the whole pack loads from the start");
+        expect(gx::hiresStats().residentBytes > (1u << 20), "the whole pack stays past the memory budget");
+        GXPC_Shutdown(); std::filesystem::remove_all(dir);
+        return failures ? 1 : 0;
+    }
     prepare(single, "single.bti");
     if (sync || disabled) {
         expect(uploadedBytes == 0 && gx::hiresStats().pendingCount == 0, "resource preload obeys sync/disabled setting");
@@ -289,6 +327,23 @@ int main(int argc, char** argv) {
         }
     }
     expect(reloaded, "evicted replacements can be requested and prepared again");
+    // A large late texture arrives in pieces over several frames.
+    resetRecord();
+    int frames = 0;
+    for (; frames < 2000 && !gx::hiresTexture(textureName(big), 0, 8, 4, &scale); ++frames) {
+        gx::hiresEndFrame(); std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    const size_t bigBytes = fallback ? size_t(4096) * 4096 * 4 : size_t(8) << 20;
+    expect(gx::hiresTexture(textureName(big), 0, 8, 4, &scale) != 0 && uploadedBytes >= bigBytes &&
+        largestCall <= (size_t(4) << 20), "a large texture is sent in pieces of at most 4 MiB");
+    expect(frames >= 2, "a large texture's pieces are spread over frames");
+    if (!fallback) {  // the levels made for `single` are kept on disk and read with it next time
+        gx::hiresShutdown();
+        gx::hiresEnabled();
+        prepare(single, "cached.bti");
+        expect(compressedCalls == 5 && uploadedBytes == 104 && maxLevel == 4 && gx::hiresStats().completing == 0,
+            "a later session reads the completed levels from the cache");
+    }
     // Shut down with more work queued, then rebuild the index in the same context.
     gx::hiresShutdown();
     gx::hiresEnabled();

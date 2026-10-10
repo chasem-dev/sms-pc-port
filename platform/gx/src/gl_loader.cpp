@@ -213,7 +213,15 @@ void pxCompressedTexImage2D(GLenum target, GLint level, GLenum ifmt, GLsizei w, 
                             GLsizei bytes, const void* data) {
     if (glt::onGlThread()) return real_glCompressedTexImage2D(target, level, ifmt, w, h, border, bytes, data);
     auto fn = real_glCompressedTexImage2D;
+    if (!data) return glt::post([=] { fn(target, level, ifmt, w, h, border, bytes, nullptr); });
     glt::postData(data, size_t(bytes), [=](const uint8_t* d) { fn(target, level, ifmt, w, h, border, bytes, d); });
+}
+
+void pxCompressedTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsizei w, GLsizei h, GLenum format,
+                               GLsizei bytes, const void* data) {
+    if (glt::onGlThread()) return real_glCompressedTexSubImage2D(target, level, x, y, w, h, format, bytes, data);
+    auto fn = real_glCompressedTexSubImage2D;
+    glt::postData(data, size_t(bytes), [=](const uint8_t* d) { fn(target, level, x, y, w, h, format, bytes, d); });
 }
 
 void pxReadPixels(GLint x, GLint y, GLsizei w, GLsizei h, GLenum format, GLenum type, void* pixels) {
@@ -317,6 +325,7 @@ void gx::glt::installProxies() {
     gx_glTexImage2D = &pxTexImage2D;
     gx_glTexSubImage2D = &pxTexSubImage2D;
     gx_glCompressedTexImage2D = &pxCompressedTexImage2D;
+    gx_glCompressedTexSubImage2D = &pxCompressedTexSubImage2D;
     gx_glReadPixels = &pxReadPixels;
     gx_glMultiDrawElementsBaseVertex = &pxMultiDrawElementsBaseVertex;
 #define SMS_GX_PROXY_OPTIONAL(type, name)                         \
