@@ -10,7 +10,8 @@
 //
 // Output: SDL2 audio (loaded with dlopen, so builds without the GX layer still
 // link) at 32 kHz; the SDL callback drains the FIFO and kicks the CPU when it
-// runs low. Without a device (headless, SMS_AUDIO_OUT=null, or SDL failure) a
+// runs low (three blocks queued, 52 ms, or up to eight after the output ran
+// dry). Without a device (headless, SMS_AUDIO_OUT=null, or SDL failure) a
 // host timer paces blocks at the DAC rate. SMS_AUDIO_WAV=path also records
 // every block. SMS_AUDIO=0 drops the output only: the DMA engine keeps its
 // clock (as with no device), so JAudio's audio thread, its sequencer and the
@@ -24,6 +25,7 @@
 #include "port_os.h"
 #include "port_platform.h"
 #include <dolphin/ai.h>
+#include <dolphin/os/OSThread.h>
 
 #include <atomic>
 #include <algorithm>
@@ -61,6 +63,9 @@ typedef void (*PFN_SDL_PauseAudioDevice)(uint32_t, int);
 typedef const char* (*PFN_SDL_GetError)(void);
 
 const u32 kRate = 32000;
+const u32 kBlockFrames = 560; // JAudio's DAC block (0x460 samples), 17.5 ms
+const int kBaseBlocks  = 3;   // blocks the output keeps queued
+const int kMaxExtra    = 5;   // more after it ran dry: up to 8 blocks, 140 ms
 
 struct Ai {
 	bool enabled; // the DMA engine runs (not SMS_NO_AUDIO)
@@ -72,6 +77,7 @@ struct Ai {
 	u32 start, length;         // registers
 	u32 latchedStart, latchedLen;
 	AIDCallback cb;
+	OSThread* dacThread; // the thread that started the DMA: JAudio's audio thread
 	u32 dspRate;
 	u32 streamRate;
 	// Output FIFO of stereo frames (L, R after swap).
@@ -79,7 +85,14 @@ struct Ai {
 	std::vector<int16_t> fifo;
 	size_t head, count;
 	bool sdl;
+	bool fed; // a block has reached the FIFO
 	s16 lastL, lastR;
+	// Blocks queued beyond kBaseBlocks, added when the output ran dry and
+	// given back one at a time after kRate * 30 frames without (sdl_callback).
+	std::atomic<int> extra;
+	std::atomic<int> grew; // for the log: the new target in blocks
+	u32 dryFrames;         // device frames with nothing to play, this dry spell
+	u32 steadyFrames;      // device frames played since the last dry spell
 	// Null clock
 	std::atomic<int> due;
 	u64 blocks;
@@ -96,7 +109,7 @@ int playback_speed()
 	return speed > 0 ? speed : 1;
 }
 
-size_t fifo_target(int speed) { return 3 * 560 * (size_t)speed; }
+size_t fifo_target(int speed) { return (kBaseBlocks + g.extra.load()) * kBlockFrames * (size_t)speed; }
 
 void wav_header(FILE* f, u32 bytes)
 {
@@ -144,6 +157,7 @@ void sdl_callback(void*, uint8_t* stream, int len)
 	{
 		std::lock_guard<std::mutex> lk(g.mu);
 		size_t cap = fifo_cap();
+		size_t dry = 0;
 		for (size_t i = 0; i < frames; i++) {
 			if (g.count) {
 				g.lastL = g.fifo[g.head * 2];
@@ -151,9 +165,31 @@ void sdl_callback(void*, uint8_t* stream, int len)
 				size_t consumed = std::min(g.count, (size_t)speed);
 				g.head = (g.head + consumed) % cap;
 				g.count -= consumed;
+			} else {
+				dry++;
 			}
 			out[i * 2]     = (int16_t)((g.lastL * g.volume) >> 8);
 			out[i * 2 + 1] = (int16_t)((g.lastR * g.volume) >> 8);
+		}
+		// Ran dry: blocks are made on the emulated CPU, so the game's thread
+		// held it (a load, a shader compile, a slow frame) for longer than the
+		// queue lasts, and the gap clicks. When the spell ends, queue at least
+		// one block more, or enough more to have covered it, so hitches like
+		// it play through.
+		if (dry && g.fed && g.running) {
+			g.dryFrames += (u32)dry;
+			g.steadyFrames = 0;
+		} else if (g.dryFrames) {
+			int cover = (int)((g.dryFrames + kBlockFrames - 1) / kBlockFrames);
+			int need  = std::min(kMaxExtra, std::max(g.extra.load() + 1, cover));
+			if (need > g.extra.load()) {
+				g.extra.store(need);
+				g.grew.store(kBaseBlocks + need);
+			}
+			g.dryFrames = 0;
+		} else if (g.extra.load() > 0 && (g.steadyFrames += (u32)frames) >= kRate * 30) {
+			g.extra.fetch_sub(1);
+			g.steadyFrames = 0;
 		}
 		low = g.count < fifo_target(speed);
 	}
@@ -304,6 +340,7 @@ void dma_block()
 		}
 		if (g.sdl) {
 			std::lock_guard<std::mutex> lk(g.mu);
+			g.fed      = true;
 			size_t cap = fifo_cap();
 			for (size_t i = 0; i < frames && g.count < cap; i++) {
 				size_t p         = (g.head + g.count) % cap;
@@ -319,6 +356,20 @@ void dma_block()
 
 u64 g_det_acc; // deterministic pacing: samples owed, in 1/60000 units
 
+// The DMA callback wakes JAudio's audio thread, which programs the next block
+// (AIInitDMA) and mixes the one after it. On hardware a block plays for
+// 17.5 ms, so that work is long done when the next block starts. Here blocks
+// start back to back while the output catches up after the game's thread held
+// the CPU (a slow frame, a hitch), and one started before the audio thread
+// has run plays the same DAC buffer again; the buffer it mixes meanwhile is
+// then overwritten unplayed. Each catch-up repeated and dropped 17.5 ms
+// pieces, heard as crackling, and at a steady low frame rate (the output
+// catching up every frame) as distortion that lasted as long as the low rate.
+bool dac_thread_busy()
+{
+	return g.dacThread && (g.dacThread->state == OS_THREAD_STATE_READY || g.dacThread->state == OS_THREAD_STATE_RUNNING);
+}
+
 // Interrupt source, polled on the emulated CPU when kicked.
 void ai_poll()
 {
@@ -328,7 +379,11 @@ void ai_poll()
 		port_irq_kick(); // the audio thread is mid-frame: retry at the next check point
 		return;
 	}
+	if (dac_thread_busy())
+		return; // polled again when it blocks (the scheduler delivers interrupts then)
 	if (g.sdl) {
+		if (int blocks = g.grew.exchange(0))
+			port_log("[audio] the output ran dry; queueing %u ms from now on\n", blocks * kBlockFrames * 1000 / kRate);
 		size_t level;
 		size_t target = fifo_target(playback_speed());
 		{
@@ -394,6 +449,7 @@ extern "C" void AIStartDMA(void)
 {
 	if (!g.enabled)
 		return;
+	g.dacThread = OSGetCurrentThread();
 	g.running = true;
 	port_irq_kick();
 }

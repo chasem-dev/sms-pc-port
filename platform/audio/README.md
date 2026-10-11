@@ -74,6 +74,9 @@ Compared against retail running under Dolphin with DSP LLE (the game's own micro
 - Bus 1 is left, bus 2 right, as retail.
 - **Decoders are bit-exact against the disc** (all 449 ADPCM4 and 3 ADPCM2 loop histories; `tests/audio_test`).
 - FX returns use Q15 gains, mode-specific FIR ordering, and the game's RAM delay buffers. Auto-mixer wet sends use the front-effect buses and Sunshine's Q16 reverb factor (the highest game value is just under 0.5). Stop requests release gradually through zero. Asset-free impulse and release checks cover these rules in both word sizes; see PROTOCOL.md.
+- Slow frames: blocks are mixed on the emulated CPU, so when the game's thread holds it for longer than the output queue lasts (a load, a shader compile, a slow frame; three blocks, 52 ms), the output runs dry and clicks.
+  The queue then grows (up to eight blocks, 140 ms; one block back after each 30 s without) and the log says so.
+  While the output catches up, a block starts only after the audio thread has handled the one before; catching up used to replay DAC buffers and drop others, which a steady low frame rate made lasting distortion.
 - Untested against retail: stream voices (not used in this segment), surround mode, FX lines (no fx sends in this segment), oscillator voices, per-voice filters (retail's IIR coefficients were identity here).
 
 Debug aids: `SMS_AUDIO_TRACE=1` (voice starts, ends with reason and lifetime, counts every 5 s) and `SMS_AUDIO_ARAM_DUMP=file[,subframe]` (writes the ARAM image once, for replaying traced voice blocks offline).
