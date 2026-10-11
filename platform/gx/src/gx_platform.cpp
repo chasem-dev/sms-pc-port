@@ -29,6 +29,7 @@
 #include <SDL.h>
 #ifdef _WIN32
 #include <SDL_syswm.h>
+#include "gx_borderless_window.h"
 #endif
 #endif
 #ifdef SMS_GX_HAVE_EGL
@@ -116,6 +117,9 @@ void captureMouse(bool on) {
 // desktop's mode). F11 or Alt+Enter toggles between the window and that
 // fullscreen (desktop when SMS_FULLSCREEN is unset).
 bool s_exclusive = false, s_isFullscreen = false;
+#ifdef _WIN32
+BorderlessWindow s_borderless;
+#endif
 
 #ifdef _WIN32
 // Whether Windows HDR ("advanced colour") is on for the monitor showing the
@@ -160,7 +164,14 @@ bool windowsHdrOn() { return false; }
 // first, so the display returns to the desktop's mode before the process ends
 // rather than Windows restoring it after.
 void leaveFullscreenAtExit() {
-    if (s_window && s_isFullscreen) SDL_SetWindowFullscreen(s_window, 0);
+    if (!s_window || !s_isFullscreen) return;
+#ifdef _WIN32
+    if (s_borderless.active) {
+        s_borderless.leave(s_window);
+        return;
+    }
+#endif
+    SDL_SetWindowFullscreen(s_window, 0);
 }
 
 void setFullscreen(bool on) {
@@ -189,6 +200,18 @@ void setFullscreen(bool on) {
     } else if (on) {
         flags = SDL_WINDOW_FULLSCREEN_DESKTOP;
     }
+#ifdef _WIN32
+    // Borderless and the HDR fallback never enter SDL fullscreen on Windows.
+    // Remember the decorated window so F11/Alt+Enter restores its size and position.
+    if (flags == SDL_WINDOW_FULLSCREEN_DESKTOP) {
+        if (!s_borderless.enter(s_window)) {
+            logmsg("borderless change failed: %s; continuing as before", SDL_GetError());
+            return;
+        }
+    } else if (s_borderless.active && !on) {
+        s_borderless.leave(s_window);
+    } else
+#endif
     if (SDL_SetWindowFullscreen(s_window, flags) != 0) {
         logmsg("fullscreen change failed: %s; continuing as before", SDL_GetError());
         return;
@@ -391,7 +414,8 @@ bool openWindow(float scale) {
     // the same monitor. Desktop fullscreen keeps the display's native mode;
     // rendering quality and aspect ratio are still handled by the renderer.
     // Exclusive fullscreen switches the display to the mode asked for.
-    if (const char* e = getenv("SMS_FULLSCREEN")) s_exclusive = strcmp(e, "exclusive") == 0;
+    const char* fullscreen = getenv("SMS_FULLSCREEN");
+    s_exclusive = fullscreen && strcmp(fullscreen, "exclusive") == 0;
     if (windowsHdrOn()) logmsg("Windows HDR is on for this monitor");
     if (envTrue("SMS_FULLSCREEN")) setFullscreen(true);
 #ifdef _WIN32
@@ -403,9 +427,10 @@ bool openWindow(float scale) {
 #else
     hdrInit(nullptr);
 #endif
-    if (SDL_GetWindowFlags(s_window) & SDL_WINDOW_FULLSCREEN)
+    if (s_isFullscreen)
         logmsg("%s fullscreen on display %d (%s), internal resolution scale %g, OpenGL context ready",
-               (SDL_GetWindowFlags(s_window) & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN_DESKTOP ? "desktop" : "exclusive",
+               (SDL_GetWindowFlags(s_window) & SDL_WINDOW_FULLSCREEN) &&
+               (SDL_GetWindowFlags(s_window) & SDL_WINDOW_FULLSCREEN_DESKTOP) != SDL_WINDOW_FULLSCREEN_DESKTOP ? "exclusive" : "desktop",
                display, s_videoDriver, scale);
     else
         logmsg("window %dx%d centered on display %d (%s), internal resolution scale %g, OpenGL context ready",
