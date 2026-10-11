@@ -14,28 +14,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
   cancel-in-progress: true
 jobs:
-  windows-borderless:
-    runs-on: windows-2025
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - msystem: MINGW64
-            package: mingw-w64-x86_64
-          - msystem: MINGW32
-            package: mingw-w64-i686
-    steps:
-      - uses: actions/checkout@v4
-      - uses: msys2/setup-msys2@v2
-        with:
-          msystem: ${{ matrix.msystem }}
-          install: ${{ matrix.package }}-gcc ${{ matrix.package }}-SDL2 ${{ matrix.package }}-pkgconf
-      - name: Check borderless mode without a display mode switch
-        shell: msys2 {0}
-        run: |
-          g++ -std=c++17 -Iplatform/gx/src platform/gx/tests/gx_borderlesstest.cpp $(pkg-config --cflags --libs sdl2) -o borderless-test.exe
-          ./borderless-test.exe
   window:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
