@@ -2745,13 +2745,14 @@ static uint32_t peekSync(int x, int y, bool depth) {
     return uint32_t(px[0]) | uint32_t(px[1]) << 8 | uint32_t(px[2]) << 16 | uint32_t(px[3]) << 24;
 }
 
-// A frame's peek snapshot is read at 1x: with a larger EFB scale the EFB is
-// first blitted (nearest) into this buffer, so a read stays 1.3 MiB.
+// A frame's peek snapshot is read at 1x: the EFB is first blitted (nearest)
+// into this buffer, so a read stays 1.3 MiB. At scale 1 too: reading the EFB
+// itself into a pixel buffer, while the game goes on drawing into it, garbled
+// the whole picture into blocks on Intel's Windows driver (HD 530, 21.20).
 static GLuint s_peekFbo, s_peekColor, s_peekDepth;
 
 static GLuint peekSource(bool depth) {
     const GLbitfield bits = depth ? GL_DEPTH_BUFFER_BIT : GL_COLOR_BUFFER_BIT;
-    if (s_scale == 1.0f) return efbReadFbo(0, 0, INT32_MAX, INT32_MAX, bits);
     if (!s_peekFbo) {
         glGenRenderbuffers(1, &s_peekColor);
         glBindRenderbuffer(GL_RENDERBUFFER, s_peekColor);
