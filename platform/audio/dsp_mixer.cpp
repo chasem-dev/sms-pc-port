@@ -56,7 +56,7 @@ struct Voice {
 	uint16_t afcSamples[16];   // 0x0B0
 	int16_t lpHist[2];         // 0x0D0
 	uint8_t pad0D4[0x2C];      // 0x0D4
-	uint16_t sourceType;       // 0x100 9 ADPCM4, 5 ADPCM2, 8 PCM8, 16 PCM16, <4 oscillator
+	uint16_t sourceType;       // 0x100 9 ADPCM4, 5 ADPCM2, 8 PCM8, 16 PCM16, else oscillator (kOsc*)
 	uint16_t looping;          // 0x102
 	int16_t loopYN1;           // 0x104
 	int16_t loopYN2;           // 0x106
@@ -105,6 +105,24 @@ const uint32_t kAdpcmDefault[16] = {
 
 enum { kBuses = 12, kMaxN = 1024, kDirectPcm = 0x21 };
 
+// Oscillator sources (JAudio's noteOnOsc: program 0xF0 + type). They have no
+// wave data; the DSP synthesises one period every 32 output samples at ratio
+// 0x1000, which is the period JAudio's pitch constant assumes (16736.016 / 32
+// = 523 Hz, C5). The pattern sources play 64-sample tables from the setup
+// table (DSPRES_FILTER after the resampling taps: a sine, a triangle and two
+// clicks). Source 10 (pattern 0 with a step modulated by another buffer) is
+// played as plain pattern 0.
+enum {
+	kOscSquare    = 0,  // 50 % duty, +-0x4000
+	kOscSaw       = 1,  // full-scale rising ramp
+	kOscSquare25  = 3,  // 25 % duty, +-0x4000
+	kOscPattern1  = 4,
+	kOscPattern0  = 7,
+	kOscPattern0V = 10,
+	kOscPattern2  = 11,
+	kOscPattern3  = 12,
+};
+
 // Bus addresses in DSP DRAM, indexed as JASDSPInterface's connect_table.
 const uint16_t kBusAddr[kBuses] = { 0x0000, 0x0D00, 0x0D60, 0x0DC0, 0x0E20, 0x0E80,
 	                                0x0EE0, 0x0CA0, 0x0F40, 0x0FA0, 0x0B00, 0x09A0 };
@@ -130,6 +148,7 @@ struct Decoder {
 	uint32_t startTick; // trace: subframe the voice started
 	int16_t win[4];   // x[n-1], x[n], x[n+1], x[n+2]
 	uint32_t frac;    // Q16 position between win[1] and win[2]
+	uint32_t phase;   // oscillators: Q22 position in the period
 };
 
 struct State {
@@ -137,6 +156,7 @@ struct State {
 	uint32_t nvoices;
 	FxLine* fx;
 	int16_t res[64 * 4];
+	int16_t pattern[4][64]; // oscillator patterns (setup table, after res)
 	int16_t coef[16][2];
 	port_dspmix_aram_fn aram;
 	Decoder dec[64];
@@ -152,7 +172,7 @@ struct State {
 	bool fxOff;
 	bool trace;
 	uint32_t traceTick;
-	bool warnedOsc;
+	bool warnedSource;
 } g;
 
 void build_default_resampler()
@@ -165,6 +185,18 @@ void build_default_resampler()
 			            0.5 * t3 - 0.5 * t2 };
 		for (int k = 0; k < 4; k++)
 			g.res[p * 4 + k] = (int16_t)lrint(w[k] * 32767.0);
+	}
+}
+
+void build_default_patterns()
+{
+	// The game's patterns 0 and 1 (a sine and a triangle); the clicks in 2
+	// and 3 are left silent. Only used without the game's table.
+	memset(g.pattern, 0, sizeof g.pattern);
+	for (int i = 0; i < 64; i++) {
+		g.pattern[0][i] = (int16_t)lrint(sin(i * M_PI / 32) * 32767.0);
+		int t           = (i < 16 ? i : i < 48 ? 32 - i : i - 64) * 2048;
+		g.pattern[1][i] = (int16_t)(t > 32767 ? 32767 : t < -32767 ? -32767 : t);
 	}
 }
 
@@ -281,18 +313,60 @@ int32_t pull(Decoder& d, const Voice& v)
 	return s;
 }
 
+int pattern_index(uint16_t type)
+{
+	switch (type) {
+	case kOscPattern0:
+	case kOscPattern0V: return 0;
+	case kOscPattern1: return 1;
+	case kOscPattern2: return 2;
+	case kOscPattern3: return 3;
+	}
+	return -1;
+}
+
+bool is_oscillator(uint16_t type)
+{
+	return type == kOscSquare || type == kOscSaw || type == kOscSquare25 || pattern_index(type) >= 0;
+}
+
 void start(Decoder& d, const Voice& v)
 {
 	memset(&d, 0, sizeof d);
 	d.active    = true;
 	d.remaining = v.remaining;
 	d.written   = v.remaining;
+	if (is_oscillator(v.sourceType))
+		return; // no source data: the phase starts at 0
 	d.win[0] = 0;
 	for (int k = 1; k < 4; k++)
 		d.win[k] = (int16_t)pull(d, v);
 }
 
-bool supported(uint16_t type) { return type == 9 || type == 5 || type == 8 || type == 16 || type == kDirectPcm; }
+bool supported(uint16_t type)
+{
+	return type == 9 || type == 5 || type == 8 || type == 16 || type == kDirectPcm || is_oscillator(type);
+}
+
+// Synthesise `n` samples of an oscillator voice. The phase is Q22 per period
+// (64 pattern samples of Q16), stepping ratio << 5 per output sample: 32
+// samples a period at 0x1000. No resampling filter is applied.
+void oscillate(Decoder& d, const Voice& v, int32_t* out, int n)
+{
+	const uint32_t step = (uint32_t)v.ratio << 5, mask = (1u << 22) - 1;
+	const int pi        = pattern_index(v.sourceType);
+	uint32_t ph         = d.phase;
+	for (int k = 0; k < n; k++) {
+		switch (v.sourceType) {
+		case kOscSquare: out[k] = (ph >> 21) & 1 ? -0x4000 : 0x4000; break;
+		case kOscSquare25: out[k] = (ph >> 20) & 3 ? -0x4000 : 0x4000; break;
+		case kOscSaw: out[k] = (int16_t)(ph >> 6); break;
+		default: out[k] = g.pattern[pi][ph >> 16]; break;
+		}
+		ph = (ph + step) & mask;
+	}
+	d.phase = ph;
+}
 
 // Resample `n` samples of voice `v` into out; returns the number produced
 // before a one-shot source ran dry (the rest is zero-filled).
@@ -349,9 +423,9 @@ void render_voice(int vi, int n)
 	}
 	bool stopping = v.endRequested != 0;
 	if (!supported(v.sourceType)) {
-		if (!g.warnedOsc) {
-			g.warnedOsc = true;
-			fprintf(stderr, "[audio] oscillator voices (source type %u) are not synthesised yet\n", v.sourceType);
+		if (!g.warnedSource) {
+			g.warnedSource = true;
+			fprintf(stderr, "[audio] source type %u is not supported\n", v.sourceType);
 		}
 		if (stopping)
 			v.done = 1;
@@ -369,7 +443,13 @@ void render_voice(int vi, int n)
 		return;
 	}
 	int32_t src[kMaxN];
-	int got = resample(d, v, src, n);
+	int got;
+	if (is_oscillator(v.sourceType)) {
+		oscillate(d, v, src, n);
+		got = n; // endless: only a stop request finishes it
+	} else {
+		got = resample(d, v, src, n);
+	}
 	g.active++;
 
 	if (v.amEnabled) {
@@ -422,7 +502,7 @@ void render_voice(int vi, int n)
 	} else {
 		v.position = (int32_t)d.idx;
 	}
-	v.posFrac = (int16_t)(d.frac & 0xFFFF);
+	v.posFrac = (int16_t)(is_oscillator(v.sourceType) ? d.phase >> 6 : d.frac & 0xFFFF);
 	if (got < n || (d.ended && d.tail > 2)) {
 		v.endReached = 1;
 		v.done       = 1;
@@ -521,8 +601,14 @@ extern "C" void port_dspmix_setup(uint32_t nvoices, void* voices, const uint32_t
 			g.res[i * 2]     = (int16_t)(res_filter[i] >> 16);
 			g.res[i * 2 + 1] = (int16_t)(res_filter[i] & 0xFFFF);
 		}
+		for (int i = 0; i < 128; i++) {
+			int16_t* p = &g.pattern[0][0] + i * 2;
+			p[0]       = (int16_t)(res_filter[128 + i] >> 16);
+			p[1]       = (int16_t)(res_filter[128 + i] & 0xFFFF);
+		}
 	} else {
 		build_default_resampler();
+		build_default_patterns();
 	}
 	load_adpcm_table(adpcm_filter ? adpcm_filter : kAdpcmDefault);
 	memset(g.dec, 0, sizeof g.dec);
