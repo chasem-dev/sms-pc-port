@@ -14,6 +14,28 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
   cancel-in-progress: true
 jobs:
+  windows-borderless:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - msystem: MINGW64
+            package: mingw-w64-x86_64
+          - msystem: MINGW32
+            package: mingw-w64-i686
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          install: ${{ matrix.package }}-gcc ${{ matrix.package }}-SDL2 ${{ matrix.package }}-pkgconf
+      - name: Check borderless mode without a display mode switch
+        shell: msys2 {0}
+        run: |
+          g++ -std=c++17 -Iplatform/gx/src platform/gx/tests/gx_borderlesstest.cpp $(pkg-config --cflags --libs sdl2) -o borderless-test.exe
+          ./borderless-test.exe
   window:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -56,7 +78,7 @@ jobs:
           ARCH: ${{ matrix.arch }}
         run: |
           cmake -S . -B build/window -DCMAKE_BUILD_TYPE=Release -DSMS_ARCH="$ARCH" -DSMS_GX_BUILD_TESTS=ON
-          cmake --build build/window --target gx_windowtest gx_windowsmoke -j2
+          cmake --build build/window --target gx_windowtest gx_windowsmoke gx_borderlesstest -j2
       - name: Check window placement, fullscreen, and headless rendering
         env:
           LIBGL_ALWAYS_SOFTWARE: '1'
@@ -83,6 +105,9 @@ jobs:
           ctest --test-dir build/window/platform/gx -R '^gx_windowtest$' --output-on-failure
           # SDL desktop fullscreen is managed by the desktop window manager.
           xvfb-run -a -s '-screen 0 1280x800x24' bash -e -c '
+            # This path is used on Windows. Test its SDL calls before the X11
+            # window manager starts: X11 changes decorations asynchronously.
+            smoke build/window/platform/gx/gx_borderlesstest
             openbox --sm-disable > build/window/window-manager.log 2>&1 &
             window_wm_pid=$!
             trap "kill $window_wm_pid" EXIT
