@@ -87,8 +87,13 @@ int main(int argc, char** argv) {
         expect(SDL_GetDisplayUsableBounds(SDL_GetWindowDisplayIndex(window), &desktop) == 0, "usable desktop available");
         const Uint32 flags = SDL_GetWindowFlags(window);
         if (fullscreen) {
+#ifdef _WIN32
+            expect(!(flags & SDL_WINDOW_FULLSCREEN) && (flags & SDL_WINDOW_BORDERLESS),
+                   "launcher borderless opens a normal undecorated window on Windows");
+#else
             expect((flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN_DESKTOP,
                    "launcher fullscreen setting opens desktop fullscreen");
+#endif
             SDL_Rect display = {};
             expect(SDL_GetDisplayBounds(SDL_GetWindowDisplayIndex(window), &display) == 0, "full display bounds available");
             expect(waitForSize([&](int width, int height) { return width == display.w && height == display.h; }),
@@ -96,7 +101,13 @@ int main(int argc, char** argv) {
             SDL_GetWindowPosition(window, &x, &y);
             expect(x == display.x && y == display.y, "fullscreen starts at the display origin");
             std::printf("Fullscreen smoke: %dx%d at %d,%d\n", w, h, x, y);
-            expect(SDL_SetWindowFullscreen(window, 0) == 0, "fullscreen can return to a window");
+            // Use the game's own toggle so Windows restores the normal window
+            // rather than asking SDL to leave a fullscreen state it never entered.
+            SDL_Event toggle = {};
+            toggle.type = SDL_KEYDOWN;
+            toggle.key.keysym.scancode = SDL_SCANCODE_F11;
+            expect(SDL_PushEvent(&toggle) == 1, "fullscreen toggle queued");
+            sms_gx_pump_events();
             expect(waitForSize([&](int width, int height) { return width <= desktop.w * 0.8 && height <= desktop.h * 0.8; }),
                    "leaving fullscreen restores the fitted window size");
         } else {
