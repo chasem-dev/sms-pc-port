@@ -281,7 +281,7 @@ void shaderPrepareStage(int stage);  // while a stage loads: its programs (the w
 // ---------------------------------------------------------------- overlay panels
 // Each slot keeps its own texture, so panels drawn in the same frame keep their
 // cached bitmaps. GXPC_DrawOverlay draws the debug overlay's slot.
-enum OverlaySlot { OVERLAY_DEBUG, OVERLAY_CHEAT_MENU, OVERLAY_SLOTS };
+enum OverlaySlot { OVERLAY_DEBUG, OVERLAY_CHEAT_MENU, OVERLAY_WARP_MENU, OVERLAY_SLOTS };
 void drawOverlayPanel(OverlaySlot slot, const uint8_t* rgba, int w, int h, int x, int y, int scale, int winW, int winH);
 // Panel bitmaps (gx_overlay.cpp): RGBA8, w x h, row 0 at the top. Text shares
 // one scratch buffer, so panels are rasterised on the GL thread only.

@@ -6,6 +6,7 @@
 // GXPC_Init itself, and every GXCopyDisp presents the XFB to the window.
 #include "gx_internal.h"
 #include "gx_cheat_menu.h"
+#include "gx_warp_menu.h"
 #include "gx_glthread.h"
 #include "gx_window_layout.h"
 #include "sms_gx/gx_pc.h"
@@ -220,12 +221,17 @@ void setFullscreen(bool on) {
     SDL_ShowCursor(on ? SDL_DISABLE : SDL_ENABLE);
 }
 
-// The open cheat menu has a free cursor; closing it gives mouse look back the
-// capture it had.
+// An open menu (cheats or warps) has a free cursor; closing it gives mouse
+// look back the capture it had.
 bool s_menuOpen = false, s_capturedBeforeMenu = false;
 
-void syncCheatMenuInput() {
-    const bool open = cheatMenuVisible();
+bool menuVisible() { return cheatMenuVisible() || warpMenuVisible(); }
+// F8 and the Back button ([0] and [1]) went down to open or close the warp
+// menu: their release is the menu's too.
+bool s_warpToggleHeld[2];
+
+void syncMenuInput() {
+    const bool open = menuVisible();
     if (open == s_menuOpen) return;
     s_menuOpen = open;
     if (open) {
@@ -675,7 +681,7 @@ int GXPC_MouseCaptured(void) {
     return 0;
 #endif
 }
-int GXPC_GameInputBlocked(void) { return cheatMenuVisible(); }
+int GXPC_GameInputBlocked(void) { return menuVisible(); }
 int GXPC_IsHeadless(void) { return s_mode != MODE_WINDOW; }
 uint32_t GXPC_FrameCount(void) { return s_frame; }
 
@@ -746,6 +752,7 @@ void GXPC_Present(const void* xfb) {
             GXPC_PresentXFB(xfb, w, h);
             GXPC_OverlayDraw(w, h);
             cheatMenuRender(w, h);
+            warpMenuRender(w, h);
             t1 = nowSeconds();
             if (hdr) hdrFramePresent(s_vsync != 0);
             else SDL_GL_SwapWindow(s_window);
@@ -810,7 +817,7 @@ void sms_gx_pump_events(void) {
     if (s_mode != MODE_WINDOW) return;
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
-        if (!cheatMenuVisible()) noteInputDevice(ev);
+        if (!menuVisible()) noteInputDevice(ev);
         switch (ev.type) {
         case SDL_CONTROLLERDEVICEADDED:
             if (SDL_IsGameController(ev.cdevice.which)) {
@@ -845,12 +852,36 @@ void sms_gx_pump_events(void) {
         // F9 opens and closes the cheat menu and is kept from the pad layer
         if ((ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) && ev.key.keysym.scancode == SDL_SCANCODE_F9) {
             if (ev.type == SDL_KEYDOWN && !ev.key.repeat) {
+                if (warpMenuVisible()) warpMenuToggle();
                 cheatMenuToggle();
-                syncCheatMenuInput();
+                syncMenuInput();
             }
             continue;
         }
-        if (s_mouseCamera && !cheatMenuVisible()) {
+        // F8 or a controller's Back (Select) button opens the warp menu while
+        // the debug overlay is open, and closes it; a press that does either
+        // is kept from the pad layer, release included. Otherwise they reach
+        // the pad layer as any key or button does (PAD_BACK can be bound).
+        const bool warpKey = (ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) && ev.key.keysym.scancode == SDL_SCANCODE_F8;
+        const bool warpButton = (ev.type == SDL_CONTROLLERBUTTONDOWN || ev.type == SDL_CONTROLLERBUTTONUP) &&
+                                ev.cbutton.button == SDL_CONTROLLER_BUTTON_BACK;
+        if (warpKey || warpButton) {
+            bool& held = s_warpToggleHeld[warpButton];
+            const bool down = ev.type == SDL_KEYDOWN || ev.type == SDL_CONTROLLERBUTTONDOWN;
+            const bool repeat = warpKey && ev.key.repeat;
+            if (down && !repeat && (warpMenuVisible() || GXPC_OverlayVisible())) {
+                if (cheatMenuVisible()) cheatMenuToggle();
+                warpMenuToggle();
+                syncMenuInput();
+                held = true;
+                continue;
+            }
+            if (held) {
+                if (!down) held = false;
+                continue;
+            }
+        }
+        if (s_mouseCamera && !menuVisible()) {
             if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_FOCUS_LOST) captureMouse(false);
             if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_FOCUS_GAINED && !s_mouseReleased)
                 captureMouse(true);
@@ -880,9 +911,9 @@ void sms_gx_pump_events(void) {
             if (!ev.key.repeat) GXPC_CycleSpeed();
             continue;
         }
-        // The cheat menu's own keys and clicks never reach the pad layer (Escape would quit)
-        if (cheatMenuHandleEvent(ev)) {
-            syncCheatMenuInput();
+        // The menus' own keys, buttons and clicks never reach the pad layer (Escape would quit)
+        if (cheatMenuHandleEvent(ev) || warpMenuHandleEvent(ev)) {
+            syncMenuInput();
             continue;
         }
         if (s_eventCb) s_eventCb(&ev);
@@ -893,6 +924,7 @@ void sms_gx_pump_events(void) {
             exit(0);
         }
     }
+    warpMenuTick();
 #endif
 }
 
