@@ -87,7 +87,7 @@ Reason: port: show "(A) Skip" (the system font's A button glyph) in the bottom-r
  
  	switch (gpApplication.getMovie()) {
  	case 16:
-@@ -548,7 +613,23 @@
+@@ -548,7 +613,28 @@
  	}
  
  	s32 nextState = unk1C;
@@ -95,14 +95,19 @@ Reason: port: show "(A) Skip" (the system font's A button glyph) in the bottom-r
 +	// Port: A ends any movie at once, seen or not, under the prompt
 +	// (TMovieSkipPrompt). Retail's A, B or START skip fades out over a
 +	// second, and only for a movie already seen. What follows is the same as
-+	// after the fade: decideNextMode, from black.
++	// after the fade, from black: decideNextMode through the fade-out's mod
++	// site (retail 0x802B606C), where a mod such as Eclipse picks the next
++	// movie of its own chains and sets their flags.
 +	bool skipped = false;
 +	if (TMovieSkipPrompt::shown(this) && getGamePad()->checkFrameMeaning(0x20)) {
 +		skipped = true;
 +		THPPlayerStop();
 +		gpApplication.getFader()->setFadeStatus(
 +		    TSMSFader::FADE_STATUS_FULLY_FADED_OUT);
-+		desiredAppState = decideNextMode(&nextState);
++		desiredAppState = SMS_MOD_CALLM_R(0x802B606C, TMovieDirector,
++		                                  decideNextMode,
++		                                  decideNextMode(&nextState), this,
++		                                  &nextState);
 +	}
 +	switch (skipped ? -1 : unk1C) {
 +#else
