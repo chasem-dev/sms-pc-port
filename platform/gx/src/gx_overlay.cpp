@@ -189,7 +189,7 @@ void GXPC_OverlayDraw(int winW, int winH) {
                  "L: Q     R: E     Start: Enter\n"
                  "D-pad: 1 2 3 4\n"
                  "`: this overlay     F7: speed x1/x2/x4/x10\n"
-                 "F9: cheat menu\n"
+                 "F8 or Select: warp menu     F9: cheat menu\n"
                  "Esc: quit",
                  s_clock.fps, s_clock.shownFps, s_clock.avgMs, s_clock.maxMs, GXPC_GetSpeed(), s_clock.gameMs, s_clock.per.gx,
                  s_clock.per.present, s_clock.per.swap, s_clock.per.idle, s_clock.per.vertices, s_clock.per.draws,

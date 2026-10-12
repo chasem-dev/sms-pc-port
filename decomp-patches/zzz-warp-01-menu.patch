@@ -1,4 +1,4 @@
-Reason: port: the warp menu (F8 / controller Select, platform/gx) lists every stage and episode on the disc and warps to the one picked
+Reason: port: the warp menu (F8 / controller Select with the debug overlay open, platform/gx) lists every stage and episode on the disc and warps to the one picked
 --- a/src/System/Application.cpp
 +++ b/src/System/Application.cpp
 @@ -834,6 +834,166 @@

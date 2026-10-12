@@ -226,6 +226,9 @@ void setFullscreen(bool on) {
 bool s_menuOpen = false, s_capturedBeforeMenu = false;
 
 bool menuVisible() { return cheatMenuVisible() || warpMenuVisible(); }
+// F8 and the Back button ([0] and [1]) went down to open or close the warp
+// menu: their release is the menu's too.
+bool s_warpToggleHeld[2];
 
 void syncMenuInput() {
     const bool open = menuVisible();
@@ -855,17 +858,28 @@ void sms_gx_pump_events(void) {
             }
             continue;
         }
-        // F8 or a controller's Back (Select) button opens and closes the warp
-        // menu and is kept from the pad layer
-        if (((ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) && ev.key.keysym.scancode == SDL_SCANCODE_F8) ||
-            ((ev.type == SDL_CONTROLLERBUTTONDOWN || ev.type == SDL_CONTROLLERBUTTONUP) &&
-             ev.cbutton.button == SDL_CONTROLLER_BUTTON_BACK)) {
-            if ((ev.type == SDL_KEYDOWN && !ev.key.repeat) || ev.type == SDL_CONTROLLERBUTTONDOWN) {
+        // F8 or a controller's Back (Select) button opens the warp menu while
+        // the debug overlay is open, and closes it; a press that does either
+        // is kept from the pad layer, release included. Otherwise they reach
+        // the pad layer as any key or button does (PAD_BACK can be bound).
+        const bool warpKey = (ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) && ev.key.keysym.scancode == SDL_SCANCODE_F8;
+        const bool warpButton = (ev.type == SDL_CONTROLLERBUTTONDOWN || ev.type == SDL_CONTROLLERBUTTONUP) &&
+                                ev.cbutton.button == SDL_CONTROLLER_BUTTON_BACK;
+        if (warpKey || warpButton) {
+            bool& held = s_warpToggleHeld[warpButton];
+            const bool down = ev.type == SDL_KEYDOWN || ev.type == SDL_CONTROLLERBUTTONDOWN;
+            const bool repeat = warpKey && ev.key.repeat;
+            if (down && !repeat && (warpMenuVisible() || GXPC_OverlayVisible())) {
                 if (cheatMenuVisible()) cheatMenuToggle();
                 warpMenuToggle();
                 syncMenuInput();
+                held = true;
+                continue;
             }
-            continue;
+            if (held) {
+                if (!down) held = false;
+                continue;
+            }
         }
         if (s_mouseCamera && !menuVisible()) {
             if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_FOCUS_LOST) captureMouse(false);

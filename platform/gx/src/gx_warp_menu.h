@@ -1,6 +1,7 @@
-// In-game warp menu (F8, or a controller's Back/Select button), drawn with the
-// debug overlay's renderer: every stage on the disc, then its episodes, and a
-// warp to the one picked (src/port_include/port_warp.h).
+// In-game warp menu (F8, or a controller's Back/Select button, with the debug
+// overlay open), drawn with the debug overlay's renderer: every stage on the
+// disc, then its episodes, and a warp to the one picked
+// (src/port_include/port_warp.h).
 #ifndef SMS_GX_WARP_MENU_H
 #define SMS_GX_WARP_MENU_H
 

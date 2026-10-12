@@ -1,8 +1,8 @@
 #ifndef PORT_WARP_H
 #define PORT_WARP_H
 
-// The warp menu (F8 or a controller's Back/Select button, platform/gx): a list
-// of every stage and episode on the disc, and a warp to the one picked. The
+// The warp menu (F8 or a controller's Back/Select button with the debug overlay
+// open, platform/gx): a list of every stage and episode on the disc, and a warp to the one picked. The
 // game fills the list when the menu first asks for it and starts the warp
 // (patch zzz-warp-01); platform/misc/port_warp.cpp keeps both between them.
 

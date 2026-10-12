@@ -162,13 +162,13 @@ GameCube adapters work too. On Windows, an adapter in Wii U mode (Nintendo WUP-0
 | D-pad | 1 2 3 4 (up, down, left, right) or keypad 8 2 4 6 |
 | Debug overlay (frame rate, stats, keys) | ` (backtick) |
 | Game and movie speed x1 / x2 / x4 / x10 (overlay open) | F7 |
-| Warp menu | F8, or a controller's Back/Select button |
+| Warp menu (debug overlay open) | F8, or a controller's Back/Select button |
 | Quit | Esc |
 
 The warp menu lists every stage on the disc (Eclipse's too) and, under each, its episodes and secret courses with their names and scene files; picking one warps there straight away, as a pipe or the pause menu's Exit Area would, without the Shines that would unlock it.
 It warps while a stage is playing (not during a cutscene, dialogue or the pause menu); the game keeps running behind it but reads no input.
 Arrow keys or the d-pad (or the left stick) move, Enter or A opens a stage and warps, Esc, Backspace or B goes back; LB/RB and Page Up/Down skip a page, and the mouse works too.
-The controller's Back/Select button always opens the menu, so it cannot be bound to a game control.
+F8 and Back/Select open it only while the debug overlay (`` ` ``) is open; otherwise they are ordinary keys and buttons, so `PAD_BACK` can still be bound to a game control (it then opens the menu instead while the overlay is open).
 
 To change them, edit [`bindings.txt`](bindings.txt) (`CONTROL = KEY KEY ...`, one control per line; a line replaces that control's defaults), or point `SMS_BINDINGS` at another file.
 
