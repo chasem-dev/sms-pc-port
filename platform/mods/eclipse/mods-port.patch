@@ -1,5 +1,52 @@
 --- a/bse/src/area.cpp
 +++ b/bse/src/area.cpp
+@@ -9,6 +9,9 @@
+ #define MESSAGE_NO_DATA "NO DATA"
+ 
+ static void moveStage_override(TMarDirector *director);
++// port: an episode's name for the port's warp menu (src/port_include/port_warp.h)
++extern "C" int (*port_warp_scenario_name_id)(int area, int episode);
++static int portWarpScenarioNameID(int area, int episode);
+ 
+ namespace BetterSMS {
+ 
+@@ -101,8 +104,36 @@
+ 
+         oldHeap->becomeCurrentHeap();
+     }
++
++    port_warp_scenario_name_id = portWarpScenarioNameID;
+ }
+ 
++// The episode's message in scenarioname.bmg, as the level select and the
++// pause menu name it: an area's by its scenario, a secret course's by its
++// Shine (an episode's or one of the stage's others); -1 for none.
++static int portWarpScenarioNameID(int area, int episode) {
++    if (area < 0 || area >= BETTER_SMS_AREA_MAX)
++        return -1;
++    const s32 shineStageID = sNormalAreaInfos[area].mShineStageID;
++    if (shineStageID < 0 || !sShineAreaInfos[shineStageID])
++        return -1;
++    const ShineAreaInfo &info = *sShineAreaInfos[shineStageID];
++    if (area < BETTER_SMS_EXAREA_MAX && sExAreaInfos[area].mShineStageID != -1) {
++        const s32 shineID = sExAreaInfos[area].mShineID;
++        for (int ex = 0; shineID != -1 && ex < 2; ++ex) {
++            const TGlobalVector<s32> &ids   = ex ? info.getExScenarioIDs() : info.getScenarioIDs();
++            const TGlobalVector<s32> &names = ex ? info.getExScenarioNameIDs() : info.getScenarioNameIDs();
++            for (size_t i = 0; i < ids.size() && i < names.size(); ++i) {
++                if (ids[i] == shineID)
++                    return names[i];
++            }
++        }
++        return -1;
++    }
++    const TGlobalVector<s32> &names = info.getScenarioNameIDs();
++    return episode >= 0 && size_t(episode) < names.size() ? names[episode] : -1;
++}
++
+ bool BetterSMS::Stage::registerShineStage(ShineAreaInfo *info) {
+     if (sShineAreaInfos[info->getShineStageID()]) {
+         OSReport("[WARN] Overwriting stage info for stage %d\n", info->getShineStageID());
 @@ -359,8 +359,8 @@
  SMS_NO_INLINE static const char *loadScenarioNameFromBMGAfterStub(u8 *pause_menu, void* global_bmg) {
      const char *name = loadScenarioNameFromBMGAfter(global_bmg);

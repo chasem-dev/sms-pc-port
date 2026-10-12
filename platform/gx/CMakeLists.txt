@@ -103,8 +103,8 @@ if(TARGET SDL2::SDL2)
     target_compile_definitions(sms_gx PRIVATE SMS_GX_HAVE_SDL2=1)
     target_link_libraries(sms_gx PUBLIC SDL2::SDL2)
     message(STATUS "sms_gx: SDL2 window support")
-    # The cheat menu (F9) in the window.
-    target_sources(sms_gx PRIVATE src/gx_cheat_menu.cpp)
+    # The cheat menu (F9) and the warp menu (F8) in the window.
+    target_sources(sms_gx PRIVATE src/gx_cheat_menu.cpp src/gx_warp_menu.cpp)
 else()
     message(STATUS "sms_gx: SDL2 not found - no window support")
 endif()
@@ -131,8 +131,12 @@ if(SMS_GX_BUILD_TESTS)
     # x86, never x87 extended precision, and no contraction. Source file
     # properties are per directory, so the tests' copy needs its own.
     set(SMS_GX_MSL_MATH ${CMAKE_CURRENT_SOURCE_DIR}/../misc/msl_math.c)
-    # The cheat menu reads the port_cheat_* flags, which the port defines (platform/misc).
-    set(SMS_GX_PORT_CHEATS ${CMAKE_CURRENT_SOURCE_DIR}/../misc/port_cheats.cpp)
+    # The cheat menu reads the port_cheat_* flags and the warp menu the warp
+    # list, which the port defines (platform/misc).
+    set(SMS_GX_PORT_CHEATS ${CMAKE_CURRENT_SOURCE_DIR}/../misc/port_cheats.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../misc/port_warp.cpp)
+    set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/../misc/port_warp.cpp PROPERTIES
+        INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/../../src/port_include)
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|i.86)$" OR CMAKE_OSX_ARCHITECTURES MATCHES "x86_64")
         set(_sms_gx_msl_opts "-msse2;-mfpmath=sse;-ffp-contract=off")
     else()
