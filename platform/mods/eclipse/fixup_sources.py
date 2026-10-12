@@ -532,6 +532,22 @@ SHI_FIXES = BOOL_RET_FIXES + SHI_WORD_FIXES + SHI_GAME_TYPES + [
      + "".join("extern template void TParamT<%s>::load(JSUMemoryInputStream &);\n" % t
                for t in ("u8", "s16", "u16", "s32", "f32", "JGeometry::TVec3<f32>")),
      "the game's TParamT loads convert .prm values"),
+    # A bool .prm value is a byte the mods' code tests against zero on the
+    # console (BSE's canCollectFluddItem_: lbz, cmplwi 0), and Eclipse's
+    # luigi.szs better_sms.prm stores mCanUseFludd as 2. Read raw into a
+    # bool, clang on x86 takes 2 for neither true nor false: !mCanUseFludd
+    # came out true, so Luigi could not take a nozzle from a box. Stored as
+    # 0 or 1 here, every reader sees what the console's code did.
+    ("include/SMS/System/Params.hxx",
+     r"(\nextern template void TParamT<JGeometry::TVec3<f32>>::load\(JSUMemoryInputStream &\);\n)",
+     r"\1template <> inline void TParamT<bool>::load(JSUMemoryInputStream &stream) {\n"
+     r"    u32 buffer;\n"
+     r"    stream.read(&buffer, 4);\n"
+     r"    u8 value;\n"
+     r"    stream.read(&value, 1);\n"
+     r"    mValue = value != 0;\n"
+     r"}\n",
+     ".prm bools are any nonzero byte, as the console's code tests them"),
 ]
 
 
