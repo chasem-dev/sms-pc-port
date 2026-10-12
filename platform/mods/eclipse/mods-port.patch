@@ -64,7 +64,59 @@
  }
 --- a/bse/src/music.cpp
 +++ b/bse/src/music.cpp
-@@ -487,12 +487,12 @@
+@@ -244,6 +244,39 @@
+ }
+ 
+ bool AudioStreamer::queueAudio(const AudioPacket &packet) {
++    // The port: leaving a stage stops the song with a 0.8 s fade and clears the
++    // queue once the fade ends. A console spends seconds reading the next stage
++    // from the disc, so the clear has run before that stage queues its song.
++    // Here the stage is ready long before, and the late clear dropped the new
++    // song too (silent secret course intros, silent stages without an intro,
++    // and nothing for Pizza Time's skipStream to play). Finish the old song now.
++    if (mRequestedClear) {
++        if (_mIsPlaying || _mIsPaused || mRequestedStop)
++            stopLowStream();
++        _mIsPlaying         = false;
++        _mIsPaused          = false;
++        mRequestedStop      = false;
++        mRequestedPause     = false;
++        mRequestedNext      = false;
++        mRequestedPlay      = false;
++        _mDelayedTime       = 0.0f;
++        _mFadeTime          = 0.0f;
++        _mTargetVolume      = 0;
++        _mVolLeft           = 0;
++        _mVolRight          = 0;
++        _mPreservedVolLeft  = 0;
++        _mPreservedVolRight = 0;
++
++        TAtomicGuard guard;
++
++        _mAudioIndex = 0;
++        for (size_t i = 0; i < AudioQueueSize; ++i) {
++            _mAudioQueue[i] = AudioPacket();
++        }
++        mStreamPos      = 0;
++        mRequestedClear = false;
++    }
++
+     for (u32 i = 0; i < AudioQueueSize; ++i) {
+         AudioPacket &slot = _mAudioQueue[(i + _mAudioIndex) % AudioQueueSize];
+         if (slot.getID() == 0xFFFFFFFF) {
+@@ -340,8 +373,9 @@
+ }
+ 
+ void AudioStreamer::clear() {
+-    sAudioCommand = AudioCommand::CLEAR;
+-    OSSendMessage(&mMessageQueue, static_cast<u32>(sAudioCommand), OS_MESSAGE_NOBLOCK);
++    // The port: flagged here, not by the audio thread, so queueAudio above
++    // sees a clear that is still to run whichever thread ran first.
++    clear_();
+ }
+ 
+ SMS_NO_INLINE bool AudioStreamer::play_() {
+@@ -487,12 +521,12 @@
  
  static JAISound *GetJAISoundForMusic(u32 id) {
      JAISound **unk = (JAISound **)search__19JALListS_5(id & 0x3FF); 
