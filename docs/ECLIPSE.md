@@ -197,6 +197,14 @@ For bisecting, `SMS_MOD_LIST=1` prints every registered patch and `SMS_MOD_DISAB
   `fixup_sources.py` reserves two slots for the crate, preserving both models and their lighting flags.
   `python3 tools/mods/test_iron_crate.py BUILD/eclipse-src/eclipse --compiler clang++` exercises the fetched, fixed-up setup on both host widths and rejects the original one-slot allocation.
   The 64-bit headless run loads all three crates with two valid models each; a hit selects the broken model and completes its fragment animation while Bowser keeps updating.
+- **Allocation and bounds audit** (2026-10-12).
+  Star Bits used the six-colour table's 24-byte size as the random entry count and as an inclusive upper index bound, reading beyond the table.
+  The source fixups use the element count and clamp to the last valid index, and read the scene's colour index big-endian so explicit colours are honoured.
+  `tools/mods/test_star_bit_colors.py BUILD/eclipse-src/eclipse` checks random choices, negative and oversized indices, and scene colours on both host widths; 24 native constructors also produced only valid palette colours.
+  BSE's settings label and its shadow shared one heap string even though each `J2DTextBox` deletes its string.
+  Each now owns a separate 100-byte buffer, with edits mirrored on refresh and on both direction inputs; the initial constructor strings are freed before replacement.
+  `tools/mods/test_settings_text.py BUILD/eclipse-src/bse` checks independent ownership, all three update paths, and teardown on both widths; a native first-boot settings run checked all 32 pairs and a controller edit.
+  Both checks accept `--compiler` for the compiler used by the Eclipse build.
 - **Flag words** (2026-10-08). In Delfino Plaza's `dolpic1` (after the statue appears), Shadow Mario walked up to Peach and never took her: he tried again forever, and the game could not go on.
   `TEnemyMario::tryTake` sets Peach's `LIVE_FLAG_UNK100000` (0x100000) and takes her; BSE's `canCarryNPC`, in place of the game's test of that flag in `TBaseNPC::receiveMessage`, reads it as SunshineHeaderInterface's bitfield `mStateFlags.asFlags.mCanBeTaken`.
   SunshineHeaderInterface declares such flag words from the top bit down, as the GameCube allocates bitfields; native compilers allocate from bit 0 up, so natively `mCanBeTaken` was 0x800 and Peach refused him.
