@@ -293,6 +293,12 @@ ASPECT_RATIO_FIXES = [
 ]
 
 ECLIPSE_FIXES = optional(TEXTURE_FIXES) + CARD_IMAGE_FIXES + PARTICLE_FIXES + DEBS_FIXES + [RAWDATA_FIX, RAWDATA_REGION_FIX] + BOOL_RET_FIXES + ECLIPSE_BE_FIXES + ECLIPSE_PATCH_TYPE_FIXES + [
+    # The final Bowser arena's iron crates create an intact and a broken
+    # model. A one-entry keeper writes both its actor pointer and model index
+    # past their arrays, corrupting the neighbouring model before calc().
+    ("src/object/iron_crate.cpp", r"new TMActorKeeper\(mLiveManager, 1\)",
+     "new TMActorKeeper(mLiveManager, 2)",
+     "iron crates reserve both intact and broken model slots"),
     # A retail function taking TVec3f references, called through a (...) cast:
     # on the GameCube an aggregate in a variable argument list is passed by
     # address, so the callee's references see the objects. Pass the addresses.

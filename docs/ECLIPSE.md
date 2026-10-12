@@ -192,6 +192,11 @@ For bisecting, `SMS_MOD_LIST=1` prints every registered patch and `SMS_MOD_DISAB
 - A crash entering Red Lily's second episode (`SMS_WARP=74,1`, 2026-10-12). The stage's `switch.sb` hides the bubbles until the switch is pressed with `setDead4LiveActor`, and three of the names it gives (`bubble_smoke0`, `bubble_smoke1`, `bubble_particle`) are map statics (`TMapStaticObj`), no live actors.
   The game sets `TLiveActor::mLiveFlag` regardless: on the console 0xF0 into a 0x80-byte object, in the next heap block, with no visible effect; on a 64-bit host 0x148 in, which is the next `TopOfCorona`'s `MActor` pointer, so drawing it faulted at 0x100000008.
   The `*4LiveActor` commands now touch live flags only on real `TLiveActor`s (`dynamic_cast`); other hit actors keep retail's collision change (`bounds-07`).
+- A crash entering Eclipse's added Bowser fight after 239 Shines (`finalBoss.szs`, Delfino Plaza scenario 4, `SMS_WARP=1,4,239`, 2026-10-12).
+  Each iron crate creates `rocketbox.bmd` and `rocketbox_crash.bmd` in a `TMActorKeeper` sized for one model, writing past its actor and model-index arrays and corrupting a model's vtable before `MActor::calc()`.
+  `fixup_sources.py` reserves two slots for the crate, preserving both models and their lighting flags.
+  `python3 tools/mods/test_iron_crate.py BUILD/eclipse-src/eclipse --compiler clang++` exercises the fetched, fixed-up setup on both host widths and rejects the original one-slot allocation.
+  The 64-bit headless run loads all three crates with two valid models each; a hit selects the broken model and completes its fragment animation while Bowser keeps updating.
 - **Flag words** (2026-10-08). In Delfino Plaza's `dolpic1` (after the statue appears), Shadow Mario walked up to Peach and never took her: he tried again forever, and the game could not go on.
   `TEnemyMario::tryTake` sets Peach's `LIVE_FLAG_UNK100000` (0x100000) and takes her; BSE's `canCarryNPC`, in place of the game's test of that flag in `TBaseNPC::receiveMessage`, reads it as SunshineHeaderInterface's bitfield `mStateFlags.asFlags.mCanBeTaken`.
   SunshineHeaderInterface declares such flag words from the top bit down, as the GameCube allocates bitfields; native compilers allocate from bit 0 up, so natively `mCanBeTaken` was 0x800 and Peach refused him.
