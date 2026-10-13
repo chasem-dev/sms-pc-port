@@ -133,4 +133,6 @@ frame_rate = 60
 # rumble_strength = 100
 
 # save_dir = /path/to/memory/card/folder
+# Save states (README.md, Save states); default: savestates beside save_dir
+# save_state_dir = /path/to/save/states/folder
 # disc_image = /path/to/GMSE01.iso

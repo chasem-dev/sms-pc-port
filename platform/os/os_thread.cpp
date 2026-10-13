@@ -496,6 +496,23 @@ static void describe_threads_for_crash()
 	}
 }
 
+// Every thread the scheduler knows, and whether interrupt work is waiting,
+// for save states (platform/savestate): the thread records live in game
+// memory but belong to the scheduler, so a state puts back the ones it found.
+extern "C" int port_os_thread_list(OSThread** out, int max)
+{
+	int n = 0;
+	for (size_t i = 0; i < g_threads.size(); i++) {
+		if (host_of(g_threads[i])->cancelled)
+			continue;
+		if (n < max)
+			out[n] = g_threads[i];
+		n++;
+	}
+	return n;
+}
+extern "C" int port_os_irq_work_pending(void) { return !g_deferred.empty(); }
+
 extern "C" void port_os_threads_init(void)
 {
 	port_crash_set_thread_describer(describe_threads_for_crash);

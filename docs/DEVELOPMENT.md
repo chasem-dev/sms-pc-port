@@ -112,6 +112,7 @@ gdb -q -batch -nx -ex 'set debuginfod enabled off' \
 
 | Module | What it does |
 | --- | --- |
+| `platform/savestate/` | Save states ([SAVE-STATES.md](SAVE-STATES.md)): the state file and its compression (`state_file.cpp`, tested by `tests/`), saving and loading the game's memory, and the requests between the controls, the state menu (`platform/gx/src/gx_savestate_menu.cpp`) and the game (patches `zzzz-savestate-*`). |
 | `platform/sdk_stubs.cpp` | Generated: a weak, logging stub for all 321 SDK functions in `api-surface.tsv` that are not header inlines/macros; real implementations override them. |
 | `platform/port_runtime.cpp` | Boot: emulated MEM1 (24 MiB) mapped at `0x80000000`, game source selection, GLX vendor choice, crash handler. |
 | `platform/os/` | One emulated CPU: every `OSThread` is a host thread, only the CPU owner runs, strict priorities; message queues, mutexes, conds; interrupts delivered at OS-call check points and on idle; arena, clocks, OSAlloc, stopwatches, cache ops (→ `GXPC_InvalidateRange`). |
@@ -244,6 +245,7 @@ The everyday options are in the [README](../README.md#options); this is the full
 | `SMS_ARCH=32\|64` | which build `build.sh` and `run.sh` use (see [BUILD.md](../BUILD.md)) |
 | `SMS_DISC_IMAGE`, `SMS_DISC_ROOT` | game source (image file, or extracted `files/` folder); either, or a disc argument, overrides files bundled into the executable |
 | `SMS_SAVE_DIR` | memory card directory |
+| `SMS_SAVE_STATE_DIR` | save state directory (default: `savestates` beside the memory card directory; [SAVE-STATES.md](SAVE-STATES.md)) |
 | `SMS_HEADLESS=1` / `--headless` | no window (offscreen EGL; Linux only) |
 | `SMS_BINDINGS` | key bindings file (default `./bindings.txt`, then `../../bindings.txt` when started from `build/<os>-<arch>/`) |
 | `SMS_AUDIO=0` | no sound output; the game's audio (JAudio's thread and sequencer, the software DSP) still runs, paced as with no output device ([64-BIT.md](64-BIT.md), item 19) |
@@ -253,6 +255,7 @@ The everyday options are in the [README](../README.md#options); this is the full
 | `SMS_WARP_LIST=1` | print the warp menu's list (`area,episode` as `SMS_WARP` takes them, the stage, the episode and its scene) when the menu first opens |
 | `SMS_WARP_MOVIE=n` | debugging: loading a file plays streaming movie `n` (0–19, `TMovieDirector::getStreamMovieName`) |
 | `SMS_SHOTS=f,f,...`, `SMS_SHOT_DIR` | capture the XFB at these fields (retail numbering) as PPM; `tools/shots.py` converts them into `build/shots/` and compares with retail |
+| `SMS_WINDOW_SHOTS=n,n,...` | capture the window as shown, with the port's menus over the game, at these GX frames (`GXPC_FrameCount`) as `SMS_SHOT_DIR/window<n>.ppm` (needs a window, not `SMS_HEADLESS`) |
 | `SMS_AUTOPRESS=control@field[+hold],...` | scripted input (e.g. `start@1400+20,stick_left@3300+40,a@3500+30`); in a window it is injected as SDL key events, i.e. through the keyboard path |
 | `SMS_FIELD_CLOCK=retrace` | shots/autopress count VI retraces (wall clock) instead of game fields (2 per display copy, the default) |
 | `SMS_VI_DETERMINISTIC=1` | virtual VI/OS clock: retraces fire when the game idles (or spins on `OSGetTick` for a whole field), `OSGetTime` follows them from a fixed date, AI DMA is paced by retraces (no output device); two runs with the same input give identical frames |

@@ -7,6 +7,7 @@
 #include "gx_internal.h"
 #include "gx_cheat_menu.h"
 #include "gx_warp_menu.h"
+#include "gx_savestate_menu.h"
 #include "gx_glthread.h"
 #include "gx_window_layout.h"
 #include "sms_gx/gx_pc.h"
@@ -221,11 +222,11 @@ void setFullscreen(bool on) {
     SDL_ShowCursor(on ? SDL_DISABLE : SDL_ENABLE);
 }
 
-// An open menu (cheats or warps) has a free cursor; closing it gives mouse
+// An open menu (cheats, warps or save states) has a free cursor; closing it gives mouse
 // look back the capture it had.
 bool s_menuOpen = false, s_capturedBeforeMenu = false;
 
-bool menuVisible() { return cheatMenuVisible() || warpMenuVisible(); }
+bool menuVisible() { return cheatMenuVisible() || warpMenuVisible() || savestateMenuVisible(); }
 // Fullscreen (borderless or exclusive) hides the cursor. When F10 releases
 // mouse look the cursor must come back, or the release looks like it did
 // nothing; capturing it again hides it as before.
@@ -759,6 +760,8 @@ void GXPC_Present(const void* xfb) {
             GXPC_OverlayDraw(w, h);
             cheatMenuRender(w, h);
             warpMenuRender(w, h);
+            savestateMenuRender(w, h);
+            captureWindow(s_frame, w, h);
             t1 = nowSeconds();
             if (hdr) hdrFramePresent(s_vsync != 0);
             else SDL_GL_SwapWindow(s_window);
@@ -920,7 +923,7 @@ void sms_gx_pump_events(void) {
             continue;
         }
         // The menus' own keys, buttons and clicks never reach the pad layer (Escape would quit)
-        if (cheatMenuHandleEvent(ev) || warpMenuHandleEvent(ev)) {
+        if (cheatMenuHandleEvent(ev) || warpMenuHandleEvent(ev) || savestateMenuHandleEvent(ev)) {
             syncMenuInput();
             continue;
         }
@@ -933,6 +936,8 @@ void sms_gx_pump_events(void) {
         }
     }
     warpMenuTick();
+    savestateMenuTick();
+    syncMenuInput();
 #endif
 }
 

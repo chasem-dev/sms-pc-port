@@ -97,6 +97,7 @@ Options can be kept in [`settings.txt`](settings.txt) (`resolution = 2`, `textur
 | `SMS_AUDIO=0` | no sound |
 | `SMS_VOLUME=n` | master volume, 0 to 100 (default 100) |
 | `SMS_SAVE_DIR=dir` | memory card folder |
+| `SMS_SAVE_STATE_DIR=dir` | save state folder (default: `savestates` beside the memory card folder) |
 | `SMS_BINDINGS=file` | key bindings file (default `bindings.txt` in this folder) |
 | `SMS_DISC_IMAGE=file` | disc image to use when none is passed |
 | `--headless` (after the image) or `SMS_HEADLESS=1` | no window, for testing (Linux only) |
@@ -163,6 +164,9 @@ GameCube adapters work too. On Windows, an adapter in Wii U mode (Nintendo WUP-0
 | Debug overlay (frame rate, stats, keys) | ` (backtick) |
 | Game and movie speed x1 / x2 / x4 / x10 (overlay open) | F7 |
 | Warp menu (debug overlay open) | F8, or a controller's Back/Select button |
+| Save a save state | F5, or L1 + R1 (LB + RB) held together on a controller |
+| Save states list (in the pause menu) | the same: F5, or L1 + R1 |
+| Load the newest save state | F6 |
 | Quit | Esc |
 
 The warp menu lists every stage on the disc (Eclipse's too) and, under each, its episodes and secret courses with their names and scene files; picking one warps there straight away, as a pipe or the pause menu's Exit Area would, without the Shines that would unlock it.
@@ -170,9 +174,18 @@ It warps while a stage is playing (not during a cutscene, dialogue or the pause 
 Arrow keys or the d-pad (or the left stick) move, Enter or A opens a stage and warps, Esc, Backspace or B goes back; LB/RB and Page Up/Down skip a page, and the mouse works too.
 F8 and Back/Select open it only while the debug overlay (`` ` ``) is open; otherwise they are ordinary keys and buttons, so `PAD_BACK` can still be bound to a game control (it then opens the menu instead while the overlay is open).
 
+### Save states
+
+A save state is the game at one moment: in a level, F5 or L1 + R1 (LB + RB) saves it. The pause menu shows those buttons at its top right with **LOAD SAVE STATE**: press them there to open the list of states, newest first, with a picture of each; A loads one, Y deletes it, B goes back. F6 loads the newest without the menu. The buttons show as your keyboard or controller shows them, from the launcher's button prompt pictures (their names without the launcher).
+Loading a state saved by the same build of the game puts everything back as it was, Mario, enemies, the camera, the music, in place and at once. A state from another build (an update, someone else's game, another word size) cannot be put back that way; it takes you to its level and episode and puts Mario where he was, with his health, FLUDD's water and nozzle, and the progress the state had (Shines, coins, lives). The list marks those states "position".
+States are files (`*.smsstate`) in a `savestates` folder beside the memory card folder (`~/.local/share/sms-port/savestates` by default; `SMS_SAVE_STATE_DIR` or `save_state_dir` sets another); share one by sending the file. Loading a state takes you to its progress too, so saving to the memory card afterwards saves that. Saving a state does not touch the memory card.
+How states work, and their limits: [docs/SAVE-STATES.md](docs/SAVE-STATES.md).
+
 To change them, edit [`bindings.txt`](bindings.txt) (`CONTROL = KEY KEY ...`, one control per line; a line replaces that control's defaults), or point `SMS_BINDINGS` at another file.
 
 Controller buttons can be remapped the same way, by name: `PAD_A`, `PAD_B`, `PAD_X`, `PAD_Y`, `PAD_LB`, `PAD_RB`, `PAD_LT`, `PAD_RT`, `PAD_START`, `PAD_BACK`, `PAD_DPUP` … (the full list is in `bindings.txt`). A line's keys and buttons each replace only their own kind, so `A = PAD_Y` moves A to the controller's Y button and keeps Space and X; `Z = PAD_RT` puts Z on the right trigger. L and R stay analog when bound to a trigger.
+
+Two keys or two buttons joined with `+` must be held together: the default `SAVE_STATE = F5 PAD_LB+PAD_RB` saves with F5, or with L1 and R1 (LB and RB) held at once. While one of such a pair is held, the game does not see the other, so holding L1 and then pressing R1 does not also press Z.
 
 `L_SOFT` and `R_SOFT` are a light L or R press: the trigger goes part of the way, without the click, as when a GameCube trigger is pressed gently (for example, spraying FLUDD on the move with R). They have no default keys; bind them like any other control (`R_SOFT = LALT PAD_RB`). `SMS_SOFT_TRIGGER=n` (`soft_trigger`) sets how far, 5 to 95 percent (default 40).
 

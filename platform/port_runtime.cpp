@@ -751,6 +751,7 @@ static const struct {
 	{ "soft_trigger", "SMS_SOFT_TRIGGER" }, // L_SOFT / R_SOFT press depth, percent
 	{ "overlay", "SMS_OVERLAY" },
 	{ "save_dir", "SMS_SAVE_DIR" },
+	{ "save_state_dir", "SMS_SAVE_STATE_DIR" },
 	{ "disc_image", "SMS_DISC_IMAGE" },
 	{ "camera_invert_x", "SMS_CAMERA_INVERT_X" },
 	{ "camera_invert_y", "SMS_CAMERA_INVERT_Y" },

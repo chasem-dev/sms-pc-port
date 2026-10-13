@@ -872,6 +872,9 @@ void poll_reads()
 }
 } // namespace
 
+// A read is still on its way (save states wait for the drive to be idle).
+extern "C" int port_dvd_busy(void) { return !g_pending_reads.empty(); }
+
 extern "C" s32 DVDReadPrio(DVDFileInfo* fi, void* addr, s32 length, s32 offset, s32 prio)
 {
 	fi->cb.state = DVD_STATE_BUSY;

@@ -2999,6 +2999,37 @@ void GXPC_DrawOverlay(const uint8_t* rgba, int w, int h, int x, int y, int scale
 
 }  // extern "C"
 
+// SMS_WINDOW_SHOTS=frame,frame,...: the window as it is shown, with the menus
+// drawn over the game, at those GX frames (GXPC_FrameCount), written to
+// SMS_SHOT_DIR (default "shots") as window<frame>.ppm. The XFB captures
+// (SMS_SHOTS) have the game's picture only.
+void gx::captureWindow(uint32_t frame, int w, int h) {
+    static std::vector<uint32_t> frames;
+    static bool parsed = false;
+    if (!parsed) {
+        parsed = true;
+        if (const char* e = getenv("SMS_WINDOW_SHOTS"))
+            for (const char* p = e; *p;) {
+                frames.push_back(uint32_t(strtoul(p, const_cast<char**>(&p), 10)));
+                while (*p == ',' || *p == ' ') p++;
+            }
+    }
+    if (w <= 0 || h <= 0 || std::find(frames.begin(), frames.end(), frame) == frames.end()) return;
+    std::vector<uint8_t> px(size_t(w) * h * 4);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+    const char* dir = getenv("SMS_SHOT_DIR");
+    char path[1024];
+    snprintf(path, sizeof path, "%s/window%05u.ppm", dir ? dir : "shots", frame);
+    if (FILE* f = fopen(path, "wb")) {
+        fprintf(f, "P6\n%d %d\n255\n", w, h);
+        for (int y = h - 1; y >= 0; y--)  // GL's rows go bottom up
+            for (int x = 0; x < w; x++) fwrite(&px[(size_t(y) * w + x) * 4], 1, 3, f);
+        fclose(f);
+        fprintf(stderr, "[sms_gx] captured the window at frame %u -> %s\n", frame, path);
+    }
+}
+
 void gx::drawOverlayPanel(OverlaySlot slot, const uint8_t* rgba, int w, int h, int x, int y, int scale, int winW, int winH) {
     if (!s_ready || w <= 0 || h <= 0) return;
     if (!rgba && (!s_overlayTex[slot] || w != s_overlayW[slot] || h != s_overlayH[slot])) return;

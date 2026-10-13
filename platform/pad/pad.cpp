@@ -9,6 +9,7 @@
 // SDL headers or library: the 32-bit build works without i386 SDL packages.
 #include "port_compat.h"
 #include "port_platform.h"
+#include "port_savestate.h"
 #include <dolphin/pad.h>
 #include <string.h>
 #include <strings.h>
@@ -291,15 +292,20 @@ enum Control {
 	C_DUP, C_DDOWN, C_DLEFT, C_DRIGHT,
 	C_UP, C_DOWN, C_LEFT, C_RIGHT,
 	C_CUP, C_CDOWN, C_CLEFT, C_CRIGHT,
-	C_HALF, C_QUIT, C_LSOFT, C_RSOFT, C_COUNT
+	C_HALF, C_QUIT, C_LSOFT, C_RSOFT, C_SAVESTATE, C_LOADSTATE, C_COUNT
 };
 const char* const kControlNames[C_COUNT] = {
 	"A", "B", "X", "Y", "Z", "L", "R", "START",
 	"DPAD_UP", "DPAD_DOWN", "DPAD_LEFT", "DPAD_RIGHT",
 	"STICK_UP", "STICK_DOWN", "STICK_LEFT", "STICK_RIGHT",
 	"CSTICK_UP", "CSTICK_DOWN", "CSTICK_LEFT", "CSTICK_RIGHT",
-	"HALF_TILT", "QUIT", "L_SOFT", "R_SOFT",
+	"HALF_TILT", "QUIT", "L_SOFT", "R_SOFT", "SAVE_STATE", "LOAD_STATE",
 };
+// SAVE_STATE / LOAD_STATE are the port's, not the GameCube's: a press saves a
+// save state, or loads the newest (port_savestate.h). Their bindings are often
+// two buttons held together (PAD_LB+PAD_RB), and holding one of the pair keeps
+// the other from the game (combo_masks below).
+bool is_port_action(int c) { return c == C_SAVESTATE || c == C_LOADSTATE; }
 // L_SOFT / R_SOFT press L or R part of the way, analog only (no digital click):
 // a light press, as on a GameCube trigger before it clicks. How far, 0..255,
 // from SMS_SOFT_TRIGGER (percent, default 40). Unbound unless bindings.txt
@@ -320,6 +326,8 @@ const KeyName kKeys[] = {
 	{ "ESC", 41 }, { "BACKSPACE", 42 }, { "TAB", 43 }, { "SPACE", 44 }, { "MINUS", 45 }, { "EQUALS", 46 },
 	{ "LBRACKET", 47 }, { "RBRACKET", 48 }, { "SEMICOLON", 51 }, { "APOSTROPHE", 52 }, { "COMMA", 54 },
 	{ "PERIOD", 55 }, { "SLASH", 56 }, { "F1", 58 }, { "F2", 59 }, { "F3", 60 }, { "F4", 61 },
+	{ "F5", 62 }, { "F6", 63 }, { "F7", 64 }, { "F8", 65 }, { "F9", 66 }, { "F10", 67 }, { "F11", 68 },
+	{ "F12", 69 },
 	{ "RIGHT", 79 }, { "LEFT", 80 }, { "DOWN", 81 }, { "UP", 82 },
 	{ "KP_DIVIDE", 84 }, { "KP_MULTIPLY", 85 }, { "KP_MINUS", 86 }, { "KP_PLUS", 87 }, { "KP_ENTER", 88 },
 	{ "KP_1", 89 }, { "KP_2", 90 }, { "KP_3", 91 }, { "KP_4", 92 }, { "KP_5", 93 }, { "KP_6", 94 },
@@ -350,7 +358,17 @@ const char* const kDefaultBindings =
     "CSTICK_LEFT = J\n"
     "CSTICK_RIGHT = L\n"
     "HALF_TILT = LCTRL\n"
-    "QUIT = ESCAPE\n";
+    "QUIT = ESCAPE\n"
+    "SAVE_STATE = F5\n"
+    "LOAD_STATE = F6\n";
+
+// A binding is one key or controller button, or two held together, written
+// FIRST+SECOND (PAD_LB+PAD_RB, LCTRL+S): the second's code plus one sits above
+// kComboShift.
+const int kComboShift = 10;
+int combo(int first, int second) { return first | (second + 1) << kComboShift; }
+int combo_first(int bind) { return bind & ((1 << kComboShift) - 1); }
+int combo_second(int bind) { return (bind >> kComboShift) - 1; }
 
 const int kMaxKeys = 8;
 int g_bind[C_COUNT][kMaxKeys];
@@ -379,6 +397,7 @@ int g_npbind[C_COUNT];
 const struct { int control, source; } kDefaultPad[] = {
 	{ C_A, 0 }, { C_B, 1 }, { C_X, 2 }, { C_Y, 3 }, { C_Z, 10 }, { C_L, PAD_SRC_LT }, { C_R, PAD_SRC_RT },
 	{ C_START, 6 }, { C_DUP, 11 }, { C_DDOWN, 12 }, { C_DLEFT, 13 }, { C_DRIGHT, 14 },
+	{ C_SAVESTATE, combo(9, 10) }, // L1 + R1 (LB + RB)
 };
 bool g_inited;
 // SMS_CAMERA_INVERT_X / SMS_CAMERA_INVERT_Y=1 flip the C-stick, which only
@@ -498,21 +517,30 @@ void parse_bindings(const char* text, const char* source)
 		int keys[kMaxKeys], nkeys = 0, pads[kMaxPad], npads = 0;
 		bool anyKey = false, anyPad = false;
 		for (char* k = strtok(eq + 1, " \t,"); k; k = strtok(NULL, " \t,")) {
-			if (strncasecmp(k, "PAD_", 4) == 0) {
+			// FIRST+SECOND: two keys or two controller buttons held together
+			char* second = strchr(k, '+');
+			if (second)
+				*second++ = 0;
+			const bool pad = strncasecmp(k, "PAD_", 4) == 0;
+			if (second && (strncasecmp(second, "PAD_", 4) == 0) != pad) {
+				port_log("[pad] %s:%d: '%s+%s' mixes a key and a controller button\n", source, line, k, second);
+				continue;
+			}
+			if (pad) {
 				anyPad   = true;
-				int code = pad_code(k);
-				if (code < 0)
-					port_log("[pad] %s:%d: unknown controller button '%s'\n", source, line, k);
+				int code = pad_code(k), code2 = second ? pad_code(second) : -1;
+				if (code < 0 || (second && code2 < 0))
+					port_log("[pad] %s:%d: unknown controller button '%s'\n", source, line, code < 0 ? k : second);
 				else if (npads < kMaxPad)
-					pads[npads++] = code;
+					pads[npads++] = second ? combo(code, code2) : code;
 				continue;
 			}
 			anyKey   = true;
-			int code = key_code(k);
-			if (code < 0 || code >= 512)
-				port_log("[pad] %s:%d: unknown key '%s'\n", source, line, k);
+			int code = key_code(k), code2 = second ? key_code(second) : -1;
+			if (code < 0 || code >= 512 || (second && (code2 < 0 || code2 >= 512)))
+				port_log("[pad] %s:%d: unknown key '%s'\n", source, line, code < 0 || code >= 512 ? k : second);
 			else if (nkeys < kMaxKeys)
-				keys[nkeys++] = code;
+				keys[nkeys++] = second ? combo(code, code2) : code;
 		}
 		// each part replaces only its own defaults; an empty line clears the keys
 		if (anyKey || !anyPad) {
@@ -524,9 +552,11 @@ void parse_bindings(const char* text, const char* source)
 			g_npbind[c] = npads;
 			char list[96] = "";
 			for (int i = 0; i < npads; i++)
-				for (size_t j = 0; j < sizeof kPadButtons / sizeof kPadButtons[0]; j++)
-					if (kPadButtons[j].code == pads[i])
-						snprintf(list + strlen(list), sizeof list - strlen(list), " %s", kPadButtons[j].name);
+				for (int part = 0; part < 2; part++)
+					for (size_t j = 0; j < sizeof kPadButtons / sizeof kPadButtons[0]; j++)
+						if (kPadButtons[j].code == (part ? combo_second(pads[i]) : combo_first(pads[i])))
+							snprintf(list + strlen(list), sizeof list - strlen(list), "%s%s",
+							         part ? "+" : " ", kPadButtons[j].name);
 			port_log("[pad] %s: controller %s =%s\n", source, kControlNames[c], npads ? list : " (none)");
 		}
 	}
@@ -592,15 +622,58 @@ void on_event(const union SDL_Event* ev)
 // How far a trigger is pressed, 0..255.
 int trigger(int source) { return g_axis[source == PAD_SRC_LT ? 4 : 5] > 0 ? g_axis[source == PAD_SRC_LT ? 4 : 5] * 255 / 32767 : 0; }
 
-// A control's bound keys or controller buttons (a trigger counts once it clicks).
+// Keys and controller buttons the game does not see, because the other half
+// of a port action's two-button binding is held (combo_masks).
+bool g_keyMasked[512], g_padMasked[PAD_SRC_COUNT];
+
+bool pad_down(int s) { return s == PAD_SRC_LT || s == PAD_SRC_RT ? trigger(s) >= 250 : g_cbtn[s]; }
+// Pressed at all: a trigger part of the way counts.
+bool pad_touched(int s) { return s == PAD_SRC_LT || s == PAD_SRC_RT ? trigger(s) >= 26 : g_cbtn[s]; }
+
+// Holding one half of a port action's two-button binding (LB of LB+RB) hides
+// the other half from the game until that is let go, so saving a state with
+// L1 + R1 (LB + RB) does not also press Z.
+void combo_masks()
+{
+	bool key[512] = {}, pad[PAD_SRC_COUNT] = {};
+	for (int c = 0; c < C_COUNT; c++) {
+		if (!is_port_action(c))
+			continue;
+		for (int i = 0; i < g_nbind[c]; i++) {
+			const int a = combo_first(g_bind[c][i]), b = combo_second(g_bind[c][i]);
+			if (b >= 0) {
+				key[a] = key[a] || g_key[b];
+				key[b] = key[b] || g_key[a];
+			}
+		}
+		for (int i = 0; i < g_npbind[c]; i++) {
+			const int a = combo_first(g_pbind[c][i]), b = combo_second(g_pbind[c][i]);
+			if (b >= 0) {
+				pad[a] = pad[a] || pad_touched(b);
+				pad[b] = pad[b] || pad_touched(a);
+			}
+		}
+	}
+	for (int k = 0; k < 512; k++)
+		g_keyMasked[k] = key[k] || (g_keyMasked[k] && g_key[k]);
+	for (int s = 0; s < PAD_SRC_COUNT; s++)
+		g_padMasked[s] = pad[s] || (g_padMasked[s] && pad_touched(s));
+}
+
+// A control's bound keys or controller buttons (a trigger counts once it
+// clicks); a two-button binding needs both. The game's controls skip what
+// combo_masks hides.
 bool held(int c)
 {
-	for (int i = 0; i < g_nbind[c]; i++)
-		if (g_key[g_bind[c][i]])
+	const bool game = !is_port_action(c);
+	for (int i = 0; i < g_nbind[c]; i++) {
+		const int a = combo_first(g_bind[c][i]), b = combo_second(g_bind[c][i]);
+		if (g_key[a] && !(game && g_keyMasked[a]) && (b < 0 || (g_key[b] && !(game && g_keyMasked[b]))))
 			return true;
+	}
 	for (int i = 0; i < g_npbind[c]; i++) {
-		const int s = g_pbind[c][i];
-		if (s == PAD_SRC_LT || s == PAD_SRC_RT ? trigger(s) >= 250 : g_cbtn[s])
+		const int a = combo_first(g_pbind[c][i]), b = combo_second(g_pbind[c][i]);
+		if (pad_down(a) && !(game && g_padMasked[a]) && (b < 0 || (pad_down(b) && !(game && g_padMasked[b]))))
 			return true;
 	}
 	return false;
@@ -610,9 +683,11 @@ bool held(int c)
 int analog_trigger(int c)
 {
 	int v = 0;
-	for (int i = 0; i < g_npbind[c]; i++)
-		if (g_pbind[c][i] == PAD_SRC_LT || g_pbind[c][i] == PAD_SRC_RT)
-			v = std::max(v, trigger(g_pbind[c][i]));
+	for (int i = 0; i < g_npbind[c]; i++) {
+		const int s = g_pbind[c][i];
+		if ((s == PAD_SRC_LT || s == PAD_SRC_RT) && !g_padMasked[s])
+			v = std::max(v, trigger(s));
+	}
 	return held(c) ? 255 : v;
 }
 
@@ -759,6 +834,14 @@ void send_key(int scancode, bool down)
 	g_key[scancode] = down;
 }
 
+// Both keys of a two-key binding, the first pressed first.
+void send_binding(int bind, bool down)
+{
+	send_key(combo_first(bind), down);
+	if (combo_second(bind) >= 0)
+		send_key(combo_second(bind), down);
+}
+
 } // namespace
 
 extern "C" void port_pad_autopress_field(u32 field)
@@ -770,12 +853,54 @@ extern "C" void port_pad_autopress_field(u32 field)
 		if (!a.down && field >= a.at) {
 			a.down = true;
 			port_log("[pad] autopress %s down at field %u\n", kControlNames[a.control], field);
-			send_key(g_bind[a.control][0], true);
+			send_binding(g_bind[a.control][0], true);
 		} else if (a.down && field >= a.until) {
 			a.done = true;
-			send_key(g_bind[a.control][0], false);
+			send_binding(g_bind[a.control][0], false);
 		}
 	}
+}
+
+// SAVE_STATE's first binding as the pause menu's hint names it
+// (port_savestate.h): the keyboard's key names, or a controller's buttons as
+// that kind of controller labels them, indexed by SDL button (kPadButtons).
+extern "C" int port_pad_savestate_labels(int style, char labels[2][16])
+{
+	static const char* const kXbox[PAD_SRC_COUNT] = {
+		"A", "B", "X", "Y", "View", "Xbox", "Menu", "LS", "RS", "LB", "RB", "Up", "Down", "Left", "Right",
+		"Share", "P1", "P2", "P3", "P4", "Touchpad", "LT", "RT",
+	};
+	static const char* const kPlayStation[PAD_SRC_COUNT] = {
+		"Cross", "Circle", "Square", "Triangle", "Create", "PS", "Options", "L3", "R3", "L1", "R1", "Up", "Down",
+		"Left", "Right", "Mic", "P1", "P2", "P3", "P4", "Touchpad", "L2", "R2",
+	};
+	static const char* const kSteamDeck[PAD_SRC_COUNT] = {
+		"A", "B", "X", "Y", "View", "Steam", "Menu", "L3", "R3", "L1", "R1", "Up", "Down", "Left", "Right",
+		"...", "L4", "R4", "L5", "R5", "Touchpad", "L2", "R2",
+	};
+	init();
+	labels[0][0] = labels[1][0] = 0;
+	const bool keyboard = style == 0;
+	if (keyboard ? !g_nbind[C_SAVESTATE] : !g_npbind[C_SAVESTATE])
+		return 0;
+	const int bind = keyboard ? g_bind[C_SAVESTATE][0] : g_pbind[C_SAVESTATE][0];
+	const int parts[2] = { combo_first(bind), combo_second(bind) };
+	int n = 0;
+	for (int i = 0; i < 2 && parts[i] >= 0; i++, n++) {
+		const char* name = nullptr;
+		if (keyboard) {
+			for (size_t k = 0; k < sizeof kKeys / sizeof kKeys[0] && !name; k++)
+				if (kKeys[k].code == parts[i])
+					name = kKeys[k].name;
+		} else if (parts[i] < PAD_SRC_COUNT) {
+			name = (style == 2 ? kPlayStation : style == 3 ? kSteamDeck : kXbox)[parts[i]];
+		}
+		if (name)
+			snprintf(labels[i], 16, "%s", name);
+		else
+			snprintf(labels[i], 16, "#%d", parts[i]);
+	}
+	return n;
 }
 
 extern "C" BOOL PADInit()
@@ -818,7 +943,18 @@ extern "C" u32 PADRead(PADStatus* status)
 		memset(&status[i], 0, sizeof status[i]);
 		status[i].err = i == 0 ? PAD_ERR_NONE : PAD_ERR_NO_CONTROLLER;
 	}
-	if (GXPC_GameInputBlocked && GXPC_GameInputBlocked())
+	combo_masks();
+	const bool blocked = GXPC_GameInputBlocked && GXPC_GameInputBlocked();
+	// Port actions on their press, not while a menu has the input.
+	static bool wasSave, wasLoad;
+	const bool save = held(C_SAVESTATE), load = held(C_LOADSTATE);
+	if (save && !wasSave && !blocked)
+		port_savestate_hotkey(PORT_SAVESTATE_HOTKEY_SAVE);
+	if (load && !wasLoad && !blocked)
+		port_savestate_hotkey(PORT_SAVESTATE_HOTKEY_LOAD_NEWEST);
+	wasSave = save;
+	wasLoad = load;
+	if (blocked)
 		return PAD_CHAN0_BIT;
 	PADStatus& s = status[0];
 	u16 b        = 0;
