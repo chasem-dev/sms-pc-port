@@ -1629,6 +1629,8 @@ static void uploadUniforms(const ShaderProgram* sp, float texW[8], float texH[8]
 
     float efb[2] = {float(s_efbW), float(EFB_H)};
     UNI(uEfb, efb, efb, glUniform2fv(sp->uEfb, 1, efb));
+    float lw[1] = {float(g.bp[BP_LPSIZE] & 0xFF) / 6.0f};  // line programs: GXSetLineWidth's sixths of a pixel
+    UNI(uLineWidth, linewidth, lw, glUniform1fv(sp->uLineWidth, 1, lw));
     float proj[8] = {xff(XFR_PROJ), xff(XFR_PROJ + 1), xff(XFR_PROJ + 2), xff(XFR_PROJ + 3),
                      xff(XFR_PROJ + 4), xff(XFR_PROJ + 5), float(g.xfReg[XFR_PROJ + 6] & 1), 0.0f};
     UNI(uProj, proj, proj, glUniform4fv(sp->uProj, 2, proj));
@@ -2022,7 +2024,7 @@ void flushBatch() {
     GxTimer timer;
     GxTimer tf(&g_flushSeconds);
     s_xmap = drawXMap();
-    const ShaderProgram* sp = shaderForCurrentState();
+    const ShaderProgram* sp = shaderForCurrentState(false, s_bclass == PRIM_LINES);
     glcUseProgram(sp->prog);
     applyGlState();
 
@@ -2110,7 +2112,7 @@ void flushBatch() {
         }
     }
     if (earlyFallback) {
-        const ShaderProgram* depthSp = shaderForCurrentState(true);
+        const ShaderProgram* depthSp = shaderForCurrentState(true, s_bclass == PRIM_LINES);
         glcUseProgram(depthSp->prog);
         uploadUniforms(depthSp, texW, texH);
         GLboolean masks[4];

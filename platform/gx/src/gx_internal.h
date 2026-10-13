@@ -265,17 +265,20 @@ struct UniformCache {
     bool init;
     int tevreg[16], konst[16], alpharef[2];
     float texscale[16], texsize[16], fog[4], fogcolor[4], indmtx[24], efb[2], proj[8], vp[8], ambmat[16];
+    float linewidth[1];
 };
 struct ShaderProgram {
     unsigned prog;
     int id;  // creation order; SMS_GX_DUMP_SHADERS=dir writes dir/prog<id>.vs/.fs
     int uTevReg, uKonst, uTexScale, uAlphaRef, uFog, uFogColor, uIndMtx, uTexSize, uEfb,
-        uProj, uViewport, uAmbMat, uDstAlpha;
+        uProj, uViewport, uAmbMat, uDstAlpha, uLineWidth;
     mutable UniformCache uc;
 };
 bool shaderHasEarlyFragmentTests();
 bool earlyZWritesRejected();
-const ShaderProgram* shaderForCurrentState(bool depthOnly = false);
+// `lines`: the program for a line batch, which draws each line as a quad
+// GXSetLineWidth wide (a geometry shader)
+const ShaderProgram* shaderForCurrentState(bool depthOnly = false, bool lines = false);
 void shaderPrepareStage(int stage);  // while a stage loads: its programs (the warm-up)
 
 // ---------------------------------------------------------------- overlay panels

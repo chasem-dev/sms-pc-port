@@ -166,7 +166,7 @@ The following are accepted, and their state is stored, but they have no or only 
 | `GXInitTexCacheRegion` | bookkeeping only; textures are read from RAM |
 | `GXSetZTexture` | not rendered |
 | `GXSetFogRangeAdj` | registers written; range adjustment not rendered |
-| `GXSetLineWidth` | lines are 1 px, because core GL has no wide lines |
+| `GXSetLineWidth` | applied (line batches draw quads through a geometry shader); the texture offsets are not |
 | `GXEnableTexOffsets`, `GXSetTexCoordCylWrap` | not rendered |
 | `GXPixModeSync`, `GXSetDrawDone`, `GXWaitDrawDone`, `GXDrawDone` | the pipeline is synchronous; callbacks fire immediately |
 | `GXGetCPUFifo`, `GXGetFifoPtrs` | report a static FIFO object |

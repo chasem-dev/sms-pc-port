@@ -603,6 +603,7 @@ static void setupProgram(GLuint p, ShaderProgram& sp, bool aside = false) {
     sp.uProj = glGetUniformLocation(p, "u_proj");
     sp.uViewport = glGetUniformLocation(p, "u_vp");
     sp.uAmbMat = glGetUniformLocation(p, "u_chan");
+    sp.uLineWidth = glGetUniformLocation(p, "u_linewidth");
     sp.uDstAlpha = -1;
     if (aside) glUseProgram(GLuint(bound));
 }
@@ -991,7 +992,90 @@ void shaderPrepareStage(int stage) {
                s_warmMade - before - own, elapsed(), s_warmNext < s_warmKeys.size() ? "" : " (all known programs made)");
 }
 
-const ShaderProgram* shaderForCurrentState(bool depthOnly) {
+// ------------------------------------------------------------------ lines
+// GX draws a line as a quad GXSetLineWidth sixths of an EFB pixel wide,
+// widened along the minor axis. GL's own lines are one pixel of the scaled
+// EFB, and wider ones are missing from forward-compatible core contexts
+// (macOS), so 1-pixel lines at a 4x EFB leave three rows in four uncovered:
+// the iris wipes' black field (one line per row) turned into a translucent
+// grey stripe pattern. Line batches draw through the same program with a
+// geometry shader that makes the quads; only a few 2D draws (the wipes) use
+// lines, so these are kept apart from s_programs, the program cache and the
+// warm-up's keys, and compiled when first drawn.
+static const char* const kLineVaryings[][2] = {
+    {"vec4", "c0"},  {"vec4", "c1"},  {"vec3", "tc0"}, {"vec3", "tc1"}, {"vec3", "tc2"},
+    {"vec3", "tc3"}, {"vec3", "tc4"}, {"vec3", "tc5"}, {"vec3", "tc6"}, {"vec3", "tc7"},
+};
+
+// The vertex shader's outputs renamed (v_ to vl_), as the geometry shader's inputs.
+static std::string genLineVS(const ShaderKey& k) {
+    std::string vs = genVS(k), defs;
+    for (const auto& v : kLineVaryings) defs += std::string("#define v_") + v[1] + " vl_" + v[1] + "\n";
+    return vs.insert(vs.find('\n') + 1, defs);
+}
+
+static std::string genLineGS() {
+    std::string s = "#version 330 core\n"
+                    "layout(lines) in;\n"
+                    "layout(triangle_strip, max_vertices = 4) out;\n"
+                    "uniform vec2 u_efb;\n"
+                    "uniform float u_linewidth;  // EFB pixels\n";
+    for (const auto& v : kLineVaryings)
+        s += std::string("in ") + v[0] + " vl_" + v[1] + "[]; out " + v[0] + " v_" + v[1] + ";\n";
+    s += "void main() {\n"
+         "  vec4 a = gl_in[0].gl_Position, b = gl_in[1].gl_Position;\n"
+         "  vec2 d = (b.xy / max(abs(b.w), 1e-6) - a.xy / max(abs(a.w), 1e-6)) * u_efb;\n"
+         "  vec2 off = abs(d.y) > abs(d.x) ? vec2(u_linewidth / u_efb.x, 0.0) : vec2(0.0, u_linewidth / u_efb.y);\n";
+    // each end, then each side of it; constant indices, as gl_ClipDistance is unsized
+    for (int i = 0; i < 4; i++) {
+        char buf[256];
+        const int e = i >> 1;
+        snprintf(buf, sizeof buf,
+                 "  gl_Position = gl_in[%d].gl_Position + vec4(%soff * gl_in[%d].gl_Position.w, 0.0, 0.0);\n"
+                 "  gl_ClipDistance[0] = gl_in[%d].gl_ClipDistance[0];\n"
+                 "  gl_ClipDistance[1] = gl_in[%d].gl_ClipDistance[1];\n",
+                 e, i & 1 ? "" : "-", e, e, e);
+        s += buf;
+        for (const auto& v : kLineVaryings) s += std::string("  v_") + v[1] + " = vl_" + v[1] + "[" + char('0' + e) + "];\n";
+        s += "  EmitVertex();\n";
+    }
+    return s + "  EndPrimitive();\n}\n";
+}
+
+static std::unordered_map<ProgramKey, ShaderProgram, ProgramKeyHash> s_linePrograms;
+
+static const ShaderProgram* lineProgram(const ProgramKey& key) {
+    auto it = s_linePrograms.find(key);
+    if (it != s_linePrograms.end()) return &it->second;
+    g_statShaderCompiles++;
+    std::string vs = genLineVS(key.k), gs = genLineGS(), fs = genFS(key.k);
+    ShaderProgram sp;
+    glt::sync([&] {
+        GLuint v = compile(GL_VERTEX_SHADER, vs), gm = compile(GL_GEOMETRY_SHADER, gs),
+               f = compile(GL_FRAGMENT_SHADER, fs);
+        GLuint p = glCreateProgram();
+        glAttachShader(p, v);
+        glAttachShader(p, gm);
+        glAttachShader(p, f);
+        bindAttributes(p);
+        glLinkProgram(p);
+        GLint ok = 0;
+        glGetProgramiv(p, GL_LINK_STATUS, &ok);
+        if (!ok) {
+            char log[4096];
+            glGetProgramInfoLog(p, sizeof log, nullptr, log);
+            logmsg("line program link failed: %s", log);
+        }
+        glDeleteShader(v);
+        glDeleteShader(gm);
+        glDeleteShader(f);
+        sp.id = int(g_statShaderCompiles);
+        setupProgram(p, sp);
+    });
+    return &(s_linePrograms[key] = sp);
+}
+
+const ShaderProgram* shaderForCurrentState(bool depthOnly, bool lines) {
     if (s_cacheState < 0) shaderSetup();
     ProgramKey key;
     ShaderKey& k = key.k;
@@ -999,6 +1083,7 @@ const ShaderProgram* shaderForCurrentState(bool depthOnly) {
     k.depthOnly = depthOnly;
     key.indScale[0] = k.numInd ? g.bp[BP_RAS1_SS0] : 0;
     key.indScale[1] = k.numInd ? g.bp[BP_RAS1_SS0 + 1] : 0;
+    if (lines) return lineProgram(key);
     // consecutive batches mostly share a program
     if (s_lastProgram && key == s_lastKey) return s_lastProgram;
     recordKey(key);
@@ -1058,6 +1143,8 @@ void shaderShutdown() {
     s_cacheState = -1;
     for (auto& kv : s_programs) glDeleteProgram(kv.second.prog);
     s_programs.clear();
+    for (auto& kv : s_linePrograms) glDeleteProgram(kv.second.prog);
+    s_linePrograms.clear();
     s_lastProgram = nullptr;
     s_earlyFragmentTests = -1;
 }
