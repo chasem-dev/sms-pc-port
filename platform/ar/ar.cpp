@@ -41,6 +41,13 @@ extern "C" u32 ARInit(u32*, u32)
 	return kAramBase;
 }
 extern "C" int ARCheckInit(void) { return g_aram != NULL; }
+// ARAM and its allocation mark, for save states (platform/savestate).
+extern "C" u8* port_ar_memory(u32* size, u32** alloc)
+{
+	*size  = kAramSize;
+	*alloc = &g_alloc;
+	return g_aram;
+}
 extern "C" u32 ARAlloc(u32 length)
 {
 	u32 p = g_alloc;

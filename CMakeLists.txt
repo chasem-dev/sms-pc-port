@@ -118,7 +118,10 @@ check_cxx_compiler_flag("-fno-unreachable-traps" SMS_HAVE_NO_UNREACHABLE_TRAPS)
 if(SMS_HAVE_NO_UNREACHABLE_TRAPS)
   list(APPEND SMS_GAME_FLAGS -fno-unreachable-traps)
 endif()
-if(SMS_ARCH STREQUAL "64")
+# Non-PIE: the game's code and data sit at the same addresses every run, which
+# 64-bit builds need for pointers in u32 slots and save states need everywhere
+# (a state holds pointers to the game's vtables and globals).
+if(SMS_ARCH STREQUAL "64" OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
   list(APPEND SMS_GAME_FLAGS -fno-pie)
 endif()
 # Clang rejects the game's pointer-to-int truncations ((int)ptr, (u32)ptr) as
@@ -241,6 +244,9 @@ add_library(sms_game STATIC ${SMS_DECOMP_CXX_SOURCES} ${SMS_DECOMP_C_SOURCES})
 include(${CMAKE_CURRENT_SOURCE_DIR}/platform/thp/thp.cmake)
 # The SDK's PADClamp (dead zone / octagon), built from the decomp as C.
 target_sources(sms_game PRIVATE ${SMS_DECOMP}/libs/dolphin/src/pad/Padclamp.c)
+# The save state menu, drawn by the game in its pause menu with the game's
+# own font and art, so it is built as game code (port_savestate_menu.h).
+target_sources(sms_game PRIVATE ${SMS_PORT_SRC}/savestate_menu.cpp)
 # port_include must stay ahead of the game headers: its dolphin/types.h
 # overrides the decomp's (LP64 integer widths, weak AT_ADDRESS globals).
 if(DEFINED SMS_CP932_ROOT)
@@ -359,7 +365,8 @@ target_compile_options(sms PRIVATE -fno-strict-aliasing -Wno-unused-parameter -U
 if(WIN32)
   target_link_options(sms PRIVATE "-Wl,--defsym=${_object_prefix}lbl_80004600=0x80004600")
   if(SMS_ARCH STREQUAL "32")
-    target_link_options(sms PRIVATE -Wl,--large-address-aware)
+    # At its preferred address every run, for save states (see -fno-pie above).
+    target_link_options(sms PRIVATE -Wl,--large-address-aware -Wl,--disable-dynamicbase)
   endif()
   if(SMS_ARCH STREQUAL "64")
     # Game pointers pass through u32 slots, including addresses of static
@@ -372,7 +379,7 @@ elseif(APPLE)
 else()
   target_link_options(sms PRIVATE -Wl,--defsym=lbl_80004600=0x80004600)
 endif()
-if(SMS_ARCH STREQUAL "64")
+if(SMS_ARCH STREQUAL "64" OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_options(sms PRIVATE -fno-pie)
   if(NOT APPLE AND NOT WIN32)
     target_link_options(sms PRIVATE -no-pie)
@@ -381,7 +388,26 @@ endif()
 if(APPLE)
   # Shrink PAGEZERO so MAP_32BIT / low stacks work (x86_64 / Rosetta only).
   target_link_options(sms PRIVATE "LINKER:-pagezero_size,0x1000")
+  # At the same address every run, as on Linux and Windows, so save states
+  # load exactly in a later run (where the linker still accepts it).
+  include(CheckLinkerFlag)
+  check_linker_flag(CXX "LINKER:-no_pie" SMS_HAVE_NO_PIE)
+  if(SMS_HAVE_NO_PIE)
+    target_link_options(sms PRIVATE "LINKER:-no_pie")
+  endif()
 endif()
+# Save states copy the game's own global variables: the link map says where
+# they are, and tools/savestate_ranges.py writes that into the executable.
+if(APPLE)
+  target_link_options(sms PRIVATE "LINKER:-map,${CMAKE_BINARY_DIR}/sms.map")
+else()
+  target_link_options(sms PRIVATE "LINKER:-Map=${CMAKE_BINARY_DIR}/sms.map")
+endif()
+add_custom_command(TARGET sms POST_BUILD
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/savestate_ranges.py
+    --map ${CMAKE_BINARY_DIR}/sms.map --exe $<TARGET_FILE:sms>
+    --archive libsms_game.a --archive libsms_eclipse.a
+  COMMENT "Recording the game's data for save states")
 find_package(Threads REQUIRED)
 if(WIN32 AND SMS_ARCH STREQUAL "64")
   add_executable(sms_windows_stack_test EXCLUDE_FROM_ALL

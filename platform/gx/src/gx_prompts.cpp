@@ -7,8 +7,10 @@
 // steamdeck) picks how every controller's prompts look, whatever the
 // controller; unset or match follows the controller. The glyph images come
 // from SMS_BUTTON_PROMPT_DIR/<style>.png: eight 64x64 cells in a row, in the
-// order A B X Y Z L R C. SMS Launcher draws them from the player's bindings, so
-// remapped keys and buttons show as bound.
+// order A B X Y Z L R C, then (from newer launchers) the one or two keys or
+// buttons of SAVE_STATE, which the pause menu's save state hint draws in the
+// style of the device in use, whatever the prompt setting. SMS Launcher draws
+// them from the player's bindings, so remapped keys and buttons show as bound.
 //
 // JUTResFont::drawChar_scale (decomp patch zzz-prompts-01) asks
 // port_button_glyph for each character of the system font and draws the
@@ -38,12 +40,14 @@ namespace {
 
 enum Style { S_GAMECUBE, S_XBOX, S_PLAYSTATION, S_STEAMDECK, S_KEYBOARD, S_COUNT };
 const char* const kStyleNames[S_COUNT] = {"gamecube", "xbox", "playstation", "steamdeck", "keyboard"};
-const int kCell = 64, kGlyphs = 8;
+// The button glyphs, and the cells after them: SAVE_STATE's binding.
+const int kCell = 64, kGlyphs = 8, kCells = 10;
 
 struct Atlas {
     bool tried = false, ok = false;
-    uint8_t* tex[kGlyphs] = {};          // GX RGBA8, 64x64 each, below 4 GiB
-    std::vector<uint8_t> rgba[kGlyphs];  // the same, row-major RGBA
+    int cells = 0;                      // kGlyphs, or kCells with the save state cells
+    uint8_t* tex[kCells] = {};          // GX RGBA8, 64x64 each, below 4 GiB
+    std::vector<uint8_t> rgba[kCells];  // the same, row-major RGBA
 };
 
 bool s_inited, s_auto;
@@ -104,14 +108,15 @@ const Atlas* atlas(int style) {
         stbi_image_free(px);
         return nullptr;
     }
+    a.cells = w >= kCell * kCells ? kCells : kGlyphs;
     const size_t cellBytes = kCell * kCell * 4;
-    uint8_t* low = (uint8_t*)port_low_alloc(cellBytes * kGlyphs);
+    uint8_t* low = (uint8_t*)port_low_alloc(cellBytes * a.cells);
     if (!low) {
         gx::logmsg("button prompts: no memory below 4 GiB for %s", path.c_str());
         stbi_image_free(px);
         return nullptr;
     }
-    for (int i = 0; i < kGlyphs; i++) {
+    for (int i = 0; i < a.cells; i++) {
         a.tex[i] = low + i * cellBytes;
         toGxRgba8(px + i * kCell * 4, w * 4, a.tex[i]);
         a.rgba[i].resize(kCell * kCell * 4);
@@ -144,6 +149,16 @@ int currentStyle() {
     init();
     if (!s_auto) return s_fixed;
     return s_device != S_KEYBOARD && s_pad >= 0 ? s_pad : s_device;
+}
+
+// The save state hint's style: the one chosen, or with Original or Automatic
+// prompts the device in use, so the keys show for the keyboard and the
+// buttons for a controller.
+int hintStyle() {
+    init();
+    if (!s_auto && s_fixed != S_GAMECUBE) return s_fixed;
+    if (s_device == S_KEYBOARD) return S_KEYBOARD;
+    return s_pad > S_GAMECUBE ? s_pad : s_device;
 }
 
 }  // namespace
@@ -180,10 +195,40 @@ void GXPC_NoteInputDevice(int controller, int sdlType, const char* name) {
     }
 }
 
+// The device in use for the save state hint (port_savestate.h): 0 keyboard,
+// 1 Xbox, 2 PlayStation, 3 Steam Deck.
+int GXPC_InputStyle(void) {
+    switch (hintStyle()) {
+    case S_XBOX: return 1;
+    case S_PLAYSTATION: return 2;
+    case S_STEAMDECK: return 3;
+    default: return 0;
+    }
+}
+
 // A GX RGBA8 64x64 image to draw in place of system-font character chr, or
-// null to draw the font's own glyph.
+// null to draw the font's own glyph. The codes past a byte,
+// PORT_PROMPT_SAVESTATE and the one after it, are SAVE_STATE's binding.
 const void* port_button_glyph(int chr) {
     init();
+    if (chr == 0x10002) {
+        // PORT_PROMPT_PLUS: a white plus, made once
+        static uint8_t* plus;
+        if (!plus) {
+            std::vector<uint8_t> rgba(kCell * kCell * 4, 0);
+            for (int y = 0; y < kCell; y++)
+                for (int x = 0; x < kCell; x++) {
+                    const bool bar = (x >= 8 && x < 56 && y >= 25 && y < 39) || (y >= 8 && y < 56 && x >= 25 && x < 39);
+                    if (bar) memset(&rgba[(y * kCell + x) * 4], 255, 4);
+                }
+            if ((plus = (uint8_t*)port_low_alloc(rgba.size()))) toGxRgba8(rgba.data(), kCell * 4, plus);
+        }
+        return plus;
+    }
+    if (chr == 0x10000 || chr == 0x10001) {
+        const Atlas* a = atlas(hintStyle());
+        return a && a->cells == kCells ? a->tex[kGlyphs + (chr - 0x10000)] : nullptr;
+    }
     const int g = glyphIndex(chr);
     if (g < 0) return nullptr;
     const int style = currentStyle();

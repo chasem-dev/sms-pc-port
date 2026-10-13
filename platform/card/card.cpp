@@ -280,6 +280,13 @@ s32 used_blocks()
 
 } // namespace
 
+// Slot A's folder; save states keep theirs beside it (platform/savestate).
+extern "C" const char* port_card_dir(void)
+{
+	static std::string dir = card_dir();
+	return dir.c_str();
+}
+
 extern "C" void CARDInit(void) {}
 extern "C" s32 CARDGetResultCode(s32 chan) { return chan == 0 ? CARD_RESULT_READY : CARD_RESULT_NOCARD; }
 extern "C" int CARDProbe(long chan) { return chan == 0; }
