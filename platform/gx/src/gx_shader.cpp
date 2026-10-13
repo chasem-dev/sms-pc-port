@@ -381,9 +381,16 @@ static std::string genFS(const ShaderKey& k) {
                 snprintf(buf, sizeof buf, "    iv += ivec3(%d, %d, %d);\n", (bias & 1) ? bv : 0, (bias & 2) ? bv : 0, (bias & 4) ? bv : 0);
                 s += buf;
                 if (mid >= 1 && mid <= 3) {
+                    // The hardware's integer offset: s.10 matrix entries, the product >> 3 in 1/128 texels,
+                    // shifted by the matrix's exponent and kept to the coordinate's 24 bits. Shifted 24 or
+                    // more, nothing is left (Sunshine's goop bubbles, ms_raku_indawa, use an exponent of 29).
                     uint32_t m = mid - 1;
                     snprintf(buf, sizeof buf,
-                             "    vec2 off = vec2(dot(u_indmtx[%u].xyz, vec3(iv)), dot(u_indmtx[%u].xyz, vec3(iv))) * u_indmtx[%u].w;\n",
+                             "    ivec3 m0 = ivec3(u_indmtx[%u].xyz * 1024.0), m1 = ivec3(u_indmtx[%u].xyz * 1024.0);\n"
+                             "    ivec2 it = ivec2(m0.x * iv.x + m0.y * iv.y + m0.z * iv.z, m1.x * iv.x + m1.y * iv.y + m1.z * iv.z) >> 3;\n"
+                             "    int sc = int(u_indmtx[%u].w);\n"
+                             "    it = sc >= 32 ? ivec2(0) : sc >= 0 ? it << sc : it >> -sc;\n"
+                             "    vec2 off = vec2((it << 8) >> 8) / 128.0;\n",
                              m * 2, m * 2 + 1, m * 2);
                 } else {
                     snprintf(buf, sizeof buf, "    vec2 off = vec2(0.0);\n");
