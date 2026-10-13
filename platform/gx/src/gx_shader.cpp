@@ -381,9 +381,16 @@ static std::string genFS(const ShaderKey& k) {
                 snprintf(buf, sizeof buf, "    iv += ivec3(%d, %d, %d);\n", (bias & 1) ? bv : 0, (bias & 2) ? bv : 0, (bias & 4) ? bv : 0);
                 s += buf;
                 if (mid >= 1 && mid <= 3) {
+                    // The hardware's integer offset: s.10 matrix entries, the product >> 3 in 1/128 texels,
+                    // shifted by the matrix's exponent and kept to the coordinate's 24 bits. Shifted 24 or
+                    // more, nothing is left (Sunshine's goop bubbles, ms_raku_indawa, use an exponent of 29).
                     uint32_t m = mid - 1;
                     snprintf(buf, sizeof buf,
-                             "    vec2 off = vec2(dot(u_indmtx[%u].xyz, vec3(iv)), dot(u_indmtx[%u].xyz, vec3(iv))) * u_indmtx[%u].w;\n",
+                             "    ivec3 m0 = ivec3(u_indmtx[%u].xyz * 1024.0), m1 = ivec3(u_indmtx[%u].xyz * 1024.0);\n"
+                             "    ivec2 it = ivec2(m0.x * iv.x + m0.y * iv.y + m0.z * iv.z, m1.x * iv.x + m1.y * iv.y + m1.z * iv.z) >> 3;\n"
+                             "    int sc = int(u_indmtx[%u].w);\n"
+                             "    it = sc >= 32 ? ivec2(0) : sc >= 0 ? it << sc : it >> -sc;\n"
+                             "    vec2 off = vec2((it << 8) >> 8) / 128.0;\n",
                              m * 2, m * 2 + 1, m * 2);
                 } else {
                     snprintf(buf, sizeof buf, "    vec2 off = vec2(0.0);\n");
@@ -665,6 +672,14 @@ static uint64_t driverId() {
 
 static bool programCacheOn() { return s_cacheState == 1; }
 
+// Whether a key read back from the cache file is one buildKey can make. A torn
+// record (a write cut short, or two games appending at once) reads as garbage,
+// and genFS loops numInd times: 0xFFFFFFFF of them ran out of memory.
+static bool programKeyValid(const ProgramKey& key) {
+    const ShaderKey& k = key.k;
+    return k.numTexGens <= 8 && k.numChans <= 3 && k.numStages >= 1 && k.numStages <= 16 && k.numInd <= 4;
+}
+
 // Loads the cached programs (on the GL thread, at the first draw).
 static void programCacheLoad() {
     s_cacheState = 0;
@@ -684,6 +699,7 @@ static void programCacheLoad() {
     const uint64_t driver = driverId();
     unsigned loaded = 0, stale = 0;
     bool keep = false;  // the file is this driver's: append to it
+    bool corrupt = false;
     if (FILE* in = fopen(s_cachePath.c_str(), "rb")) {
         char magic[8];
         uint64_t fileDriver = 0;
@@ -696,11 +712,22 @@ static void programCacheLoad() {
                 uint64_t srcHash;
                 ProgramKey key;
                 uint32_t format, len;
+                int c = fgetc(in);
+                if (c == EOF) break;  // the end, between records
+                ungetc(c, in);
+                // A record cut short, or one that is not a record: those after
+                // it (and any appended to it) are out of step, so start over.
                 if (fread(&srcHash, 8, 1, in) != 1 || fread(&key, sizeof key, 1, in) != 1 ||
-                    fread(&format, 4, 1, in) != 1 || fread(&len, 4, 1, in) != 1 || len > (64u << 20))
+                    fread(&format, 4, 1, in) != 1 || fread(&len, 4, 1, in) != 1 || len > (64u << 20) ||
+                    !programKeyValid(key)) {
+                    corrupt = true;
                     break;
+                }
                 bin.resize(len);
-                if (len && fread(bin.data(), len, 1, in) != 1) break;
+                if (len && fread(bin.data(), len, 1, in) != 1) {
+                    corrupt = true;
+                    break;
+                }
                 if (s_programs.count(key) || sourceHash(genVS(key.k), genFS(key.k)) != srcHash) {
                     stale++;
                     continue;
@@ -724,17 +751,23 @@ static void programCacheLoad() {
         fclose(in);
     }
     if (stale > 64 && stale > loaded) keep = false;  // mostly unusable (repeated or rejected): start over
+    if (corrupt) keep = false;
     s_cacheOut = fopen(s_cachePath.c_str(), keep ? "ab" : "wb");
     if (!s_cacheOut) return;
+    // Unbuffered, so that each record (programCacheStore) is one append that
+    // another game running at the same time cannot land in the middle of.
+    setvbuf(s_cacheOut, nullptr, _IONBF, 0);
     if (!keep) {
         const uint32_t keySize = sizeof(ProgramKey);
-        fwrite(kCacheMagic, 8, 1, s_cacheOut);
-        fwrite(&driver, 8, 1, s_cacheOut);
-        fwrite(&keySize, 4, 1, s_cacheOut);
-        fflush(s_cacheOut);
+        uint8_t head[20];
+        memcpy(head, kCacheMagic, 8);
+        memcpy(head + 8, &driver, 8);
+        memcpy(head + 16, &keySize, 4);
+        fwrite(head, sizeof head, 1, s_cacheOut);
     }
     s_cacheState = 1;
     if (keep) logmsg("shader cache: %u programs loaded, %u skipped (%s)", loaded, stale, s_cachePath.c_str());
+    else if (corrupt) logmsg("shader cache: damaged after %u programs, made anew (%s)", loaded, s_cachePath.c_str());
     else logmsg("shader cache: new (%s)", s_cachePath.c_str());
 }
 
@@ -743,18 +776,19 @@ static void programCacheStore(const ProgramKey& key, uint64_t srcHash, GLuint p)
     GLint len = 0;
     glGetProgramiv(p, GL_PROGRAM_BINARY_LENGTH, &len);
     if (len <= 0) return;
-    std::vector<uint8_t> bin(static_cast<size_t>(len));
+    // The record in one buffer: srcHash, key, format, length, binary.
+    const size_t head = 8 + sizeof key + 4 + 4;
+    std::vector<uint8_t> rec(head + static_cast<size_t>(len));
     GLenum format = 0;
     GLsizei got = 0;
-    glGetProgramBinary(p, len, &got, &format, bin.data());
+    glGetProgramBinary(p, len, &got, &format, rec.data() + head);
     if (got <= 0) return;
     const uint32_t fmt = format, n = uint32_t(got);
-    fwrite(&srcHash, 8, 1, s_cacheOut);
-    fwrite(&key, sizeof key, 1, s_cacheOut);
-    fwrite(&fmt, 4, 1, s_cacheOut);
-    fwrite(&n, 4, 1, s_cacheOut);
-    fwrite(bin.data(), n, 1, s_cacheOut);
-    fflush(s_cacheOut);
+    memcpy(rec.data(), &srcHash, 8);
+    memcpy(rec.data() + 8, &key, sizeof key);
+    memcpy(rec.data() + 8 + sizeof key, &fmt, 4);
+    memcpy(rec.data() + 8 + sizeof key + 4, &n, 4);
+    fwrite(rec.data(), head + n, 1, s_cacheOut);
 }
 
 // ------------------------------------------------------------------ warm-up

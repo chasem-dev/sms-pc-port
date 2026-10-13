@@ -226,6 +226,12 @@ void setFullscreen(bool on) {
 bool s_menuOpen = false, s_capturedBeforeMenu = false;
 
 bool menuVisible() { return cheatMenuVisible() || warpMenuVisible(); }
+// Fullscreen (borderless or exclusive) hides the cursor. When F10 releases
+// mouse look the cursor must come back, or the release looks like it did
+// nothing; capturing it again hides it as before.
+void showReleasedCursor() {
+    SDL_ShowCursor(s_mouseReleased || !s_isFullscreen ? SDL_ENABLE : SDL_DISABLE);
+}
 // F8 and the Back button ([0] and [1]) went down to open or close the warp
 // menu: their release is the menu's too.
 bool s_warpToggleHeld[2];
@@ -888,12 +894,14 @@ void sms_gx_pump_events(void) {
             if (ev.type == SDL_MOUSEBUTTONDOWN && !s_mouseCaptured) {
                 s_mouseReleased = false;
                 captureMouse(true);
+                showReleasedCursor();
                 continue;
             }
             if (ev.type == SDL_KEYDOWN && ev.key.keysym.scancode == SDL_SCANCODE_F10) {
                 if (!ev.key.repeat) {
                     s_mouseReleased = s_mouseCaptured;
                     captureMouse(!s_mouseCaptured);
+                    showReleasedCursor();
                 }
                 continue;
             }

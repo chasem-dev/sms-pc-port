@@ -205,8 +205,8 @@ Without them it still compiles, but only a host-supplied context (`GXPC_Init(get
 - **Not verified against the game yet.**
   Nothing here has drawn a J2D screen from the real game, and the 3D paths (J3D display lists, skinning, indirect effects) are untested beyond the self-test.
 - **Indirect texturing is approximate.**
-  Offsets are computed in texel units with the static matrices.
-  Dynamic S/T matrices (bump mapping) and the exact hardware fixed-point rounding are missing.
+  Offsets are computed with the static matrices as the hardware does: s.10 entries, the product `>> 3` in 1/128 texels, shifted by the matrix's exponent and kept to 24 bits, so a shift of 24 or more leaves no offset (Sunshine's goop bubbles, `ms_raku_indawa.jpa`, use 29; as a float the offset sent them millions of texels off the screen copy, and they drew as flat colour quadrants).
+  Dynamic S/T matrices (bump mapping) are missing.
   Emboss texgen passes the source coordinate through.
 - **Early-Z.**
   `GXSetZCompLoc(GX_TRUE)` on a depth-writing draw whose alpha test can reject uses `ARB_shader_image_load_store`'s early fragment tests so alpha-rejected pixels still write depth, as on GX. Contexts without the extension use ordered colour/depth passes per primitive for those draws. `SMS_GX_FORCE_EARLY_Z_FALLBACK=1` exercises that fallback. This keeps later shadow-volume masks behind foreground depth (issue #33).
