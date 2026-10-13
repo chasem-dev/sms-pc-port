@@ -47,7 +47,9 @@ int main(int, char**) {
         expect(!(flags & SDL_WINDOW_FULLSCREEN), "borderless never requests SDL fullscreen");
         expect(flags & SDL_WINDOW_BORDERLESS, "window decorations removed");
         expect(!(flags & SDL_WINDOW_RESIZABLE), "borderless window cannot be resized");
-        expect(waitForRectangle(window, bounds), "borderless fills monitor bounds");
+        SDL_Rect covering = bounds;
+        covering.h += gx::BorderlessWindow::kExtraRows;
+        expect(waitForRectangle(window, covering), "borderless covers the monitor, one row taller");
         expect(SDL_GetCurrentDisplayMode(display, &after) == 0 &&
                before.w == after.w && before.h == after.h && before.refresh_rate == after.refresh_rate &&
                before.format == after.format, "borderless leaves display mode unchanged");

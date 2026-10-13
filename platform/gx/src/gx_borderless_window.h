@@ -5,8 +5,13 @@
 namespace gx {
 // Keep Windows borderless mode a normal window. Even desktop fullscreen can
 // take a driver-specific fullscreen path; this never requests a display mode
-// or calls SDL_SetWindowFullscreen.
+// or calls SDL_SetWindowFullscreen. The window is one row taller than the
+// monitor (the extra row is off screen): a window exactly the monitor's size
+// is still promoted to the driver's and DWM's fullscreen flip, whose switches
+// blank the monitor at launch and on every Alt-Tab back in.
 struct BorderlessWindow {
+    static constexpr int kExtraRows = 1;
+
     bool active = false;
     SDL_Rect saved = {};
     Uint32 savedFlags = 0;
@@ -22,7 +27,7 @@ struct BorderlessWindow {
         SDL_SetWindowBordered(window, SDL_FALSE);
         SDL_SetWindowResizable(window, SDL_FALSE);
         SDL_SetWindowPosition(window, bounds.x, bounds.y);
-        SDL_SetWindowSize(window, bounds.w, bounds.h);
+        SDL_SetWindowSize(window, bounds.w, bounds.h + kExtraRows);
         active = true;
         return true;
     }
