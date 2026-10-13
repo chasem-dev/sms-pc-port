@@ -200,8 +200,17 @@ static void scan() {
         if (!fs::is_directory(d, ec)) continue;
         size_t before = s_index.size();
         for (auto it = fs::recursive_directory_iterator(d, fs::directory_options::follow_directory_symlink, ec);
-             !ec && it != fs::recursive_directory_iterator(); it.increment(ec))
+             !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            // The UHD pack's widescreen_stars_fix blanks two star textures to
+            // hide stars Dolphin's widescreen hack shows at the screen's edges.
+            // One is the particle star of Mario's wall bonk and a stunned
+            // Cataquack, which it hides too; the port's widescreen needs no fix.
+            if (it->is_directory(ec) && it->path().filename() == "widescreen_stars_fix") {
+                it.disable_recursion_pending();
+                continue;
+            }
             if (it->is_regular_file(ec)) indexFile(it->path());
+        }
         logmsg("texture pack: %zu textures under %s", s_index.size() - before, d.c_str());
     }
     for (auto it = s_index.begin(); it != s_index.end();)  // mips without a level 0
