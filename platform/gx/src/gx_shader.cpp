@@ -665,6 +665,14 @@ static uint64_t driverId() {
 
 static bool programCacheOn() { return s_cacheState == 1; }
 
+// Whether a key read back from the cache file is one buildKey can make. A torn
+// record (a write cut short, or two games appending at once) reads as garbage,
+// and genFS loops numInd times: 0xFFFFFFFF of them ran out of memory.
+static bool programKeyValid(const ProgramKey& key) {
+    const ShaderKey& k = key.k;
+    return k.numTexGens <= 8 && k.numChans <= 3 && k.numStages >= 1 && k.numStages <= 16 && k.numInd <= 4;
+}
+
 // Loads the cached programs (on the GL thread, at the first draw).
 static void programCacheLoad() {
     s_cacheState = 0;
@@ -684,6 +692,7 @@ static void programCacheLoad() {
     const uint64_t driver = driverId();
     unsigned loaded = 0, stale = 0;
     bool keep = false;  // the file is this driver's: append to it
+    bool corrupt = false;
     if (FILE* in = fopen(s_cachePath.c_str(), "rb")) {
         char magic[8];
         uint64_t fileDriver = 0;
@@ -696,11 +705,22 @@ static void programCacheLoad() {
                 uint64_t srcHash;
                 ProgramKey key;
                 uint32_t format, len;
+                int c = fgetc(in);
+                if (c == EOF) break;  // the end, between records
+                ungetc(c, in);
+                // A record cut short, or one that is not a record: those after
+                // it (and any appended to it) are out of step, so start over.
                 if (fread(&srcHash, 8, 1, in) != 1 || fread(&key, sizeof key, 1, in) != 1 ||
-                    fread(&format, 4, 1, in) != 1 || fread(&len, 4, 1, in) != 1 || len > (64u << 20))
+                    fread(&format, 4, 1, in) != 1 || fread(&len, 4, 1, in) != 1 || len > (64u << 20) ||
+                    !programKeyValid(key)) {
+                    corrupt = true;
                     break;
+                }
                 bin.resize(len);
-                if (len && fread(bin.data(), len, 1, in) != 1) break;
+                if (len && fread(bin.data(), len, 1, in) != 1) {
+                    corrupt = true;
+                    break;
+                }
                 if (s_programs.count(key) || sourceHash(genVS(key.k), genFS(key.k)) != srcHash) {
                     stale++;
                     continue;
@@ -724,17 +744,23 @@ static void programCacheLoad() {
         fclose(in);
     }
     if (stale > 64 && stale > loaded) keep = false;  // mostly unusable (repeated or rejected): start over
+    if (corrupt) keep = false;
     s_cacheOut = fopen(s_cachePath.c_str(), keep ? "ab" : "wb");
     if (!s_cacheOut) return;
+    // Unbuffered, so that each record (programCacheStore) is one append that
+    // another game running at the same time cannot land in the middle of.
+    setvbuf(s_cacheOut, nullptr, _IONBF, 0);
     if (!keep) {
         const uint32_t keySize = sizeof(ProgramKey);
-        fwrite(kCacheMagic, 8, 1, s_cacheOut);
-        fwrite(&driver, 8, 1, s_cacheOut);
-        fwrite(&keySize, 4, 1, s_cacheOut);
-        fflush(s_cacheOut);
+        uint8_t head[20];
+        memcpy(head, kCacheMagic, 8);
+        memcpy(head + 8, &driver, 8);
+        memcpy(head + 16, &keySize, 4);
+        fwrite(head, sizeof head, 1, s_cacheOut);
     }
     s_cacheState = 1;
     if (keep) logmsg("shader cache: %u programs loaded, %u skipped (%s)", loaded, stale, s_cachePath.c_str());
+    else if (corrupt) logmsg("shader cache: damaged after %u programs, made anew (%s)", loaded, s_cachePath.c_str());
     else logmsg("shader cache: new (%s)", s_cachePath.c_str());
 }
 
@@ -743,18 +769,19 @@ static void programCacheStore(const ProgramKey& key, uint64_t srcHash, GLuint p)
     GLint len = 0;
     glGetProgramiv(p, GL_PROGRAM_BINARY_LENGTH, &len);
     if (len <= 0) return;
-    std::vector<uint8_t> bin(static_cast<size_t>(len));
+    // The record in one buffer: srcHash, key, format, length, binary.
+    const size_t head = 8 + sizeof key + 4 + 4;
+    std::vector<uint8_t> rec(head + static_cast<size_t>(len));
     GLenum format = 0;
     GLsizei got = 0;
-    glGetProgramBinary(p, len, &got, &format, bin.data());
+    glGetProgramBinary(p, len, &got, &format, rec.data() + head);
     if (got <= 0) return;
     const uint32_t fmt = format, n = uint32_t(got);
-    fwrite(&srcHash, 8, 1, s_cacheOut);
-    fwrite(&key, sizeof key, 1, s_cacheOut);
-    fwrite(&fmt, 4, 1, s_cacheOut);
-    fwrite(&n, 4, 1, s_cacheOut);
-    fwrite(bin.data(), n, 1, s_cacheOut);
-    fflush(s_cacheOut);
+    memcpy(rec.data(), &srcHash, 8);
+    memcpy(rec.data() + 8, &key, sizeof key);
+    memcpy(rec.data() + 8 + sizeof key, &fmt, 4);
+    memcpy(rec.data() + 8 + sizeof key + 4, &n, 4);
+    fwrite(rec.data(), head + n, 1, s_cacheOut);
 }
 
 // ------------------------------------------------------------------ warm-up
