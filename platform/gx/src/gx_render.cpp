@@ -1622,7 +1622,7 @@ static void uploadUniforms(const ShaderProgram* sp, float texW[8], float texH[8]
         row1[1] = sext11((r1 >> 11) & 0x7FF) / 1024.0f;
         row0[2] = sext11(r2 & 0x7FF) / 1024.0f;
         row1[2] = sext11((r2 >> 11) & 0x7FF) / 1024.0f;
-        row0[3] = ldexpf(1.0f, sc);
+        row0[3] = float(sc);  // the scale's exponent: the shader shifts by it
         row1[3] = 0.0f;
     }
     UNI(uIndMtx, indmtx, im, glUniform4fv(sp->uIndMtx, 6, im));
