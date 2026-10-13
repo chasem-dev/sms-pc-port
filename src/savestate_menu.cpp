@@ -1,16 +1,19 @@
 // Port: the save state menu, drawn by the game in its pause menu (save
 // states, port_savestate.h). L1 + R1 there opens it: the states as a list on
-// the HUD's brushstrokes, beside a stack of their pictures. Both show one
-// selection in one list (port_savestate_scan): up and down step through the
-// list, left and right through the pictures. A loads, Y deletes (pressed
-// twice), B goes back to the pause menu.
+// the HUD's brushstrokes, beside a stack of their pictures that scrolls as
+// the list does, the selection in front, the states before and after it
+// behind, above and below. Both show one selection in one list
+// (port_savestate_scan), which up and down (or left and right) step through.
+// A loads, Y deletes (pressed twice), B goes back to the pause menu.
 //
 // Everything it draws is the game's: the system font (its button glyphs swap
 // for the controller in use, patch zzz-prompts-01), the HUD's art from
 // game_6 (the brushstroke behind its counters, the Shine, coin and life
 // icons, the counter digits, the pointing hand), drawn as the font draws its
-// glyphs, in GX quads. The pictures are the states' own, as GX textures the
-// port decodes (port_savestate_picture).
+// glyphs, in GX quads, and the worlds' names as the game's own art: the file
+// select's lettering in the list, the episode select's banner under the
+// pictures (port_savestate_world_art). The pictures are the states' own, as
+// GX textures the port decodes (port_savestate_picture).
 //
 // Built into the game library (CMakeLists.txt), so its statics are game
 // globals: an exact load puts them back too, as the menu was when the state
@@ -25,6 +28,7 @@
 #include <MSound/MSoundSE.hpp>
 #include <System/Application.hpp>
 #include <System/MarioGamePad.hpp>
+#include <System/StageUtil.hpp>
 #include <dolphin/gx.h>
 #include <math.h>
 #include <stdio.h>
@@ -44,7 +48,8 @@ const f32 kRowW        = 282.0f;
 const f32 kRowH        = 64.0f;
 const f32 kPictureFromRight = 162.0f; // the front picture's centre, from the right edge
 const f32 kPictureY    = 168.0f;
-const f32 kPictureW    = 244.0f;
+const f32 kPictureW    = 220.0f;
+const f32 kStackStep   = 74.0f;  // how far above and below the front the neighbours sit
 const f32 kTextSize    = 14.0f;
 
 const u32 kSelectedRow = 0x28AA28FF; // the HUD counters' green
@@ -81,6 +86,8 @@ bool loadArt(JUTTexture& tex, const char* name)
 }
 
 // --- drawing: quads as JUTResFont draws its glyphs --------------------------
+
+enum { LEFT, CENTRE, RIGHT };
 
 void colourOf(u32 c, u8 alpha, GXColor* out)
 {
@@ -193,8 +200,6 @@ f32 textWidth(const char* text, f32 size)
 	return w;
 }
 
-enum { LEFT, CENTRE, RIGHT };
-
 // Text with its top at y, in the system font, with the game's drop shadow.
 f32 text(const char* s, f32 x, f32 y, f32 size, u32 colour, int align, u8 alpha)
 {
@@ -236,6 +241,37 @@ void picture(int index, int slot, f32 cx, f32 cy, f32 w, f32 degrees, bool front
 	quad(cx, cy, w, h, degrees, kWhite, alpha, true);
 }
 
+// The state's world as SMS_getShineStage numbers them (0 the Airstrip to 9
+// Corona Mountain), -1 for an area outside retail's table (a code mod's).
+int worldOf(const PortSaveStateInfo* st)
+{
+	if (st->area < 0 || st->area >= 0x3D)
+		return -1;
+	const int world = SMS_getShineStage((u8)st->area);
+	return world <= 9 ? world : -1;
+}
+
+// The world's name as the game's art (banner: the episode select's, else the
+// file select's lettering), h tall, centred on y, from x as align says; its
+// width, or 0 when there is none to draw (the caller writes the name).
+f32 worldName(const PortSaveStateInfo* st, bool banner, f32 x, f32 y, f32 h, int align, u8 alpha)
+{
+	int tw = 0, th = 0, artW = 0;
+	const int world      = worldOf(st);
+	const void* data     = world < 0 ? nullptr : port_savestate_world_art(world, banner, &tw, &th, &artW);
+	if (!data)
+		return 0.0f;
+	const f32 scale = h / th, w = tw * scale, shown = artW * scale;
+	const f32 left = align == CENTRE ? x - shown / 2 : align == RIGHT ? x - shown : x;
+	GXTexObj obj;
+	GXInitTexObj(&obj, (void*)data, tw, th, GX_TF_RGBA8, GX_CLAMP, GX_CLAMP, GX_FALSE);
+	GXInitTexObjLOD(&obj, GX_LINEAR, GX_LINEAR, 0.0f, 0.0f, 0.0f, GX_FALSE, GX_FALSE, GX_ANISO_1);
+	GXLoadTexObj(&obj, GX_TEXMAP0);
+	setupTextured();
+	quad(left + w / 2, y, w, h, 0.0f, kWhite, alpha, true);
+	return shown;
+}
+
 void sound(u32 id) { SMSGetMSound()->startSoundSystemSE(id, 0, nullptr, 0); }
 
 void selectState(int index)
@@ -270,8 +306,10 @@ void drawRow(int index, f32 y, u8 alpha)
 	const f32 pulse = selected ? 1.0f + 0.025f * sinf(sTicks * port_frame_scale() * 0.2f) : 1.0f;
 	art(sBrush, kListX + kRowW / 2, y + 23.0f, kRowW * pulse, 58.0f * pulse, 0.0f,
 	    selected ? kSelectedRow : kOtherRow, (u8)(alpha * (selected ? 0.95f : 0.72f)));
-	text(st->stageName[0] ? st->stageName : "SAVE STATE", kListX + 20.0f, y + 1.0f, selected ? 15.0f : 13.0f,
-	     kWhite, LEFT, alpha);
+	// the world's name in the file select's lettering, else in the font
+	if (worldName(st, false, kListX + 20.0f, y + 9.0f, selected ? 17.0f : 15.0f, LEFT, alpha) == 0.0f)
+		text(st->stageName[0] ? st->stageName : "SAVE STATE", kListX + 20.0f, y + 1.0f, selected ? 15.0f : 13.0f,
+		     kWhite, LEFT, alpha);
 	text(st->when, kListX + 20.0f, y + 21.0f, 9.5f, kPale, LEFT, alpha);
 	if (st->hasCounts) {
 		f32 x = kListX + kRowW - 128.0f;
@@ -415,38 +453,43 @@ void SaveStateMenuDraw(const JDrama::TRect& screen)
 	}
 
 	const f32 kPictureX = width - kPictureFromRight;
-	// the pictures: the selection in front, its neighbours tilted behind,
-	// where the stack has slid to (sShown)
+	// the pictures, scrolling as the list does: the selection in front, the
+	// states before and after it behind, above and below, where the stack
+	// has slid to (sShown); the farthest first
 	const int nearIndex = (int)floorf(sShown + 0.5f);
-	const int order[3] = { nearIndex - 1, nearIndex + 1, nearIndex };
-	for (int k = 0; k < 3; k++) {
+	const int order[5] = { nearIndex - 2, nearIndex + 2, nearIndex - 1, nearIndex + 1, nearIndex };
+	for (int k = 0; k < 5; k++) {
 		const int i = order[k];
 		if (i < 0 || i >= sCount)
 			continue;
 		const f32 off   = i - sShown;
+		if (fabsf(off) > 1.6f)
+			continue;
 		const f32 apart = off < -1.0f ? -1.0f : off > 1.0f ? 1.0f : off;
-		const f32 scale = 1.0f - 0.3f * fabsf(apart);
+		const f32 scale = 1.0f - 0.26f * fabsf(apart);
 		picture(i, (i % PORT_SAVESTATE_PICTURE_SLOTS + PORT_SAVESTATE_PICTURE_SLOTS) % PORT_SAVESTATE_PICTURE_SLOTS,
-		        kPictureX + apart * 94.0f, kPictureY + fabsf(apart) * 36.0f, kPictureW * scale, -apart * 11.0f,
-		        k == 2, alpha);
+		        kPictureX + fabsf(apart) * 12.0f, kPictureY + off * kStackStep, kPictureW * scale, apart * 5.0f,
+		        k == 4, (u8)(alpha * (fabsf(off) > 1.0f ? 2.0f - fabsf(off) : 1.0f)));
 	}
 
 	// about the selection
 	const PortSaveStateInfo* st = port_savestate_scanned(sSelected);
 	if (st) {
-		text(st->stageName, kPictureX, 258.0f, 20.0f, kWhite, CENTRE, alpha);
+		// the world's banner from the episode select, else its name
+		if (worldName(st, true, kPictureX, 316.0f, 24.0f, CENTRE, alpha) == 0.0f)
+			text(st->stageName, kPictureX, 304.0f, 20.0f, kWhite, CENTRE, alpha);
 		if (st->episodeName[0])
-			text(st->episodeName, kPictureX, 284.0f, 12.5f, kWhite, CENTRE, alpha);
+			text(st->episodeName, kPictureX, 332.0f, 12.5f, kWhite, CENTRE, alpha);
 		if (st->hasCounts) {
 			f32 cx = kPictureX - 86.0f;
-			cx += icon(sCoin, cx, 320.0f, 22.0f, alpha) + 2.0f;
-			cx += count(st->coins, cx, 321.0f, 18.0f, alpha) + 22.0f;
-			cx += icon(sLife, cx, 320.0f, 22.0f, alpha) + 2.0f;
-			count(st->lives, cx, 321.0f, 18.0f, alpha);
+			cx += icon(sCoin, cx, 362.0f, 20.0f, alpha) + 2.0f;
+			cx += count(st->coins, cx, 363.0f, 16.0f, alpha) + 22.0f;
+			cx += icon(sLife, cx, 362.0f, 20.0f, alpha) + 2.0f;
+			count(st->lives, cx, 363.0f, 16.0f, alpha);
 		}
 		char position[24];
 		snprintf(position, sizeof position, "%d of %d", sSelected + 1, sCount);
-		text(position, kPictureX, 340.0f, 11.0f, kPale, CENTRE, alpha);
+		text(position, width - 28.0f, 20.0f, 12.0f, kPale, RIGHT, alpha);
 	}
 
 	// a note, then the buttons (the font's button glyphs, as the game writes them)

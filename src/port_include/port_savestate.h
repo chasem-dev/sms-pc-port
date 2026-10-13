@@ -69,6 +69,7 @@ typedef struct PortSaveStateInfo {
 	int hasCounts;     // the counts below are known (from its portable part)
 	int shines, blueCoins, coins, lives;
 	char when[32];     // when it was saved, as the menu shows it: "Today 9:13 AM"
+	int area;          // its area (TGameSequence's stage), -1 when unknown
 } PortSaveStateInfo;
 
 // The state menu in the game (src/savestate_menu.cpp) reads the folder
@@ -80,6 +81,13 @@ const PortSaveStateInfo* port_savestate_scanned(int index);
 // until another picture takes the slot. Null when it has none.
 #define PORT_SAVESTATE_PICTURE_SLOTS 4
 const void* port_savestate_picture(int index, int slot, int* w, int* h);
+// A world's name as the game writes it (world as SMS_getShineStage numbers
+// them, 0 the Airstrip to 9 Corona Mountain), from the disc: the episode
+// select's colourful banner (banner 1), or the file select's white lettering
+// (banner 0), each falling back to the other where a world has only one. A
+// GX RGBA8 texture below 4 GiB, *w x *h (multiples of four, the lettering's
+// own width in *artW); null when the disc has neither.
+const void* port_savestate_world_art(int world, int banner, int* w, int* h, int* artW);
 
 // The game's side, once a frame, between frames.
 enum {

@@ -29,6 +29,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <time.h>
 
@@ -639,6 +640,7 @@ int port_savestate_list(PortSaveStateInfo* out, int max)
 				continue;
 			PortSaveStateInfo info;
 			memset(&info, 0, sizeof info);
+			info.area = -1;
 			snprintf(info.path, sizeof info.path, "%s/%s", dir.c_str(), name.c_str());
 			static const char* const kWanted[] = { "INFO", "PORT" };
 			std::vector<Chunk> chunks;
@@ -650,6 +652,7 @@ int port_savestate_list(PortSaveStateInfo* out, int max)
 				snprintf(info.stageName, sizeof info.stageName, "%s", p.stageName);
 				snprintf(info.episodeName, sizeof info.episodeName, "%s", p.episodeName);
 				// TFlagManager's game ints 0x40000.. and card int 0x20001
+				info.area      = p.area;
 				info.hasCounts = 1;
 				info.shines    = p.gameInts[0];
 				info.blueCoins = p.gameInts[1];
@@ -791,5 +794,189 @@ extern "C" const void* port_savestate_picture(int index, int slot, int* w, int* 
 	*w = s.w;
 	*h = s.h;
 	return s.tex;
+}
+
+// The worlds' names as the game draws them (port_savestate_world_art), read
+// from the disc through the DVD layer (so mods' replacements count).
+namespace {
+uint32_t be32(const u8* p) { return (uint32_t)p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3]; }
+uint16_t be16(const u8* p) { return (uint16_t)(p[0] << 8 | p[1]); }
+
+std::vector<u8> read_disc(const char* path)
+{
+	std::vector<u8> out;
+	DVDFileInfo fi;
+	if (!DVDOpen((char*)path, &fi))
+		return out;
+	out.resize(fi.length);
+	if (DVDReadPrio(&fi, out.data(), (s32)fi.length, 0, 2) != (s32)fi.length)
+		out.clear();
+	DVDClose(&fi);
+	return out;
+}
+
+std::vector<u8> yaz0(const std::vector<u8>& src)
+{
+	if (src.size() < 16 || memcmp(src.data(), "Yaz0", 4) != 0)
+		return src;
+	const size_t size = be32(&src[4]);
+	std::vector<u8> out;
+	out.reserve(size);
+	size_t s = 16;
+	while (out.size() < size && s < src.size()) {
+		const u8 code = src[s++];
+		for (int bit = 0; bit < 8 && out.size() < size && s < src.size(); bit++) {
+			if (code & (0x80 >> bit)) {
+				out.push_back(src[s++]);
+				continue;
+			}
+			if (s + 1 >= src.size())
+				return std::vector<u8>();
+			const u8 b1 = src[s], b2 = src[s + 1];
+			s += 2;
+			const size_t dist = ((b1 & 0xF) << 8 | b2) + 1;
+			size_t n = b1 >> 4;
+			n = n ? n + 2 : (s < src.size() ? src[s++] + 0x12 : 0);
+			if (dist > out.size())
+				return std::vector<u8>();
+			for (size_t i = 0; i < n; i++)
+				out.push_back(out[out.size() - dist]);
+		}
+	}
+	return out;
+}
+
+// A file in a RARC archive by its name (anywhere in the archive); empty if absent.
+std::vector<u8> rarc_file(const std::vector<u8>& arc, const char* name)
+{
+	if (arc.size() < 0x40 || memcmp(arc.data(), "RARC", 4) != 0)
+		return std::vector<u8>();
+	const u8* info = &arc[0x20];
+	const uint32_t entries = be32(info + 0x08), entriesOff = be32(info + 0x0C) + 0x20;
+	const uint32_t strOff = be32(info + 0x14) + 0x20, data = be32(&arc[0x0C]) + 0x20;
+	for (uint32_t e = 0; e < entries; e++) {
+		const size_t ent = entriesOff + e * 20;
+		if (ent + 20 > arc.size())
+			break;
+		if (arc[ent + 4] & 0x02)
+			continue; // a folder
+		const size_t nameAt = strOff + (be32(&arc[ent + 4]) & 0xFFFFFF);
+		if (nameAt >= arc.size() || strcasecmp((const char*)&arc[nameAt], name) != 0)
+			continue;
+		const size_t off = data + be32(&arc[ent + 8]), size = be32(&arc[ent + 12]);
+		if (off + size <= arc.size())
+			return std::vector<u8>(arc.begin() + off, arc.begin() + off + size);
+	}
+	return std::vector<u8>();
+}
+
+// A BTI's pixels as RGBA rows, for the formats the names use (IA4, RGB5A3).
+bool bti_rgba(const std::vector<u8>& bti, std::vector<u8>& rgba, int* w, int* h)
+{
+	if (bti.size() < 0x20)
+		return false;
+	const int fmt = bti[0];
+	*w = be16(&bti[2]);
+	*h = be16(&bti[4]);
+	const size_t img = be32(&bti[0x1C]);
+	const int bw = fmt == 2 ? 8 : 4, bh = 4, bpp = fmt == 2 ? 8 : 16;
+	if ((fmt != 2 && fmt != 5) || *w <= 0 || *h <= 0)
+		return false;
+	const size_t need = img + (size_t)((*w + bw - 1) / bw) * ((*h + bh - 1) / bh) * bw * bh * bpp / 8;
+	if (need > bti.size())
+		return false;
+	rgba.assign((size_t)*w * *h * 4, 0);
+	size_t o = img;
+	for (int by = 0; by < *h; by += bh)
+		for (int bx = 0; bx < *w; bx += bw)
+			for (int y = 0; y < bh; y++)
+				for (int x = 0; x < bw; x++) {
+					u8 c[4];
+					if (fmt == 2) {
+						const u8 v = bti[o++];
+						c[0] = c[1] = c[2] = (v & 15) * 17;
+						c[3] = (v >> 4) * 17;
+					} else {
+						const uint16_t v = be16(&bti[o]);
+						o += 2;
+						if (v & 0x8000) {
+							c[0] = ((v >> 10) & 31) * 255 / 31;
+							c[1] = ((v >> 5) & 31) * 255 / 31;
+							c[2] = (v & 31) * 255 / 31;
+							c[3] = 255;
+						} else {
+							c[0] = ((v >> 8) & 15) * 17;
+							c[1] = ((v >> 4) & 15) * 17;
+							c[2] = (v & 15) * 17;
+							c[3] = ((v >> 12) & 7) * 255 / 7;
+						}
+					}
+					if (bx + x < *w && by + y < *h)
+						memcpy(&rgba[((size_t)(by + y) * *w + bx + x) * 4], c, 4);
+				}
+	return true;
+}
+
+struct WorldArt {
+	bool tried = false;
+	u8* tex = nullptr;
+	int w = 0, h = 0, artW = 0;
+};
+WorldArt g_worldArt[10][2];
+
+// The episode select's banners and the file select's lettering, by world.
+const char* const kBanner[10] = { nullptr, nullptr, "sc_map_bianco.bti", "sc_map_ricco.bti", "sc_map_mamma.bti",
+	                              "sc_map_pinna.bti", "sc_map_sirena.bti", "sc_map_monte.bti", "sc_map_mare.bti",
+	                              "sc_map_corona.bti" };
+const char* const kLettering[10] = { "stage_airport.bti", "stage_dolpictown.bti", "stage_bianco.bti", "stage_ricco.bti",
+	                                 "stage_mamma.bti", "stage_pinna.bti", "stage_sirena.bti", "stage_monte.bti",
+	                                 "stage_mare.bti", nullptr };
+
+const WorldArt* world_art(int world, int banner)
+{
+	WorldArt& a = g_worldArt[world][banner];
+	if (a.tried)
+		return a.tex ? &a : nullptr;
+	a.tried = true;
+	const char* name = banner ? kBanner[world] : kLettering[world];
+	if (!name)
+		return nullptr;
+	static std::vector<u8> select, option;
+	std::vector<u8>& arc = banner ? select : option;
+	if (arc.empty())
+		arc = yaz0(read_disc(banner ? "/data/select.szs" : "/data/option.szs"));
+	std::vector<u8> rgba;
+	int w = 0, h = 0;
+	if (!bti_rgba(rarc_file(arc, name), rgba, &w, &h))
+		return nullptr;
+	// a multiple of four each way, the rest clear
+	const int tw = (w + 3) & ~3, th = (h + 3) & ~3;
+	std::vector<u8> padded((size_t)tw * th * 4, 0);
+	for (int y = 0; y < h; y++)
+		memcpy(&padded[(size_t)y * tw * 4], &rgba[(size_t)y * w * 4], (size_t)w * 4);
+	a.tex = (u8*)port_low_alloc((unsigned long)padded.size());
+	if (!a.tex)
+		return nullptr;
+	to_gx_rgba8(padded.data(), tw, th, a.tex);
+	a.w = tw;
+	a.h = th;
+	a.artW = w;
+	return &a;
+}
+} // namespace
+
+extern "C" const void* port_savestate_world_art(int world, int banner, int* w, int* h, int* artW)
+{
+	if (world < 0 || world >= 10)
+		return nullptr;
+	const WorldArt* a = world_art(world, banner ? 1 : 0);
+	if (!a)
+		a = world_art(world, banner ? 0 : 1);
+	if (!a)
+		return nullptr;
+	*w = a->w;
+	*h = a->h;
+	*artW = a->artW;
+	return a->tex;
 }
 

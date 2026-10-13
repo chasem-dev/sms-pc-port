@@ -52,8 +52,11 @@ menu `SAVE_STATE` opens the state menu instead, and loads happen there too.
 The state menu (`src/savestate_menu.cpp`) is game code, built into the game library and drawn by the game:
 the system font, and the HUD's art from `game_6` (the brushstroke behind its counters, the Shine, coin and
 life icons, the counter digits, the pointing hand), in GX quads as the font draws its glyphs. It lists the
-states on the brushstrokes beside a stack of their pictures, one selection in one list
-(`port_savestate_scan`) that up and down step through the list and left and right through the pictures.
+states on the brushstrokes beside a stack of their pictures that scrolls as the list does (the selection in
+front, the states before and after it behind, above and below), one selection in one list
+(`port_savestate_scan`) that up and down (or left and right) step through. The worlds' names are the game's
+own art, read from the disc by the port (`port_savestate_world_art`): the file select's lettering
+(`option.szs`) in the list, the episode select's banners (`select.szs`) under the pictures.
 The pause menu gives it the pad while it is open (patch `zzzz-savestate-02`), and the frame loop draws it
 last, over the HUD (patch `zzzz-savestate-01`). The pictures are the states' PNGs, decoded by the port
 into GX textures in four reusable buffers below 4 GiB (`port_savestate_picture`).
