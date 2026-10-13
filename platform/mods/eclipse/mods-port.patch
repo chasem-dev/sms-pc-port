@@ -587,13 +587,17 @@
                  target->_118++;
              }
              target->mTarget = 0;
-@@ -333,7 +338,7 @@
+@@ -333,7 +338,10 @@
  
                      JPABaseEmitter *emitterFireCb =
                          gpMarioParticleManager->emitAndBindToMtxPtr(0x1a6, *fire_mtx, 1, target);
 -                    *(JPACallBackBase<> **)((u8 *)emitterFireCb + 0x110) =
-+                    *(JPACallBackBase<> **)((u8 *)emitterFireCb + SMS_OFFSET(JPABaseEmitter, 0x110)) =
-                         target->m_fire_particle_callback;
+-                        target->m_fire_particle_callback;
++                    // The port: there is no emitter when the particle pool is
++                    // full; bowser_car.cpp's fire breath checks for that too.
++                    if (emitterFireCb)
++                        *(JPACallBackBase<> **)((u8 *)emitterFireCb + SMS_OFFSET(JPABaseEmitter, 0x110)) =
++                            target->m_fire_particle_callback;
  
                      gpMarioParticleManager->emitAndBindToMtxPtr(0x1a5, *fire_mtx, 1, target);
 --- a/eclipse/src/menu/character_select.cpp
