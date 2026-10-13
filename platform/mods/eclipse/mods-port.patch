@@ -832,7 +832,60 @@
      startStageEntranceDemo__10MSMainProcFUcUc(director->mAreaID, director->mEpisodeID);
 --- a/eclipse/src/stage/music.cpp
 +++ b/eclipse/src/stage/music.cpp
-@@ -93,16 +93,28 @@
+@@ -49,11 +49,21 @@
+     ~MSStageDistFadeStream(){};
+ 
+     void proc() override {
+-        if (!Music::isPlaying() || Music::isPaused()) {
++        if (Music::isPaused()) {
+             return;
+         }
+ 
+         MSBgm *handle = (MSBgm *)MSBgm::getHandle(1);
++        if (!Music::isPlaying()) {
++            // The Shadow Mario theme starts with the stage at full volume, but the
++            // stage song only streams from GO!. Hold the theme at its distance
++            // blend until then so it doesn't blare before the crossfade takes over.
++            if (handle != nullptr) {
++                MSBgm::setTrackVolume(1, distanceBlend(), 0, 0);
++            }
++            return;
++        }
++
+         if (handle == nullptr) {
+             if (mFrameCounter++ >= 150 && !mFadedPermanently) {
+                 Music::setVolumeFade(Music::getMaxVolume(), 0.4f);
+@@ -62,14 +72,7 @@
+             return;
+         }
+ 
+-        f32 distance = PSVECDistance(*gpMarioPos, mPosPtr);
+-
+-        f32 blend = 0.0f;
+-        if (distance <= mBlendRadiusEnd && distance > mBlendRadiusStart) {
+-            blend = (mBlendRadiusEnd - distance) / (mBlendRadiusEnd - mBlendRadiusStart);
+-        } else if (distance <= mBlendRadiusStart) {
+-            blend = 1.0f;
+-        }
++        f32 blend = distanceBlend();
+ 
+         f32 *timingTable = (f32 *)sms_mod_rawdata(0x803ACA68);
+         f32 *expTable    = (f32 *)sms_mod_rawdata(0x803ACAB0);
+@@ -90,19 +93,42 @@
+     }
+ 
+ private:
++    f32 distanceBlend() const {
++        f32 distance = PSVECDistance(*gpMarioPos, mPosPtr);
++        if (distance <= mBlendRadiusStart) {
++            return 1.0f;
++        }
++        if (distance <= mBlendRadiusEnd) {
++            return (mBlendRadiusEnd - distance) / (mBlendRadiusEnd - mBlendRadiusStart);
++        }
++        return 0.0f;
++    }
++
      bool mFadedPermanently;
  };
  
@@ -867,7 +920,7 @@
              OSReport("MSoundEnterStageExtended: Episode 6\n");
          }
      }
-@@ -114,7 +126,7 @@
+@@ -114,7 +140,7 @@
      bool excluded = area == SME::STAGE_LACRIMA || area == SME::STAGE_LACRIMA_INSIDE;
      if (!excluded && area >= SME::STAGE_ERTO && area <= SME::STAGE_LACRIMA_BACKHOUSE) {
          if (episode == 6) {
