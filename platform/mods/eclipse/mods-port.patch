@@ -111,7 +111,18 @@
  }
 --- a/bse/src/music.cpp
 +++ b/bse/src/music.cpp
-@@ -244,6 +244,39 @@
+@@ -241,9 +241,50 @@
+ void AudioStreamer::setVolumeFadeTo(u8 to, f32 seconds) {
++    // The port: a song being stopped fades out to silence before the stop
++    // (and the next song) runs. Eclipse's Shadow Mario episodes set the
++    // stream's volume from his distance every frame; a console's slow stage
++    // load let the character select's stop finish first, but here the stage
++    // was running while it faded and held it at that volume, so the stop
++    // never ran and the character select's song played on.
++    if (mRequestedStop)
++        return;
+     _mTargetVolume = to;
+     _mFadeTime     = seconds;
  }
  
  bool AudioStreamer::queueAudio(const AudioPacket &packet) {
@@ -151,7 +162,7 @@
      for (u32 i = 0; i < AudioQueueSize; ++i) {
          AudioPacket &slot = _mAudioQueue[(i + _mAudioIndex) % AudioQueueSize];
          if (slot.getID() == 0xFFFFFFFF) {
-@@ -340,8 +373,9 @@
+@@ -340,8 +381,9 @@
  }
  
  void AudioStreamer::clear() {
@@ -163,7 +174,7 @@
  }
  
  SMS_NO_INLINE bool AudioStreamer::play_() {
-@@ -487,12 +521,12 @@
+@@ -487,12 +529,12 @@
  
  static JAISound *GetJAISoundForMusic(u32 id) {
      JAISound **unk = (JAISound **)search__19JALListS_5(id & 0x3FF); 
