@@ -429,6 +429,53 @@ bool exact_compatible(const Info& saved, const Info& now, const char** why)
 
 } // namespace
 
+// Every state in the folder, newest first.
+static std::vector<PortSaveStateInfo> list_states()
+{
+	const std::string dir = state_dir();
+	std::vector<PortSaveStateInfo> found;
+	const Info now = current_info();
+	if (DIR* d = opendir(dir.c_str())) {
+		while (struct dirent* e = readdir(d)) {
+			const std::string name = e->d_name;
+			if (name[0] == '.' || !ends_with(name, ".smsstate"))
+				continue;
+			PortSaveStateInfo info;
+			memset(&info, 0, sizeof info);
+			info.area = -1;
+			snprintf(info.path, sizeof info.path, "%s/%s", dir.c_str(), name.c_str());
+			static const char* const kWanted[] = { "INFO", "PORT" };
+			std::vector<Chunk> chunks;
+			Info saved;
+			PortSaveStatePortable p;
+			if (!savestate::read_file(info.path, &chunks, kWanted, 2) || !read_info(chunks, &saved))
+				continue;
+			if (read_portable(chunks, &p)) {
+				snprintf(info.stageName, sizeof info.stageName, "%s", p.stageName);
+				snprintf(info.episodeName, sizeof info.episodeName, "%s", p.episodeName);
+				// TFlagManager's game ints 0x40000.. and card int 0x20001
+				info.area      = p.area;
+				info.hasCounts = 1;
+				info.shines    = p.gameInts[0];
+				info.blueCoins = p.gameInts[1];
+				info.coins     = p.gameInts[2];
+				info.lives     = p.cardInts[1];
+			}
+			info.created = saved.created;
+			when_text(saved.created, info.when, sizeof info.when);
+			info.sameGame = same_game(saved, now);
+			const char* why;
+			info.exact = info.sameGame && exact_compatible(saved, now, &why);
+			found.push_back(info);
+		}
+		closedir(d);
+	}
+	std::sort(found.begin(), found.end(), [](const PortSaveStateInfo& a, const PortSaveStateInfo& b) {
+		return a.created != b.created ? a.created > b.created : strcmp(a.path, b.path) > 0;
+	});
+	return found;
+}
+
 extern "C" {
 
 void port_savestate_hotkey(int action)
@@ -630,47 +677,7 @@ int port_savestate_load_exact(const char* path, PortSaveStatePortable* portable,
 
 int port_savestate_list(PortSaveStateInfo* out, int max)
 {
-	const std::string dir = state_dir();
-	std::vector<PortSaveStateInfo> found;
-	const Info now = current_info();
-	if (DIR* d = opendir(dir.c_str())) {
-		while (struct dirent* e = readdir(d)) {
-			const std::string name = e->d_name;
-			if (name[0] == '.' || !ends_with(name, ".smsstate"))
-				continue;
-			PortSaveStateInfo info;
-			memset(&info, 0, sizeof info);
-			info.area = -1;
-			snprintf(info.path, sizeof info.path, "%s/%s", dir.c_str(), name.c_str());
-			static const char* const kWanted[] = { "INFO", "PORT" };
-			std::vector<Chunk> chunks;
-			Info saved;
-			PortSaveStatePortable p;
-			if (!savestate::read_file(info.path, &chunks, kWanted, 2) || !read_info(chunks, &saved))
-				continue;
-			if (read_portable(chunks, &p)) {
-				snprintf(info.stageName, sizeof info.stageName, "%s", p.stageName);
-				snprintf(info.episodeName, sizeof info.episodeName, "%s", p.episodeName);
-				// TFlagManager's game ints 0x40000.. and card int 0x20001
-				info.area      = p.area;
-				info.hasCounts = 1;
-				info.shines    = p.gameInts[0];
-				info.blueCoins = p.gameInts[1];
-				info.coins     = p.gameInts[2];
-				info.lives     = p.cardInts[1];
-			}
-			info.created = saved.created;
-			when_text(saved.created, info.when, sizeof info.when);
-			info.sameGame = same_game(saved, now);
-			const char* why;
-			info.exact = info.sameGame && exact_compatible(saved, now, &why);
-			found.push_back(info);
-		}
-		closedir(d);
-	}
-	std::sort(found.begin(), found.end(), [](const PortSaveStateInfo& a, const PortSaveStateInfo& b) {
-		return a.created != b.created ? a.created > b.created : strcmp(a.path, b.path) > 0;
-	});
+	const std::vector<PortSaveStateInfo> found = list_states();
 	const int n = std::min((int)found.size(), max);
 	for (int i = 0; i < n; i++)
 		out[i] = found[i];
@@ -745,9 +752,7 @@ void to_gx_rgba8(const u8* rgba, int w, int h, u8* out)
 
 extern "C" int port_savestate_scan(void)
 {
-	g_scanned.assign(256, PortSaveStateInfo());
-	const int n = port_savestate_list(g_scanned.data(), (int)g_scanned.size());
-	g_scanned.resize(std::min(n, (int)g_scanned.size()));
+	g_scanned = list_states(); // all of them: no limit on how many states there are
 	return (int)g_scanned.size();
 }
 
