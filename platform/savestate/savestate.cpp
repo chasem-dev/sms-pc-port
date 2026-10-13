@@ -287,8 +287,10 @@ std::string metadata(const Info& info, const PortSaveStatePortable& p, bool exac
 	json_string(out, p.stageName);
 	out += ",\"episode\":";
 	json_string(out, p.episodeName);
-	char numbers[160];
-	snprintf(numbers, sizeof numbers, ",\"area\":%d,\"episodeIndex\":%d,\"build\":", (int)p.area, (int)p.episode);
+	char numbers[256];
+	snprintf(numbers, sizeof numbers,
+	         ",\"area\":%d,\"episodeIndex\":%d,\"shines\":%d,\"blueCoins\":%d,\"coins\":%d,\"lives\":%d,\"build\":",
+	         (int)p.area, (int)p.episode, (int)p.gameInts[0], (int)p.gameInts[1], (int)p.gameInts[2], (int)p.cardInts[1]);
 	out += numbers;
 	json_string(out, hex);
 	out += ",\"exact\":";
@@ -620,6 +622,12 @@ int port_savestate_list(PortSaveStateInfo* out, int max)
 			if (read_portable(chunks, &p)) {
 				snprintf(info.stageName, sizeof info.stageName, "%s", p.stageName);
 				snprintf(info.episodeName, sizeof info.episodeName, "%s", p.episodeName);
+				// TFlagManager's game ints 0x40000.. and card int 0x20001
+				info.hasCounts = 1;
+				info.shines    = p.gameInts[0];
+				info.blueCoins = p.gameInts[1];
+				info.coins     = p.gameInts[2];
+				info.lives     = p.cardInts[1];
 			}
 			info.created = saved.created;
 			info.sameGame = same_game(saved, now);

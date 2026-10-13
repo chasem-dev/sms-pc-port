@@ -42,6 +42,11 @@ const uint8_t kNote[4] = {240, 200, 90, 255};
 const uint8_t kRowSelected[4] = {34, 60, 94, 240};
 const uint8_t kAccent[4] = {66, 150, 250, 255};
 const uint8_t kPictureBg[4] = {0, 0, 0, 255};
+// the counts' labels, in the HUD's colours
+const uint8_t kShineColour[4] = {255, 214, 70, 255};
+const uint8_t kBlueCoinColour[4] = {120, 160, 255, 255};
+const uint8_t kCoinColour[4] = {250, 190, 60, 255};
+const uint8_t kLivesColour[4] = {235, 95, 85, 255};
 
 // The port's side (platform/savestate); none in the GX tests.
 const PortSaveStateMenuApi* s_api;
@@ -292,9 +297,19 @@ void rasterize(const Layout& l) {
             text(pic.x0, y, fit(st.episodeName, pictureTextPx), kTextDim);
             y += l.at(11);
         }
-        if (st.sameGame && !st.exact) {
-            text(pic.x0, y, fit("Saved by another version:", pictureTextPx), kNote);
-            text(pic.x0, y + l.at(10), fit("loads Mario's place only", pictureTextPx), kNote);
+        if (st.hasCounts) {
+            // two columns: Shines and coins, blue coins and lives
+            y += l.at(3);
+            const int column = pic.x0 + (pic.x1 - pic.x0) / 2;
+            auto count = [&](int x, int y, const char* label, const uint8_t colour[4], int value) {
+                text(x, y, label, colour);
+                text(x + textWidth(label) + l.at(4), y, std::to_string(value), kText);
+            };
+            count(pic.x0, y, "Shines", kShineColour, st.shines);
+            count(column, y, "Blue coins", kBlueCoinColour, st.blueCoins);
+            y += l.at(11);
+            count(pic.x0, y, "Coins", kCoinColour, st.coins);
+            count(column, y, "Lives", kLivesColour, st.lives);
         }
     }
     const int footerY = l.at(footerTop());
@@ -304,6 +319,8 @@ void rasterize(const Layout& l) {
     const std::string hint = s_states.empty() ? "B/Esc Back" : "A/Enter Load   Y/Del Delete   B/Esc Back";
     text(l.at(kPad), footerY + l.at(4), hint, kTextDim);
     std::string note = s_note;
+    if (note.empty() && !s_states.empty() && s_states[s_selected].sameGame && !s_states[s_selected].exact)
+        note = "Saved by another version: loads Mario's place and progress only";
     if (note.empty() && !s_api->ready()) note = "States load in a level, once it has loaded";
     if (!note.empty()) text(l.at(kPad), footerY + l.at(kFooterH + 2), note, s_note.empty() ? kTextDim : kNote);
     const int t = std::max(1, g / 2);

@@ -66,6 +66,8 @@ typedef struct PortSaveStateInfo {
 	int64_t created;   // seconds since 1970
 	int exact;         // this build can load it exactly
 	int sameGame;      // the same game (Sunshine, or the same mod)
+	int hasCounts;     // the counts below are known (from its portable part)
+	int shines, blueCoins, coins, lives;
 } PortSaveStateInfo;
 
 // The game's side, once a frame, between frames.
