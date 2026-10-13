@@ -25,7 +25,7 @@ Each state holds two copies of the moment.
   can load it, including another word size or a later version. The level's other actors start as the level
   starts.
 
-A state that this build cannot load exactly loads the portable way; the state menu marks it "position". A
+A state that this build cannot load exactly loads the portable way; the state menu says so under the list. A
 state from another game (another disc, or Super Mario Eclipse for Sunshine) does not load at all.
 
 ## When states are saved and loaded
@@ -48,6 +48,15 @@ Saving and loading happen in `ApplicationSaveStateFrame` (patch `zzzz-savestate-
 
 Saves happen only in a level, while it plays (`TMarDirector` state 4, no stage change pending). In the pause
 menu `SAVE_STATE` opens the state menu instead, and loads happen there too.
+
+The state menu (`src/savestate_menu.cpp`) is game code, built into the game library and drawn by the game:
+the system font, and the HUD's art from `game_6` (the brushstroke behind its counters, the Shine, coin and
+life icons, the counter digits, the pointing hand), in GX quads as the font draws its glyphs. It lists the
+states on the brushstrokes beside a stack of their pictures, one selection in one list
+(`port_savestate_scan`) that up and down step through the list and left and right through the pictures.
+The pause menu gives it the pad while it is open (patch `zzzz-savestate-02`), and the frame loop draws it
+last, over the HUD (patch `zzzz-savestate-01`). The pictures are the states' PNGs, decoded by the port
+into GX textures in four reusable buffers below 4 GiB (`port_savestate_picture`).
 
 The pause menu's hint (patch `zzzz-savestate-02`) draws `SAVE_STATE`'s binding through the system font, as
 the HUD's button prompts are drawn: `port_savestate_hint` names the keys or buttons as the device in use
@@ -116,7 +125,8 @@ renamed.
 
 `platform/savestate/tests` checks the file format and the compression (`make -C platform/savestate/tests
 run`), and `tools/tests/test_savestate_ranges.py` the link map reading. Run the game headless with scripted input to check a save and a load in place. `SMS_SHOTS` captures
-fields to compare, and `SMS_WINDOW_SHOTS` captures the window with the state menu.
+fields to compare, and the game draws the state menu, so they include it; `SMS_WINDOW_SHOTS` captures the
+window with the port's messages too.
 
 ```sh
 SMS_SAVE_DIR=$(mktemp -d)/card-a SMS_SETTINGS=/dev/null SMS_TEXTURE_PACKS=0 SMS_HEADLESS=1 SMS_AUDIO=0 \

@@ -32,6 +32,11 @@
 #include <sys/stat.h>
 #include <time.h>
 
+#define STBI_ONLY_PNG
+#define STB_IMAGE_STATIC
+#define STB_IMAGE_IMPLEMENTATION
+#include "../gx/src/third_party/stb_image.h"
+
 #include <algorithm>
 #include <atomic>
 #include <mutex>
@@ -47,8 +52,7 @@ extern "C" const char* port_card_dir(void);
 // platform/gx (absent in a build without it)
 extern "C" __attribute__((weak)) void GXPC_MemoryWritten(const void* p, uint32_t n);
 extern "C" __attribute__((weak)) uint8_t* GXPC_SaveStateThumbnail(size_t* size);
-extern "C" __attribute__((weak)) void GXPC_SetSaveStateApi(const PortSaveStateMenuApi* api);
-extern "C" __attribute__((weak)) void GXPC_OpenSaveStateMenu(void);
+extern "C" __attribute__((weak)) void GXPC_SetSaveStateApi(const PortSaveStateOverlayApi* api);
 extern "C" __attribute__((weak)) int GXPC_InputStyle(void);
 extern "C" __attribute__((weak)) const void* port_button_glyph(int chr);
 
@@ -214,6 +218,35 @@ bool exists(const std::string& path)
 {
 	struct stat st;
 	return stat(path.c_str(), &st) == 0;
+}
+
+// "Today 9:13 AM", "Yesterday 10:40 PM", "Oct 12 7:30 PM"
+void when_text(int64_t created, char* out, size_t n)
+{
+	const time_t t = (time_t)created, nowT = time(NULL);
+	struct tm at, today;
+#ifdef _WIN32
+	localtime_s(&at, &t);
+	localtime_s(&today, &nowT);
+#else
+	localtime_r(&t, &at);
+	localtime_r(&nowT, &today);
+#endif
+	char clock[16];
+	strftime(clock, sizeof clock, "%I:%M %p", &at);
+	const char* time12 = clock[0] == '0' ? clock + 1 : clock;
+	struct tm midnight = today;
+	midnight.tm_hour = midnight.tm_min = midnight.tm_sec = 0;
+	const time_t startOfToday = mktime(&midnight);
+	if (t >= startOfToday)
+		snprintf(out, n, "Today %s", time12);
+	else if (t >= startOfToday - 24 * 3600)
+		snprintf(out, n, "Yesterday %s", time12);
+	else {
+		char day[16];
+		strftime(day, sizeof day, "%b %d", &at);
+		snprintf(out, n, "%s %s", day, time12);
+	}
 }
 
 bool ends_with(const std::string& s, const char* tail)
@@ -457,12 +490,6 @@ void port_savestate_hint(PortSaveStateHint* out)
 		out->hasImage[i] = port_button_glyph && port_button_glyph(PORT_PROMPT_SAVESTATE + i) != nullptr;
 }
 
-void port_savestate_open_menu(void)
-{
-	if (GXPC_OpenSaveStateMenu)
-		GXPC_OpenSaveStateMenu();
-}
-
 int port_savestate_save(const PortSaveStatePortable* portable)
 {
 	if (g_writing.exchange(true)) {
@@ -630,6 +657,7 @@ int port_savestate_list(PortSaveStateInfo* out, int max)
 				info.lives     = p.cardInts[1];
 			}
 			info.created = saved.created;
+			when_text(saved.created, info.when, sizeof info.when);
 			info.sameGame = same_game(saved, now);
 			const char* why;
 			info.exact = info.sameGame && exact_compatible(saved, now, &why);
@@ -675,13 +703,93 @@ int port_savestate_delete(const char* path)
 } // extern "C"
 
 namespace {
-const PortSaveStateMenuApi kMenuApi = { port_savestate_ready, port_savestate_list, port_savestate_thumbnail_png,
-	                                    port_savestate_request_load, port_savestate_delete, port_savestate_message };
-struct GiveMenuApi {
-	GiveMenuApi()
+const PortSaveStateOverlayApi kOverlayApi = { port_savestate_message };
+struct GiveOverlayApi {
+	GiveOverlayApi()
 	{
 		if (GXPC_SetSaveStateApi)
-			GXPC_SetSaveStateApi(&kMenuApi);
+			GXPC_SetSaveStateApi(&kOverlayApi);
 	}
-} s_giveMenuApi;
+} s_giveOverlayApi;
 } // namespace
+
+// The state menu's view of the folder (src/savestate_menu.cpp) and its pictures.
+namespace {
+std::vector<PortSaveStateInfo> g_scanned;
+struct PictureSlot {
+	std::string path;
+	u8* tex = nullptr;
+	int w = 0, h = 0;
+};
+PictureSlot g_pictures[PORT_SAVESTATE_PICTURE_SLOTS];
+const int kPictureMaxW = 320, kPictureMaxH = 256;
+
+// RGBA rows to GX RGBA8 tiles: 4x4 blocks, each an AR half then a GB half.
+void to_gx_rgba8(const u8* rgba, int w, int h, u8* out)
+{
+	size_t o = 0;
+	for (int by = 0; by < h; by += 4)
+		for (int bx = 0; bx < w; bx += 4)
+			for (int half = 0; half < 2; half++)
+				for (int y = 0; y < 4; y++)
+					for (int x = 0; x < 4; x++) {
+						const u8* p = rgba + ((size_t)(by + y) * w + bx + x) * 4;
+						out[o++] = half ? p[1] : p[3];
+						out[o++] = half ? p[2] : p[0];
+					}
+}
+} // namespace
+
+extern "C" int port_savestate_scan(void)
+{
+	g_scanned.assign(256, PortSaveStateInfo());
+	const int n = port_savestate_list(g_scanned.data(), (int)g_scanned.size());
+	g_scanned.resize(std::min(n, (int)g_scanned.size()));
+	return (int)g_scanned.size();
+}
+
+extern "C" const PortSaveStateInfo* port_savestate_scanned(int index)
+{
+	return index >= 0 && index < (int)g_scanned.size() ? &g_scanned[index] : nullptr;
+}
+
+extern "C" const void* port_savestate_picture(int index, int slot, int* w, int* h)
+{
+	const PortSaveStateInfo* info = port_savestate_scanned(index);
+	if (!info || slot < 0 || slot >= PORT_SAVESTATE_PICTURE_SLOTS)
+		return nullptr;
+	PictureSlot& s = g_pictures[slot];
+	if (s.path != info->path) {
+		s.path = info->path;
+		s.w = s.h = 0;
+		size_t size = 0;
+		uint8_t* png = port_savestate_thumbnail_png(info->path, &size);
+		int pw = 0, ph = 0, n = 0;
+		stbi_uc* rgba = png ? stbi_load_from_memory(png, (int)size, &pw, &ph, &n, 4) : nullptr;
+		free(png);
+		if (rgba && pw > 0 && ph > 0) {
+			// at most kPictureMaxW x kPictureMaxH, a multiple of four each way
+			const float scale = std::min(1.0f, std::min((float)kPictureMaxW / pw, (float)kPictureMaxH / ph));
+			const int tw = std::max(4, (int)(pw * scale) & ~3), th = std::max(4, (int)(ph * scale) & ~3);
+			std::vector<u8> fit((size_t)tw * th * 4);
+			for (int y = 0; y < th; y++)
+				for (int x = 0; x < tw; x++)
+					memcpy(&fit[((size_t)y * tw + x) * 4], &rgba[((size_t)(y * ph / th) * pw + x * pw / tw) * 4], 4);
+			if (!s.tex)
+				s.tex = (u8*)port_low_alloc((unsigned long)kPictureMaxW * kPictureMaxH * 4);
+			if (s.tex) {
+				to_gx_rgba8(fit.data(), tw, th, s.tex);
+				s.w = tw;
+				s.h = th;
+			}
+		}
+		if (rgba)
+			stbi_image_free(rgba);
+	}
+	if (!s.w)
+		return nullptr;
+	*w = s.w;
+	*h = s.h;
+	return s.tex;
+}
+

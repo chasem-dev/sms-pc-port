@@ -112,7 +112,7 @@ gdb -q -batch -nx -ex 'set debuginfod enabled off' \
 
 | Module | What it does |
 | --- | --- |
-| `platform/savestate/` | Save states ([SAVE-STATES.md](SAVE-STATES.md)): the state file and its compression (`state_file.cpp`, tested by `tests/`), saving and loading the game's memory, and the requests between the controls, the state menu (`platform/gx/src/gx_savestate_menu.cpp`) and the game (patches `zzzz-savestate-*`). |
+| `platform/savestate/` | Save states ([SAVE-STATES.md](SAVE-STATES.md)): the state file and its compression (`state_file.cpp`, tested by `tests/`), saving and loading the game's memory, and the requests between the controls, the state menu the game draws in its pause menu (`src/savestate_menu.cpp`) and the game (patches `zzzz-savestate-*`); `platform/gx/src/gx_savestate_overlay.cpp` shows the saved/loaded messages and takes the pictures. |
 | `platform/sdk_stubs.cpp` | Generated: a weak, logging stub for all 321 SDK functions in `api-surface.tsv` that are not header inlines/macros; real implementations override them. |
 | `platform/port_runtime.cpp` | Boot: emulated MEM1 (24 MiB) mapped at `0x80000000`, game source selection, GLX vendor choice, crash handler. |
 | `platform/os/` | One emulated CPU: every `OSThread` is a host thread, only the CPU owner runs, strict priorities; message queues, mutexes, conds; interrupts delivered at OS-call check points and on idle; arena, clocks, OSAlloc, stopwatches, cache ops (→ `GXPC_InvalidateRange`). |

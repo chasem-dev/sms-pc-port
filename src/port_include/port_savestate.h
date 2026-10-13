@@ -68,7 +68,18 @@ typedef struct PortSaveStateInfo {
 	int sameGame;      // the same game (Sunshine, or the same mod)
 	int hasCounts;     // the counts below are known (from its portable part)
 	int shines, blueCoins, coins, lives;
+	char when[32];     // when it was saved, as the menu shows it: "Today 9:13 AM"
 } PortSaveStateInfo;
+
+// The state menu in the game (src/savestate_menu.cpp) reads the folder
+// through these: a scan, newest first, then each state by its index.
+int port_savestate_scan(void);
+const PortSaveStateInfo* port_savestate_scanned(int index);
+// The picture of scanned state `index` as a GX RGBA8 texture (its width and
+// height multiples of four) in buffer `slot` (0 to 3, below 4 GiB), kept
+// until another picture takes the slot. Null when it has none.
+#define PORT_SAVESTATE_PICTURE_SLOTS 4
+const void* port_savestate_picture(int index, int slot, int* w, int* h);
 
 // The game's side, once a frame, between frames.
 enum {
@@ -93,18 +104,25 @@ int port_savestate_load_exact(const char* path, PortSaveStatePortable* portable,
 // A one-line message on screen for a few seconds ("State saved").
 void port_savestate_notify(const char* text);
 
-// The menu's side (platform/gx), on its own thread.
+// The window's side (platform/gx): the current message ("State saved") and
+// how long it has left, in seconds (0: none).
+float port_savestate_message(char* out, int outLen);
+// The GX layer reaches it through this table, which platform/savestate hands
+// it at start: the GX tests link that library without the game.
+typedef struct PortSaveStateOverlayApi {
+	float (*message)(char* out, int outLen);
+} PortSaveStateOverlayApi;
+void GXPC_SetSaveStateApi(const PortSaveStateOverlayApi* api);
+// A picture of the last frame shown, as a PNG of *size bytes; free() it.
+uint8_t* GXPC_SaveStateThumbnail(size_t* size);
+
+// For the state menu (src/savestate_menu.cpp) and the hotkeys.
 int port_savestate_ready(void);
 int port_savestate_list(PortSaveStateInfo* out, int max); // newest first
 // The thumbnail of a state, a PNG of *size bytes; free() it. Null when it has none.
 uint8_t* port_savestate_thumbnail_png(const char* path, size_t* size);
 void port_savestate_request_load(const char* path);
 int port_savestate_delete(const char* path);
-// The current notification and how long it has left, in seconds (0: none).
-float port_savestate_message(char* out, int outLen);
-
-// The state menu: the pause menu opens it when SAVE_STATE is pressed there.
-void port_savestate_open_menu(void);
 
 // The pause menu's hint (patch zzzz-savestate-02): SAVE_STATE's binding as the
 // device in use shows it (the keyboard's keys, or a controller's buttons named
@@ -124,22 +142,6 @@ void port_savestate_hint(PortSaveStateHint* out);
 // platform/pad: SAVE_STATE's first binding as `style` names it (0 keyboard,
 // 1 Xbox, 2 PlayStation, 3 Steam Deck); the number of parts.
 int port_pad_savestate_labels(int style, char labels[2][16]);
-
-// The state menu (platform/gx) reaches the functions above through this table,
-// which platform/savestate hands it at start: the GX tests link that library
-// without the game.
-typedef struct PortSaveStateMenuApi {
-	int (*ready)(void);
-	int (*list)(PortSaveStateInfo* out, int max);
-	uint8_t* (*thumbnail_png)(const char* path, size_t* size);
-	void (*request_load)(const char* path);
-	int (*remove)(const char* path);
-	float (*message)(char* out, int outLen);
-} PortSaveStateMenuApi;
-void GXPC_SetSaveStateApi(const PortSaveStateMenuApi* api);
-void GXPC_OpenSaveStateMenu(void);
-// A picture of the last frame shown, as a PNG of *size bytes; free() it.
-uint8_t* GXPC_SaveStateThumbnail(size_t* size);
 
 #ifdef __cplusplus
 }

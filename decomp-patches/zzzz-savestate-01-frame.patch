@@ -1,12 +1,13 @@
 Reason: port: save states (port_savestate.h) are saved and loaded at the top of the frame loop, exactly or by warping and putting Mario back
 --- a/src/System/Application.cpp
 +++ b/src/System/Application.cpp
-@@ -994,6 +994,283 @@
+@@ -994,6 +994,284 @@
  }
  #endif
  
 +#ifdef TARGET_PC
 +#include "port_savestate.h"
++#include "port_savestate_menu.h"
 +#include <Camera/Camera.hpp>
 +#include <GC2D/GCConsole2.hpp>
 +#include <Player/Mario.hpp>
@@ -256,7 +257,7 @@ Reason: port: save states (port_savestate.h) are saved and loaded at the top of 
 +			port_savestate_save(&state);
 +		} else if (paused) {
 +			// the pause menu's hint: SAVE_STATE there opens the state menu
-+			port_savestate_open_menu();
++			SaveStateMenuOpen();
 +		} else {
 +			port_savestate_notify("Save states work in a level, once it has loaded");
 +		}
@@ -285,7 +286,7 @@ Reason: port: save states (port_savestate.h) are saved and loaded at the top of 
  // TODO: frame 0x50 short (0x70 before the display's video was read through
  // getVideo()): retail's low region runs to 0xac (the TRect temp) where ours
  // ended at 0x38, i.e. inline temporaries from an expansion this body lacks;
-@@ -1002,6 +1279,9 @@
+@@ -1002,6 +1280,9 @@
  {
  	u32 nextState = APP_STATE_DEFAULT;
  	while (nextState <= APP_STATE_DEFAULT) {
@@ -295,3 +296,14 @@ Reason: port: save states (port_savestate.h) are saved and loaded at the top of 
  		mDisplay->startRendering();
  
  		ApplicationStartTimerTwice(mDisplay->getVideo()->mLastRetraceTime, 0);
+@@ -1071,6 +1352,10 @@
+ 			mFader->update();
+ 			mFader->draw(
+ 			    JDrama::TRect(0, 0, mode.fbWidth, mode.efbHeight));
++#ifdef TARGET_PC
++			// the save state menu over everything (port_savestate_menu.h)
++			SaveStateMenuDraw(JDrama::TRect(0, 0, mode.fbWidth, mode.efbHeight));
++#endif
+ 			// TODO: the ROM loads gpMSound twice here (once for the test,
+ 			// once for the call); neither this spelling nor SMSGetMSound()
+ 			// per use reproduces the reload.

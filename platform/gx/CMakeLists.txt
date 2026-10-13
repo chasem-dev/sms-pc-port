@@ -103,8 +103,8 @@ if(TARGET SDL2::SDL2)
     target_compile_definitions(sms_gx PRIVATE SMS_GX_HAVE_SDL2=1)
     target_link_libraries(sms_gx PUBLIC SDL2::SDL2)
     message(STATUS "sms_gx: SDL2 window support")
-    # The cheat menu (F9), the warp menu (F8) and the save state menu in the window.
-    target_sources(sms_gx PRIVATE src/gx_cheat_menu.cpp src/gx_warp_menu.cpp src/gx_savestate_menu.cpp)
+    # The cheat menu (F9), the warp menu (F8) and the save state messages in the window.
+    target_sources(sms_gx PRIVATE src/gx_cheat_menu.cpp src/gx_warp_menu.cpp src/gx_savestate_overlay.cpp)
 else()
     message(STATUS "sms_gx: SDL2 not found - no window support")
 endif()
