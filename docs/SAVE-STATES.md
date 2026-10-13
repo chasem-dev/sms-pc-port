@@ -57,6 +57,12 @@ icons (`PORT_PROMPT_SAVESTATE` in `gx_prompts.cpp`), used even with the original
 After an exact load, the GX layer stamps all of MEM1 as written (`GXPC_MemoryWritten`), so every texture and
 display list decoded from game memory is checked again.
 
+An exact load plays between two fades, as long as the game's own (0.25 s, `TSMSFader`). The state is checked
+first (`port_savestate_can_load_exact`, reading only its small chunks). Then the screen fades to black while
+the game runs on, the memory is loaded behind it, and the fader, which the load put back as it was, is set
+black again and fades in. A load that cannot be exact needs no fades of its own: it reloads the level, which
+has the game's transition.
+
 ## The game's globals
 
 Only the link map says where the linker put the game's global variables, so `tools/savestate_ranges.py`

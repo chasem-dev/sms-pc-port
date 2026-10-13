@@ -364,6 +364,16 @@ bool same_game(const Info& a, const Info& b)
 	return !memcmp(a.game, b.game, sizeof a.game) && !strncmp(a.flavor, b.flavor, sizeof a.flavor);
 }
 
+// The same game threads, waiting the same way, as when the state was saved.
+bool threads_match(const std::vector<Chunk>& chunks)
+{
+	const std::vector<ThreadSig> threads = thread_sigs();
+	const Chunk* thrd = savestate::find_chunk(chunks, "THRD");
+	std::vector<ThreadSig> then(thrd ? thrd->rawSize / sizeof(ThreadSig) : 0);
+	return thrd && thrd->rawSize % sizeof(ThreadSig) == 0
+	       && savestate::chunk_data(*thrd, (uint8_t*)then.data(), then.size() * sizeof(ThreadSig)) && then == threads;
+}
+
 // Whether this build can take a state saved as `saved` back exactly.
 bool exact_compatible(const Info& saved, const Info& now, const char** why)
 {
@@ -498,6 +508,18 @@ int port_savestate_save(const PortSaveStatePortable* portable)
 	return 1;
 }
 
+int port_savestate_can_load_exact(const char* path)
+{
+	static const char* const kWanted[] = { "INFO", "THRD" };
+	std::vector<Chunk> chunks;
+	Info saved;
+	const Info now = current_info();
+	const char* why = nullptr;
+	return savestate::read_file(path, &chunks, kWanted, 2) && read_info(chunks, &saved) && same_game(saved, now)
+	       && exact_compatible(saved, now, &why) && !port_dvd_busy() && !port_os_irq_work_pending()
+	       && threads_match(chunks);
+}
+
 int port_savestate_load_exact(const char* path, PortSaveStatePortable* portable, int* hasPortable)
 {
 	if (hasPortable)
@@ -530,12 +552,7 @@ int port_savestate_load_exact(const char* path, PortSaveStatePortable* portable,
 		port_log("[savestate] %s: the game is busy; loading the position only\n", path);
 		return 0;
 	}
-	// The same threads, waiting the same way.
-	const std::vector<ThreadSig> threads = thread_sigs();
-	const Chunk* thrd = savestate::find_chunk(chunks, "THRD");
-	std::vector<ThreadSig> then(thrd ? thrd->rawSize / sizeof(ThreadSig) : 0);
-	if (!thrd || thrd->rawSize % sizeof(ThreadSig)
-	    || !savestate::chunk_data(*thrd, (uint8_t*)then.data(), then.size() * sizeof(ThreadSig)) || then != threads) {
+	if (!threads_match(chunks)) {
 		port_log("[savestate] %s: the game's threads are not as they were; loading the position only\n", path);
 		return 0;
 	}

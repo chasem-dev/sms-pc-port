@@ -81,6 +81,9 @@ int port_savestate_take(char* path, int pathLen);
 void port_savestate_set_ready(int ready);
 // Saves the game as it is now; the portable part from the caller. 1 if written.
 int port_savestate_save(const PortSaveStatePortable* portable);
+// Whether `path` would load exactly now (reads only its small chunks): the
+// game fades out first when it will.
+int port_savestate_can_load_exact(const char* path);
 // Loads `path` exactly, if this build can: returns 1 and the game is then as
 // it was when the state was saved. Otherwise 0, and *portable (if not null)
 // holds the state's portable part for the game to warp with (when it has one).

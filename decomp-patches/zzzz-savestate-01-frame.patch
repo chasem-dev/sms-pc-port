@@ -1,7 +1,7 @@
 Reason: port: save states (port_savestate.h) are saved and loaded at the top of the frame loop, exactly or by warping and putting Mario back
 --- a/src/System/Application.cpp
 +++ b/src/System/Application.cpp
-@@ -994,6 +994,236 @@
+@@ -994,6 +994,283 @@
  }
  #endif
  
@@ -27,9 +27,13 @@ Reason: port: save states (port_savestate.h) are saved and loaded at the top of 
 +// stage loads.
 +enum {
 +	STATE_LOAD_IDLE,
-+	STATE_LOAD_UNPAUSE, // the pause menu closing first
-+	STATE_LOAD_ARRIVE,  // on the way to the state's area
++	STATE_LOAD_FADE_OUT, // the screen going black before an exact load
++	STATE_LOAD_UNPAUSE,  // the pause menu closing first
++	STATE_LOAD_ARRIVE,   // on the way to the state's area
 +};
++// the fades around an exact load, as long as the game's own (TMovieDirector)
++static const f32 kStateFadeSeconds = 0.25f;
++static char sStateLoadPath[PORT_SAVESTATE_PATH_LEN];
 +static PortSaveStatePortable sStateLoad;
 +static u8 sStateLoadPhase;
 +static u16 sStateLoadFrames;
@@ -171,6 +175,37 @@ Reason: port: save states (port_savestate.h) are saved and loaded at the top of 
 +	dir->setNextStage((u16)(((sStateLoad.area + 1) << 8) | sStateLoad.episode), nullptr);
 +}
 +
++// Loads `path`: exactly when this build can (the screen is black for it, and
++// fades back in), else its portable part.
++static void ApplicationStateLoad(TApplication* app, TMarDirector* dir, bool paused, const char* path)
++{
++	int hasPortable = 0;
++	const bool faded = app->mFader->isFullyFadedOut();
++	// an exact load is done once this returns: the game is at the state's
++	// moment, its fader too (as it was, not black)
++	if (port_savestate_load_exact(path, &sStateLoad, &hasPortable)) {
++		sStateLoadPhase = STATE_LOAD_IDLE;
++		if (faded) {
++			app->mFader->setColor(JUtility::TColor(0, 0, 0, 0));
++			app->mFader->setFadeStatus(TSMSFader::FADE_STATUS_FULLY_FADED_OUT);
++			app->mFader->startFadeinT(kStateFadeSeconds);
++		}
++		port_savestate_notify("State loaded");
++		return;
++	}
++	if (faded)
++		app->mFader->startFadeinT(kStateFadeSeconds);
++	if (!hasPortable)
++		return;
++	if (paused) {
++		sStateLoadPhase  = STATE_LOAD_UNPAUSE;
++		sStateLoadFrames = 0;
++		PauseMenuCloseForStateLoad();
++	} else {
++		ApplicationStateStartWarp(app, dir);
++	}
++}
++
 +static void ApplicationSaveStateFrame(TApplication* app)
 +{
 +	TMarDirector* dir
@@ -180,6 +215,22 @@ Reason: port: save states (port_savestate.h) are saved and loaded at the top of 
 +	const bool paused = dir && dir->mState == TMarDirector::STATE_PAUSE_MENU;
 +	port_savestate_set_ready((playing || paused) && sStateLoadPhase == STATE_LOAD_IDLE);
 +
++	if (sStateLoadPhase == STATE_LOAD_FADE_OUT) {
++		// black, or a second at most (a fade the game took over)
++		if (app->mFader->isFullyFadedOut() || ++sStateLoadFrames > 60) {
++			char path[PORT_SAVESTATE_PATH_LEN];
++			snprintf(path, sizeof path, "%s", sStateLoadPath);
++			sStateLoadPhase = STATE_LOAD_IDLE;
++			if (playing || paused) {
++				ApplicationStateLoad(app, dir, paused, path);
++			} else {
++				// the stage stopped meanwhile (Mario lost a life, a stage change)
++				app->mFader->startFadeinT(kStateFadeSeconds);
++				port_savestate_notify("Could not load the state");
++			}
++		}
++		return;
++	}
 +	if (sStateLoadPhase != STATE_LOAD_IDLE) {
 +		// about 20 seconds at 60 frames a second, in case the warp never happens
 +		if (++sStateLoadFrames > 1200) {
@@ -210,25 +261,21 @@ Reason: port: save states (port_savestate.h) are saved and loaded at the top of 
 +			port_savestate_notify("Save states work in a level, once it has loaded");
 +		}
 +		break;
-+	case PORT_SAVESTATE_LOAD: {
++	case PORT_SAVESTATE_LOAD:
 +		if (!playing && !paused)
 +			break;
-+		int hasPortable = 0;
-+		// an exact load is done once this returns: the game is at the state's moment
-+		if (port_savestate_load_exact(path, &sStateLoad, &hasPortable)) {
-+			port_savestate_notify("State loaded");
-+			break;
-+		}
-+		if (!hasPortable)
-+			break;
-+		if (paused) {
-+			sStateLoadPhase  = STATE_LOAD_UNPAUSE;
++		if (port_savestate_can_load_exact(path)) {
++			// the screen fades to black, the state loads behind it, and it
++			// fades back in (ApplicationStateLoad)
++			snprintf(sStateLoadPath, sizeof sStateLoadPath, "%s", path);
++			sStateLoadPhase  = STATE_LOAD_FADE_OUT;
 +			sStateLoadFrames = 0;
-+			PauseMenuCloseForStateLoad();
++			app->mFader->setColor(JUtility::TColor(0, 0, 0, 0));
++			app->mFader->startFadeoutT(kStateFadeSeconds);
 +		} else {
-+			ApplicationStateStartWarp(app, dir);
++			ApplicationStateLoad(app, dir, paused, path);
 +		}
-+	} break;
++		break;
 +	default:
 +		break;
 +	}
@@ -238,7 +285,7 @@ Reason: port: save states (port_savestate.h) are saved and loaded at the top of 
  // TODO: frame 0x50 short (0x70 before the display's video was read through
  // getVideo()): retail's low region runs to 0xac (the TRect temp) where ours
  // ended at 0x38, i.e. inline temporaries from an expansion this body lacks;
-@@ -1002,6 +1232,9 @@
+@@ -1002,6 +1279,9 @@
  {
  	u32 nextState = APP_STATE_DEFAULT;
  	while (nextState <= APP_STATE_DEFAULT) {
