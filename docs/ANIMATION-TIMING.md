@@ -39,3 +39,12 @@ The duck fixture selects the state used after a stomp on a stunned duck and requ
 It passed at 60 and 120 FPS on the current code.
 The reported missing duck effect was not reproduced; the existing `framerate-36` particle stepping correction remains in place.
 The fixture tests the effect path, rather than a full player-input stomp sequence.
+
+## GO! letters
+
+As the stage-start GO! letters fly apart (`TConsoleStr::processGo`), each movement tick resizes a letter to its *global* bounds plus two.
+The global bounds only change when a frame is drawn: once in four ticks at 30 fps, every tick at 120.
+So at 60 and 120 fps the letters grew two or four times as fast, and kept the excess after the shrink at the end of the effect.
+Every later GO! was then drawn too big, such as the READY/GO of Eclipse's races (measured: 316 pixels wide at 120 fps, 78 at 30).
+`zzzz-rate-01` grows them once per native frame (`port_native_frame_step`). It applies after the `zzzz-lang` patches that rename those panes.
+
