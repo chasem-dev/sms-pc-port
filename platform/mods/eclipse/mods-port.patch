@@ -1,3 +1,14 @@
+--- a/bse/include/BetterSMS/music.hxx
++++ b/bse/include/BetterSMS/music.hxx
+@@ -125,6 +125,10 @@
+             bool isPlaying() const;
+             bool isPaused() const;
++            // The port: the stop and clear of leaving a stage are still to run
++            // (stopMusicOnExitStage); the next stage can be ready before they
++            // are, while the old song fades out.
++            bool isLeavingStage() const { return mRequestedClear; }
+ 
+             bool isLooping() const;
 --- a/bse/src/area.cpp
 +++ b/bse/src/area.cpp
 @@ -9,6 +9,9 @@
@@ -111,7 +122,18 @@
  }
 --- a/bse/src/music.cpp
 +++ b/bse/src/music.cpp
-@@ -244,6 +244,39 @@
+@@ -241,9 +241,50 @@
+ void AudioStreamer::setVolumeFadeTo(u8 to, f32 seconds) {
++    // The port: a song being stopped fades out to silence before the stop
++    // (and the next song) runs. Eclipse's Shadow Mario episodes set the
++    // stream's volume from his distance every frame; a console's slow stage
++    // load let the character select's stop finish first, but here the stage
++    // was running while it faded and held it at that volume, so the stop
++    // never ran and the character select's song played on.
++    if (mRequestedStop)
++        return;
+     _mTargetVolume = to;
+     _mFadeTime     = seconds;
  }
  
  bool AudioStreamer::queueAudio(const AudioPacket &packet) {
@@ -151,7 +173,7 @@
      for (u32 i = 0; i < AudioQueueSize; ++i) {
          AudioPacket &slot = _mAudioQueue[(i + _mAudioIndex) % AudioQueueSize];
          if (slot.getID() == 0xFFFFFFFF) {
-@@ -340,8 +373,9 @@
+@@ -340,8 +381,9 @@
  }
  
  void AudioStreamer::clear() {
@@ -163,7 +185,7 @@
  }
  
  SMS_NO_INLINE bool AudioStreamer::play_() {
-@@ -487,12 +521,12 @@
+@@ -487,12 +529,12 @@
  
  static JAISound *GetJAISoundForMusic(u32 id) {
      JAISound **unk = (JAISound **)search__19JALListS_5(id & 0x3FF); 
@@ -178,6 +200,22 @@
  }
  
  static f32 GetJAISoundSeInterVolume(JAISound *sound, u8 channel) {
+@@ -959,8 +993,14 @@
+     if (!config->mMusicEnabled.get())
+         return;
+ 
+     if (config->mIsExStage.get()) {
+-        if (MSBgm::getHandle(0) || streamer->isPlaying()) {
++        // The port: a secret course leaves its music to the entrance demo
++        // (initExMusic) when a song is already playing. A console reads the
++        // course from the disc while the last stage's song fades out, so that
++        // song has stopped by now; here it can still be fading, and courses
++        // with sequenced music (Daisy Cruiser's) stayed silent until Mario
++        // died and the stage started again.
++        if (MSBgm::getHandle(0) || (streamer->isPlaying() && !streamer->isLeavingStage())) {
+             return;
+         }
+     }
 --- a/bse/src/p_settings.hxx
 +++ b/bse/src/p_settings.hxx
 @@ -1246,8 +1246,8 @@
@@ -836,7 +874,60 @@
      startStageEntranceDemo__10MSMainProcFUcUc(director->mAreaID, director->mEpisodeID);
 --- a/eclipse/src/stage/music.cpp
 +++ b/eclipse/src/stage/music.cpp
-@@ -93,16 +93,28 @@
+@@ -49,11 +49,21 @@
+     ~MSStageDistFadeStream(){};
+ 
+     void proc() override {
+-        if (!Music::isPlaying() || Music::isPaused()) {
++        if (Music::isPaused()) {
+             return;
+         }
+ 
+         MSBgm *handle = (MSBgm *)MSBgm::getHandle(1);
++        if (!Music::isPlaying()) {
++            // The Shadow Mario theme starts with the stage at full volume, but the
++            // stage song only streams from GO!. Hold the theme at its distance
++            // blend until then so it doesn't blare before the crossfade takes over.
++            if (handle != nullptr) {
++                MSBgm::setTrackVolume(1, distanceBlend(), 0, 0);
++            }
++            return;
++        }
++
+         if (handle == nullptr) {
+             if (mFrameCounter++ >= 150 && !mFadedPermanently) {
+                 Music::setVolumeFade(Music::getMaxVolume(), 0.4f);
+@@ -62,14 +72,7 @@
+             return;
+         }
+ 
+-        f32 distance = PSVECDistance(*gpMarioPos, mPosPtr);
+-
+-        f32 blend = 0.0f;
+-        if (distance <= mBlendRadiusEnd && distance > mBlendRadiusStart) {
+-            blend = (mBlendRadiusEnd - distance) / (mBlendRadiusEnd - mBlendRadiusStart);
+-        } else if (distance <= mBlendRadiusStart) {
+-            blend = 1.0f;
+-        }
++        f32 blend = distanceBlend();
+ 
+         f32 *timingTable = (f32 *)sms_mod_rawdata(0x803ACA68);
+         f32 *expTable    = (f32 *)sms_mod_rawdata(0x803ACAB0);
+@@ -90,19 +93,42 @@
+     }
+ 
+ private:
++    f32 distanceBlend() const {
++        f32 distance = PSVECDistance(*gpMarioPos, mPosPtr);
++        if (distance <= mBlendRadiusStart) {
++            return 1.0f;
++        }
++        if (distance <= mBlendRadiusEnd) {
++            return (mBlendRadiusEnd - distance) / (mBlendRadiusEnd - mBlendRadiusStart);
++        }
++        return 0.0f;
++    }
++
      bool mFadedPermanently;
  };
  
@@ -871,7 +962,7 @@
              OSReport("MSoundEnterStageExtended: Episode 6\n");
          }
      }
-@@ -114,7 +126,7 @@
+@@ -114,7 +140,7 @@
      bool excluded = area == SME::STAGE_LACRIMA || area == SME::STAGE_LACRIMA_INSIDE;
      if (!excluded && area >= SME::STAGE_ERTO && area <= SME::STAGE_LACRIMA_BACKHOUSE) {
          if (episode == 6) {
