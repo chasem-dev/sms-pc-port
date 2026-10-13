@@ -385,6 +385,13 @@ endif()
 if(APPLE)
   # Shrink PAGEZERO so MAP_32BIT / low stacks work (x86_64 / Rosetta only).
   target_link_options(sms PRIVATE "LINKER:-pagezero_size,0x1000")
+  # At the same address every run, as on Linux and Windows, so save states
+  # load exactly in a later run (where the linker still accepts it).
+  include(CheckLinkerFlag)
+  check_linker_flag(CXX "LINKER:-no_pie" SMS_HAVE_NO_PIE)
+  if(SMS_HAVE_NO_PIE)
+    target_link_options(sms PRIVATE "LINKER:-no_pie")
+  endif()
 endif()
 # Save states copy the game's own global variables: the link map says where
 # they are, and tools/savestate_ranges.py writes that into the executable.

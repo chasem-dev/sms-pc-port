@@ -17,7 +17,11 @@ Each state holds two copies of the moment.
 - **Portable**: where the game was, as plain values (`PortSaveStatePortable` in
   `src/port_include/port_savestate.h`). That is the area and episode, Mario's position, facing, speed,
   health, FLUDD's water and nozzles, the camera, and the progress flags (`TFlagManager` banks 1 to 4).
-  Loading it warps to the area as the warp menu does, then puts Mario back (`TMario::warpRequest`). Any build
+  Loading it sets the flags and warps to the area as the warp menu does, then puts Mario back
+  (`TMario::warpRequest`). It warps even into the area already loaded. The level's objects (a blue coin, a
+  Shine) and the HUD's counters only follow the flags when a stage loads. The HUD's blue coin and Shine
+  counters count up a step a frame toward their flags, so a lower flag under a running HUD had it count on
+  to 1000 and crash. The old stage's HUD is synced to the new flags for the frames it still runs. Any build
   can load it, including another word size or a later version. The level's other actors start as the level
   starts.
 
@@ -91,9 +95,11 @@ renamed.
 - **Exact loading needs the identical build.** Two players' builds of the same version are identical only if
   their compilers produce the same bytes. Builds made in different folders may differ, because paths end
   up in the binary. Those players' states still load the portable way.
-- **macOS** builds are position-independent, so the code moves on every launch, and exact loads work only
-  in the run that saved the state. `codeAnchor` in `INFO` catches this, and those states load the portable
-  way.
+- **macOS** builds link with `-no_pie` where Apple's linker still accepts it, so the code stays put. If a
+  linker ignores it, the code moves on every launch and exact loads work only in the run that saved the
+  state. `codeAnchor` in `INFO` catches this, and those states load the portable way. Apple's newer linker
+  writes archive members as `lib.a[12](obj.o)` in its link map; `savestate_ranges.py` reads both spellings,
+  and warns in the build log when it finds no game data.
 - Portable loads restore Mario and the progress, not Yoshi, a ride, or what the level's actors were doing.
 - Super Mario Eclipse's music streams from the disc (`platform/audio/dtk.cpp`), host-side, and is not in
   a state, so after a load the stream playing may not be the state's until the music next changes. Save
@@ -103,7 +109,7 @@ renamed.
 ## Testing
 
 `platform/savestate/tests` checks the file format and the compression (`make -C platform/savestate/tests
-run`). Run the game headless with scripted input to check a save and a load in place. `SMS_SHOTS` captures
+run`), and `tools/tests/test_savestate_ranges.py` the link map reading. Run the game headless with scripted input to check a save and a load in place. `SMS_SHOTS` captures
 fields to compare, and `SMS_WINDOW_SHOTS` captures the window with the state menu.
 
 ```sh

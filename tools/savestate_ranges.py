@@ -30,7 +30,9 @@ NUM = r"0x[0-9a-fA-F]+"
 
 
 def from_game(path, archives):
-    return any(f"{name}(" in path for name in archives)
+    """A member of one of the archives: GNU ld and classic ld64 write lib.a(obj.o),
+    Apple's newer linker lib.a[12](obj.o)."""
+    return any(re.search(re.escape(name) + r"(\[\d+\])?\(", path) for name in archives)
 
 
 def gnu_ranges(lines, archives):
@@ -161,6 +163,10 @@ def main():
     os.replace(temporary, args.exe)
     total = sum(end - start for start, end in ranges)
     print(f"savestate_ranges: {len(ranges)} ranges, {total} bytes of game data, build {fingerprint.hex()[:16]}")
+    if not ranges:
+        # the game still builds, but its save states can only load the portable way
+        print(f"savestate_ranges: warning: no game data found in {args.map}; "
+              "save states will load the position only", file=sys.stderr)
 
 
 if __name__ == "__main__":
