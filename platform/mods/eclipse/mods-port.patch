@@ -1,3 +1,14 @@
+--- a/bse/include/BetterSMS/music.hxx
++++ b/bse/include/BetterSMS/music.hxx
+@@ -125,6 +125,10 @@
+             bool isPlaying() const;
+             bool isPaused() const;
++            // The port: the stop and clear of leaving a stage are still to run
++            // (stopMusicOnExitStage); the next stage can be ready before they
++            // are, while the old song fades out.
++            bool isLeavingStage() const { return mRequestedClear; }
+ 
+             bool isLooping() const;
 --- a/bse/src/area.cpp
 +++ b/bse/src/area.cpp
 @@ -9,6 +9,9 @@
@@ -178,6 +189,22 @@
  }
  
  static f32 GetJAISoundSeInterVolume(JAISound *sound, u8 channel) {
+@@ -959,8 +993,14 @@
+     if (!config->mMusicEnabled.get())
+         return;
+ 
+     if (config->mIsExStage.get()) {
+-        if (MSBgm::getHandle(0) || streamer->isPlaying()) {
++        // The port: a secret course leaves its music to the entrance demo
++        // (initExMusic) when a song is already playing. A console reads the
++        // course from the disc while the last stage's song fades out, so that
++        // song has stopped by now; here it can still be fading, and courses
++        // with sequenced music (Daisy Cruiser's) stayed silent until Mario
++        // died and the stage started again.
++        if (MSBgm::getHandle(0) || (streamer->isPlaying() && !streamer->isLeavingStage())) {
+             return;
+         }
+     }
 --- a/bse/src/p_settings.hxx
 +++ b/bse/src/p_settings.hxx
 @@ -1246,8 +1246,8 @@
