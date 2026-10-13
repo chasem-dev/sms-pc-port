@@ -7,14 +7,15 @@
 #   Windows  build/windows-64/sms.exe (MSYS2 MINGW64 shell, or build.cmd)
 # With a disc image (the argument, SMS_DISC_IMAGE, or the one image in rom/)
 # it also builds a copy that has the game's files inside and needs no image:
-# sms-standalone (sms-standalone.exe on Windows, SMS.app on macOS).
+# sms-standalone (sms-standalone.exe on Windows, SMS.app on macOS);
+# SMS_STANDALONE=0 skips that copy (SMS Launcher sets it).
 # JOBS=n limits parallel compiler jobs. SMS_ECLIPSE=1 builds Super Mario
 # Eclipse in, into build/<os>-<arch>-eclipse/ (docs/ECLIPSE.md). See BUILD.md.
 set -euo pipefail
 
 cd "$(dirname "$0")"
 if [[ "${1:-}" == -h || "${1:-}" == --help ]]; then
-  sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
   exit 0
 fi
 source tools/common.sh
@@ -134,7 +135,9 @@ fi
 exe="$bdir/sms$sms_exe_suffix"
 echo
 echo "Built $exe ($sms_os, $sms_arch-bit)"
-if [[ -n "$disc" ]]; then
+if [[ -n "$disc" && "${SMS_STANDALONE:-1}" == 0 ]]; then
+  echo "Play: ./run.sh \"$disc\""
+elif [[ -n "$disc" ]]; then
   cmake --build "$bdir" --target sms_standalone
   if [[ "$sms_os" == macos ]]; then
     echo "Built $bdir/SMS.app with the game from $disc inside"

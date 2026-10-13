@@ -72,6 +72,7 @@ The same two scripts work on every system:
 | `./clean.sh [--all] [--dry-run]` | deletes the build output (every `build/<os>-<arch>/`); never deletes your disc image, and keeps the downloaded SDL2; `--all` deletes all of `build/` |
 | `SMS_ARCH=64 ./build.sh` | chooses the word size (Linux: `32` default or `64`; macOS: `64` only; Windows: `64` default (`32` legacy with MINGW32)) |
 | `JOBS=2 ./build.sh` | limits parallel compiler jobs (default: all cores) |
+| `SMS_STANDALONE=0 ./build.sh` | skips the standalone copy even when an image is found |
 
 `./build.sh --help`, `./run.sh --help` and `./clean.sh --help` print the details.
 When both a 32-bit and a 64-bit build exist, `./run.sh` runs the 32-bit one unless `SMS_ARCH=64` is set.
