@@ -104,9 +104,10 @@ void sleep_ms(int ms)
 }
 
 // An open adapter. read() returns one report's length, 0 when none came
-// within about 100 ms, or -1 once the adapter is gone.
+// within about 100 ms, or -1 once the adapter is gone, saying why in `error`.
 struct Link {
 	const char* how = "";
+	char error[96] = "";
 	virtual ~Link() {}
 	virtual int read(unsigned char* buf, int cap) = 0;
 	virtual bool write(const unsigned char* buf, int len) = 0;
@@ -136,7 +137,10 @@ void session(Link& link)
 			link.write(cmd, sizeof cmd);
 			motor = want;
 		}
-		unsigned char rep[128];
+		// Exactly one report: 37 bytes is also the adapter's USB packet size, so
+		// a longer read through libusb or WinUSB runs on into the next reports
+		// and fails with an overflow once one no longer fits.
+		unsigned char rep[37];
 		const int n = link.read(rep, sizeof rep);
 		if (n < 0)
 			break; // unplugged
@@ -172,7 +176,7 @@ void session(Link& link)
 		g_state.present = 1;
 	}
 	g_state.present = 0;
-	port_log("[pad] GameCube adapter disconnected\n");
+	port_log("[pad] GameCube adapter disconnected%s%s\n", link.error[0] ? ": " : "", link.error);
 }
 
 #if GCAD_WINDOWS
@@ -346,8 +350,13 @@ struct WinUsbLink : Link {
 	int read(unsigned char* buf, int cap) override
 	{
 		ULONG n = 0;
-		if (!pWuRead(wu, 0x81, buf, cap, &n, NULL))
-			return GetLastError() == ERROR_SEM_TIMEOUT ? 0 : -1;
+		if (!pWuRead(wu, 0x81, buf, cap, &n, NULL)) {
+			const DWORD e = GetLastError();
+			if (e == ERROR_SEM_TIMEOUT)
+				return 0;
+			snprintf(error, sizeof error, "WinUSB read error %lu", e);
+			return -1;
+		}
 		return (int)n;
 	}
 	bool write(const unsigned char* buf, int len) override
@@ -386,16 +395,20 @@ struct WinHidLink : Link {
 	{
 		if (!pending) {
 			ResetEvent(rov.hEvent);
-			if (!ReadFile(h, in, inLen, NULL, &rov) && GetLastError() != ERROR_IO_PENDING)
+			if (!ReadFile(h, in, inLen, NULL, &rov) && GetLastError() != ERROR_IO_PENDING) {
+				snprintf(error, sizeof error, "HID read error %lu", GetLastError());
 				return -1;
+			}
 			pending = true;
 		}
 		if (WaitForSingleObject(rov.hEvent, 100) == WAIT_TIMEOUT)
 			return 0;
 		pending = false;
 		DWORD n = 0;
-		if (!GetOverlappedResult(h, &rov, &n, FALSE))
+		if (!GetOverlappedResult(h, &rov, &n, FALSE)) {
+			snprintf(error, sizeof error, "HID read error %lu", GetLastError());
 			return -1;
+		}
 		const int m = (int)n < cap ? (int)n : cap;
 		memcpy(buf, in, m);
 		return m;
@@ -512,13 +525,19 @@ struct FdLink : Link {
 		const int r = poll(&p, 1, 100);
 		if (r == 0)
 			return 0;
-		if (r < 0)
-			return errno == EINTR ? 0 : -1;
-		if (p.revents & (POLLERR | POLLHUP | POLLNVAL))
+		if (r < 0 && errno == EINTR)
+			return 0;
+		if (r < 0 || (p.revents & (POLLERR | POLLHUP | POLLNVAL))) {
+			snprintf(error, sizeof error, "hidraw: %s", r < 0 ? strerror(errno) : "device gone");
 			return -1;
+		}
 		const ssize_t n = ::read(fd, buf, cap);
-		if (n < 0)
-			return errno == EAGAIN || errno == EINTR ? 0 : -1;
+		if (n < 0 && (errno == EAGAIN || errno == EINTR))
+			return 0;
+		if (n < 0) {
+			snprintf(error, sizeof error, "hidraw: %s", strerror(errno));
+			return -1;
+		}
 		return (int)n;
 	}
 	bool write(const unsigned char* buf, int len) override { return ::write(fd, buf, len) == len; }
@@ -614,7 +633,10 @@ struct UsbLink : Link {
 		const int r = lu.interrupt(dev, 0x81, buf, cap, &n, 100);
 		if (r == LU_ERROR_TIMEOUT)
 			return 0;
-		return r == 0 ? n : -1;
+		if (r == 0)
+			return n;
+		snprintf(error, sizeof error, "libusb: %s", lu.error_name(r));
+		return -1;
 	}
 	bool write(const unsigned char* buf, int len) override
 	{
