@@ -16,6 +16,9 @@
 #include <string>
 #include <vector>
 
+#if defined(SMS_HAVE_GAME_BUILD_H) && !defined(SMS_GAME_BUILD)
+#include "sms_game_build.h" // ext/ext.cmake: the port's commit, Eclipse marked
+#endif
 #ifndef SMS_GAME_BUILD
 #define SMS_GAME_BUILD "dev"
 #endif

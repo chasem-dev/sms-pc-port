@@ -26,6 +26,12 @@ string(SUBSTRING "${_sms_ext_commit}" 0 12 _sms_ext_build)
 if(SMS_ECLIPSE)
   string(APPEND _sms_ext_build "-eclipse")
 endif()
-set_property(SOURCE ${SMS_EXT_HOST_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS "SMS_GAME_BUILD=\"${_sms_ext_build}\"")
+# In a generated header rather than a -D: a quoted definition does not survive
+# every toolchain's compiler wrapper (32-bit Windows).
+set(SMS_GAME_BUILD_STRING "${_sms_ext_build}")
+file(CONFIGURE OUTPUT ${CMAKE_BINARY_DIR}/ext-generated/sms_game_build.h
+     CONTENT "#define SMS_GAME_BUILD \"@SMS_GAME_BUILD_STRING@\"\n" @ONLY)
+target_include_directories(sms PRIVATE ${CMAKE_BINARY_DIR}/ext-generated)
+set_property(SOURCE ${SMS_EXT_HOST_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS SMS_HAVE_GAME_BUILD_H=1)
 # for test tools that join this build (ext/multiplayer/tools/mp_shots.py)
 file(WRITE ${CMAKE_BINARY_DIR}/multiplayer-build.txt "${_sms_ext_build}\n")
