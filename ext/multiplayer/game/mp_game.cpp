@@ -12,10 +12,12 @@
 //   5. a client follows the host into their stage; the host leaves when a
 //      client got a Shine.
 #include "../mp_game_api.h"
+#include "mp_boss.hpp"
 #include "mp_puppet.hpp"
 #include "port_ext.h"
 #include "port_framerate.h"
 
+#include <Enemy/BossPakkun.hpp>
 #include <Enemy/Conductor.hpp>
 #include <Map/Map.hpp>
 #include <Enemy/EnemyManager.hpp>
@@ -1168,8 +1170,10 @@ struct TestPlan {
 	int together;            // frames this stage that another player was in sight (drop@ and takedrop@ count these)
 	int coinsAt, coinsValue; // coins@N:K: the coin count set to K
 	int touchAt;             // touchshine@N: a Shine appears where this player is and they touch it
+	int bossWaterAt, bossWaterCount; // bosswater@N:K: K sprays in the boss's mouth, in this game
+	int bossDownAt;                  // bossdown@N: the boss loses all its hit points to ground pounds
 	int frames; // in this stage
-	bool tookHere, warped, died, shone, flagged, livesSet, dropped, tookDrop, coinsSet, touched;
+	bool tookHere, warped, died, shone, flagged, livesSet, dropped, tookDrop, coinsSet, touched, bossWatered, bossDowned;
 };
 TestPlan s_test;
 
@@ -1178,7 +1182,7 @@ void runTests(TMarDirector* dir, bool arrived)
 	if (!s_test.parsed) {
 		s_test.parsed = true;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
-		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = -1;
+		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = -1;
 		s_test.dieLives = -1;
 		if (const char* plan = getenv("SMS_MULTIPLAYER_TEST")) {
 			const char* t = strstr(plan, "take@");
@@ -1212,6 +1216,10 @@ void runTests(TMarDirector* dir, bool arrived)
 				sscanf(c, "coins@%d:%d", &s_test.coinsAt, &s_test.coinsValue);
 			if (const char* ts = strstr(plan, "touchshine@"))
 				sscanf(ts, "touchshine@%d", &s_test.touchAt);
+			if (const char* bw = strstr(plan, "bosswater@"))
+				sscanf(bw, "bosswater@%d:%d", &s_test.bossWaterAt, &s_test.bossWaterCount);
+			if (const char* bd = strstr(plan, "bossdown@"))
+				sscanf(bd, "bossdown@%d", &s_test.bossDownAt);
 		}
 	}
 	if (arrived) {
@@ -1297,6 +1305,33 @@ void runTests(TMarDirector* dir, bool arrived)
 			}
 		}
 		fprintf(stderr, "[multiplayer] test: took %d coins that appeared during the stage\n", taken);
+	}
+	if (s_test.bossWaterAt >= 0 && !s_test.bossWatered && s_test.together >= s_test.bossWaterAt && gpConductor) {
+		for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
+			for (int i = 0; *it && i < (*it)->getObjNum(); i++)
+				if (TBossPakkun* b = dynamic_cast<TBossPakkun*>((*it)->getObj(i))) {
+					if (!dynamic_cast<TBossPakkunManager*>(*it) || dynamic_cast<TBossPakkunManager*>(*it)->mIsLightVersion)
+						continue; // the light one (no fight) takes no water
+					s_test.bossWatered = true;
+					for (int k = 0; k < s_test.bossWaterCount; k++)
+						b->gotWaterDamage();
+					fprintf(stderr, "[multiplayer] test: %d sprays in Petey's mouth, water now %d\n", s_test.bossWaterCount,
+					        b->mWaterMark);
+				}
+	}
+	if (s_test.bossDownAt >= 0 && !s_test.bossDowned && s_test.together >= s_test.bossDownAt && gpConductor) {
+		for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it) {
+			TBossPakkunManager* mgr = dynamic_cast<TBossPakkunManager*>(*it);
+			for (int i = 0; mgr && !mgr->mIsLightVersion && i < mgr->getObjNum(); i++)
+				if (TBossPakkun* b = dynamic_cast<TBossPakkun*>(mgr->getObj(i))) {
+					s_test.bossDowned = true;
+					while (b->getHitPoints() > 0) {
+						b->mState = BOSSPAKU_STATE_BELLY_UP;
+						b->gotHipDropDamage();
+					}
+					fprintf(stderr, "[multiplayer] test: Petey ground-pounded down\n");
+				}
+		}
 	}
 	if (s_test.touchAt >= 0 && !s_test.touched && s_test.together >= s_test.touchAt && gpMarioOriginal) {
 		int shines = 0;
@@ -1504,8 +1539,10 @@ void frame()
 			// hold theirs still too while they still bite, so send none
 			if (g.paused)
 				mpg_set_enemies(nullptr, 0);
-			else
+			else {
+				MpBossHostFrame(); // before the enemies: it rides in their snapshot
 				hostEnemies();
+			}
 		} else
 			reportEnemyDefeats();
 		noticeOwnShineGet();
@@ -1539,6 +1576,7 @@ void frame()
 void stageSetup()
 {
 	s_hostShineFrames = 0; // a Shine's exit belongs to the stage it was got in
+	MpBossStageSetup();
 	s_inWinDemo = s_winRemote = false;
 	s_shineGetFrames  = 0;
 	if (!enabled())
@@ -1590,8 +1628,10 @@ void afterMovement()
 {
 	if (!enabled() || !inStage())
 		return;
-	if (s_role == MPG_ROLE_CLIENT)
+	if (s_role == MPG_ROLE_CLIENT) {
 		followHostEnemies();
+		MpBossClientTick();
+	}
 	if (s_spectating)
 		spectateTick();
 }

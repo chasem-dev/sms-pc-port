@@ -159,6 +159,13 @@ void mpg_host_leaving(int area, int episode);
 void mpg_demo(const void* data, size_t size);
 size_t mpg_next_demo(int* slot, void* data, size_t size);
 
+// Bosses (game/mp_boss.cpp): the host's boss state, sent with the enemies
+// (at most 48 bytes), and the hits the others land on their copies.
+void mpg_set_boss(const void* data, size_t size);
+size_t mpg_boss(void* out, size_t size, float* age);
+void mpg_boss_hit(int kind, int count);
+int mpg_next_boss_hit(int* kind, int* count);
+
 // Items: a pickup from the stage's own items (`key` names it the same in
 // every game: its index among the item manager's objects and its type);
 // and the next one to take away here, picked up by someone else.
