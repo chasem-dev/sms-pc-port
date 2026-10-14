@@ -847,6 +847,8 @@ extern "C" int mp_config_from_env(MpConfig* cfg, const char* build)
 	         name && *name ? name : cfg->role == MP_ROLE_HOST ? "Host" : "Player");
 	if (const char* drop = getenv("SMS_MULTIPLAYER_DROP"))
 		cfg->dropRate = (float)atof(drop);
+	const char* local = getenv("SMS_MULTIPLAYER_LOCAL");
+	cfg->loopback     = local && !strcmp(local, "1");
 	if (const char* t = getenv("SMS_MULTIPLAYER_TIMEOUT"))
 		cfg->timeout = (float)atof(t) > 1.0f ? (float)atof(t) : cfg->timeout;
 	return 1;
@@ -861,7 +863,7 @@ extern "C" int mp_start(const MpConfig* cfg)
 		s->cfg.timeout = 10.0f;
 	std::string error;
 	if (cfg->role == MP_ROLE_HOST) {
-		if (!s->sock.open(cfg->port, error)) {
+		if (!s->sock.open(cfg->port, error, cfg->loopback != 0)) {
 			std::lock_guard<std::mutex> g(g_sessionLock);
 			s->link    = MP_LINK_FAILED;
 			s->message = "Could not host on port " + std::to_string(cfg->port) + ": " + error;

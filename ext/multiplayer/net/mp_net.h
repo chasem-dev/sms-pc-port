@@ -75,10 +75,14 @@ typedef struct MpConfig {
 	float dropRate;
 	// seconds of silence after which a peer counts as gone
 	float timeout;
+	// host: listen on this computer only (the launcher passes the other
+	// players' packets on)
+	int loopback;
 } MpConfig;
 
 // Reads SMS_MULTIPLAYER (host|join), SMS_MULTIPLAYER_ADDRESS (host[:port]),
-// SMS_MULTIPLAYER_PORT and SMS_MULTIPLAYER_NAME into *cfg. Returns 0 when
+// SMS_MULTIPLAYER_PORT, SMS_MULTIPLAYER_NAME and SMS_MULTIPLAYER_LOCAL (1:
+// listen on this computer only) into *cfg. Returns 0 when
 // multiplayer is not asked for, -1 when it is but the settings are wrong
 // (cfg->address then holds why).
 int mp_config_from_env(MpConfig* cfg, const char* build);
