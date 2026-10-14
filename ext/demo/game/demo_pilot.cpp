@@ -18,11 +18,12 @@
 #include <dolphin/vi.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
 extern "C" int mp_player_position(int slot, float* xyz) __attribute__((weak));
-extern "C" u32 GXPC_FrameCount(void) __attribute__((weak));
+extern "C" uint32_t GXPC_FrameCount(void) __attribute__((weak)); // as sms_gx declares it (u32 is long on 32-bit)
 extern "C" void port_vi_set_pace(double fields) __attribute__((weak));
 
 namespace {
