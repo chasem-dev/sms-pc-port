@@ -7,6 +7,7 @@
 #include "mp_flags.h"
 
 #include <algorithm>
+#include <ctype.h>
 #include <cmath>
 #include <deque>
 #include <mutex>
@@ -656,6 +657,21 @@ using namespace mp;
 
 static std::string g_build = SMS_GAME_BUILD;
 
+// The room code friends join with (SMS_MULTIPLAYER_ROOM, from the launcher),
+// or "" when there is none: shown as the host plays.
+static const std::string& roomCode()
+{
+	static const std::string code = [] {
+		std::string text;
+		if (const char* room = getenv("SMS_MULTIPLAYER_ROOM"))
+			for (const char* c = room; *c && text.size() < 12; c++)
+				if (isalnum((unsigned char)*c) || *c == '-')
+					text += (char)toupper((unsigned char)*c);
+		return text;
+	}();
+	return code;
+}
+
 extern "C" void mpg_set_build(const char* build) { g_build = build ? build : SMS_GAME_BUILD; }
 
 extern "C" int mpg_start(void)
@@ -677,7 +693,10 @@ extern "C" int mpg_start(void)
 		return g.role;
 	}
 	if (g.role == MPG_ROLE_HOST) {
-		notice("Hosting on port " + std::to_string(cfg.port) + ". Players who join come to the level you are in.");
+		if (!roomCode().empty())
+			notice("Hosting room " + roomCode() + ". Friends join with this code, and come to the level you are in.");
+		else
+			notice("Hosting on port " + std::to_string(cfg.port) + ". Players who join come to the level you are in.");
 		mp_set_host_status("the title screen");
 	} else {
 		char msg[256];
@@ -1060,6 +1079,8 @@ extern "C" void mpg_status(char* out, int size)
 	char line[128];
 	snprintf(line, sizeof line, "MULTIPLAYER  %d/%d", __builtin_popcount(players), MP_MAX_PLAYERS);
 	s += line;
+	if (g.role == MPG_ROLE_HOST && !roomCode().empty())
+		s += "  ROOM " + roomCode();
 	for (int i = 0; i < MP_MAX_PLAYERS; i++) {
 		if (!(players & (1u << i)))
 			continue;

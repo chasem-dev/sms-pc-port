@@ -26,8 +26,11 @@ public:
 	Socket& operator=(const Socket&) = delete;
 
 	// Listens on `port` (0: any free port); false with `error` set on failure.
-	bool open(uint16_t port, std::string& error);
-	// For joining: a socket on any port that can reach `to`.
+	// `loopbackOnly`: heard from this computer only (the launcher passes the
+	// other players' packets on), so no firewall asks about it.
+	bool open(uint16_t port, std::string& error, bool loopbackOnly = false);
+	// For joining: a socket on any port that can reach `to` (on this computer
+	// only, when `to` is).
 	bool openFor(const Address& to, std::string& error);
 	void close();
 	bool isOpen() const;

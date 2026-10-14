@@ -115,7 +115,7 @@ static bool nonBlocking(sock_t s)
 #endif
 }
 
-bool Socket::open(uint16_t port, std::string& error)
+bool Socket::open(uint16_t port, std::string& error, bool loopbackOnly)
 {
 	close();
 	if (!socketsInit()) {
@@ -123,7 +123,7 @@ bool Socket::open(uint16_t port, std::string& error)
 		return false;
 	}
 	// IPv6 with IPv4 mapped in, so one socket hears both
-	sock_t s = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+	sock_t s = loopbackOnly ? MP_BAD_SOCKET : socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
 	if (s != MP_BAD_SOCKET) {
 		int off = 0;
 		setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY, (const char*)&off, sizeof off);
@@ -147,7 +147,7 @@ bool Socket::open(uint16_t port, std::string& error)
 	sockaddr_in a;
 	memset(&a, 0, sizeof a);
 	a.sin_family      = AF_INET;
-	a.sin_addr.s_addr = htonl(INADDR_ANY);
+	a.sin_addr.s_addr = htonl(loopbackOnly ? INADDR_LOOPBACK : INADDR_ANY);
 	a.sin_port        = htons(port);
 	if (bind(s, (const sockaddr*)&a, sizeof a) != 0) {
 		char buf[160];
@@ -180,6 +180,22 @@ bool Socket::openFor(const Address& to, std::string& error)
 		if (s != MP_BAD_SOCKET)
 			closeSocket(s);
 		return false;
+	}
+	// a host on this computer (the launcher passing packets on): listen on
+	// this computer only, not on every network (unbound, the first send
+	// binds it to any address)
+	if (family == AF_INET && (ntohl(((const sockaddr_in*)to.storage)->sin_addr.s_addr) >> 24) == 127) {
+		sockaddr_in a;
+		memset(&a, 0, sizeof a);
+		a.sin_family      = AF_INET;
+		a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+		bind(s, (const sockaddr*)&a, sizeof a);
+	} else if (family == AF_INET6 && IN6_IS_ADDR_LOOPBACK(&((const sockaddr_in6*)to.storage)->sin6_addr)) {
+		sockaddr_in6 a;
+		memset(&a, 0, sizeof a);
+		a.sin6_family = AF_INET6;
+		a.sin6_addr   = in6addr_loopback;
+		bind(s, (const sockaddr*)&a, sizeof a);
 	}
 	fd_     = (intptr_t)s;
 	family_ = family;
