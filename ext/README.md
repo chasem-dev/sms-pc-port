@@ -7,6 +7,7 @@ They are the start of a code-mod framework for the port: a new feature that need
 | --- | --- |
 | [`core/`](core/port_ext.cpp) | the registry: the game's hooks call each registered extension in turn |
 | [`multiplayer/`](multiplayer/README.md) | up to four players in one game over the network |
+| [`demo/`](demo/README.md) | plays Mario from a script, as a player holds the controller, for trailers and footage |
 
 ## The hooks
 
@@ -27,6 +28,7 @@ An extension fills in a `PortExtension` with the hooks it needs, leaving the res
 | `itemTaken` | a `TItem` (coin, blue or red coin, 1-up) is picked up | note it |
 | `allowSaveStates`, `saveStatesOffReason` | the controls or menu ask for a save state | return 0 to refuse, and say why |
 | `hidePlayerModel` | Mario's models are about to be drawn | return 1 to leave them out (and draw the player yourself) |
+| `padRead` | the controllers were read (`PADRead`), before the game sees them | change the input (scripted play, input mods) |
 
 Every hook runs on the game thread inside the game's own steps, so an extension uses the game's globals (`gpApplication`, `gpMarDirector`, `gpMarioOriginal`, `TFlagManager`) as the game does there.
 With no extension switched on, each hook is a loop over nothing.

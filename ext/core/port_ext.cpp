@@ -104,3 +104,8 @@ extern "C" int port_ext_hide_player_model(void* mario)
 	EACH(hidePlayerModel) if (s_ext[i]->hidePlayerModel(mario)) return 1;
 	return 0;
 }
+
+extern "C" void port_ext_pad_read(void* status)
+{
+	EACH(padRead) s_ext[i]->padRead(status);
+}

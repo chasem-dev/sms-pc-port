@@ -357,8 +357,16 @@ bool openWindow(float scale) {
         const long requested = strtol(e, nullptr, 10);
         if (requested > 0) windowScale = int(std::min(requested, 16L));
     }
-    const WindowArea layout = initialWindowLayout({desktop.x, desktop.y, desktop.w, desktop.h},
-                                                  640.0 * GXPC_GetWidescreen() / 480.0, windowScale);
+    WindowArea layout = initialWindowLayout({desktop.x, desktop.y, desktop.w, desktop.h},
+                                            640.0 * GXPC_GetWidescreen() / 480.0, windowScale);
+    // SMS_WINDOW_SIZE=WxH: exactly that size, whatever the display (captures)
+    if (const char* e = getenv("SMS_WINDOW_SIZE")) {
+        int w = 0, h = 0;
+        if (sscanf(e, "%dx%d", &w, &h) == 2 && w >= 320 && h >= 240) {
+            layout.w = w;
+            layout.h = h;
+        }
+    }
     s_window = SDL_CreateWindow("Super Mario Sunshine", layout.x, layout.y, layout.w, layout.h,
                                 SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI |
                                 SDL_WINDOW_HIDDEN);
