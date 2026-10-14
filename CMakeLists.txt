@@ -460,6 +460,9 @@ else()
   endif()
 endif()
 
+# Extensions: optional features the game calls at chosen points (ext/README.md).
+include(${CMAKE_CURRENT_SOURCE_DIR}/ext/ext.cmake)
+
 option(SMS_ECLIPSE "Build Super Mario Eclipse in (fetches its sources, see docs/ECLIPSE.md)" OFF)
 if(SMS_ECLIPSE)
   include(cmake/eclipse.cmake)
