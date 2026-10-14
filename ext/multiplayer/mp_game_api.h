@@ -143,6 +143,22 @@ void mpg_item_taken_at(int type, const float pos[3]);
 // The session's list so far, from 0 (new ones are added at the end); 0 past it.
 int mpg_taken_at(int i, MpgTakenAt* out);
 
+// This game's player touched a Shine (its event id, where it is): every other
+// game moves its player there and plays the Shine Get as well.
+void mpg_shine_get(int eventId, const float pos[3]);
+// The next Shine another player touched; 0 when there is none.
+int mpg_next_shine_get(int* slot, int* eventId, float pos[3]);
+
+// Host: setting off for another area (episode 0xFF: the game decides on
+// arrival); the others start their own trip there at once.
+void mpg_host_leaving(int area, int episode);
+
+// A cutscene this game started (the game's own description of it, at most 256
+// bytes): the others play it too. mpg_next_demo gives one another player's
+// game started (its size; 0 when there is none).
+void mpg_demo(const void* data, size_t size);
+size_t mpg_next_demo(int* slot, void* data, size_t size);
+
 // Items: a pickup from the stage's own items (`key` names it the same in
 // every game: its index among the item manager's objects and its type);
 // and the next one to take away here, picked up by someone else.

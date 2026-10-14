@@ -60,6 +60,11 @@ typedef struct PortExtension {
 	// the game is about to see, which the hook may change (scripted input,
 	// input mods). Called from the game thread, before the game reads them.
 	void (*padRead)(void* status);
+	// A camera cutscene was asked for (TMarDirector::fireStartDemoCamera):
+	// its camera's name, the point it centres on (or null), its arguments,
+	// whether a callback or an actor came with it, and its flags.
+	void (*demoCamera)(const char* name, const float* pos, int frames, float angle, int option, int hasCallback,
+	                   void* actor, unsigned flags);
 } PortExtension;
 
 // Adds an extension; call from a static constructor or before the first frame.
@@ -82,6 +87,8 @@ void port_ext_item_taken(void* item, void* taker);
 int port_ext_allow_save_states(const char** reason);
 int port_ext_hide_player_model(void* mario);
 void port_ext_pad_read(void* status);
+void port_ext_demo_camera(const char* name, const float* pos, int frames, float angle, int option, int hasCallback,
+                          void* actor, unsigned flags);
 
 #ifdef __cplusplus
 }
