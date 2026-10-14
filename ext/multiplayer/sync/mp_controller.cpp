@@ -36,7 +36,10 @@ enum Kind : uint8_t {
 	K_SHINE_GET,    // either way: session, slot, Shine event id, position (someone touched a Shine)
 	K_LEAVING,      // host -> client: area, episode (0xFF: the game decides) the host is setting off for
 	K_DEMO,         // either way: session, slot, the game's description of a cutscene (mp_game.cpp)
+	K_BOSS_HIT,     // client -> host: session, kind, count (a hit on its copy of the boss, for the real one)
 };
+// The host's boss rides at the end of the world snapshot, after the enemies.
+const size_t kMaxBoss = 48;
 // Items that appear during a stage (from a box, a defeated enemy, a red coin
 // switch) are named by their type and where they are, not their place in the
 // item manager (every game fills that differently); at most this many a stage.
@@ -89,6 +92,9 @@ struct Controller {
 		std::vector<uint8_t> data;
 	};
 	std::deque<Demo> demos;
+	// host: its boss's state for the snapshot, and the hits the others report
+	std::vector<uint8_t> boss;
+	std::deque<std::pair<int, int>> bossHits;
 	// enemies: the host's list and where the next share starts; a client's
 	// newest share; kills reported to the host
 	std::vector<MpgEnemy> enemies;
@@ -298,6 +304,13 @@ void hostMessage(const MpEvent& ev)
 		for (int i = 1; i < MP_MAX_PLAYERS; i++)
 			if (i != ev.slot && (mp_players() & (1u << i)))
 				send(i, K_TAKEN_AT, takenAtMessage(s, t));
+		break;
+	}
+	case K_BOSS_HIT: {
+		uint32_t s = r.u32();
+		int kind = r.u8(), count = r.u8();
+		if (r.ok && s == g.session && g.session && g.bossHits.size() < 64)
+			g.bossHits.emplace_back(kind, count);
 		break;
 	}
 	case K_ENEMY_KILL: {
@@ -705,6 +718,8 @@ extern "C" void mpg_frame(const MpgGame* game)
 			g.takenAt.clear();
 			g.shineGets.clear();
 			g.demos.clear();
+			g.boss.clear();
+			g.bossHits.clear();
 			g.sessionRed = 0;
 			g.restoreRed = false;
 			g.shineExit  = false;
@@ -1076,7 +1091,7 @@ extern "C" void mpg_set_enemies(const MpgEnemy* list, int count)
 	uint8_t buf[MP_MAX_WORLD];
 	Writer w(buf, sizeof buf);
 	w.u32(g.session);
-	const size_t per = (sizeof buf - 6) / kEnemySize;
+	const size_t per = (sizeof buf - 6 - 1 - g.boss.size()) / kEnemySize;
 	const size_t n   = std::min(per, g.enemies.size());
 	w.u16((uint16_t)n);
 	if (g.enemyNext >= g.enemies.size())
@@ -1092,6 +1107,8 @@ extern "C" void mpg_set_enemies(const MpgEnemy* list, int count)
 		w.s16(e.rotY);
 	}
 	g.enemyNext = g.enemies.empty() ? 0 : (g.enemyNext + n) % g.enemies.size();
+	w.u8((uint8_t)g.boss.size());
+	w.bytes(g.boss.data(), g.boss.size());
 	mp_set_world(buf, w.len);
 }
 
@@ -1130,6 +1147,56 @@ extern "C" int mpg_enemies(MpgEnemy* out, int max, float* age)
 			got++;
 	}
 	return got;
+}
+
+extern "C" void mpg_set_boss(const void* data, size_t size)
+{
+	if (g.role != MPG_ROLE_HOST || size > kMaxBoss)
+		return;
+	std::lock_guard<std::mutex> hold(g_lock);
+	g.boss.assign((const uint8_t*)data, (const uint8_t*)data + size);
+}
+
+extern "C" size_t mpg_boss(void* out, size_t size, float* age)
+{
+	if (g.role != MPG_ROLE_CLIENT || !g.localSession)
+		return 0;
+	uint8_t buf[MP_MAX_WORLD];
+	const size_t got = mp_world(buf, sizeof buf, age);
+	Reader r(buf, got);
+	if (!got || r.u32() != g.localSession)
+		return 0;
+	const int n = r.u16();
+	r.skip((size_t)n * kEnemySize);
+	const size_t len = r.u8();
+	const uint8_t* d = r.skip(len);
+	if (!r.ok || !len || len > size)
+		return 0;
+	memcpy(out, d, len);
+	return len;
+}
+
+extern "C" void mpg_boss_hit(int kind, int count)
+{
+	if (g.role != MPG_ROLE_CLIENT || !g.localSession || count <= 0)
+		return;
+	uint8_t buf[8];
+	Writer w(buf, sizeof buf);
+	w.u32(g.localSession);
+	w.u8((uint8_t)kind);
+	w.u8((uint8_t)(count > 255 ? 255 : count));
+	mp_send(0, K_BOSS_HIT, buf, w.len);
+}
+
+extern "C" int mpg_next_boss_hit(int* kind, int* count)
+{
+	std::lock_guard<std::mutex> hold(g_lock);
+	if (g.bossHits.empty())
+		return 0;
+	*kind  = g.bossHits.front().first;
+	*count = g.bossHits.front().second;
+	g.bossHits.pop_front();
+	return 1;
 }
 
 extern "C" void mpg_enemy_killed(int manager, int index)
