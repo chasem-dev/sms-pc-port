@@ -127,8 +127,10 @@ frame_rate = 60
 # background_input = off
 
 # Controller rumble (on by default; the game's own Rumble option still applies)
-# and its strength in percent. The GameCube adapter rumbles at full strength
-# with its second (power) cable plugged in.
+# and its strength in percent, up to 200. Below 100 is gentler (except on the
+# GameCube adapter, whose motors are on or off); above 100 the game runs the
+# motor more often, so light rumbles feel stronger. The GameCube adapter
+# rumbles with its second (power) cable plugged in.
 # rumble = on
 # rumble_strength = 100
 

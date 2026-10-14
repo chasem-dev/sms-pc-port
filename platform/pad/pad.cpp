@@ -75,6 +75,12 @@ f32 port_camera_speed_x   = 1.0f;
 f32 port_camera_speed_y   = 1.0f;
 }
 
+// SMS_RUMBLE_STRENGTH above 100: how much more often the game runs the motor,
+// read by RumbleBase::update (decomp-patches/port-10-rumble-boost.patch).
+extern "C" {
+f32 port_rumble_boost = 1.0f;
+}
+
 #ifdef _WIN32
 // --- Native GameCube adapter (Nintendo / Mayflash in Wii U mode, 057e:0337) ----
 // In that mode the adapter is a WinUSB device (driver installed by Zadig or
@@ -418,6 +424,8 @@ bool g_focused = true, g_backgroundInput;
 // running it on some frames only (RumbleMgr), and the controller plays it the
 // same way. SMS_RUMBLE=0 turns it off; SMS_RUMBLE_STRENGTH=percent scales it
 // (SDL controllers only: the GameCube adapter's motors are on or off too).
+// Above 100 the motor is at full strength and the game runs it on more frames
+// (port_rumble_boost, decomp-patches/port-10), on every controller.
 u16 g_rumbleStrength = 0xFFFF;
 bool g_motor; // controller 1's motor, as the game last set it
 
@@ -726,8 +734,9 @@ void init()
 		}
 	if (const char* e = getenv("SMS_RUMBLE_STRENGTH"))
 		if (*e && g_rumbleStrength) {
-			const int pct    = atoi(e) < 0 ? 0 : atoi(e) > 100 ? 100 : atoi(e);
-			g_rumbleStrength = (u16)(pct * 0xFFFF / 100);
+			const int pct    = atoi(e) < 0 ? 0 : atoi(e) > 200 ? 200 : atoi(e);
+			g_rumbleStrength = (u16)((pct < 100 ? pct : 100) * 0xFFFF / 100);
+			port_rumble_boost = pct > 100 ? pct / 100.0f : 1.0f;
 			port_log("[pad] rumble strength: %d%%\n", pct);
 		}
 	atexit(stop_rumble_at_exit);
