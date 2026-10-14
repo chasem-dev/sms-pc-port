@@ -318,8 +318,10 @@ void drawRow(int index, f32 y, u8 alpha)
 		x += icon(sBlueCoin, x, y + 25.0f, 17.0f, alpha) + 1.0f;
 		count(st->blueCoins, x, y + 26.0f, 13.0f, alpha);
 	}
+	// the glove's finger points up in its texture: turned clockwise, it points
+	// right, at the row
 	if (selected)
-		art(sCursor, kListX - 2.0f, y + 18.0f, 24.0f * 32 / 46, 24.0f, 90.0f, kWhite, alpha);
+		art(sCursor, kListX - 2.0f, y + 18.0f, 24.0f * 32 / 46, 24.0f, -90.0f, kWhite, alpha);
 }
 
 } // namespace
