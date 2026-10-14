@@ -8,6 +8,7 @@
 #include "gx_cheat_menu.h"
 #include "gx_warp_menu.h"
 #include "gx_savestate_overlay.h"
+#include "gx_ext_overlay.h"
 #include "gx_glthread.h"
 #include "gx_window_layout.h"
 #include "sms_gx/gx_pc.h"
@@ -774,6 +775,7 @@ void GXPC_Present(const void* xfb) {
             cheatMenuRender(w, h);
             warpMenuRender(w, h);
             savestateOverlayRender(w, h);
+            extOverlayRender(w, h);
             captureWindow(s_frame, w, h);
             t1 = nowSeconds();
             if (hdr) hdrFramePresent(s_vsync != 0);
