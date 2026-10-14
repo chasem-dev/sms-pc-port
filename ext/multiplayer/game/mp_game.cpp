@@ -556,9 +556,10 @@ void sendPose()
 
 const char* worldName(int area)
 {
+	// SMS_getShineStage's worlds: Pianta Village (monte) is 7, Noki Bay (mare) 8
 	static const char* const names[] = {"the Airstrip", "Delfino Plaza", "Bianco Hills", "Ricco Harbor",
-	                                    "Gelato Beach", "Pinna Park",   "Sirena Beach", "Noki Bay",
-	                                    "Pianta Village", "Corona Mountain"};
+	                                    "Gelato Beach", "Pinna Park",   "Sirena Beach", "Pianta Village",
+	                                    "Noki Bay", "Corona Mountain"};
 	u8 w = area >= 0 && area < 61 ? SMS_getShineStage((u8)area) : 1;
 	return names[w < 10 ? w : 1];
 }
@@ -1172,8 +1173,11 @@ struct TestPlan {
 	int touchAt;             // touchshine@N: a Shine appears where this player is and they touch it
 	int bossWaterAt, bossWaterCount; // bosswater@N:K: K sprays in the boss's mouth, in this game
 	int bossDownAt;                  // bossdown@N: the boss loses all its hit points to ground pounds
+	int bossHitAt;                   // bosshit@N: a hit on this game's copy of the boss (mp_boss.cpp)
+	int setFlagAt;                   // setflag@N:ID: a flag of the game's set (hex), e.g. what starts a fight
+	unsigned setFlagId;
 	int frames; // in this stage
-	bool tookHere, warped, died, shone, flagged, livesSet, dropped, tookDrop, coinsSet, touched, bossWatered, bossDowned;
+	bool tookHere, warped, died, shone, flagged, livesSet, dropped, tookDrop, coinsSet, touched, bossWatered, bossDowned, bossHit, flagSet;
 };
 TestPlan s_test;
 
@@ -1182,7 +1186,7 @@ void runTests(TMarDirector* dir, bool arrived)
 	if (!s_test.parsed) {
 		s_test.parsed = true;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
-		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = -1;
+		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = s_test.bossHitAt = s_test.setFlagAt = -1;
 		s_test.dieLives = -1;
 		if (const char* plan = getenv("SMS_MULTIPLAYER_TEST")) {
 			const char* t = strstr(plan, "take@");
@@ -1220,6 +1224,10 @@ void runTests(TMarDirector* dir, bool arrived)
 				sscanf(bw, "bosswater@%d:%d", &s_test.bossWaterAt, &s_test.bossWaterCount);
 			if (const char* bd = strstr(plan, "bossdown@"))
 				sscanf(bd, "bossdown@%d", &s_test.bossDownAt);
+			if (const char* bh = strstr(plan, "bosshit@"))
+				sscanf(bh, "bosshit@%d", &s_test.bossHitAt);
+			if (const char* sf = strstr(plan, "setflag@"))
+				sscanf(sf, "setflag@%d:%x", &s_test.setFlagAt, &s_test.setFlagId);
 		}
 	}
 	if (arrived) {
@@ -1331,6 +1339,21 @@ void runTests(TMarDirector* dir, bool arrived)
 					}
 					fprintf(stderr, "[multiplayer] test: Petey ground-pounded down\n");
 				}
+		}
+	}
+	// (after the test's own trip, when it has one: in the stage it went to)
+	if (s_test.setFlagAt >= 0 && !s_test.flagSet && s_test.frames >= s_test.setFlagAt && s_test.together > 0
+	    && (s_test.warpAt < 0 || (s_test.warped && !arrived && s_test.frames > 1 && gpApplication.mCurrArea.getStage()
+	                                                                                       == s_test.warpArea))) {
+		s_test.flagSet = true;
+		TFlagManager::getInstance()->setBool(true, s_test.setFlagId);
+		fprintf(stderr, "[multiplayer] test: flag %x set\n", s_test.setFlagId);
+	}
+	if (s_test.bossHitAt >= 0 && !s_test.bossHit && s_test.together >= s_test.bossHitAt) {
+		const int kind = MpBossTestHit();
+		if (kind) {
+			s_test.bossHit = true;
+			fprintf(stderr, "[multiplayer] test: a hit on this game's boss (kind %d)\n", kind);
 		}
 	}
 	if (s_test.touchAt >= 0 && !s_test.touched && s_test.together >= s_test.touchAt && gpMarioOriginal) {
