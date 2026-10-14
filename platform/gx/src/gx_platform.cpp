@@ -39,6 +39,10 @@
 #include <EGL/eglext.h>
 #endif
 
+// USB ids of the GameCube adapters the PAD layer reads itself, which SDL must
+// leave alone (platform/pad/gc_adapter.cpp); none without it.
+extern "C" __attribute__((weak)) const char* port_gc_adapter_sdl_ignore(void) { return nullptr; }
+
 namespace gx {
 extern void (*g_displayCopyHook)(const void* xfb);
 bool rendererReady();
@@ -299,11 +303,20 @@ bool openWindow(float scale) {
 #endif
     s_windowFailure = WF_NONE;
     s_videoDriver[0] = 0;
-    // Native GameCube adapters (Nintendo / Mayflash in Wii U mode, 057e:0337):
-    // SDL's HIDAPI driver turns each plugged port into a mapped game controller.
-    // Set before SDL_Init; an SDL_JOYSTICK_HIDAPI_GAMECUBE environment value wins.
+    // GameCube adapters: SDL's HIDAPI driver turns each plugged port into a
+    // mapped game controller (EVORETRO and other PC-mode adapters). Set before
+    // SDL_Init; an SDL_JOYSTICK_HIDAPI_GAMECUBE environment value wins.
     SDL_SetHint("SDL_JOYSTICK_HIDAPI", "1");
     SDL_SetHint("SDL_JOYSTICK_HIDAPI_GAMECUBE", "1");
+    // Wii U-mode adapters (057e:0337) are the PAD layer's own
+    // (platform/pad/gc_adapter.cpp): SDL leaves them alone, so they are not read
+    // twice or taken from under it. Added to any SDL_HIDAPI_IGNORE_DEVICES set.
+    if (const char* ids = port_gc_adapter_sdl_ignore()) {
+        const char* had = getenv("SDL_HIDAPI_IGNORE_DEVICES");
+        char list[512];
+        snprintf(list, sizeof list, "%s%s%s", had && *had ? had : "", had && *had ? "," : "", ids);
+        SDL_SetHintWithPriority("SDL_HIDAPI_IGNORE_DEVICES", list, SDL_HINT_OVERRIDE);
+    }
     SDL_SetHint("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1");
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMECONTROLLER) != 0) {
         logmsg("SDL_Init failed: %s", SDL_GetError());

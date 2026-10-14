@@ -149,7 +149,23 @@ On Linux this is usually the 32-bit build without the GPU driver's 32-bit librar
 Controller 1 reads the keyboard and any game controller SDL recognises (A/B/X/Y, Start, right shoulder = Z, triggers = L/R, sticks, d-pad).
 Keyboard defaults:
 
-GameCube adapters work too. On Windows, an adapter in Wii U mode (Nintendo WUP-028, Mayflash and other copies; USB `057e:0337`) is read directly through WinUSB, so it needs its WinUSB driver (the one Dolphin installs); `SMS_GC_ADAPTER=VVVV:PPPP` adds another USB id and `SMS_NO_GC_ADAPTER=1` turns it off. In PC/HID mode the adapter is a normal joystick for SDL. The first plugged port is controller 1.
+GameCube adapters work too. An adapter in Wii U mode (the official Nintendo adapter, WUP-028, and Mayflash and other copies with the switch on Wii U; USB `057e:0337`) is read by the game itself, with no extra software, and its controller plays exactly as on a GameCube: analog triggers with their click, the sticks centred where they rest when plugged in. The first plugged port is controller 1. In PC mode an adapter is an ordinary controller for SDL instead.
+
+- **Windows:** works with Windows' own driver, or with the WinUSB driver that Zadig or Dolphin installs.
+- **Linux and Steam Deck:** the game needs permission to open the adapter, as Dolphin does. Steam's udev rules (the `steam-devices` package, and SteamOS) give it already, through libusb. Otherwise SMS Launcher can add a rule (Settings, Controls), or add it yourself and plug the adapter in again:
+
+  ```sh
+  sudo tee /etc/udev/rules.d/51-gcadapter.rules <<'EOF'
+  SUBSYSTEM=="usb", ATTRS{idVendor}=="057e", ATTRS{idProduct}=="0337", TAG+="uaccess"
+  KERNEL=="hidraw*", ATTRS{idVendor}=="057e", ATTRS{idProduct}=="0337", TAG+="uaccess"
+  EOF
+  sudo udevadm control --reload-rules && sudo udevadm trigger
+  ```
+
+  If Steam is running with its GameCube support on, Steam takes the adapter and hands its controllers to the game as Steam controllers; that works too.
+- **Mac:** read through libusb when it is installed (`brew install libusb`).
+
+The game log says how it opened the adapter (`[pad] GameCube adapter opened (...)`), or why it could not. `SMS_GC_ADAPTER=VVVV:PPPP` adds another USB id, and `SMS_NO_GC_ADAPTER=1` leaves the adapter to SDL.
 
 | GameCube | Keys |
 | --- | --- |
@@ -197,7 +213,7 @@ The launcher sets them from **Settings → Gameplay → Invert camera X / Y** (X
 
 The game ignores the keyboard and controllers while another window has focus, so a controller used in another app (or in the launcher) does not also move Mario. Anything held is released when the window loses focus; a button still held when you come back counts once you press it again. `SMS_BACKGROUND_INPUT=1` (`background_input`) keeps input on in the background.
 
-Controllers rumble where the game rumbles the GameCube controller: the one you last pressed or moved does, through SDL (Xbox, PlayStation, Switch and other controllers with motors), and on Windows a controller on a GameCube adapter read through WinUSB does too, when the adapter's second (power) cable is plugged in. The game's own **Rumble** option turns it on and off as on the console; `SMS_RUMBLE=0` (`rumble = off`) turns it off for the port, and `SMS_RUMBLE_STRENGTH=n` (`rumble_strength`) sets its strength in percent (default 100; below 100 for SDL controllers only). Up to 200 makes it stronger than the console's on every controller: the game runs the motor on more of the frames it rumbles on, so light rumbles feel stronger. Rumble stops while another window has focus.
+Controllers rumble where the game rumbles the GameCube controller: the one you last pressed or moved does, through SDL (Xbox, PlayStation, Switch and other controllers with motors), and a controller on a GameCube adapter in Wii U mode does too, when the adapter's second (power) cable is plugged in. The game's own **Rumble** option turns it on and off as on the console; `SMS_RUMBLE=0` (`rumble = off`) turns it off for the port, and `SMS_RUMBLE_STRENGTH=n` (`rumble_strength`) sets its strength in percent (default 100; below 100 for SDL controllers only). Up to 200 makes it stronger than the console's on every controller: the game runs the motor on more of the frames it rumbles on, so light rumbles feel stronger. Rumble stops while another window has focus.
 
 On the file-select screen, walk Mario left under a block for about half a second and press A to jump into it.
 
