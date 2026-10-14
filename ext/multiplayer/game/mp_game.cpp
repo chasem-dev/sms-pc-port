@@ -84,6 +84,11 @@ int s_refusedFrames;
 // still in the stage (saving): wait for the host there, not back in the stage.
 int s_shineHoldFrames;
 int s_shineHoldArea = -1, s_shineHoldEpisode = -1;
+// The Shine Get together (syncShineGets)
+bool s_inWinDemo;    // our player was in the Shine Get last frame
+bool s_winRemote;    // ...because another player's Shine was played here
+int s_shineGetFrames; // a Shine Get played here lately: the flag-only exit stays out of it
+
 int s_titleFrames; // a client's frames on the title screen
 TMarDirector* s_readyDir; // the director whose stage stageSetup saw set up
 
@@ -565,7 +570,8 @@ void followHost(TMarDirector* dir)
 		return; // the host is still saving the Shine we got: they come to us
 	s_shineHoldFrames = 0;
 	// the host's flags are the game's now (synced this frame): load their stage
-	TFlagManager::getInstance()->setFlag(0x40003, episode);
+	if (episode != 0xFF) // 0xFF: the game picks the episode from the flags, as the host's does
+		TFlagManager::getInstance()->setFlag(0x40003, episode);
 	gpApplication.mNextArea.set((u8)area, (u8)episode, 0);
 	dir->onFlag(TMarDirector::DIRECTOR_FLAG_STAGE_TRANSITION_PENDING);
 	char text[128];
@@ -622,6 +628,10 @@ void hostShineExit(TMarDirector* dir)
 	}
 	if (!mpg_take_shine_exit())
 		return;
+	// the Shine Get played here already (everyone was taken to it): the
+	// game's own sequence leads to the prompt
+	if (s_shineGetFrames > 0 || dir->checkFlag(TMarDirector::DIRECTOR_FLAG_SHINE_TAKEN))
+		return;
 	if (TGCConsole2* console = dir->getConsole()) {
 		if (console->unk94)
 			console->unk94->startAppearShineGet();
@@ -635,6 +645,109 @@ void hostShineExit(TMarDirector* dir)
 	}
 	// the banner and the fade (about six seconds), then the prompt
 	s_hostShineFrames = (int)(6.5f * (port_active_frame_rate > 0 ? port_active_frame_rate : 30));
+}
+
+// ------------------------------------------------------------------- Shine Get
+
+// A Shine got by anyone is got by everyone together: when a player touches
+// one, every other game moves its player to that Shine and has it touch them
+// (TShine::touchPlayer), so each game plays the game's own Shine Get: the
+// camera, the victory pose, the banner, the fanfare and the fade. Only the
+// host saves (clientShineExit).
+
+// The stage's Shines, wherever they are kept (any of the conductor's object
+// lists, or among its loose actors), in turn: `index` from 0 until null.
+TShine* shineAt(int index)
+{
+	if (!gpConductor)
+		return nullptr;
+	for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end(); ++it)
+		for (int i = 0; *it && i < (*it)->getObjNum(); i++) {
+			TLiveActor* a = (*it)->getObj(i);
+			if (a && a->getActorType() == 0x20000013 && index-- == 0)
+				return static_cast<TShine*>(a);
+		}
+	for (JGadget::TList<TLiveActor*>::iterator it = gpConductor->unk30.begin(); it != gpConductor->unk30.end(); ++it)
+		if (*it && (*it)->getActorType() == 0x20000013 && index-- == 0)
+			return static_cast<TShine*>(*it);
+	return nullptr;
+}
+
+TShine* findShine(int eventId, const float pos[3])
+{
+	TShine* best = nullptr;
+	f32 bestD    = 1e30f;
+	for (int i = 0; shineAt(i); i++) {
+		TLiveActor* a = shineAt(i);
+		if (!a || a->getActorType() != 0x20000013 || (int)(static_cast<TMapObjBase*>(a)->getEventId() & 0xFF) != eventId)
+			continue;
+		const f32 dx = a->mPosition.x - pos[0], dy = a->mPosition.y - pos[1], dz = a->mPosition.z - pos[2];
+		const f32 d = dx * dx + dy * dy + dz * dz;
+		if (d < bestD)
+			best = static_cast<TShine*>(a), bestD = d;
+	}
+	return best;
+}
+
+// Every frame in a stage (the Shine Get takes the game out of play at once,
+// so this looks whether or not it is playing).
+void noticeOwnShineGet()
+{
+	TMario* m = gpMarioOriginal;
+	if (!m)
+		return;
+	if (s_shineGetFrames > 0)
+		s_shineGetFrames--;
+	const bool win = m->mStatus == MARIO_STATUS_WIN_DEMO;
+	if (win && !s_inWinDemo) {
+		s_shineGetFrames = 30 * (port_active_frame_rate > 0 ? port_active_frame_rate : 30);
+		THitActor* shine = m->unk384;
+		if (!s_winRemote && shine && shine->getActorType() == 0x20000013) {
+			// we touched it: the others come to it
+			const float pos[3] = {shine->mPosition.x, shine->mPosition.y, shine->mPosition.z};
+			fprintf(stderr, "[multiplayer] we touched Shine %d: everyone comes to it\n",
+			        (int)(static_cast<TMapObjBase*>(shine)->getEventId() & 0xFF));
+			mpg_shine_get((int)(static_cast<TMapObjBase*>(shine)->getEventId() & 0xFF), pos);
+		}
+	}
+	if (!win)
+		s_winRemote = false;
+	s_inWinDemo = win;
+}
+
+// While playing: another player's Shine Get comes here.
+void playOthersShineGets()
+{
+	TMario* m = gpMarioOriginal;
+	if (!m)
+		return;
+	const bool win = m->mStatus == MARIO_STATUS_WIN_DEMO;
+	int slot, eventId;
+	float pos[3];
+	while (mpg_next_shine_get(&slot, &eventId, pos)) {
+		if (win || s_spectating)
+			continue; // in one already, or watching
+		TShine* shine = findShine(eventId, pos);
+		if (!shine) {
+			fprintf(stderr, "[multiplayer] %s got Shine %d, which this game does not have\n", mpg_character_name(slot),
+			        eventId);
+			continue;
+		}
+		if (shine->checkLiveFlag(LIVE_FLAG_DEAD)) {
+			// out only in their game so far (an event brought it there): here too
+			shine->mPosition.set(pos[0], pos[1], pos[2]);
+			shine->appear();
+		}
+		fprintf(stderr, "[multiplayer] %s got Shine %d: everyone to it\n", mpg_character_name(slot), eventId);
+		char text[96];
+		snprintf(text, sizeof text, "%s got a Shine!", mpg_character_name(slot));
+		showNotice(text);
+		// where they touched it, as the game puts a player who touches it
+		m->mPosition.set(pos[0], pos[1], pos[2]);
+		s_winRemote = true;
+		shine->touchPlayer(m);
+		break;
+	}
 }
 
 // A client's own Shine: no save prompt (its game plays the host's save, which
@@ -1054,8 +1167,9 @@ struct TestPlan {
 	int takeDropAt;          // takedrop@N: this player takes the coins that appeared during the stage
 	int together;            // frames this stage that another player was in sight (drop@ and takedrop@ count these)
 	int coinsAt, coinsValue; // coins@N:K: the coin count set to K
+	int touchAt;             // touchshine@N: a Shine appears where this player is and they touch it
 	int frames; // in this stage
-	bool tookHere, warped, died, shone, flagged, livesSet, dropped, tookDrop, coinsSet;
+	bool tookHere, warped, died, shone, flagged, livesSet, dropped, tookDrop, coinsSet, touched;
 };
 TestPlan s_test;
 
@@ -1064,7 +1178,7 @@ void runTests(TMarDirector* dir, bool arrived)
 	if (!s_test.parsed) {
 		s_test.parsed = true;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
-		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = -1;
+		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = -1;
 		s_test.dieLives = -1;
 		if (const char* plan = getenv("SMS_MULTIPLAYER_TEST")) {
 			const char* t = strstr(plan, "take@");
@@ -1080,6 +1194,8 @@ void runTests(TMarDirector* dir, bool arrived)
 			if (w)
 				sscanf(w, "warp@%d:%d,%d", &s_test.warpAt, &s_test.warpArea, &s_test.warpEpisode);
 			const char* sh = strstr(plan, "shine@");
+			while (sh && sh > plan && sh[-1] == 'h') // touchshine@
+				sh = strstr(sh + 1, "shine@");
 			if (sh)
 				sscanf(sh, "shine@%d:%d", &s_test.shineAt, &s_test.shineId);
 			const char* f = strstr(plan, "flags@");
@@ -1094,6 +1210,8 @@ void runTests(TMarDirector* dir, bool arrived)
 				sscanf(td, "takedrop@%d", &s_test.takeDropAt);
 			if (const char* c = strstr(plan, "coins@"))
 				sscanf(c, "coins@%d:%d", &s_test.coinsAt, &s_test.coinsValue);
+			if (const char* ts = strstr(plan, "touchshine@"))
+				sscanf(ts, "touchshine@%d", &s_test.touchAt);
 		}
 	}
 	if (arrived) {
@@ -1180,6 +1298,28 @@ void runTests(TMarDirector* dir, bool arrived)
 		}
 		fprintf(stderr, "[multiplayer] test: took %d coins that appeared during the stage\n", taken);
 	}
+	if (s_test.touchAt >= 0 && !s_test.touched && s_test.together >= s_test.touchAt && gpMarioOriginal) {
+		int shines = 0;
+		while (shineAt(shines))
+			shines++;
+		s_test.touched = shines > 0; // none here: try again in the next stage
+		static int told = -1;
+		if (told != shines)
+			fprintf(stderr, "[multiplayer] test: %d Shines in this stage\n", shines);
+		told = shines;
+		for (int i = 0; shineAt(i); i++) {
+			TShine* shine = shineAt(i);
+			const JGeometry::TVec3<f32>& at = gpMarioOriginal->mPosition;
+			shine->mPosition.set(at.x, at.y + 60.0f, at.z);
+			if (shine->checkLiveFlag(LIVE_FLAG_DEAD))
+				shine->appear();
+			fprintf(stderr, "[multiplayer] test: touching Shine %d\n", (int)(shine->getEventId() & 0xFF));
+			shine->touchPlayer(gpMarioOriginal);
+			fprintf(stderr, "[multiplayer] test: Mario's status now %x (Shine Get %x), holding %p\n",
+			        (unsigned)gpMarioOriginal->mStatus, (unsigned)MARIO_STATUS_WIN_DEMO, (void*)gpMarioOriginal->unk384);
+			break;
+		}
+	}
 	if (s_test.shineAt >= 0 && !s_test.shone && s_test.frames >= s_test.shineAt) {
 		s_test.shone = true;
 		TFlagManager::getInstance()->setShineFlag(s_test.shineId);
@@ -1216,8 +1356,84 @@ void updateText()
 	}
 }
 
-// Cutscenes play in the game of whoever started them; the others hear that
-// one is on, so a friend standing still is not a mystery.
+// ------------------------------------------------------------------- cutscenes
+
+// A camera cutscene started in one game plays in every game: the others are
+// taken to the player who started it and watch it with them. Not the stage's
+// opening (every game plays its own), the Shine Get (syncShineGets) or a
+// gate's camera (it follows the gate, which the others cannot be handed).
+bool s_replayingDemo; // playing another game's cutscene: not news to send back
+int s_stageFrames;    // frames of play in this stage
+char s_demoNames[8][64];
+JGeometry::TVec3<f32> s_demoPos[8];
+int s_demoNext;
+
+void demoCamera(const char* name, const float* pos, int frames, float angle, int option, int hasCallback, void* actor,
+                unsigned flags)
+{
+	(void)hasCallback;
+	(void)actor;
+	TMario* m = gpMarioOriginal;
+	if (!enabled() || s_replayingDemo || !inStage() || !s_playing || !name || !m || s_spectating || flags == 1
+	    || m->mStatus == MARIO_STATUS_WIN_DEMO)
+		return;
+	const int fps = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
+	if (s_stageFrames < 3 * fps)
+		return;
+	uint8_t buf[128];
+	size_t n         = 0;
+	const size_t len = strnlen(name, 63);
+	buf[n++]         = (uint8_t)len;
+	memcpy(buf + n, name, len);
+	n += len;
+	buf[n++] = pos ? 1 : 0;
+	const float values[8] = {pos ? pos[0] : 0.0f, pos ? pos[1] : 0.0f, pos ? pos[2] : 0.0f, angle,
+	                         m->mPosition.x, m->mPosition.y, m->mPosition.z, m->mFaceAngle.y * (360.0f / 65536.0f)};
+	memcpy(buf + n, values, sizeof values); // the same build on both sides: the same float layout
+	n += sizeof values;
+	const s32 f = frames;
+	memcpy(buf + n, &f, 4);
+	n += 4;
+	buf[n++] = (uint8_t)(option != 0);
+	mpg_demo(buf, n);
+}
+
+void playOthersCutscenes(TMarDirector* dir)
+{
+	uint8_t buf[256];
+	int slot;
+	size_t n;
+	while ((n = mpg_next_demo(&slot, buf, sizeof buf)) != 0) {
+		TMario* m = gpMarioOriginal;
+		if (!m || s_spectating || dir->isDemoModeNow() || m->mStatus == MARIO_STATUS_WIN_DEMO)
+			continue; // watching one already
+		const size_t len = buf[0];
+		if (n < 1 + len + 1 + 32 + 4 + 1 || len > 63)
+			continue;
+		const int k = s_demoNext++ & 7;
+		memcpy(s_demoNames[k], buf + 1, len);
+		s_demoNames[k][len] = 0;
+		const bool hasPos   = buf[1 + len] != 0;
+		float values[8];
+		memcpy(values, buf + 2 + len, sizeof values);
+		s32 frames;
+		memcpy(&frames, buf + 2 + len + sizeof values, 4);
+		const bool option = buf[2 + len + sizeof values + 4] != 0;
+		s_demoPos[k].set(values[0], values[1], values[2]);
+		// to the player who started it, then their cutscene
+		JGeometry::TVec3<f32> at(values[4], values[5], values[6]);
+		m->warpRequest(at, values[7]);
+		fprintf(stderr, "[multiplayer] %s started a cutscene (%s): everyone watches\n", mpg_character_name(slot),
+		        s_demoNames[k]);
+		s_replayingDemo = true;
+		dir->fireStartDemoCamera(s_demoNames[k], hasPos ? &s_demoPos[k] : nullptr, frames, values[3], option, nullptr, 0,
+		                         nullptr, JDrama::TFlagT<u16>(0));
+		s_replayingDemo = false;
+	}
+}
+
+// The others hear that a cutscene is on (the pose's flag), so a friend
+// standing still is not a mystery.
 bool s_inDemo[4];
 
 void noticeCutscenes()
@@ -1261,6 +1477,7 @@ void frame()
 		snapshotItems();
 		collectManagers();
 		collectSwitches();
+		s_stageFrames = 0;
 		s_restarting = false;
 		if (s_spectating && mpg_session() != s_spectateSession) {
 			s_spectating = false; // a new start: alive again
@@ -1291,13 +1508,17 @@ void frame()
 				hostEnemies();
 		} else
 			reportEnemyDefeats();
+		noticeOwnShineGet();
 		if (s_playing) {
+			playOthersShineGets();
 			if (s_role == MPG_ROLE_CLIENT)
 				followHost(dir);
 			else
 				hostShineExit(dir);
 			runTests(dir, !s_wasPlaying);
 			noticeCutscenes();
+			playOthersCutscenes(dir);
+			s_stageFrames++;
 			if (s_spectating) {
 				spectateFrame(dir);
 				if (s_role == MPG_ROLE_HOST)
@@ -1318,6 +1539,8 @@ void frame()
 void stageSetup()
 {
 	s_hostShineFrames = 0; // a Shine's exit belongs to the stage it was got in
+	s_inWinDemo = s_winRemote = false;
+	s_shineGetFrames  = 0;
 	if (!enabled())
 		return;
 	s_readyDir = gpMarDirector;
@@ -1376,9 +1599,14 @@ void afterMovement()
 int allowNextStage(unsigned code, void* actor)
 {
 	int area, episode;
+	const int next = code >= 0x100 ? (int)(code >> 8) - 1 : (int)code;
+	if (s_role == MPG_ROLE_HOST && inStage()) {
+		// setting off: everyone sets off now, so the fades go together
+		mpg_host_leaving(next, code >= 0x100 ? (int)(code & 0xFF) : 0xFF);
+		return 1;
+	}
 	if (s_role != MPG_ROLE_CLIENT || !mpg_target(&area, &episode))
 		return 1;
-	const int next = code >= 0x100 ? (int)(code >> 8) - 1 : (int)code;
 	if (next == area)
 		return 1;
 	if (!s_refusedFrames)
@@ -1395,6 +1623,12 @@ int allowNextStage(unsigned code, void* actor)
 void moveStage()
 {
 	int area, episode;
+	if (s_role == MPG_ROLE_HOST) {
+		// any other way out (the pause menu's, a Shine's): the others go too
+		const TGameSequence& next = gpApplication.mNextArea;
+		mpg_host_leaving(next.getStage(), next.getScenario());
+		return;
+	}
 	if (s_role != MPG_ROLE_CLIENT || !mpg_target(&area, &episode))
 		return;
 	// after its own Shine it goes to the plaza, as the host will once saved
@@ -1403,9 +1637,10 @@ void moveStage()
 		return;
 	// wherever this game meant to go, it goes where the host is
 	TGameSequence& next = gpApplication.mNextArea;
-	if (next.getStage() != area || next.getScenario() != episode) {
+	if (next.getStage() != area || (episode != 0xFF && next.getScenario() != episode)) {
 		next.set((u8)area, (u8)episode, 0);
-		TFlagManager::getInstance()->setFlag(0x40003, episode);
+		if (episode != 0xFF)
+			TFlagManager::getInstance()->setFlag(0x40003, episode);
 	}
 }
 
@@ -1464,7 +1699,7 @@ const char* saveStatesOffReason() { return "Save states are off in multiplayer";
 PortExtension s_extension = {
 	"multiplayer",   frame,           afterMovement,   stageSetup,     allowNextStage, moveStage,
 	missNextArea,    takeGameOver,    keepCoinsOnMiss, afterFileSelect, itemTaken,      allowSaveStates,
-	saveStatesOffReason, hidePlayerModel,
+	saveStatesOffReason, hidePlayerModel, 0, demoCamera,
 };
 
 struct Register {

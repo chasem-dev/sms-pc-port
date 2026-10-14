@@ -109,3 +109,9 @@ extern "C" void port_ext_pad_read(void* status)
 {
 	EACH(padRead) s_ext[i]->padRead(status);
 }
+
+extern "C" void port_ext_demo_camera(const char* name, const float* pos, int frames, float angle, int option,
+                                     int hasCallback, void* actor, unsigned flags)
+{
+	EACH(demoCamera) s_ext[i]->demoCamera(name, pos, frames, angle, option, hasCallback, actor, flags);
+}

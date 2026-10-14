@@ -33,6 +33,9 @@ enum Kind : uint8_t {
 	K_TAKEN_LIST,   // host -> client: session, keys (all taken so far)
 	K_ENEMY_KILL,   // client -> host: session, manager, index
 	K_TAKEN_AT,     // either way: session, item type, position (an item that appeared during the stage)
+	K_SHINE_GET,    // either way: session, slot, Shine event id, position (someone touched a Shine)
+	K_LEAVING,      // host -> client: area, episode (0xFF: the game decides) the host is setting off for
+	K_DEMO,         // either way: session, slot, the game's description of a cutscene (mp_game.cpp)
 };
 // Items that appear during a stage (from a box, a defeated enemy, a red coin
 // switch) are named by their type and where they are, not their place in the
@@ -74,6 +77,18 @@ struct Controller {
 	std::deque<uint32_t> removals;
 	// items that appeared during the stage and were taken, by anyone, this session
 	std::vector<MpgTakenAt> takenAt;
+	// Shines another player touched, for this game to play the Shine Get too
+	struct ShineGet {
+		int slot, eventId;
+		float pos[3];
+	};
+	std::deque<ShineGet> shineGets;
+	// cutscenes another player's game started, for this game to play too
+	struct Demo {
+		int slot;
+		std::vector<uint8_t> data;
+	};
+	std::deque<Demo> demos;
 	// enemies: the host's list and where the next share starts; a client's
 	// newest share; kills reported to the host
 	std::vector<MpgEnemy> enemies;
@@ -184,6 +199,30 @@ bool readTakenAt(Reader& r, MpgTakenAt& t)
 	return r.ok && t.pos[0] == t.pos[0] && t.pos[1] == t.pos[1] && t.pos[2] == t.pos[2]; // not NaN
 }
 
+std::vector<uint8_t> shineGetMessage(uint32_t session, int slot, int eventId, const float pos[3])
+{
+	std::vector<uint8_t> buf(4 + 1 + 1 + 12);
+	Writer w(buf.data(), buf.size());
+	w.u32(session);
+	w.u8((uint8_t)slot);
+	w.u8((uint8_t)eventId);
+	w.f32(pos[0]);
+	w.f32(pos[1]);
+	w.f32(pos[2]);
+	return buf;
+}
+
+bool readShineGet(Reader& r, Controller::ShineGet& out)
+{
+	out.slot    = r.u8();
+	out.eventId = r.u8();
+	out.pos[0]  = r.f32();
+	out.pos[1]  = r.f32();
+	out.pos[2]  = r.f32();
+	return r.ok && out.slot < MP_MAX_PLAYERS && out.pos[0] == out.pos[0] && out.pos[1] == out.pos[1]
+	       && out.pos[2] == out.pos[2];
+}
+
 void addTakenAt(const MpgTakenAt& t)
 {
 	if (g.takenAt.size() < kMaxTakenAt)
@@ -213,6 +252,41 @@ void hostMessage(const MpEvent& ev)
 			for (const MpgTakenAt& t : g.takenAt)
 				send(ev.slot, K_TAKEN_AT, takenAtMessage(g.session, t));
 		}
+		break;
+	}
+	case K_SHINE_GET: {
+		uint32_t s = r.u32();
+		Controller::ShineGet sg;
+		if (!readShineGet(r, sg) || s != g.session || !g.session)
+			break;
+		sg.slot = ev.slot; // a client speaks for itself only
+		if (g_debug)
+			fprintf(stderr, "[multiplayer] slot %d touched Shine %d\n", sg.slot, sg.eventId);
+		if (g.shineGets.size() < 8)
+			g.shineGets.push_back(sg);
+		for (int i = 1; i < MP_MAX_PLAYERS; i++)
+			if (i != ev.slot && (mp_players() & (1u << i)))
+				send(i, K_SHINE_GET, shineGetMessage(s, sg.slot, sg.eventId, sg.pos));
+		break;
+	}
+	case K_DEMO: {
+		uint32_t s = r.u32();
+		r.u8();
+		if (!r.ok || s != g.session || !g.session || r.left() > 256)
+			break;
+		Controller::Demo d;
+		d.slot = ev.slot;
+		d.data.assign(r.p + r.pos, r.p + r.len);
+		if (g.demos.size() < 4)
+			g.demos.push_back(d);
+		std::vector<uint8_t> buf(5 + d.data.size());
+		Writer w(buf.data(), buf.size());
+		w.u32(s);
+		w.u8((uint8_t)ev.slot);
+		w.bytes(d.data.data(), d.data.size());
+		for (int i = 1; i < MP_MAX_PLAYERS; i++)
+			if (i != ev.slot && (mp_players() & (1u << i)))
+				send(i, K_DEMO, buf);
 		break;
 	}
 	case K_TAKEN_AT: {
@@ -268,6 +342,28 @@ void clientMessage(const MpEvent& ev)
 		g.targetEpisode = episode;
 		g.targetSession = s;
 		fprintf(stderr, "[multiplayer] the host is in area %d, episode %d (session %u)\n", area, episode, s);
+		// we set off with the host and are there already: this is their session
+		if (g.wasPlaying && !g.localSession && g.game.area == area && g.game.episode == episode) {
+			g.localSession = s;
+			g.takenAt.clear();
+			uint8_t buf[4];
+			Writer w(buf, sizeof buf);
+			w.u32(s);
+			mp_send(0, K_READY, buf, w.len);
+		}
+		break;
+	}
+	case K_LEAVING: {
+		int area = r.u8(), episode = r.u8();
+		if (!r.ok || (g.hasTarget && !g.targetSession && g.targetArea == area && g.targetEpisode == episode))
+			break;
+		// the host is setting off: go now, so everyone fades out together
+		// (the session comes with K_STAGE once the host is there)
+		g.hasTarget     = true;
+		g.targetArea    = area;
+		g.targetEpisode = episode;
+		g.targetSession = 0;
+		fprintf(stderr, "[multiplayer] the host is leaving for area %d, episode %d\n", area, episode);
 		break;
 	}
 	case K_FLAGS:
@@ -285,6 +381,24 @@ void clientMessage(const MpEvent& ev)
 		MpgTakenAt t;
 		if (readTakenAt(r, t) && s && s == g.localSession)
 			addTakenAt(t);
+		break;
+	}
+	case K_SHINE_GET: {
+		uint32_t s = r.u32();
+		Controller::ShineGet sg;
+		if (readShineGet(r, sg) && s && s == g.localSession && g.shineGets.size() < 8)
+			g.shineGets.push_back(sg);
+		break;
+	}
+	case K_DEMO: {
+		uint32_t s = r.u32();
+		int slot = r.u8();
+		if (!r.ok || !s || s != g.localSession || slot >= MP_MAX_PLAYERS || r.left() > 256 || g.demos.size() >= 4)
+			break;
+		Controller::Demo d;
+		d.slot = slot;
+		d.data.assign(r.p + r.pos, r.p + r.len);
+		g.demos.push_back(d);
 		break;
 	}
 	case K_TAKEN_LIST: {
@@ -589,6 +703,8 @@ extern "C" void mpg_frame(const MpgGame* game)
 			g.taken.clear();
 			g.removals.clear();
 			g.takenAt.clear();
+			g.shineGets.clear();
+			g.demos.clear();
 			g.sessionRed = 0;
 			g.restoreRed = false;
 			g.shineExit  = false;
@@ -616,7 +732,9 @@ extern "C" void mpg_frame(const MpgGame* game)
 
 	// client
 	if (arrived) {
-		if (g.hasTarget && game->area == g.targetArea && game->episode == g.targetEpisode) {
+		if (g.hasTarget && !g.targetSession) {
+			g.localSession = 0; // the host is on its way too: K_STAGE says which session
+		} else if (g.hasTarget && game->area == g.targetArea && game->episode == g.targetEpisode) {
 			if (g.localSession != g.targetSession)
 				g.takenAt.clear();
 			g.localSession = g.targetSession;
@@ -713,8 +831,23 @@ extern "C" int mpg_target(int* area, int* episode)
 
 extern "C" int mpg_in_target(void)
 {
-	return g.role != MPG_ROLE_CLIENT || !g.hasTarget || mp_link() != MP_LINK_CONNECTED
-	       || (g.localSession && g.localSession == g.targetSession);
+	if (g.role != MPG_ROLE_CLIENT || !g.hasTarget || mp_link() != MP_LINK_CONNECTED)
+		return 1;
+	if (!g.targetSession) // the host is on the way: are we going there (or there) already?
+		return g.game.playing && g.game.area == g.targetArea
+		       && (g.targetEpisode == 0xFF || g.game.episode == g.targetEpisode);
+	return g.localSession && g.localSession == g.targetSession;
+}
+
+extern "C" void mpg_host_leaving(int area, int episode)
+{
+	if (g.role != MPG_ROLE_HOST)
+		return;
+	std::lock_guard<std::mutex> hold(g_lock);
+	uint8_t buf[2] = {(uint8_t)area, (uint8_t)episode};
+	for (int i = 1; i < MP_MAX_PLAYERS; i++)
+		if (mp_players() & (1u << i))
+			mp_send(i, K_LEAVING, buf, sizeof buf);
 }
 
 extern "C" int mpg_take_shine_exit(void)
@@ -765,6 +898,71 @@ extern "C" void mpg_item_taken_at(int type, const float pos[3])
 		addTakenAt(t);
 		send(0, K_TAKEN_AT, takenAtMessage(g.localSession, t));
 	}
+}
+
+extern "C" void mpg_shine_get(int eventId, const float pos[3])
+{
+	if (g.role == MPG_ROLE_OFF)
+		return;
+	std::lock_guard<std::mutex> hold(g_lock);
+	const int slot = mp_local_slot();
+	if (g.role == MPG_ROLE_HOST) {
+		if (!g.session)
+			return;
+		for (int i = 1; i < MP_MAX_PLAYERS; i++)
+			if (mp_players() & (1u << i))
+				send(i, K_SHINE_GET, shineGetMessage(g.session, slot, eventId, pos));
+	} else if (g.localSession) {
+		send(0, K_SHINE_GET, shineGetMessage(g.localSession, slot, eventId, pos));
+	}
+}
+
+extern "C" int mpg_next_shine_get(int* slot, int* eventId, float pos[3])
+{
+	std::lock_guard<std::mutex> hold(g_lock);
+	if (g.shineGets.empty())
+		return 0;
+	const Controller::ShineGet& sg = g.shineGets.front();
+	*slot    = sg.slot;
+	*eventId = sg.eventId;
+	memcpy(pos, sg.pos, sizeof sg.pos);
+	g.shineGets.pop_front();
+	return 1;
+}
+
+extern "C" void mpg_demo(const void* data, size_t size)
+{
+	if (g.role == MPG_ROLE_OFF || size > 256)
+		return;
+	std::lock_guard<std::mutex> hold(g_lock);
+	const uint32_t session = g.role == MPG_ROLE_HOST ? g.session : g.localSession;
+	if (!session)
+		return;
+	std::vector<uint8_t> buf(5 + size);
+	Writer w(buf.data(), buf.size());
+	w.u32(session);
+	w.u8((uint8_t)mp_local_slot());
+	w.bytes(data, size);
+	if (g.role == MPG_ROLE_HOST) {
+		for (int i = 1; i < MP_MAX_PLAYERS; i++)
+			if (mp_players() & (1u << i))
+				send(i, K_DEMO, buf);
+	} else {
+		send(0, K_DEMO, buf);
+	}
+}
+
+extern "C" size_t mpg_next_demo(int* slot, void* data, size_t size)
+{
+	std::lock_guard<std::mutex> hold(g_lock);
+	if (g.demos.empty())
+		return 0;
+	const Controller::Demo& d = g.demos.front();
+	const size_t n = std::min(size, d.data.size());
+	*slot = d.slot;
+	memcpy(data, d.data.data(), n);
+	g.demos.pop_front();
+	return n ? n : 1;
 }
 
 extern "C" int mpg_taken_at(int i, MpgTakenAt* out)
