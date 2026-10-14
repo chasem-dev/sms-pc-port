@@ -39,10 +39,10 @@ enum Kind : uint8_t {
 	K_SHINE_GET,    // either way: session, slot, Shine event id, position (someone touched a Shine)
 	K_LEAVING,      // host -> client: area, episode (0xFF: the game decides) the host is setting off for
 	K_DEMO,         // either way: session, slot, the game's description of a cutscene (mp_game.cpp)
-	K_BOSS_HIT,     // client -> host: session, kind, count (a hit on its copy of the boss, for the real one)
+	K_BOSS_HIT,     // client -> host: session, part, kind, count (a hit on its copy of the boss, for the real one)
 };
 // The host's boss rides at the end of the world snapshot, after the enemies.
-const size_t kMaxBoss = 48;
+const size_t kMaxBoss = 200;
 // Items that appear during a stage (from a box, a defeated enemy, a red coin
 // switch) are named by their type and where they are, not their place in the
 // item manager (every game fills that differently); at most this many a stage.
@@ -50,7 +50,7 @@ const size_t kMaxTakenAt = 512;
 
 const char* const kCharacters[MP_MAX_PLAYERS] = {"Mario", "Luigi", "Peach", "Metal Mario"};
 const char* const kWorlds[] = {"the Airstrip", "Delfino Plaza", "Bianco Hills", "Ricco Harbor", "Gelato Beach",
-                               "Pinna Park", "Sirena Beach", "Noki Bay", "Pianta Village", "Corona Mountain"};
+                               "Pinna Park", "Sirena Beach", "Pianta Village", "Noki Bay", "Corona Mountain"}; // SMS_getShineStage's order
 const size_t kPoseSize = 4 + 4 + 4 + 48 + 4 + 16 + 4 + 8 + 4 + 4 + 4 + 48 + 48 + 12 + 4;
 const size_t kEnemySize = 18;
 
@@ -97,7 +97,10 @@ struct Controller {
 	std::deque<Demo> demos;
 	// host: its boss's state for the snapshot, and the hits the others report
 	std::vector<uint8_t> boss;
-	std::deque<std::pair<int, int>> bossHits;
+	struct BossHit {
+		int unit, kind, count;
+	};
+	std::deque<BossHit> bossHits;
 	// enemies: the host's list and where the next share starts; a client's
 	// newest share; kills reported to the host
 	std::vector<MpgEnemy> enemies;
@@ -311,9 +314,12 @@ void hostMessage(const MpEvent& ev)
 	}
 	case K_BOSS_HIT: {
 		uint32_t s = r.u32();
-		int kind = r.u8(), count = r.u8();
+		Controller::BossHit h;
+		h.unit  = r.u8();
+		h.kind  = r.u8();
+		h.count = r.u8();
 		if (r.ok && s == g.session && g.session && g.bossHits.size() < 64)
-			g.bossHits.emplace_back(kind, count);
+			g.bossHits.push_back(h);
 		break;
 	}
 	case K_ENEMY_KILL: {
@@ -1179,25 +1185,27 @@ extern "C" size_t mpg_boss(void* out, size_t size, float* age)
 	return len;
 }
 
-extern "C" void mpg_boss_hit(int kind, int count)
+extern "C" void mpg_boss_hit(int unit, int kind, int count)
 {
 	if (g.role != MPG_ROLE_CLIENT || !g.localSession || count <= 0)
 		return;
 	uint8_t buf[8];
 	Writer w(buf, sizeof buf);
 	w.u32(g.localSession);
+	w.u8((uint8_t)unit);
 	w.u8((uint8_t)kind);
 	w.u8((uint8_t)(count > 255 ? 255 : count));
 	mp_send(0, K_BOSS_HIT, buf, w.len);
 }
 
-extern "C" int mpg_next_boss_hit(int* kind, int* count)
+extern "C" int mpg_next_boss_hit(int* unit, int* kind, int* count)
 {
 	std::lock_guard<std::mutex> hold(g_lock);
 	if (g.bossHits.empty())
 		return 0;
-	*kind  = g.bossHits.front().first;
-	*count = g.bossHits.front().second;
+	*unit  = g.bossHits.front().unit;
+	*kind  = g.bossHits.front().kind;
+	*count = g.bossHits.front().count;
 	g.bossHits.pop_front();
 	return 1;
 }

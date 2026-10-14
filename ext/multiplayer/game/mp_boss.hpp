@@ -10,5 +10,7 @@ void MpBossStageSetup();
 void MpBossHostFrame();
 // Client, every tick after movement: follow the host's boss, report hits.
 void MpBossClientTick();
+// Test aid: a hit by this game's player on its copy; the boss's kind, 0 if none.
+int MpBossTestHit();
 
 #endif
