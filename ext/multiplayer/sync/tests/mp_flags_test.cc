@@ -3,6 +3,7 @@
 // message through the same chunked encoding.
 //   make run
 #include "mp_flags.h"
+#include "../../net/mp_wire.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -183,6 +184,18 @@ int main()
 	w.clients[0][FLAG_LIVES] += 200;
 	w.frame();
 	CHECK(w.host[FLAG_LIVES] == 99);
+	// used up: -1 (a player out of lives watches), and no lower
+	w.host[FLAG_LIVES] = 0;
+	w.frame();
+	w.clients[0][FLAG_LIVES] -= 1;
+	w.frame();
+	CHECK(w.host[FLAG_LIVES] == -1 && w.clients[0][FLAG_LIVES] == -1 && w.clients[1][FLAG_LIVES] == -1);
+	w.clients[1][FLAG_LIVES] -= 1;
+	w.frame();
+	CHECK(w.host[FLAG_LIVES] == -1);
+	w.host[FLAG_LIVES] = 3; // everyone out: the host starts the stage again
+	w.frame();
+	CHECK(w.clients[0][FLAG_LIVES] == 3 && w.clients[1][FLAG_LIVES] == 3);
 
 	// late game: everything set, the full update still arrives whole
 	for (uint32_t i = 0; i < FLAG_CARD_BOOLS_N; i++)
@@ -193,6 +206,41 @@ int main()
 	int32_t shines, blue;
 	flagTotals([&](uint32_t id) { return w.clients[1][id]; }, &shines, &blue);
 	CHECK(shines == 120 && blue == (int32_t)FLAG_BLUE_N);
+	// a report from a changed or broken game cannot push the host's save out
+	// of the game's bounds, or overflow it
+	{
+		FlagReport bad;
+		bad.seq = 1000;
+		bad.changes.push_back({(uint16_t)sharedFlagIndex(FLAG_COINS), 2000000000});
+		bad.changes.push_back({(uint16_t)sharedFlagIndex(FLAG_RED_COINS), 2000000000});
+		bad.changes.push_back({(uint16_t)sharedFlagIndex(FLAG_BEST_COINS + 3), 2147483647});
+		bad.changes.push_back({(uint16_t)sharedFlagIndex(FLAG_LIVES), 2147483647});
+		w.host[FLAG_COINS] = 500;
+		w.hostFlags.report(1, bad, w.host.v);
+		CHECK(w.host[FLAG_COINS] == 999 && w.host[FLAG_RED_COINS] == 99);
+		CHECK(w.host[FLAG_BEST_COINS + 3] == 999 && w.host[FLAG_LIVES] == 99);
+		FlagReport low;
+		low.seq = 1001;
+		low.changes.push_back({(uint16_t)sharedFlagIndex(FLAG_LIVES), -2147483647 - 1});
+		w.hostFlags.report(1, low, w.host.v);
+		CHECK(w.host[FLAG_LIVES] == -1);
+		// more changes than there are flags is not a report from a game
+		std::vector<uint8_t> chunk;
+		{
+			const size_t n = sharedFlags().size() + 1;
+			chunk.resize(7 + n * 6);
+			mp::Writer cw(chunk.data(), chunk.size());
+			cw.u8(0);
+			cw.u32(1002);
+			cw.u16((uint16_t)n);
+			for (size_t i = 0; i < n; i++) {
+				cw.u16(0);
+				cw.s32(1);
+			}
+		}
+		FlagReportReader rr;
+		CHECK(!rr.add(chunk.data(), chunk.size()));
+	}
 	(void)before;
 	fprintf(stderr, "PASS (%zu shared flags)\n", sharedFlags().size());
 	return 0;

@@ -24,6 +24,11 @@ class MActor;
 class TMario;
 // Mario's look this frame, as a pose (mp_game.cpp).
 void MpCapturePose(TMario* mario, MpgPose* pose);
+// Counts the stages set up: what was loaded for one stage lives in its
+// memory, and is gone in the next (a director's address can come back).
+unsigned MpStageNumber();
+// Another player's FLUDD water, emitted in this game (mp_game.cpp).
+void MpEmitWater(const MpgPose& pose, f32* carry);
 
 class TMpPuppet : public THitActor {
 public:
@@ -37,11 +42,13 @@ public:
 
 	int slot() const { return mSlot; }
 	bool active() const { return mActive; }
+	const MpgPose& pose() const { return mPose; }
 	// Where it is (for the name over its head), valid while active().
 	const f32* headPos() const { return mHead; }
 
 private:
 	void applyPose(JDrama::TGraphics* graphics);
+	void blendPoses(const MpgPose& a, const MpgPose& b, f32 t, MpgPose* out);
 	void showHands(int hand);
 	bool buildBody();
 	bool buildFludd();
@@ -58,6 +65,9 @@ private:
 	f32 mSmoothed[3];
 	f32 mHead[3];
 	u32 mLastSession;
+	f32 mWaterCarry;
+	int mSpawnFrames;   // since this player appeared (it grows in over the first few)
+	int mGoneFrames;    // since it was last seen
 
 	M3UModelMario* mModel;   // Mario-shaped body (for Peach, the skeleton she copies)
 	J3DModelData* mBodyData;

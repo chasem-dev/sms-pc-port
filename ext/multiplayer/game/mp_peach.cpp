@@ -7,6 +7,7 @@
 // the whole 5 MB. The files are copied out and converted to this machine's
 // byte order as an archive's files are when the game fetches them.
 #include "mp_peach.hpp"
+#include "mp_puppet.hpp"
 
 #include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
 #include <JSystem/J3D/J3DGraphBase/J3DTexture.hpp>
@@ -102,7 +103,7 @@ J3DModelData* loadFile(const Entry* list, int count, const char* name)
 }
 
 MpPeachParts s_parts;
-void* s_partsFor; // the director (stage) they were loaded in
+unsigned s_partsFor; // the stage they were loaded in (MpStageNumber)
 bool s_missing;   // this disc has no Peach to read
 
 } // namespace
@@ -111,10 +112,10 @@ const MpPeachParts* MpPeachLoad()
 {
 	if (s_missing)
 		return nullptr;
-	if (s_partsFor == gpMarDirector && s_parts.body)
+	if (s_partsFor == MpStageNumber() && s_parts.body)
 		return &s_parts;
 	memset(&s_parts, 0, sizeof s_parts);
-	s_partsFor = gpMarDirector;
+	s_partsFor = MpStageNumber();
 	static Entry list[160];
 	const int count = listArchive(list, 160);
 	s_parts.body    = loadFile(list, count, "peach_model.bmd");

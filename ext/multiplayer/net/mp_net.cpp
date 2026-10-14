@@ -2,17 +2,24 @@
 // channel and the relay of player states.
 //
 // Every packet starts "SMMP", the protocol version and its type:
-//   PROBE   nonce                          anyone -> host: is this a game?
+//   PROBE   nonce, padding                 anyone -> host: is this a game?
 //   INFO    nonce, players, max, open, build, name, status   host's answer
-//   CONNECT nonce, build, name             client -> host, until answered
+//   CONNECT nonce, build, name, cookie     client -> host, until answered
+//   CHALLENGE nonce, cookie                host -> client: say that again with this
 //   ACCEPT  nonce, slot, token             host -> client
 //   REJECT  nonce, reason, message         host -> client
-//   DATA    token, ack, time, echo, states, messages   both ways, ~30 a second
+//   DATA    token, ack, time, echo, states, world, messages   both ways, ~30 a second
 //   BYE     token                          either side, when leaving
-// DATA carries the newest player states (unreliable: a lost one is replaced
-// by the next) and every reliable message the other side has not
+// DATA carries the newest player states and the host's world snapshot
+// (unreliable: a lost one is replaced by the next) and every reliable message the other side has not
 // acknowledged, resent until it is. `ack` is the next reliable sequence
 // number the sender expects, so everything before it has arrived.
+//
+// Packets come from anyone on the internet, so the host keeps its answers no
+// bigger than what was asked (a PROBE is padded to more than an INFO), gives
+// out a slot only to a CONNECT that echoes a cookie sent to its address (a
+// forged sender address never sees the cookie), and bounds what one player can
+// make it hold or do.
 #include "mp_net.h"
 #include "mp_socket.h"
 #include "mp_wire.h"
@@ -34,7 +41,7 @@ namespace mp {
 namespace {
 
 const uint32_t kMagic    = 0x504D4D53; // "SMMP"
-const uint16_t kProtocol = 1;
+const uint16_t kProtocol = 2;
 enum PacketType : uint8_t {
 	PK_PROBE = 1,
 	PK_INFO,
@@ -43,6 +50,7 @@ enum PacketType : uint8_t {
 	PK_REJECT,
 	PK_DATA,
 	PK_BYE,
+	PK_CHALLENGE,
 };
 enum RejectReason : uint8_t {
 	REJECT_FULL = 1,
@@ -60,8 +68,48 @@ const int kSendIntervalMs  = 33;  // states ~30 a second
 const int kResendMs        = 150; // an unacknowledged message goes again
 const int kConnectRetryMs  = 500;
 const int kConnectGiveUpMs = 10000;
+// A PROBE is at least this long, more than any INFO, so answering one sends
+// no more than it took to ask (no use for flooding someone else).
+const size_t kProbeSize = 200;
+const int kCookieWindowMs  = 10000; // a challenge cookie lasts one or two of these
+const int kRecvPerPass     = 64;    // packets read between two looks at the clock
+const size_t kMaxEvents    = 2048;  // waiting for the game; more and the sender is dropped
+const uint32_t kEarlyWindow = 256;  // out-of-order messages kept ahead of the next one
 
 typedef std::chrono::steady_clock Clock;
+
+// SipHash-2-4: the host's challenge cookies, keyed with a secret of its own.
+uint64_t sipHash(const uint8_t key[16], const uint8_t* m, size_t len)
+{
+	auto rd = [](const uint8_t* p) {
+		uint64_t v = 0;
+		for (int i = 7; i >= 0; i--)
+			v = v << 8 | p[i];
+		return v;
+	};
+	auto rotl = [](uint64_t x, int b) { return (x << b) | (x >> (64 - b)); };
+	const uint64_t k0 = rd(key), k1 = rd(key + 8);
+	uint64_t v0 = 0x736f6d6570736575ULL ^ k0, v1 = 0x646f72616e646f6dULL ^ k1;
+	uint64_t v2 = 0x6c7967656e657261ULL ^ k0, v3 = 0x7465646279746573ULL ^ k1;
+	auto round = [&]() {
+		v0 += v1, v1 = rotl(v1, 13), v1 ^= v0, v0 = rotl(v0, 32);
+		v2 += v3, v3 = rotl(v3, 16), v3 ^= v2;
+		v0 += v3, v3 = rotl(v3, 21), v3 ^= v0;
+		v2 += v1, v1 = rotl(v1, 17), v1 ^= v2, v2 = rotl(v2, 32);
+	};
+	const size_t whole = len & ~(size_t)7;
+	for (size_t i = 0; i < whole; i += 8) {
+		const uint64_t mi = rd(m + i);
+		v3 ^= mi, round(), round(), v0 ^= mi;
+	}
+	uint64_t last = (uint64_t)len << 56;
+	for (size_t i = whole; i < len; i++)
+		last |= (uint64_t)m[i] << (8 * (i - whole));
+	v3 ^= last, round(), round(), v0 ^= last;
+	v2 ^= 0xff;
+	round(), round(), round(), round();
+	return v0 ^ v1 ^ v2 ^ v3;
+}
 
 uint32_t nowMs()
 {
@@ -105,6 +153,13 @@ struct PlayerSlot {
 	size_t stateSize  = 0;
 	uint32_t stateSeq = 0;
 	uint32_t stateAt  = 0;
+	// every state received since the game last asked (mp_remote_next), so
+	// none is lost between two of its frames
+	struct Received {
+		std::vector<uint8_t> data;
+		uint32_t at;
+	};
+	std::deque<Received> unread;
 };
 
 struct Session {
@@ -116,6 +171,8 @@ struct Session {
 	Address hostAddr; // client
 	int localSlot = -1;
 	uint32_t connectNonce = 0, connectStarted = 0, connectLastTry = 0;
+	uint64_t connectCookie = 0; // client: the host's challenge, echoed in CONNECT
+	uint8_t cookieKey[16]  = {}; // host: the secret behind its cookies
 	Peer peers[MP_MAX_PLAYERS]; // host: by slot (0 unused); client: [0] is the host
 	PlayerSlot players[MP_MAX_PLAYERS];
 	uint32_t localStateSeq = 0;
@@ -125,6 +182,8 @@ struct Session {
 	std::atomic<bool> running{false};
 	std::mt19937 rng{std::random_device{}()};
 	uint32_t lastSend = 0;
+	std::vector<uint8_t> world; // host: to send; client: the newest received
+	uint32_t worldSeq = 0, worldAt = 0;
 };
 
 Session* g_session;
@@ -147,6 +206,10 @@ void header(Writer& w, PacketType type)
 void pushEvent(Session& s, MpEventType type, int slot, uint8_t kind = 0, const void* data = nullptr,
                size_t size = 0, const char* name = nullptr)
 {
+	// the game reads these every frame; only a peer flooding us (or a game
+	// stuck loading for long) fills the queue, and deliver() drops the peer
+	if (s.events.size() >= kMaxEvents + 16)
+		return;
 	s.events.emplace_back();
 	MpEvent& ev = s.events.back();
 	memset(&ev, 0, offsetof(MpEvent, data));
@@ -178,19 +241,51 @@ int peerIndexForSlot(Session& s, int slot)
 	return s.peers[0].active ? 0 : -1;
 }
 
-void sendData(Session& s, Peer& p, int toSlot, uint32_t now, bool force)
+// Writes the reliable messages due for `p` that fit in `w`, oldest first;
+// returns how many. Stops at the first that does not fit, so they go in order.
+int writeMessages(Peer& p, Writer& w, size_t room, uint32_t now, bool force, bool& left)
 {
-	uint8_t buf[kPacketMax];
-	Writer w(buf, sizeof buf);
+	const size_t countAt = w.len;
+	int count            = 0;
+	left                 = false;
+	w.u8(0);
+	for (Outgoing& o : p.out) {
+		if (o.lastSent && now - o.lastSent < (uint32_t)kResendMs && !force)
+			continue;
+		if (count == 255 || w.len + 7 + o.data.size() > room) {
+			left = true;
+			break;
+		}
+		w.u32(o.seq);
+		w.u8(o.kind);
+		w.u16((uint16_t)o.data.size());
+		w.bytes(o.data.data(), o.data.size());
+		o.lastSent = now;
+		count++;
+	}
+	w.p[countAt] = (uint8_t)count;
+	return count;
+}
+
+void dataHeader(Writer& w, Peer& p, uint32_t now)
+{
 	header(w, PK_DATA);
 	w.u32(p.token);
 	w.u32(p.recvNext);
 	w.u32(now);
-	w.u32(p.peerTime + (now - p.peerTimeAt));
+	// their clock as it is now (0 until we have heard it: no ping yet)
+	w.u32(p.peerTimeAt ? p.peerTime + (now - p.peerTimeAt) : 0);
+}
+
+void sendData(Session& s, Peer& p, int toSlot, uint32_t now, bool force)
+{
+	uint8_t buf[kPacketMax];
+	Writer w(buf, sizeof buf);
+	dataHeader(w, p, now);
 
 	// player states: the client sends its own; the host sends everyone else's
 	size_t countAt = w.len;
-	uint8_t count  = 0;
+	int count      = 0;
 	w.u8(0);
 	for (int i = 0; i < MP_MAX_PLAYERS; i++) {
 		const PlayerSlot& pl = s.players[i];
@@ -206,28 +301,34 @@ void sendData(Session& s, Peer& p, int toSlot, uint32_t now, bool force)
 	}
 	buf[countAt] = count;
 
-	// reliable messages not acknowledged, oldest first, as many as fit
-	countAt = w.len;
-	count   = 0;
-	w.u8(0);
-	for (Outgoing& o : p.out) {
-		if (count == 255)
-			break;
-		if (o.lastSent && now - o.lastSent < (uint32_t)kResendMs && !force)
-			continue;
-		if (w.len + 7 + o.data.size() > sizeof buf)
-			break;
-		w.u32(o.seq);
-		w.u8(o.kind);
-		w.u16((uint16_t)o.data.size());
-		w.bytes(o.data.data(), o.data.size());
-		o.lastSent = now;
-		count++;
+	// the host's world snapshot
+	if (s.cfg.role == MP_ROLE_HOST && !s.world.empty()) {
+		w.u32(s.worldSeq);
+		w.u16((uint16_t)s.world.size());
+		w.bytes(s.world.data(), s.world.size());
+	} else {
+		w.u32(0);
+		w.u16(0);
 	}
-	buf[countAt] = count;
-	p.flush      = false;
+
+	// reliable messages not acknowledged, oldest first, as many as fit
+	bool left = false;
+	writeMessages(p, w, sizeof buf, now, force, left);
+	p.flush = false;
 	if (w.ok)
 		s.sock.send(buf, w.len, p.addr);
+	// what did not fit beside the states and the world goes in packets of its
+	// own (no states, no world), so a big message never waits for good
+	for (int extra = 0; left && extra < 4; extra++) {
+		Writer m(buf, sizeof buf);
+		dataHeader(m, p, now);
+		m.u8(0);  // no states
+		m.u32(0); // no world
+		m.u16(0);
+		if (!writeMessages(p, m, sizeof buf, now, force, left) || !m.ok)
+			break;
+		s.sock.send(buf, m.len, p.addr);
+	}
 }
 
 void dropPeer(Session& s, int idx, const char* why)
@@ -260,6 +361,12 @@ void dropPeer(Session& s, int idx, const char* why)
 
 void deliver(Session& s, int fromSlot, uint8_t kind, const uint8_t* data, size_t size)
 {
+	if (s.events.size() >= kMaxEvents) {
+		// the game cannot keep up with what this peer sends
+		dropPeer(s, s.cfg.role == MP_ROLE_HOST ? fromSlot : 0, s.cfg.role == MP_ROLE_HOST
+		         ? "sent too much at once" : "The host sent more than this game could take.");
+		return;
+	}
 	if (kind < SYS_PLAYER_JOINED) {
 		pushEvent(s, MP_EV_MESSAGE, fromSlot, kind, data, size);
 		return;
@@ -317,6 +424,21 @@ void readData(Session& s, int idx, Reader& r, uint32_t now)
 		pl.stateSize = size;
 		pl.stateSeq  = seq;
 		pl.stateAt   = now;
+		pl.unread.push_back({std::vector<uint8_t>(d, d + size), now});
+		while (pl.unread.size() > 64)
+			pl.unread.pop_front();
+	}
+
+	uint32_t worldSeq     = r.u32();
+	uint16_t worldSize    = r.u16();
+	const uint8_t* worldP = r.skip(worldSize);
+	if (!r.ok || worldSize > MP_MAX_WORLD)
+		return;
+	if (s.cfg.role == MP_ROLE_CLIENT && worldSize && (s.world.empty() || (int32_t)(worldSeq - s.worldSeq) >= 0)) {
+		// the newest snapshot (or the same one again: still current)
+		s.world.assign(worldP, worldP + worldSize);
+		s.worldSeq = worldSeq;
+		s.worldAt  = now;
 	}
 
 	uint8_t nMsgs = r.u8();
@@ -331,6 +453,8 @@ void readData(Session& s, int idx, Reader& r, uint32_t now)
 		got = true;
 		if ((int32_t)(seq - p.recvNext) < 0 || p.early.count(seq))
 			continue; // already have it
+		if (seq - p.recvNext >= kEarlyWindow)
+			continue; // too far ahead: it comes again once the gap is filled
 		Incoming in;
 		in.kind = kind;
 		in.data.assign(d, d + size);
@@ -343,11 +467,33 @@ void readData(Session& s, int idx, Reader& r, uint32_t now)
 	// deliver in order
 	for (auto it = p.early.find(p.recvNext); it != p.early.end(); it = p.early.find(p.recvNext)) {
 		deliver(s, fromSlot, it->second.kind, it->second.data.data(), it->second.data.size());
+		if (!p.active)
+			return; // dropped for flooding
 		p.early.erase(it);
 		p.recvNext++;
 	}
 	if (got)
 		p.flush = true; // acknowledge soon
+}
+
+uint64_t makeCookie(Session& s, const Address& from, uint32_t nonce, uint32_t window)
+{
+	const std::string who = from.text();
+	std::vector<uint8_t> m(who.begin(), who.end());
+	for (int i = 0; i < 4; i++)
+		m.push_back((uint8_t)(nonce >> (8 * i)));
+	for (int i = 0; i < 4; i++)
+		m.push_back((uint8_t)(window >> (8 * i)));
+	return sipHash(s.cookieKey, m.data(), m.size()) | 1;
+}
+
+// A cookie made for this address and nonce in this window or the one before.
+bool cookieValid(Session& s, const Address& from, uint32_t nonce, uint64_t cookie, uint32_t now)
+{
+	if (!cookie)
+		return false;
+	const uint32_t window = now / kCookieWindowMs;
+	return cookie == makeCookie(s, from, nonce, window) || (window && cookie == makeCookie(s, from, nonce, window - 1));
 }
 
 void hostPacket(Session& s, const uint8_t* buf, int n, const Address& from, uint32_t now)
@@ -363,6 +509,8 @@ void hostPacket(Session& s, const uint8_t* buf, int n, const Address& from, uint
 	Writer w(out, sizeof out);
 
 	if (type == PK_PROBE) {
+		if ((size_t)n < kProbeSize)
+			return; // too short to be worth an answer (see kProbeSize)
 		uint32_t nonce = r.u32();
 		int count      = 0;
 		for (const PlayerSlot& pl : s.players)
@@ -398,16 +546,34 @@ void hostPacket(Session& s, const uint8_t* buf, int n, const Address& from, uint
 				return;
 			}
 		}
+		// The sender must show it gets packets at `from` (a forged address
+		// never sees the cookie) before the host answers at length or gives
+		// it a slot.
+		const uint64_t cookie = r.u64();
+		if (!r.ok || !cookieValid(s, from, nonce, cookie, now)) {
+			header(w, PK_CHALLENGE);
+			w.u32(nonce);
+			w.u64(makeCookie(s, from, nonce, now / kCookieWindowMs));
+			s.sock.send(out, w.len, from);
+			return;
+		}
 		const char* why = nullptr;
 		uint8_t reason  = 0;
-		int slot        = -1;
-		for (int i = 1; i < MP_MAX_PLAYERS && slot < 0; i++)
-			if (!s.peers[i].active)
-				slot = i;
 		if (version != kProtocol || strcmp(build, s.cfg.build) != 0) {
 			reason = REJECT_BUILD;
 			why    = "The host is playing a different version of the game. Update both games to the same version.";
-		} else if (slot < 0) {
+		}
+		if (!why) {
+			// a player reconnecting from the same address replaces their old slot
+			for (int i = 1; i < MP_MAX_PLAYERS; i++)
+				if (s.peers[i].active && s.peers[i].addr == from)
+					dropPeer(s, i, "reconnected");
+		}
+		int slot = -1;
+		for (int i = 1; i < MP_MAX_PLAYERS && slot < 0; i++)
+			if (!s.peers[i].active)
+				slot = i;
+		if (!why && slot < 0) {
 			reason = REJECT_FULL;
 			why    = "The game is full (4 players).";
 		}
@@ -419,10 +585,6 @@ void hostPacket(Session& s, const uint8_t* buf, int n, const Address& from, uint
 			s.sock.send(out, w.len, from);
 			return;
 		}
-		// a player reconnecting from the same address replaces their old slot
-		for (int i = 1; i < MP_MAX_PLAYERS; i++)
-			if (s.peers[i].active && s.peers[i].addr == from)
-				dropPeer(s, i, "reconnected");
 		Peer& p     = s.peers[slot];
 		p           = Peer();
 		p.active    = true;
@@ -512,6 +674,15 @@ void clientPacket(Session& s, const uint8_t* buf, int n, const Address& from, ui
 		pushEvent(s, MP_EV_CONNECTED, slot);
 		return;
 	}
+	if (type == PK_CHALLENGE && s.link == MP_LINK_CONNECTING) {
+		uint32_t nonce  = r.u32();
+		uint64_t cookie = r.u64();
+		if (!r.ok || nonce != s.connectNonce || !cookie)
+			return;
+		s.connectCookie  = cookie;
+		s.connectLastTry = 0; // ask again now, with it
+		return;
+	}
 	if (type == PK_REJECT && s.link == MP_LINK_CONNECTING) {
 		uint32_t nonce = r.u32();
 		r.u8();
@@ -556,6 +727,7 @@ void tick(Session& s, uint32_t now)
 			w.u32(s.connectNonce);
 			w.str(s.cfg.build, 63);
 			w.str(s.cfg.name, MP_NAME_LEN - 1);
+			w.u64(s.connectCookie);
 			s.sock.send(out, w.len, s.hostAddr);
 			s.connectLastTry = now;
 		}
@@ -580,21 +752,33 @@ void tick(Session& s, uint32_t now)
 
 void run(Session* s)
 {
-	uint8_t buf[2048];
+	// read a batch without the lock, so a flood of packets never holds up
+	// the game thread (every mp_* call takes the lock), then handle it
+	struct Packet {
+		uint8_t data[2048];
+		int size;
+		Address from;
+	};
+	std::vector<Packet> batch(kRecvPerPass);
 	std::uniform_real_distribution<float> chance(0.0f, 1.0f);
 	while (s->running.load()) {
 		s->sock.wait(5);
+		int got = 0;
+		while (got < kRecvPerPass) {
+			Packet& pk = batch[got];
+			if ((pk.size = s->sock.recv(pk.data, sizeof pk.data, pk.from)) < 0)
+				break;
+			got++;
+		}
 		std::lock_guard<std::mutex> hold(s->lock);
 		const uint32_t now = nowMs();
-		Address from;
-		int n;
-		while ((n = s->sock.recv(buf, sizeof buf, from)) >= 0) {
+		for (int i = 0; i < got; i++) {
 			if (s->cfg.dropRate > 0 && chance(s->rng) < s->cfg.dropRate)
 				continue;
 			if (s->cfg.role == MP_ROLE_HOST)
-				hostPacket(*s, buf, n, from, now);
+				hostPacket(*s, batch[i].data, batch[i].size, batch[i].from, now);
 			else
-				clientPacket(*s, buf, n, from, now);
+				clientPacket(*s, batch[i].data, batch[i].size, batch[i].from, now);
 		}
 		tick(*s, now);
 	}
@@ -685,6 +869,11 @@ extern "C" int mp_start(const MpConfig* cfg)
 			g_session = s;
 			return -1;
 		}
+		std::random_device seed;
+		for (int i = 0; i < 16; i += 4) {
+			const uint32_t v = seed();
+			memcpy(s->cookieKey + i, &v, 4);
+		}
 		s->localSlot          = 0;
 		s->link               = MP_LINK_CONNECTED;
 		s->players[0].present = true;
@@ -702,7 +891,7 @@ extern "C" int mp_start(const MpConfig* cfg)
 		s->link           = MP_LINK_CONNECTING;
 		s->connectNonce   = (uint32_t)s->rng() | 1;
 		s->connectStarted = nowMs();
-		s->message        = "Connecting to " + s->hostAddr.text() + "…";
+		s->message        = "Connecting to " + s->hostAddr.text() + "...";
 	}
 	fprintf(stderr, "[multiplayer] %s\n", s->message.c_str());
 	s->running = true;
@@ -875,4 +1064,54 @@ extern "C" void mp_set_host_status(const char* status)
 		    return 0;
 	    },
 	    0);
+}
+
+extern "C" void mp_set_world(const void* data, size_t size)
+{
+	if (size > MP_MAX_WORLD)
+		return;
+	withSession(
+	    [&](Session& s) {
+		    if (s.cfg.role != MP_ROLE_HOST)
+			    return 0;
+		    s.world.assign((const uint8_t*)data, (const uint8_t*)data + size);
+		    s.worldSeq++;
+		    return 0;
+	    },
+	    0);
+}
+
+extern "C" size_t mp_world(void* data, size_t size, float* age)
+{
+	return withSession(
+	    [&](Session& s) -> size_t {
+		    if (s.cfg.role != MP_ROLE_CLIENT || s.world.empty())
+			    return 0;
+		    memcpy(data, s.world.data(), s.world.size() < size ? s.world.size() : size);
+		    if (age)
+			    *age = (nowMs() - s.worldAt) / 1000.0f;
+		    return s.world.size();
+	    },
+	    (size_t)0);
+}
+
+extern "C" uint32_t mp_clock_ms(void) { return nowMs(); }
+
+extern "C" size_t mp_remote_next(int slot, void* data, size_t size, uint32_t* receivedMs)
+{
+	if (slot < 0 || slot >= MP_MAX_PLAYERS)
+		return 0;
+	return withSession(
+	    [&](Session& s) -> size_t {
+		    PlayerSlot& pl = s.players[slot];
+		    if (pl.unread.empty() || slot == s.localSlot)
+			    return 0;
+		    PlayerSlot::Received r = std::move(pl.unread.front());
+		    pl.unread.pop_front();
+		    memcpy(data, r.data.data(), r.data.size() < size ? r.data.size() : size);
+		    if (receivedMs)
+			    *receivedMs = r.at;
+		    return r.data.size();
+	    },
+	    (size_t)0);
 }

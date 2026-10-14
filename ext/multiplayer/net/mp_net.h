@@ -30,7 +30,9 @@ extern "C" {
 // smallest common path MTU with room for its header and acks).
 #define MP_MAX_MESSAGE 1000
 // The largest per-player state blob carried each tick.
-#define MP_MAX_STATE 160
+#define MP_MAX_STATE 224
+// The largest world snapshot the host sends with each update (enemies).
+#define MP_MAX_WORLD 600
 
 typedef enum MpRole {
 	MP_ROLE_OFF = 0,
@@ -88,7 +90,7 @@ void mp_stop(void);
 
 MpRole mp_role(void);
 MpLinkState mp_link(void);
-// A sentence for the player about the link ("Connecting to 1.2.3.4:24002…").
+// A sentence for the player about the link ("Connecting to 1.2.3.4:24002...").
 void mp_link_message(char* out, size_t size);
 int mp_local_slot(void); // -1 until a client has a slot
 // The players now in the session (bit n: slot n), the local one included.
@@ -103,6 +105,19 @@ void mp_set_local_state(const void* data, size_t size);
 // The newest state from `slot`: copies at most `size` bytes, returns its size
 // (0 when there is none) and how many seconds ago it arrived.
 size_t mp_remote_state(int slot, void* data, size_t size, float* age);
+
+// Host: the newest snapshot of the shared world (where enemies are), sent
+// unreliably with each update, like player states. Client: the newest one
+// received, its size (0 when none) and how many seconds ago it arrived.
+void mp_set_world(const void* data, size_t size);
+size_t mp_world(void* data, size_t size, float* age);
+
+// The states of `slot` in the order they arrived, each once (the oldest
+// unread first): its size, or 0 when none is left; *receivedMs on the
+// mp_clock_ms clock.
+size_t mp_remote_next(int slot, void* data, size_t size, uint32_t* receivedMs);
+// Milliseconds on a steady clock, the one states are stamped with.
+uint32_t mp_clock_ms(void);
 
 // A reliable, ordered message. A client's goes to the host; the host's goes
 // to `slot`, or to every client with slot -1. Returns -1 when it cannot be

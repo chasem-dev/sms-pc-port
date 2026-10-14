@@ -54,7 +54,23 @@ void chunked(const Entries& entries, size_t limit, size_t headerSize, Emit emit)
 	} while (at < entries.size());
 }
 
-int32_t lives(int32_t v) { return v < 0 ? 0 : v > 99 ? 99 : v; }
+// lives: 0 to 99, or -1 once they are used up (players then watch the others)
+int32_t lives(int64_t v) { return v < -1 ? -1 : v > 99 ? 99 : (int32_t)v; }
+
+// What a flag can hold in a real game. A player's report comes from the
+// network, so the host keeps every value it takes in these bounds (a changed
+// or broken game cannot write a huge coin count into the host's save).
+int32_t clampFlag(uint32_t id, int64_t v)
+{
+	int64_t lo = 0, hi = 1;
+	if (id == FLAG_LIVES)
+		return lives(v);
+	if (id == FLAG_COINS || (id >= FLAG_BEST_COINS && id < FLAG_BEST_COINS + FLAG_BEST_COINS_N))
+		hi = 999;
+	else if (id == FLAG_RED_COINS)
+		hi = 99;
+	return (int32_t)(v < lo ? lo : v > hi ? hi : v);
+}
 
 } // namespace
 
@@ -81,6 +97,8 @@ bool readReport(const uint8_t* data, size_t size, FlagReport& r, bool& last)
 	r.seq         = rd.u32();
 	uint16_t n    = rd.u16();
 	const size_t count = sharedFlags().size();
+	if (r.changes.size() + n > count)
+		return false; // more changes than there are flags: not from a game
 	for (int i = 0; i < n && rd.ok; i++) {
 		FlagReport::Change c;
 		c.index = rd.u16();
@@ -117,6 +135,8 @@ bool readUpdate(const uint8_t* data, size_t size, FlagUpdate& u, bool& last)
 	u.full        = (flags & CHUNK_FULL) != 0;
 	uint16_t n    = rd.u16();
 	const size_t count = sharedFlags().size();
+	if (u.values.size() + n > count)
+		return false;
 	for (int i = 0; i < n && rd.ok; i++) {
 		uint16_t index = rd.u16();
 		int32_t value  = rd.s32();
@@ -265,21 +285,22 @@ void HostFlags::report(int slot, const FlagReport& r, FlagValues& game)
 	for (const FlagReport::Change& c : r.changes) {
 		if (c.index >= specs.size())
 			continue;
-		int32_t& v = game[c.index];
+		int32_t& v        = game[c.index];
+		const uint32_t id = specs[c.index].id;
 		switch (specs[c.index].rule) {
 		case FLAG_ONCE:
 			if (c.value)
 				v = 1;
 			break;
 		case FLAG_COUNT:
-			v = specs[c.index].id == FLAG_LIVES ? lives(v + c.value) : v + c.value;
+			v = clampFlag(id, (int64_t)v + c.value);
 			break;
 		case FLAG_COUNT_UP:
 			if (c.value > 0)
-				v += c.value;
+				v = clampFlag(id, (int64_t)v + c.value);
 			break;
 		case FLAG_MAX:
-			v = std::max(v, c.value);
+			v = std::max(v, clampFlag(id, c.value));
 			break;
 		}
 	}

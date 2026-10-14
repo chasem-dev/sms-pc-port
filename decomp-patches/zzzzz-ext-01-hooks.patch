@@ -1,4 +1,4 @@
-Reason: port: extensions (port_ext.h, ext/) are called at the top of each frame, when a stage's objects are set up, on stage changes, losing a life, file select and item pickups and as the player is drawn, and can switch save states off
+Reason: port: extensions (port_ext.h, ext/) are called at the top of each frame, after everything moves each tick, when a stage's objects are set up, on stage changes, losing a life (the last one too), file select and item pickups and as the player is drawn, and can switch save states off
 --- a/src/GC2D/CardLoad.cpp
 +++ b/src/GC2D/CardLoad.cpp
 @@ -1,4 +1,7 @@
@@ -113,8 +113,27 @@ Reason: port: extensions (port_ext.h, ext/) are called at the top of each frame,
  #include <JSystem/JDrama/JDRNameRefGen.hpp>
  #include <JSystem/JKernel/JKRFileLoader.hpp>
  #include <JSystem/JDrama/JDRCamera.hpp>
-@@ -688,6 +691,10 @@
+@@ -217,6 +220,10 @@
+ 			u32 unk30Cue = ~someCue;
+ 			unk30->perform(unk30Cue, &local_140);
+ 			movement();
++#ifdef TARGET_PC
++			// everything has moved this tick; nothing is drawn from it yet
++			port_ext_after_movement();
++#endif
+ 			if (!(blacklistedCues & CUE_CALC_ANIM)) {
+ 				if (checkDemoFlag(DEMO_FLAG_SHINE_GET_STOP_THE_WORLD))
+ 					mShinePfLstAnm->perform(~blacklistedCues, &local_140);
+@@ -685,9 +692,18 @@
+ 	case STATE_UNK7:
+ 		if (SMSGetApplication()->getFader()->isFullyFadedOut()
+ 		    && (MSBgm::getHandle(2) == 0 || unk5C - unk60 >= 1200)) {
++#ifdef TARGET_PC
++			// an extension may carry on past the last life (port_ext.h)
++			if (TFlagManager::getInstance()->getFlag(0x20001) >= 0 || port_ext_take_game_over()) {
++#else
  			if (TFlagManager::getInstance()->getFlag(0x20001) >= 0) {
++#endif
  				TFlagManager::getInstance()->setBool(true, 0x30002);
  				decideNextStageOfClear();
 +#ifdef TARGET_PC
@@ -124,7 +143,7 @@ Reason: port: extensions (port_ext.h, ext/) are called at the top of each frame,
  				unk4C &= ~DIRECTOR_FLAG_MOVIE_PENDING;
  #ifdef TARGET_PC
  				SMS_MOD_MOVE_STAGE(0x8029946C);
-@@ -1223,6 +1230,9 @@
+@@ -1223,6 +1239,9 @@
  			if (checkFlag(DIRECTOR_FLAG_GAME_OVER_PENDING)) {
  				offFlag(DIRECTOR_FLAG_GAME_OVER_PENDING);
  				r29 = STATE_UNK7;
@@ -134,7 +153,7 @@ Reason: port: extensions (port_ext.h, ext/) are called at the top of each frame,
  				TFlagManager::getInstance()->setFlag(0x40002, 0);
  				break;
  			}
-@@ -1483,6 +1493,10 @@
+@@ -1483,6 +1502,10 @@
  // getFludd() for the nozzle read (research c-r29, hsearch).
  void TMarDirector::moveStage()
  {

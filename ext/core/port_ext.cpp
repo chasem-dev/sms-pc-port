@@ -41,6 +41,11 @@ extern "C" void port_ext_frame(void)
 	EACH(frame) s_ext[i]->frame();
 }
 
+extern "C" void port_ext_after_movement(void)
+{
+	EACH(afterMovement) s_ext[i]->afterMovement();
+}
+
 extern "C" void port_ext_stage_setup(void)
 {
 	EACH(stageSetup) s_ext[i]->stageSetup();
@@ -60,6 +65,12 @@ extern "C" void port_ext_move_stage(void)
 extern "C" void port_ext_miss_next_area(void)
 {
 	EACH(missNextArea) s_ext[i]->missNextArea();
+}
+
+extern "C" int port_ext_take_game_over(void)
+{
+	EACH(takeGameOver) if (s_ext[i]->takeGameOver()) return 1;
+	return 0;
 }
 
 extern "C" int port_ext_keep_coins_on_miss(void)

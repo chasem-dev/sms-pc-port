@@ -17,6 +17,8 @@
 // - Coins and items taken from the stage disappear for everyone in the
 //   session; a player who reloads the stage gets the session's list again.
 // - A Shine collected by anyone sends the whole group out, as it does alone.
+// - Enemies are the host's: clients put them where the host's game has them,
+//   and an enemy defeated in any game is defeated in all.
 
 #include <stddef.h>
 #include <stdint.h>
@@ -46,8 +48,11 @@ enum {
 	MPG_POSE_YOSHI     = 8,  // riding Yoshi
 	MPG_POSE_CAP       = 16, // the cap on (else the capless hair)
 	MPG_POSE_UPPER     = 32, // the upper body has its own animation (pumping, carrying)
+	MPG_POSE_SPECTATING = 64, // out of lives, watching the others
+	MPG_POSE_DEMO       = 128, // in a cutscene
 };
 typedef struct MpgPose {
+	uint32_t time;      // when the sender's game was like this, in its game time (ms; set by mpg_set_pose)
 	uint32_t session;   // the stage session the player is in (0: none)
 	uint8_t flags;      // MPG_POSE_*
 	uint8_t hand;       // which hand models (TMario::changeHand)
@@ -62,7 +67,25 @@ typedef struct MpgPose {
 	uint8_t yoshiColor[3];
 	uint8_t pad;
 	uint32_t hiddenShapes; // the body's shapes hidden (bit n: shape n): shirt, hands, hair
+	// while spraying: where FLUDD's water leaves (up to two emitters, the
+	// hover nozzle has two), the speed it inherits, and the trigger's pressure
+	uint8_t emitters;
+	uint8_t pad2[3];
+	float emitPos[2][3], emitDir[2][3], emitSpeed[3];
+	float pressure;
 } MpgPose;
+
+// An enemy as the host's game has it, named by its manager's place in the
+// stage's list of enemy managers and its index there (the same in every game
+// that loaded the stage).
+typedef struct MpgEnemy {
+	uint8_t manager;
+	uint8_t alive;
+	uint16_t index;
+	float pos[3];
+	int16_t rotY; // degrees * 65536 / 360
+	int16_t pad;
+} MpgEnemy;
 
 // What the game is doing this frame.
 typedef struct MpgGame {
@@ -71,11 +94,20 @@ typedef struct MpgGame {
 	int episode;
 	int world;        // SMS_getShineStage(area), for the host's status line
 	int paused;
+	float frameMs;    // how long this frame is in game time (1000 / the frame rate)
 } MpgGame;
 
 // Reads SMS_MULTIPLAYER*; starts hosting or joining. MPG_ROLE_*.
 int mpg_start(void);
+// Test tools: the game build to claim (before mpg_start), for joining a game
+// built from another commit.
+void mpg_set_build(const char* build);
 int mpg_role(void);
+// Whether `slot` is in the game now (ours included).
+int mpg_player_present(int slot);
+// Host: the next time we arrive in a stage, open a new session there even
+// if it is the same stage (everyone loads it afresh).
+void mpg_restart_session(void);
 int mpg_slot(void);    // ours; -1 before a client has one
 int mpg_character(int slot);
 const char* mpg_character_name(int slot);
@@ -99,15 +131,45 @@ int mpg_in_target(void);
 // Host: a client got a Shine; leave as if we had (once per Shine).
 int mpg_take_shine_exit(void);
 
+// An item that appeared during the stage (from a box, a defeated enemy, a red
+// coin switch), taken by anyone this session: its type (the low byte of its
+// actor type) and where it was.
+typedef struct MpgTakenAt {
+	uint8_t type;
+	float pos[3];
+} MpgTakenAt;
+// This game's player took one: the others' games remove theirs.
+void mpg_item_taken_at(int type, const float pos[3]);
+// The session's list so far, from 0 (new ones are added at the end); 0 past it.
+int mpg_taken_at(int i, MpgTakenAt* out);
+
 // Items: a pickup from the stage's own items (`key` names it the same in
 // every game: its index among the item manager's objects and its type);
 // and the next one to take away here, picked up by someone else.
 void mpg_item_taken(uint32_t key);
 int mpg_next_removal(uint32_t* key);
 
-// Our look this frame, and another player's (1 when they are in our stage).
+// Enemies. Host: every enemy now, each frame (the controller sends a share
+// of them with each update, so all of them go round several times a second);
+// and the next one a client's game killed, to kill here. Client: the share
+// that arrived last for our stage (how many), and a kill in our game the
+// host should know of.
+// Host: its enemies this frame; a null list sends none (paused: the others'
+// games stop following the snapshot once it is a second old).
+void mpg_set_enemies(const MpgEnemy* list, int count);
+int mpg_next_enemy_kill(int* manager, int* index);
+int mpg_enemies(MpgEnemy* out, int max, float* age);
+void mpg_enemy_killed(int manager, int index);
+
+// Our look this frame, and another player's newest (1 when they are in our
+// stage).
 void mpg_set_pose(const MpgPose* pose);
 int mpg_pose(int slot, MpgPose* pose, float* age);
+// Another player's look for drawing now, smoothly: the two poses they sent
+// either side of a moment a little in the past (the network's unevenness
+// hidden in the gap), and how far between them (0..1) now falls. 1 when
+// they are in our stage.
+int mpg_pose_pair(int slot, MpgPose* a, MpgPose* b, float* t);
 uint32_t mpg_session(void); // the session this game is playing in (0: none)
 
 // Text for the player: the next notice ("Bob joined as Luigi"), 0 when none;

@@ -12,7 +12,6 @@ typedef SOCKET sock_t;
 static int lastError() { return WSAGetLastError(); }
 static void closeSocket(sock_t s) { closesocket(s); }
 #else
-#include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
@@ -73,24 +72,23 @@ bool Address::operator==(const Address& o) const
 
 std::string Address::text() const
 {
-	char host[INET6_ADDRSTRLEN] = "?";
-	char out[INET6_ADDRSTRLEN + 16];
+	// getnameinfo, not inet_ntop: every Windows toolchain declares it
+	char host[NI_MAXHOST] = "?";
+	char out[NI_MAXHOST + 16];
 	const sockaddr* a = (const sockaddr*)storage;
-	if (a->sa_family == AF_INET) {
-		const sockaddr_in* v4 = (const sockaddr_in*)a;
-		inet_ntop(AF_INET, (void*)&v4->sin_addr, host, sizeof host);
-		snprintf(out, sizeof out, "%s:%u", host, (unsigned)ntohs(v4->sin_port));
-	} else if (a->sa_family == AF_INET6) {
-		const sockaddr_in6* v6 = (const sockaddr_in6*)a;
-		inet_ntop(AF_INET6, (void*)&v6->sin6_addr, host, sizeof host);
-		// an IPv4 player on a dual-stack host reads as plain IPv4
-		if (!strncmp(host, "::ffff:", 7) && strchr(host + 7, '.'))
-			snprintf(out, sizeof out, "%s:%u", host + 7, (unsigned)ntohs(v6->sin6_port));
-		else
-			snprintf(out, sizeof out, "[%s]:%u", host, (unsigned)ntohs(v6->sin6_port));
-	} else {
-		snprintf(out, sizeof out, "?");
-	}
+	if (!length || getnameinfo(a, (socklen_t)length, host, sizeof host, nullptr, 0, NI_NUMERICHOST) != 0)
+		return "?";
+	unsigned port = 0;
+	if (a->sa_family == AF_INET)
+		port = ntohs(((const sockaddr_in*)a)->sin_port);
+	else if (a->sa_family == AF_INET6)
+		port = ntohs(((const sockaddr_in6*)a)->sin6_port);
+	// an IPv4 player on a dual-stack host reads as plain IPv4
+	const char* shown = !strncmp(host, "::ffff:", 7) && strchr(host + 7, '.') ? host + 7 : host;
+	if (a->sa_family == AF_INET6 && shown == host)
+		snprintf(out, sizeof out, "[%s]:%u", host, port);
+	else
+		snprintf(out, sizeof out, "%s:%u", shown, port);
 	return out;
 }
 
