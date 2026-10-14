@@ -56,6 +56,10 @@ typedef struct PortExtension {
 	// FLUDD) when `mario` is drawn; the extension draws the player itself.
 	// Yoshi and the shadow are drawn as ever.
 	int (*hidePlayerModel)(void* mario);
+	// The controllers were just read (PADRead): `status` is the PADStatus[4]
+	// the game is about to see, which the hook may change (scripted input,
+	// input mods). Called from the game thread, before the game reads them.
+	void (*padRead)(void* status);
 } PortExtension;
 
 // Adds an extension; call from a static constructor or before the first frame.
@@ -77,6 +81,7 @@ void port_ext_item_taken(void* item, void* taker);
 // 1 when save states may be used; otherwise 0 and *reason says why.
 int port_ext_allow_save_states(const char** reason);
 int port_ext_hide_player_model(void* mario);
+void port_ext_pad_read(void* status);
 
 #ifdef __cplusplus
 }

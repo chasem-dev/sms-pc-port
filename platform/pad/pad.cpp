@@ -852,6 +852,8 @@ extern "C" void PADControlMotor(s32 chan, u32 command)
 extern "C" void PADControlAllMotors(const u32* commands) { PADControlMotor(0, commands[0]); }
 
 extern "C" __attribute__((weak)) int port_trace_pad_read(struct PADStatus* status);
+// Extensions (ext/, src/port_include/port_ext.h) may change what was read.
+extern "C" __attribute__((weak)) void port_ext_pad_read(void* status);
 
 extern "C" u32 PADRead(PADStatus* status)
 {
@@ -970,6 +972,8 @@ extern "C" u32 PADRead(PADStatus* status)
 	cy          = cy ? cy : pcy;
 	s.substickX = (s8)(g_invert_cx ? -cx : cx);
 	s.substickY = (s8)(g_invert_cy ? -cy : cy);
+	if (port_ext_pad_read)
+		port_ext_pad_read(status);
 	return PAD_CHAN0_BIT;
 }
 
