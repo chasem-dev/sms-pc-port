@@ -17,6 +17,7 @@ How the port is put together and where changes go. To build and play, see the [R
 - **PC-specific fixes go in `decomp-patches/`**: byte order (`endian-*`), host compiler leniency (`0001`–`0010`, `0015`, `0018`, `ret-02..03`), host services (`thp-*`, `audio-*`), port-only features (`port-*`, `SMS_*` switches). Each patch starts with a `Reason:` line saying why it cannot live in the decomp.
   A patch never corrects the decomp's behaviour; it only adapts retail's behaviour to the PC.
 - **Emulation of the hardware goes in `platform/`** (GX, DVD, OS, audio), never in game source.
+- **Optional features that hook the game go in `ext/`** ([ext/README.md](../ext/README.md)): the game calls them at a few chosen points (`port_ext.h`, patch `zzzzz-ext-01`), and each keeps its code in its own folder, such as [multiplayer](../ext/multiplayer/README.md). A feature that needs a new point adds a hook there, general enough for others, rather than its own patch.
 - Example: the sun-glass tint that stopped part-way down the screen was a decomp bug (`TOrthoProj`'s reconstructed constructor stored its last two edges swapped), so it was fixed in `sms-english` and verified against retail, not patched here.
 
 ## How the build works
@@ -157,6 +158,7 @@ Each file in `decomp-patches/` starts with a `Reason:` line; they are applied in
 | `port-02` | `SMS_WARP` / `SMS_WARP_MOVIE`: debug warp or movie from a file-select load. |
 | `port-09` | Hides the small grey placeholder cubes in coro_ex0, the Bianco Hills secret course ("The Secret of the Dirty Lake"): `TMapModel::initJointModel` sets the skip flag on the map's `_o17` shape, found by its material and `B_CoronaEX0_1` texture names, so Super Mario Eclipse's copy of the course loses them too. |
 | `zzz-warp-01` | The warp menu (F8 or a controller's Back/Select with the debug overlay open, `platform/gx/src/gx_warp_menu.cpp`): `TApplication::gameLoop` lists every episode whose scene is on the disc, named from `stagename.bmg` and `scenarioname.bmg` as the pause menu names them (a code mod may name them its own way, `port_warp_scenario_name_id`), and starts the warp picked with `TMarDirector::setNextStage`. |
+| `zzzzz-ext-01` | Extensions (`ext/`, `port_ext.h`): the frame loop, `setupObjects`, `setNextStage`, `moveStage`, the miss sequence and game over, file select, `TItem::taken`, `TMario::perform`'s model entry and `TMarDirector::direct` after each movement tick call the registered extensions; save states ask them first. |
 | `zzz-presence-01` | `SMS_PRESENCE`: `TApplication::gameLoop` hands the area, episode, Shine and blue coin counts, lives and pause state to `platform/presence` once a frame, for the launcher's Discord Rich Presence. |
 | `audio-01..02` | JAudio bitfield/byte-order fixes (`TChannel` mix config, BMS note-on flags); see `platform/audio/README.md`. |
 | `ret-02..03` | Explicit returns for the 34 functions that fall off the end of a non-void body and whose value nothing reads (undefined behaviour under g++, harmless under MWCC). |
@@ -266,6 +268,8 @@ The everyday options are in the [README](../README.md#options); this is the full
 | `SMS_DVD_BPS`, `SMS_DVD_SEEK_MS`, `SMS_DVD_LOG=1` | drive timing model (reads occupy the drive for bytes/rate + seek, counted in fields; off by default) and a per-read log |
 | `SMS_MOVIE`, `SMS_TRACE_OUT` | `.dtm` movie input and retail-format field traces (`platform/trace`) |
 | `SMS_MEM_MB`, `SMS_QUIET_STUBS=1` | emulated MEM1 size; silence first-call stub logs |
+| `SMS_MULTIPLAYER=host\|join`, `SMS_MULTIPLAYER_ADDRESS`, `SMS_MULTIPLAYER_PORT`, `SMS_MULTIPLAYER_NAME`, `SMS_MULTIPLAYER_TIMEOUT` | host a multiplayer game or join one ([ext/multiplayer](../ext/multiplayer/README.md#starting-it)) |
+| `SMS_MULTIPLAYER_DEBUG=1`, `SMS_MULTIPLAYER_TEST=take@N:K;kill@N:K;die@N:L;warp@N:area,episode;shine@N:ID;flags@N:K;lives@N:L;coins@N:K;drop@N;takedrop@N` | log shared flags, enemies and stage memory; take coins, defeat enemies, lose a life, leave for another area, get a Shine, set save flags, lives or coins, make a coin appear and take the ones that appeared, N frames into each stage (multiplayer tests) |
 | `SMS_PRESENCE=1` | print a `[presence] {...}` JSON line to stdout whenever the area, episode, Shine or blue coin count, lives, pause or demo state changes (`platform/presence`); SMS Launcher sets it and shows the line as Discord Rich Presence |
 | `SMS_OVERLAY=1` | open the debug overlay (frame rate and where the frame's time goes) at start |
 | `SMS_SETTINGS=file` | settings file to read instead of `settings.txt` (working directory, then `../../`); its names map to the variables in `kSettings` (`platform/port_runtime.cpp`), and any `SMS_*` name can be used as is |

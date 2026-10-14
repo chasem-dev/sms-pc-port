@@ -36,6 +36,11 @@ struct Writer {
 		uint8_t b[4] = {(uint8_t)v, (uint8_t)(v >> 8), (uint8_t)(v >> 16), (uint8_t)(v >> 24)};
 		bytes(b, 4);
 	}
+	void u64(uint64_t v)
+	{
+		u32((uint32_t)v);
+		u32((uint32_t)(v >> 32));
+	}
 	void s16(int16_t v) { u16((uint16_t)v); }
 	void s32(int32_t v) { u32((uint32_t)v); }
 	void f32(float v)
@@ -98,6 +103,11 @@ struct Reader {
 		uint8_t b[4];
 		bytes(b, 4);
 		return (uint32_t)b[0] | (uint32_t)b[1] << 8 | (uint32_t)b[2] << 16 | (uint32_t)b[3] << 24;
+	}
+	uint64_t u64()
+	{
+		const uint64_t lo = u32();
+		return lo | (uint64_t)u32() << 32;
 	}
 	int16_t s16() { return (int16_t)u16(); }
 	int32_t s32() { return (int32_t)u32(); }

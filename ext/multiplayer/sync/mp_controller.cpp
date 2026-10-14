@@ -6,6 +6,8 @@
 #include "../net/mp_wire.h"
 #include "mp_flags.h"
 
+#include <algorithm>
+#include <cmath>
 #include <deque>
 #include <mutex>
 #include <stdio.h>
@@ -29,12 +31,19 @@ enum Kind : uint8_t {
 	K_READY,        // client -> host: arrived in session
 	K_TAKEN,        // either way: session, item key
 	K_TAKEN_LIST,   // host -> client: session, keys (all taken so far)
+	K_ENEMY_KILL,   // client -> host: session, manager, index
+	K_TAKEN_AT,     // either way: session, item type, position (an item that appeared during the stage)
 };
+// Items that appear during a stage (from a box, a defeated enemy, a red coin
+// switch) are named by their type and where they are, not their place in the
+// item manager (every game fills that differently); at most this many a stage.
+const size_t kMaxTakenAt = 512;
 
 const char* const kCharacters[MP_MAX_PLAYERS] = {"Mario", "Luigi", "Peach", "Metal Mario"};
 const char* const kWorlds[] = {"the Airstrip", "Delfino Plaza", "Bianco Hills", "Ricco Harbor", "Gelato Beach",
                                "Pinna Park", "Sirena Beach", "Noki Bay", "Pianta Village", "Corona Mountain"};
-const size_t kPoseSize = 4 + 4 + 48 + 4 + 16 + 4 + 8 + 4 + 4;
+const size_t kPoseSize = 4 + 4 + 4 + 48 + 4 + 16 + 4 + 8 + 4 + 4 + 4 + 48 + 48 + 12 + 4;
+const size_t kEnemySize = 18;
 
 struct Controller {
 	int role = MPG_ROLE_OFF;
@@ -52,6 +61,7 @@ struct Controller {
 	bool shineExit       = false;
 	int32_t sessionRed   = 0;   // red coins this session, kept over a reload
 	bool restoreRed      = false;
+	bool restartSession  = false;
 
 	// client
 	bool hasTarget     = false;
@@ -62,6 +72,41 @@ struct Controller {
 	FlagUpdateReader updateReader;
 
 	std::deque<uint32_t> removals;
+	// items that appeared during the stage and were taken, by anyone, this session
+	std::vector<MpgTakenAt> takenAt;
+	// enemies: the host's list and where the next share starts; a client's
+	// newest share; kills reported to the host
+	std::vector<MpgEnemy> enemies;
+	size_t enemyNext = 0;
+	std::deque<std::pair<int, int>> enemyKills;
+
+	// each other player's recent poses, for drawing them smoothly
+	struct Timed {
+		MpgPose pose;
+		uint32_t received; // on our mp_clock_ms
+	};
+	std::deque<Timed> poses[MP_MAX_PLAYERS];
+	// how far behind our clock their stamps arrive, at least (their clock's
+	// offset plus the quickest trip), measured afresh every few seconds
+	int32_t lagMin[MP_MAX_PLAYERS]     = {};
+	int32_t lagNextMin[MP_MAX_PLAYERS] = {};
+	uint32_t lagSince[MP_MAX_PLAYERS]  = {};
+	bool lagKnown[MP_MAX_PLAYERS]      = {};
+	// the moment each player is drawn at, on their clock: it moves on by a
+	// steady step a frame (our frames' usual length) and leans slowly toward
+	// where it should be, so their movement is even when our frames are not
+	double drawAt[MP_MAX_PLAYERS]  = {};
+	bool drawing[MP_MAX_PLAYERS]   = {};
+	// how much of their game's time passes in a frame of ours, on average
+	// (their updates come in bursts; their game may run faster or slower)
+	double theirsPerFrame[MP_MAX_PLAYERS] = {};
+	uint32_t newestSeen[MP_MAX_PLAYERS]   = {};
+	// the usual gap between their poses, in their game's time
+	double poseGap[MP_MAX_PLAYERS] = {};
+	// our game's clock: the frames played, in ms (poses are stamped with it,
+	// so a player's movement is spaced as their game played it)
+	double gameMs  = 0.0;
+	double frameMs = 1000.0 / 30.0;
 	std::deque<std::string> notices;
 	MpgPose pose{};
 	bool havePose = false;
@@ -118,6 +163,33 @@ void sendTakenList(int slot)
 	} while (at < g.taken.size());
 }
 
+std::vector<uint8_t> takenAtMessage(uint32_t session, const MpgTakenAt& t)
+{
+	std::vector<uint8_t> buf(4 + 1 + 12);
+	Writer w(buf.data(), buf.size());
+	w.u32(session);
+	w.u8(t.type);
+	w.f32(t.pos[0]);
+	w.f32(t.pos[1]);
+	w.f32(t.pos[2]);
+	return buf;
+}
+
+bool readTakenAt(Reader& r, MpgTakenAt& t)
+{
+	t.type   = r.u8();
+	t.pos[0] = r.f32();
+	t.pos[1] = r.f32();
+	t.pos[2] = r.f32();
+	return r.ok && t.pos[0] == t.pos[0] && t.pos[1] == t.pos[1] && t.pos[2] == t.pos[2]; // not NaN
+}
+
+void addTakenAt(const MpgTakenAt& t)
+{
+	if (g.takenAt.size() < kMaxTakenAt)
+		g.takenAt.push_back(t);
+}
+
 void takeOnce(uint32_t key)
 {
 	for (uint32_t k : g.taken)
@@ -136,8 +208,29 @@ void hostMessage(const MpEvent& ev)
 		break;
 	case K_READY: {
 		uint32_t s = r.u32();
-		if (r.ok && s == g.session && g.session)
+		if (r.ok && s == g.session && g.session) {
 			sendTakenList(ev.slot);
+			for (const MpgTakenAt& t : g.takenAt)
+				send(ev.slot, K_TAKEN_AT, takenAtMessage(g.session, t));
+		}
+		break;
+	}
+	case K_TAKEN_AT: {
+		uint32_t s = r.u32();
+		MpgTakenAt t;
+		if (!readTakenAt(r, t) || s != g.session || !g.session || g.takenAt.size() >= kMaxTakenAt)
+			break;
+		addTakenAt(t);
+		for (int i = 1; i < MP_MAX_PLAYERS; i++)
+			if (i != ev.slot && (mp_players() & (1u << i)))
+				send(i, K_TAKEN_AT, takenAtMessage(s, t));
+		break;
+	}
+	case K_ENEMY_KILL: {
+		uint32_t s = r.u32();
+		int manager = r.u8(), index = r.u16();
+		if (r.ok && s == g.session && g.session)
+			g.enemyKills.emplace_back(manager, index);
 		break;
 	}
 	case K_TAKEN: {
@@ -185,6 +278,13 @@ void clientMessage(const MpEvent& ev)
 		uint32_t s = r.u32(), key = r.u32();
 		if (r.ok && s && s == g.localSession)
 			g.removals.push_back(key);
+		break;
+	}
+	case K_TAKEN_AT: {
+		uint32_t s = r.u32();
+		MpgTakenAt t;
+		if (readTakenAt(r, t) && s && s == g.localSession)
+			addTakenAt(t);
 		break;
 	}
 	case K_TAKEN_LIST: {
@@ -249,6 +349,7 @@ void packPose(const MpgPose& p, std::vector<uint8_t>& out)
 {
 	out.assign(kPoseSize, 0);
 	Writer w(out.data(), out.size());
+	w.u32(p.time);
 	w.u32(p.session);
 	w.u8(p.flags);
 	w.u8(p.hand);
@@ -272,6 +373,19 @@ void packPose(const MpgPose& p, std::vector<uint8_t>& out)
 	w.u8(p.yoshiColor[2]);
 	w.u8(0);
 	w.u32(p.hiddenShapes);
+	w.u8(p.emitters);
+	w.u8(0);
+	w.u8(0);
+	w.u8(0);
+	for (int e = 0; e < 2; e++)
+		for (int c = 0; c < 3; c++)
+			w.f32(p.emitPos[e][c]);
+	for (int e = 0; e < 2; e++)
+		for (int c = 0; c < 3; c++)
+			w.f32(p.emitDir[e][c]);
+	for (int c = 0; c < 3; c++)
+		w.f32(p.emitSpeed[c]);
+	w.f32(p.pressure);
 	out.resize(w.len);
 }
 
@@ -279,6 +393,7 @@ bool unpackPose(const uint8_t* d, size_t n, MpgPose& p)
 {
 	Reader r(d, n);
 	memset(&p, 0, sizeof p);
+	p.time    = r.u32();
 	p.session = r.u32();
 	p.flags   = r.u8();
 	p.hand    = r.u8();
@@ -302,7 +417,100 @@ bool unpackPose(const uint8_t* d, size_t n, MpgPose& p)
 	p.yoshiColor[2] = r.u8();
 	r.u8();
 	p.hiddenShapes = r.u32();
+	p.emitters     = r.u8();
+	r.u8();
+	r.u8();
+	r.u8();
+	for (int e = 0; e < 2; e++)
+		for (int c = 0; c < 3; c++)
+			p.emitPos[e][c] = r.f32();
+	for (int e = 0; e < 2; e++)
+		for (int c = 0; c < 3; c++)
+			p.emitDir[e][c] = r.f32();
+	for (int c = 0; c < 3; c++)
+		p.emitSpeed[c] = r.f32();
+	p.pressure = r.f32();
+	if (p.emitters > 2)
+		p.emitters = 2;
 	return r.ok;
+}
+
+// How far behind their newest pose others are drawn: about three of their
+// updates, so a late or lost one does not show.
+const int32_t kDrawBehindMs = 100;
+
+// Every pose that arrived since the last frame, into each player's buffer;
+// then each player's drawing moment moves on a frame.
+void takePoses()
+{
+	const uint32_t now = mp_clock_ms();
+	for (int slot = 0; slot < MP_MAX_PLAYERS; slot++) {
+		uint8_t buf[MP_MAX_STATE];
+		uint32_t at = 0;
+		size_t n;
+		std::deque<Controller::Timed>& q = g.poses[slot];
+		while ((n = mp_remote_next(slot, buf, sizeof buf, &at)) > 0) {
+			Controller::Timed t;
+			if (!unpackPose(buf, n, t.pose))
+				continue;
+			t.received = at;
+			static const bool trace = getenv("SMS_MULTIPLAYER_TRACE") != nullptr;
+			if (trace)
+				fprintf(stderr, "[mprecv] %d time %u at %u pos %.1f %.1f\n", slot, t.pose.time, at, t.pose.mtx[0][3],
+				        t.pose.mtx[2][3]);
+			if (!q.empty() && (int32_t)(t.pose.time - q.back().pose.time) <= 0)
+				continue; // out of order, or the same moment again
+			if (!q.empty()) {
+				const double gap = (double)(int32_t)(t.pose.time - q.back().pose.time);
+				g.poseGap[slot]  = g.poseGap[slot] > 0.0 ? g.poseGap[slot] * 0.9 + gap * 0.1 : gap;
+			}
+			q.push_back(t);
+			const int32_t lag = (int32_t)(at - t.pose.time);
+			if (!g.lagKnown[slot]) {
+				g.lagMin[slot] = g.lagNextMin[slot] = lag;
+				g.lagSince[slot] = now;
+				g.lagKnown[slot] = true;
+			}
+			if (lag < g.lagMin[slot])
+				g.lagMin[slot] = lag;
+			if (lag < g.lagNextMin[slot])
+				g.lagNextMin[slot] = lag;
+		}
+		// the measure follows a clock that drifts, or a route that changes
+		if (g.lagKnown[slot] && now - g.lagSince[slot] > 4000) {
+			g.lagMin[slot]     = g.lagNextMin[slot];
+			g.lagNextMin[slot] = 0x7FFFFFFF;
+			g.lagSince[slot]   = now;
+		}
+		while (q.size() > 2 && now - q.front().received > 1500)
+			q.pop_front();
+		if (g.lagKnown[slot] && !q.empty()) {
+			// behind their newest pose by about two and a half of their
+			// updates (at least kDrawBehindMs), in their game's time, so the
+			// pose after the moment drawn has nearly always arrived
+			const double behind  = std::max<double>(kDrawBehindMs, g.poseGap[slot] * 2.5);
+			const double target  = (double)q.back().pose.time - behind;
+			const double error   = target - g.drawAt[slot];
+			const uint32_t newest = q.back().pose.time;
+			if (!g.drawing[slot] || error > 2000.0 || error < -2000.0) {
+				g.drawAt[slot]         = target; // first sight, or far off: start there
+				g.drawing[slot]        = true;
+				g.theirsPerFrame[slot] = g.frameMs;
+			} else {
+				const double advanced  = (double)(int32_t)(newest - g.newestSeen[slot]);
+				g.theirsPerFrame[slot] = g.theirsPerFrame[slot] * 0.98 + (advanced > 0.0 ? advanced : 0.0) * 0.02;
+				// leaning harder the further off it is, never by a jump
+				const double lean = 0.015 + std::min(0.25, std::fabs(error) / 4000.0);
+				g.drawAt[slot] += g.theirsPerFrame[slot] + error * lean;
+			}
+			g.newestSeen[slot] = newest;
+		}
+		if (!(mp_players() & (1u << slot))) {
+			q.clear();
+			g.lagKnown[slot] = false;
+			g.drawing[slot]  = false;
+		}
+	}
 }
 
 } // namespace
@@ -310,11 +518,15 @@ bool unpackPose(const uint8_t* d, size_t n, MpgPose& p)
 
 using namespace mp;
 
+static std::string g_build = SMS_GAME_BUILD;
+
+extern "C" void mpg_set_build(const char* build) { g_build = build ? build : SMS_GAME_BUILD; }
+
 extern "C" int mpg_start(void)
 {
 	std::lock_guard<std::mutex> hold(g_lock);
 	MpConfig cfg;
-	int want = mp_config_from_env(&cfg, SMS_GAME_BUILD);
+	int want = mp_config_from_env(&cfg, g_build.c_str());
 	if (want == 0)
 		return g.role = MPG_ROLE_OFF;
 	if (want < 0) {
@@ -329,8 +541,7 @@ extern "C" int mpg_start(void)
 		return g.role;
 	}
 	if (g.role == MPG_ROLE_HOST) {
-		notice("Hosting a multiplayer game on port " + std::to_string(cfg.port)
-		       + ". Players can join once you are in a level.");
+		notice("Hosting on port " + std::to_string(cfg.port) + ". Players who join come to the level you are in.");
 		mp_set_host_status("the title screen");
 	} else {
 		char msg[256];
@@ -341,6 +552,11 @@ extern "C" int mpg_start(void)
 }
 
 extern "C" int mpg_role(void) { return g.role; }
+extern "C" int mpg_player_present(int slot)
+{
+	return g.role != MPG_ROLE_OFF && slot >= 0 && slot < MP_MAX_PLAYERS && (mp_players() & (1u << slot));
+}
+extern "C" void mpg_restart_session(void) { g.restartSession = true; }
 extern "C" int mpg_slot(void) { return g.role == MPG_ROLE_OFF ? -1 : mp_local_slot(); }
 extern "C" int mpg_character(int slot) { return slot >= 0 && slot < MP_MAX_PLAYERS ? slot : 0; }
 extern "C" const char* mpg_character_name(int slot)
@@ -354,21 +570,31 @@ extern "C" void mpg_frame(const MpgGame* game)
 		return;
 	std::lock_guard<std::mutex> hold(g_lock);
 	g.game = *game;
+	g.frameMs = game->frameMs > 0.0f && game->frameMs < 200.0f ? game->frameMs : 1000.0 / 30.0;
+	g.gameMs += g.frameMs;
 	events();
+	takePoses();
 	const bool arrived = game->playing && !g.wasPlaying;
 	g.wasPlaying       = game->playing != 0;
 
 	if (g.role == MPG_ROLE_HOST) {
-		if (game->playing && (game->area != g.sessionArea || game->episode != g.sessionEpisode || !g.session)) {
+		if (game->playing
+		    && (game->area != g.sessionArea || game->episode != g.sessionEpisode || !g.session
+		        || (arrived && g.restartSession))) {
+			g.restartSession = false;
 			// a new stage: everyone comes along
 			g.session++;
 			g.sessionArea    = game->area;
 			g.sessionEpisode = game->episode;
 			g.taken.clear();
 			g.removals.clear();
+			g.takenAt.clear();
 			g.sessionRed = 0;
 			g.restoreRed = false;
 			g.shineExit  = false;
+			g.enemies.clear();
+			g.enemyNext = 0;
+			g.enemyKills.clear();
 			for (int i = 1; i < MP_MAX_PLAYERS; i++)
 				if (mp_players() & (1u << i)) {
 					sendFull(i);
@@ -391,6 +617,8 @@ extern "C" void mpg_frame(const MpgGame* game)
 	// client
 	if (arrived) {
 		if (g.hasTarget && game->area == g.targetArea && game->episode == g.targetEpisode) {
+			if (g.localSession != g.targetSession)
+				g.takenAt.clear();
 			g.localSession = g.targetSession;
 			uint8_t buf[4];
 			Writer w(buf, sizeof buf);
@@ -518,6 +746,36 @@ extern "C" void mpg_item_taken(uint32_t key)
 	}
 }
 
+extern "C" void mpg_item_taken_at(int type, const float pos[3])
+{
+	if (g.role == MPG_ROLE_OFF)
+		return;
+	std::lock_guard<std::mutex> hold(g_lock);
+	MpgTakenAt t;
+	t.type = (uint8_t)type;
+	memcpy(t.pos, pos, sizeof t.pos);
+	if (g.role == MPG_ROLE_HOST) {
+		if (!g.session)
+			return;
+		addTakenAt(t);
+		for (int i = 1; i < MP_MAX_PLAYERS; i++)
+			if (mp_players() & (1u << i))
+				send(i, K_TAKEN_AT, takenAtMessage(g.session, t));
+	} else if (g.localSession) {
+		addTakenAt(t);
+		send(0, K_TAKEN_AT, takenAtMessage(g.localSession, t));
+	}
+}
+
+extern "C" int mpg_taken_at(int i, MpgTakenAt* out)
+{
+	std::lock_guard<std::mutex> hold(g_lock);
+	if (i < 0 || (size_t)i >= g.takenAt.size())
+		return 0;
+	*out = g.takenAt[i];
+	return 1;
+}
+
 extern "C" int mpg_next_removal(uint32_t* key)
 {
 	std::lock_guard<std::mutex> hold(g_lock);
@@ -537,8 +795,10 @@ extern "C" void mpg_set_pose(const MpgPose* pose)
 {
 	if (g.role == MPG_ROLE_OFF)
 		return;
+	MpgPose stamped = *pose;
+	stamped.time    = (uint32_t)(uint64_t)g.gameMs;
 	std::vector<uint8_t> buf;
-	packPose(*pose, buf);
+	packPose(stamped, buf);
 	mp_set_local_state(buf.data(), buf.size());
 }
 
@@ -599,4 +859,122 @@ extern "C" void mpg_status(char* out, int size)
 		s += msg;
 	}
 	snprintf(out, (size_t)size, "%s", s.c_str());
+}
+
+extern "C" void mpg_set_enemies(const MpgEnemy* list, int count)
+{
+	if (g.role != MPG_ROLE_HOST || !g.session)
+		return;
+	std::lock_guard<std::mutex> hold(g_lock);
+	if (!list) {
+		// nothing to follow (the host's game is paused): the others' snapshot
+		// goes stale and their games let their enemies move by themselves
+		g.enemies.clear();
+		mp_set_world(nullptr, 0);
+		return;
+	}
+	g.enemies.assign(list, list + (count > 0 ? count : 0));
+	// this update's share: as many as fit, from where the last one stopped
+	uint8_t buf[MP_MAX_WORLD];
+	Writer w(buf, sizeof buf);
+	w.u32(g.session);
+	const size_t per = (sizeof buf - 6) / kEnemySize;
+	const size_t n   = std::min(per, g.enemies.size());
+	w.u16((uint16_t)n);
+	if (g.enemyNext >= g.enemies.size())
+		g.enemyNext = 0;
+	for (size_t k = 0; k < n; k++) {
+		const MpgEnemy& e = g.enemies[(g.enemyNext + k) % g.enemies.size()];
+		w.u8(e.manager);
+		w.u8(e.alive);
+		w.u16(e.index);
+		w.f32(e.pos[0]);
+		w.f32(e.pos[1]);
+		w.f32(e.pos[2]);
+		w.s16(e.rotY);
+	}
+	g.enemyNext = g.enemies.empty() ? 0 : (g.enemyNext + n) % g.enemies.size();
+	mp_set_world(buf, w.len);
+}
+
+extern "C" int mpg_next_enemy_kill(int* manager, int* index)
+{
+	std::lock_guard<std::mutex> hold(g_lock);
+	if (g.enemyKills.empty())
+		return 0;
+	*manager = g.enemyKills.front().first;
+	*index   = g.enemyKills.front().second;
+	g.enemyKills.pop_front();
+	return 1;
+}
+
+extern "C" int mpg_enemies(MpgEnemy* out, int max, float* age)
+{
+	if (g.role != MPG_ROLE_CLIENT || !g.localSession)
+		return 0;
+	uint8_t buf[MP_MAX_WORLD];
+	size_t size = mp_world(buf, sizeof buf, age);
+	Reader r(buf, size);
+	if (!size || r.u32() != g.localSession)
+		return 0;
+	int n = r.u16(), got = 0;
+	for (int k = 0; k < n && got < max && r.ok; k++) {
+		MpgEnemy& e = out[got];
+		e.manager   = r.u8();
+		e.alive     = r.u8();
+		e.index     = r.u16();
+		e.pos[0]    = r.f32();
+		e.pos[1]    = r.f32();
+		e.pos[2]    = r.f32();
+		e.rotY      = r.s16();
+		e.pad       = 0;
+		if (r.ok)
+			got++;
+	}
+	return got;
+}
+
+extern "C" void mpg_enemy_killed(int manager, int index)
+{
+	if (g.role != MPG_ROLE_CLIENT || !g.localSession)
+		return;
+	uint8_t buf[8];
+	Writer w(buf, sizeof buf);
+	w.u32(g.localSession);
+	w.u8((uint8_t)manager);
+	w.u16((uint16_t)index);
+	mp_send(0, K_ENEMY_KILL, buf, w.len);
+}
+
+extern "C" int mpg_pose_pair(int slot, MpgPose* a, MpgPose* b, float* t)
+{
+	if (g.role == MPG_ROLE_OFF || slot < 0 || slot >= MP_MAX_PLAYERS || !g.lagKnown[slot])
+		return 0;
+	std::lock_guard<std::mutex> hold(g_lock);
+	const std::deque<Controller::Timed>& q = g.poses[slot];
+	if (q.empty())
+		return 0;
+	const uint32_t now = mp_clock_ms();
+	if (now - q.back().received > 3000)
+		return 0; // gone quiet
+	// the moment to draw, on their clock (wrapping as the clock does)
+	const uint32_t at = (uint32_t)(int64_t)g.drawAt[slot];
+	size_t i = 0;
+	while (i + 1 < q.size() && (int32_t)(q[i + 1].pose.time - at) <= 0)
+		i++;
+	*a = q[i].pose;
+	if (i + 1 < q.size() && (int32_t)(at - q[i].pose.time) >= 0) {
+		*b = q[i + 1].pose;
+		const float span = (float)(int32_t)(b->time - a->time);
+		*t = span > 0.0f ? (float)(int32_t)(at - a->time) / span : 0.0f;
+	} else {
+		*b = *a; // before the oldest, or past the newest: hold it
+		*t = 0.0f;
+	}
+	if (*t < 0.0f)
+		*t = 0.0f;
+	if (*t > 1.0f)
+		*t = 1.0f;
+	const uint32_t here = mpg_session();
+	return here && b->session == here && a->session == here;
 }

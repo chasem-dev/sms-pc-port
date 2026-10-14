@@ -198,6 +198,11 @@ Loading a state saved by the same build of the game puts everything back as it w
 States are files (`*.smsstate`) in a `savestates` folder beside the memory card folder (`~/.local/share/sms-port/savestates` by default; `SMS_SAVE_STATE_DIR` or `save_state_dir` sets another); share one by sending the file. Loading a state takes you to its progress too, so saving to the memory card afterwards saves that. Saving a state does not touch the memory card.
 How states work, and their limits: [docs/SAVE-STATES.md](docs/SAVE-STATES.md).
 
+### Multiplayer
+
+Up to four players can play one game together over the network: the host plays as Mario on their own save, and the others join as Luigi, Peach and Metal Mario. Shines, coins, blue and red coins and lives are shared and saved in the host's file, everyone plays the host's level with the host's enemies and sees everyone's water, and only the host takes the group elsewhere.
+SMS Launcher's **Multiplayer** button hosts or joins; without it, `SMS_MULTIPLAYER=host` hosts on UDP port 24002 (`SMS_MULTIPLAYER_PORT`), and `SMS_MULTIPLAYER=join SMS_MULTIPLAYER_ADDRESS=host:port` joins. The host forwards that port on their router. Details: [ext/multiplayer/README.md](ext/multiplayer/README.md).
+
 To change them, edit [`bindings.txt`](bindings.txt) (`CONTROL = KEY KEY ...`, one control per line; a line replaces that control's defaults), or point `SMS_BINDINGS` at another file.
 
 Controller buttons can be remapped the same way, by name: `PAD_A`, `PAD_B`, `PAD_X`, `PAD_Y`, `PAD_LB`, `PAD_RB`, `PAD_LT`, `PAD_RT`, `PAD_START`, `PAD_BACK`, `PAD_DPUP` … (the full list is in `bindings.txt`). A line's keys and buttons each replace only their own kind, so `A = PAD_Y` moves A to the controller's Y button and keeps Space and X; `Z = PAD_RT` puts Z on the right trigger. L and R stay analog when bound to a trigger.
@@ -229,6 +234,7 @@ build/<os>-<arch>/    build output (ignored by git)
 decomp/               the decompilation (git submodule: sms-english)
 decomp-patches/       PC-only changes applied to copies of decomp sources at configure time
 platform/             host replacements for the GameCube SDK: graphics, disc, audio, input, OS
+ext/                  optional features the game calls at chosen points: multiplayer
 src/                  entry point and compatibility headers
 tools/                build helpers and developer tools
 docs/                 developer documentation and reference screenshots
@@ -240,6 +246,7 @@ docs/                 developer documentation and reference screenshots
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): where a fix goes (decomp, patch or platform), how the build works, the platform layer, the decomp patches, every environment variable, developer tools, performance.
 - [docs/64-BIT.md](docs/64-BIT.md): how the 64-bit build works and what is left.
 - `platform/*/README.md`: each platform module in detail.
+- [ext/README.md](ext/README.md): extensions, and how to write one; [ext/multiplayer/README.md](ext/multiplayer/README.md): multiplayer.
 
 The standalone build contains the whole game, so keep it to yourself: sharing it is sharing the game.
 

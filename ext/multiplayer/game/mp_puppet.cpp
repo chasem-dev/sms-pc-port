@@ -28,6 +28,7 @@
 #include <dolphin/mtx.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "mp_peach.hpp"
@@ -264,6 +265,139 @@ Vec position(const Mtx m)
 
 } // namespace
 
+namespace {
+
+// Rotation matrix <-> quaternion (x, y, z, w), for turning smoothly.
+void toQuat(const f32 (*m)[4], f32 q[4])
+{
+	const f32 tr = m[0][0] + m[1][1] + m[2][2];
+	if (tr > 0.0f) {
+		const f32 s = sqrtf(tr + 1.0f) * 2.0f;
+		q[3] = 0.25f * s;
+		q[0] = (m[2][1] - m[1][2]) / s;
+		q[1] = (m[0][2] - m[2][0]) / s;
+		q[2] = (m[1][0] - m[0][1]) / s;
+	} else if (m[0][0] > m[1][1] && m[0][0] > m[2][2]) {
+		const f32 s = sqrtf(1.0f + m[0][0] - m[1][1] - m[2][2]) * 2.0f;
+		q[3] = (m[2][1] - m[1][2]) / s;
+		q[0] = 0.25f * s;
+		q[1] = (m[0][1] + m[1][0]) / s;
+		q[2] = (m[0][2] + m[2][0]) / s;
+	} else if (m[1][1] > m[2][2]) {
+		const f32 s = sqrtf(1.0f + m[1][1] - m[0][0] - m[2][2]) * 2.0f;
+		q[3] = (m[0][2] - m[2][0]) / s;
+		q[0] = (m[0][1] + m[1][0]) / s;
+		q[1] = 0.25f * s;
+		q[2] = (m[1][2] + m[2][1]) / s;
+	} else {
+		const f32 s = sqrtf(1.0f + m[2][2] - m[0][0] - m[1][1]) * 2.0f;
+		q[3] = (m[1][0] - m[0][1]) / s;
+		q[0] = (m[0][2] + m[2][0]) / s;
+		q[1] = (m[1][2] + m[2][1]) / s;
+		q[2] = 0.25f * s;
+	}
+}
+
+void fromQuat(const f32 q[4], f32 (*m)[4])
+{
+	const f32 x = q[0], y = q[1], z = q[2], w = q[3];
+	m[0][0] = 1 - 2 * (y * y + z * z), m[0][1] = 2 * (x * y - z * w), m[0][2] = 2 * (x * z + y * w);
+	m[1][0] = 2 * (x * y + z * w), m[1][1] = 1 - 2 * (x * x + z * z), m[1][2] = 2 * (y * z - x * w);
+	m[2][0] = 2 * (x * z - y * w), m[2][1] = 2 * (y * z + x * w), m[2][2] = 1 - 2 * (x * x + y * y);
+}
+
+// Their scale (the matrix's columns' lengths), kept apart from the turn.
+f32 columnLength(const f32 (*m)[4], int c) { return sqrtf(m[0][c] * m[0][c] + m[1][c] * m[1][c] + m[2][c] * m[2][c]); }
+
+void blendMatrix(const f32 (*a)[4], const f32 (*b)[4], f32 t, f32 (*out)[4])
+{
+	f32 sa[3], sb[3], ra[3][4], rb[3][4];
+	for (int c = 0; c < 3; c++) {
+		sa[c] = columnLength(a, c), sb[c] = columnLength(b, c);
+		for (int r = 0; r < 3; r++) {
+			ra[r][c] = sa[c] > 1e-6f ? a[r][c] / sa[c] : 0.0f;
+			rb[r][c] = sb[c] > 1e-6f ? b[r][c] / sb[c] : 0.0f;
+		}
+	}
+	f32 qa[4], qb[4], q[4];
+	toQuat(ra, qa);
+	toQuat(rb, qb);
+	f32 dot = qa[0] * qb[0] + qa[1] * qb[1] + qa[2] * qb[2] + qa[3] * qb[3];
+	if (dot < 0.0f) { // the short way round
+		for (int i = 0; i < 4; i++)
+			qb[i] = -qb[i];
+		dot = -dot;
+	}
+	f32 wa = 1.0f - t, wb = t;
+	if (dot < 0.9995f) {
+		const f32 angle = acosf(dot), sine = sinf(angle);
+		wa = sinf((1.0f - t) * angle) / sine;
+		wb = sinf(t * angle) / sine;
+	}
+	f32 len = 0.0f;
+	for (int i = 0; i < 4; i++) {
+		q[i] = qa[i] * wa + qb[i] * wb;
+		len += q[i] * q[i];
+	}
+	len = sqrtf(len);
+	for (int i = 0; i < 4; i++)
+		q[i] /= len > 1e-6f ? len : 1.0f;
+	fromQuat(q, out);
+	for (int c = 0; c < 3; c++) {
+		const f32 scale = sa[c] + (sb[c] - sa[c]) * t;
+		for (int r = 0; r < 3; r++)
+			out[r][c] *= scale;
+	}
+	for (int r = 0; r < 3; r++)
+		out[r][3] = a[r][3] + (b[r][3] - a[r][3]) * t;
+}
+
+// A frame between two of the same looping animation: forwards, over the
+// loop's end when the later one is smaller.
+f32 blendFrame(f32 a, f32 b, f32 t, f32 length)
+{
+	if (b >= a || length <= 0.0f)
+		return a + (b - a) * t;
+	f32 f = a + (b + length - a) * t;
+	return f >= length ? f - length : f;
+}
+
+} // namespace
+
+void TMpPuppet::blendPoses(const MpgPose& a, const MpgPose& b, f32 t, MpgPose* out)
+{
+	// what is not in between (a nozzle, flags, which animation) is the
+	// nearer pose's; the water is always the newer pose's
+	*out = t < 0.5f ? a : b;
+	out->flags    = (a.flags & ~MPG_POSE_SPRAYING) | (b.flags & MPG_POSE_SPRAYING);
+	out->emitters = b.emitters;
+	memcpy(out->emitPos, b.emitPos, sizeof out->emitPos);
+	memcpy(out->emitDir, b.emitDir, sizeof out->emitDir);
+	memcpy(out->emitSpeed, b.emitSpeed, sizeof out->emitSpeed);
+	out->pressure = b.pressure;
+	if (t <= 0.0f)
+		return;
+	// a jump between poses (a warp, a respawn) is not crossed smoothly
+	const f32 dx = b.mtx[0][3] - a.mtx[0][3], dy = b.mtx[1][3] - a.mtx[1][3], dz = b.mtx[2][3] - a.mtx[2][3];
+	if (dx * dx + dy * dy + dz * dz > 800.0f * 800.0f)
+		return;
+	blendMatrix(a.mtx, b.mtx, t, out->mtx);
+	M3UModelMario* pm = mModel;
+	if (a.bodyBck == b.bodyBck && a.bodyBck < kMarioAnims && pm->unk4->unk4[a.bodyBck]) {
+		out->bodyFrame = blendFrame(a.bodyFrame, b.bodyFrame, t, pm->unk4->unk4[a.bodyBck]->getFrameMax());
+		out->bodyBlend = a.bodyBlend + (b.bodyBlend - a.bodyBlend) * t;
+	}
+	if (a.upperBck == b.upperBck && a.upperBck < kMarioAnims && pm->unk4->unk4[a.upperBck]
+	    && (a.flags & b.flags & MPG_POSE_UPPER))
+		out->upperFrame = blendFrame(a.upperFrame, b.upperFrame, t, pm->unk4->unk4[a.upperBck]->getFrameMax());
+	if (a.btp == b.btp && a.btp < kMarioTexPatterns && pm->unk4->unk8[a.btp])
+		out->btpFrame = blendFrame(a.btpFrame, b.btpFrame, t, pm->unk4->unk8[a.btp]->getFrameMax());
+	if (a.fluddBck == b.fluddBck && b.fluddFrame >= a.fluddFrame)
+		out->fluddFrame = a.fluddFrame + (b.fluddFrame - a.fluddFrame) * t;
+	if (a.yoshiBck == b.yoshiBck && b.yoshiFrame >= a.yoshiFrame)
+		out->yoshiFrame = a.yoshiFrame + (b.yoshiFrame - a.yoshiFrame) * t;
+}
+
 TMpPuppet::TMpPuppet(int slot, bool self)
     : THitActor("<MpPuppet>")
     , mSlot(slot)
@@ -272,6 +406,9 @@ TMpPuppet::TMpPuppet(int slot, bool self)
     , mActive(false)
     , mHaveSmoothed(false)
     , mLastSession(0)
+    , mWaterCarry(0.0f)
+    , mSpawnFrames(0)
+    , mGoneFrames(1000)
     , mModel(nullptr)
     , mBodyData(nullptr)
     , mFludd(nullptr)
@@ -437,10 +574,10 @@ bool TMpPuppet::buildYoshi()
 	// one model data for every puppet's Yoshi in this stage (each sets his
 	// colour just before he is entered)
 	static J3DModelData* shared;
-	static void* sharedFor;
-	if (!shared || sharedFor != gpMarDirector) {
+	static unsigned sharedFor;
+	if (!shared || sharedFor != MpStageNumber()) {
 		shared    = J3DModelLoaderDataBase::load(res, J3DMLF_MaterialPEFull | (4 << J3DMLF_TevStageNumShift));
-		sharedFor = gpMarDirector;
+		sharedFor = MpStageNumber();
 	}
 	mYoshi = new MActor(yoshi->unk30);
 	mYoshi->setModel(new J3DModel(shared, 0, 1), 0);
@@ -670,28 +807,21 @@ void TMpPuppet::applyPose(JDrama::TGraphics* graphics)
 		pm->getFrameCtrl(2).setFrame(p.btpFrame);
 	}
 
-	// where: the sender's root matrix, its position eased in so the steps
-	// between their updates do not show
+	// where: the root matrix as blended from their poses
 	Mtx base;
 	memcpy(base, p.mtx, sizeof base);
-	const f32 tx = base[0][3], ty = base[1][3], tz = base[2][3];
-	const f32 dx = tx - mSmoothed[0], dy = ty - mSmoothed[1], dz = tz - mSmoothed[2];
-	if (!mHaveSmoothed || dx * dx + dy * dy + dz * dz > 600.0f * 600.0f) {
-		mSmoothed[0] = tx;
-		mSmoothed[1] = ty;
-		mSmoothed[2] = tz;
-	} else {
-		mSmoothed[0] += dx * 0.5f;
-		mSmoothed[1] += dy * 0.5f;
-		mSmoothed[2] += dz * 0.5f;
+	mPosition.x = base[0][3];
+	mPosition.y = base[1][3];
+	mPosition.z = base[2][3];
+	// a player who just arrived grows in, overshooting a little, rather than
+	// popping up from nothing
+	if (!mSelf && mSpawnFrames < 14) {
+		const f32 t     = (f32)(mSpawnFrames + 1) / 14.0f;
+		const f32 scale = t < 0.7f ? t / 0.7f * 1.12f : 1.12f - (t - 0.7f) / 0.3f * 0.12f;
+		for (int r = 0; r < 3; r++)
+			for (int c = 0; c < 3; c++)
+				base[r][c] *= scale;
 	}
-	mHaveSmoothed = true;
-	base[0][3]    = mSmoothed[0];
-	base[1][3]    = mSmoothed[1];
-	base[2][3]    = mSmoothed[2];
-	mPosition.x   = mSmoothed[0];
-	mPosition.y   = mSmoothed[1];
-	mPosition.z   = mSmoothed[2];
 	MTXCopy(base, pm->getModel()->getBaseTRMtx());
 	pm->perform(CUE_CALC_ANIM, graphics);
 
@@ -727,12 +857,14 @@ void TMpPuppet::applyPose(JDrama::TGraphics* graphics)
 		// on the back, tilted as TWaterGun::setBaseTRMtx tilts it
 		Mtx chest;
 		MTXCopy(bodyModel->getAnmMtx(mJointChest), chest);
-		if (mPeach && mRig && mRig->chest >= 0) {
-			// on Peach: turned as his chest is, on her back (she is taller)
-			MtxPtr hers = mPeach->getAnmMtx(mRig->chest);
-			chest[0][3] = hers[0][3];
-			chest[1][3] = hers[1][3];
-			chest[2][3] = hers[2][3];
+		if (mPeach && mRig && mRig->kubi >= 0) {
+			// on Peach: turned as his chest is, and as far below her neck as
+			// his chest is below his head, so it reaches her shoulders as it
+			// reaches his head (her chest joint is down at her hips)
+			MtxPtr neck = mPeach->getAnmMtx(mRig->kubi);
+			MtxPtr head = bodyModel->getAnmMtx(mJointHead);
+			for (int r = 0; r < 3; r++)
+				chest[r][3] = neck[r][3] - (head[r][3] - chest[r][3]);
 		}
 		f32 lean     = chest[1][0] < 0.0f ? -chest[1][0] : chest[1][0];
 		s16 angle    = (s16)(lean * (0 - -0x1800) + -0x1800);
@@ -782,14 +914,35 @@ void TMpPuppet::perform(u32 cue, JDrama::TGraphics* graphics)
 			mHaveSmoothed = false;
 			mActive       = gpMarioOriginal && (pose.flags & MPG_POSE_VISIBLE);
 		} else {
-			mActive = mpg_pose(mSlot, &pose, &age) && age < 3.0f && (pose.flags & MPG_POSE_VISIBLE);
+			// between the two poses either side of a moment just past
+			MpgPose a, b;
+			f32 t = 0.0f;
+			mActive = mpg_pose_pair(mSlot, &a, &b, &t) && (b.flags & MPG_POSE_VISIBLE);
+			if (mActive)
+				blendPoses(a, b, t, &pose);
+			static const bool trace = getenv("SMS_MULTIPLAYER_TRACE") != nullptr;
+			MpgPose newest;
+			if (trace && mActive && mpg_pose(mSlot, &newest, &age))
+				fprintf(stderr, "[mptrace] %d drawn %.1f %.1f newest %.1f %.1f frame %.2f t %.2f\n", mSlot,
+				        pose.mtx[0][3], pose.mtx[2][3], newest.mtx[0][3], newest.mtx[2][3], pose.bodyFrame, t);
 		}
+		if (!mActive && mGoneFrames < 1000)
+			mGoneFrames++;
 		if (mActive) {
+			// gone a second or more, or in a new stage: they appear again
+			if (mGoneFrames > 30 || pose.session != mLastSession)
+				mSpawnFrames = 0;
+			else if (mSpawnFrames < 1000)
+				mSpawnFrames++;
+			mGoneFrames = 0;
 			if (pose.session != mLastSession)
 				mHaveSmoothed = false;
 			mLastSession = pose.session;
 			mPose        = pose;
 			applyPose(graphics);
+			// their water (our own player's is the game's own)
+			if (!mSelf && (pose.flags & MPG_POSE_SPRAYING))
+				MpEmitWater(pose, &mWaterCarry);
 		}
 	}
 	if (!mActive && !mSwapped)

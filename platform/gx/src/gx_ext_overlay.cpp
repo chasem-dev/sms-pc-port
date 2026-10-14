@@ -1,7 +1,8 @@
 // Extensions' text in the window (gx_ext_overlay.h), drawn with the debug
-// overlay's renderer: the notice ("Connecting to 1.2.3.4…") centred near the
-// top, and the status panel (who is playing) in the top right corner. Each is
-// one or more lines; an empty text hides it.
+// overlay's renderer: the notice ("Connecting to 1.2.3.4...") centred near the
+// top, and the status panel (who is playing) at the right. Each is one or
+// more lines, wrapped to the window; an empty text hides it. The font has
+// ASCII only.
 #include "gx_ext_overlay.h"
 #include "gx_internal.h"
 
@@ -30,12 +31,26 @@ struct Panel {
 std::mutex s_lock;
 Panel s_panels[GXPC_EXT_OVERLAY_PANELS];
 
-std::vector<std::string> lines(const std::string& text) {
+// The text's lines, each wrapped at spaces to at most `maxWidth` font pixels.
+std::vector<std::string> lines(const std::string& text, int maxWidth) {
     std::vector<std::string> out;
     size_t start = 0;
     for (;;) {
         size_t nl = text.find('\n', start);
-        out.push_back(text.substr(start, nl == std::string::npos ? std::string::npos : nl - start));
+        std::string line = text.substr(start, nl == std::string::npos ? std::string::npos : nl - start);
+        while (gx::overlayTextWidth(line.c_str()) > maxWidth) {
+            size_t cut = line.size();
+            // the last space that leaves a line short enough
+            while (cut > 0) {
+                cut = line.rfind(' ', cut - 1);
+                if (cut == std::string::npos || cut == 0) break;
+                if (gx::overlayTextWidth(line.substr(0, cut).c_str()) <= maxWidth) break;
+            }
+            if (cut == std::string::npos || cut == 0) break;  // one long word: leave it
+            out.push_back(line.substr(0, cut));
+            line = line.substr(cut + 1);
+        }
+        out.push_back(line);
         if (nl == std::string::npos) break;
         start = nl + 1;
     }
@@ -58,7 +73,7 @@ void renderPanel(int index, gx::OverlaySlot slot, int winW, int winH) {
     if (changed) {
         p.shown = text;
         p.glyph = glyph;
-        const std::vector<std::string> rows = lines(text);
+        const std::vector<std::string> rows = lines(text, winW * 7 / 10 / glyph);
         const int pad = 6 * glyph;
         int width = 0;
         for (const std::string& r : rows) width = std::max(width, gx::overlayTextWidth(r.c_str()));
@@ -70,10 +85,11 @@ void renderPanel(int index, gx::OverlaySlot slot, int winW, int winH) {
         for (size_t i = 0; i < rows.size(); i++)
             gx::overlayText(p.pixels, p.w, p.h, pad, pad + int(i) * kLineH * glyph, rows[i].c_str(), kText, glyph);
     }
+    // the notice centred just below the HUD's top row (the lives), the status
+    // panel at the right below the counters (rows count from the top)
     const int margin = winH / 30;
-    // GL's window rows count from the bottom
     const int x = index == GXPC_EXT_OVERLAY_NOTICE ? (winW - p.w) / 2 : winW - p.w - margin;
-    const int y = index == GXPC_EXT_OVERLAY_NOTICE ? winH - p.h - winH / 6 : winH - p.h - winH / 4;
+    const int y = index == GXPC_EXT_OVERLAY_NOTICE ? winH * 17 / 100 : winH * 27 / 100;
     gx::drawOverlayPanel(slot, changed ? p.pixels.data() : nullptr, p.w, p.h, x, y, 1, winW, winH);
 }
 

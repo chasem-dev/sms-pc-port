@@ -7,6 +7,8 @@
 // other player through the host; reliable messages arrive complete and in
 // order with a third of all packets dropped; a client that leaves is gone at
 // once, one that dies after the timeout; a probe gets the host's answer.
+// Messages as big as allowed get through beside full-size states and world
+// snapshots; a CONNECT that does not echo the host's cookie gets no slot.
 #include "mp_net.h"
 #include "../mp_socket.h"
 #include "../mp_wire.h"
@@ -78,10 +80,13 @@ template <class F> static bool pump(double seconds, F pred)
 
 struct State {
 	uint32_t slot, counter;
+	uint8_t padding[MP_MAX_STATE - 8]; // as big as a state can be
 };
 
 const int kMessages = 300;
 static int g_next;            // client: the host's messages so far
+static int g_big;             // client: the host's biggest messages so far
+const int kBigMessages = 5;
 static int g_got[MP_MAX_PLAYERS]; // host: each client's messages so far
 
 static void clientEvent(const MpEvent* ev)
@@ -92,6 +97,12 @@ static void clientEvent(const MpEvent* ev)
 		CHECK(ev->slot == 0);
 		CHECK(v == (uint32_t)g_next);
 		g_next++;
+	}
+	if (ev->type == MP_EV_MESSAGE && ev->kind == 10) {
+		CHECK(ev->size == MP_MAX_MESSAGE);
+		for (int i = 0; i < MP_MAX_MESSAGE; i++)
+			CHECK(ev->data[i] == (uint8_t)(i * 7 + g_big));
+		g_big++;
 	}
 }
 
@@ -126,7 +137,7 @@ static int client(int index, bool lingerToBeKilled)
 	CHECK(!strcmp(host, "host"));
 
 	// our state goes out; everyone else's comes in
-	State mine = {(uint32_t)slot, 0};
+	State mine = {(uint32_t)slot, 0, {}};
 	bool seen[MP_MAX_PLAYERS] = {};
 	CHECK(pump(10, [&](MpEvent*) {
 		mine.counter++;
@@ -144,6 +155,14 @@ static int client(int index, bool lingerToBeKilled)
 		return all != 0;
 	}));
 
+	// the host's world snapshot arrives too (unreliable, the newest kept)
+	CHECK(pump(10, [&](MpEvent*) {
+		char world[MP_MAX_WORLD];
+		float age;
+		size_t n = mp_world(world, sizeof world, &age);
+		return n == MP_MAX_WORLD && world[0] == 'W' && world[MP_MAX_WORLD - 1] == 'w' && age < 1.0f;
+	}));
+
 	// reliable messages, numbered, both ways
 	for (int i = 0; i < kMessages; i++) {
 		uint32_t m[2] = {(uint32_t)slot, (uint32_t)i};
@@ -158,6 +177,8 @@ static int client(int index, bool lingerToBeKilled)
 	}
 	// stay until the host says it got everything (message kind 9)
 	CHECK(pump(30, [](MpEvent* ev) { return ev && ev->type == MP_EV_MESSAGE && ev->kind == 9; }));
+	// the big ones were sent before it, so they are all in
+	CHECK(g_big == kBigMessages);
 	mp_stop();
 	return 0;
 }
@@ -187,9 +208,15 @@ static void probe()
 	uint8_t buf[512];
 	mp::Writer w(buf, sizeof buf);
 	w.u32(0x504D4D53);
-	w.u16(1);
+	w.u16(2);
 	w.u8(1);
 	w.u32(1234);
+	// a short probe gets no answer (no use for flooding someone else)...
+	CHECK(s.send(buf, w.len, to));
+	CHECK(!s.wait(300));
+	// ...so it is padded to more than the answer
+	while (w.len < 200)
+		w.u8(0);
 	// the host drops a third of what it hears: ask until it answers
 	mp::Address from;
 	int n = -1;
@@ -213,6 +240,51 @@ static void probe()
 	fprintf(stderr, "[probe] %d/%d players, open %d, build %s, host %s, status \"%s\"\n", players, max, open, build,
 	        name, status);
 	CHECK(max == 4 && !strcmp(build, kBuild) && !strcmp(name, "host") && !strcmp(status, "Delfino Plaza"));
+
+	// a CONNECT without the host's cookie gets a CHALLENGE, not a slot
+	// (anyone could send one from someone else's address)
+	const unsigned before = mp_players();
+	mp::Writer c(buf, sizeof buf);
+	c.u32(0x504D4D53);
+	c.u16(2);
+	c.u8(3);
+	c.u32(77);
+	c.str(kBuild, 63);
+	c.str("spoof", 23);
+	c.u64(0);
+	n = -1;
+	for (int tries = 0; tries < 20 && n <= 0; tries++) {
+		CHECK(s.send(buf, c.len, to));
+		if (s.wait(200))
+			n = s.recv(buf, sizeof buf, from);
+	}
+	CHECK(n > 0);
+	mp::Reader cr(buf, (size_t)n);
+	CHECK(cr.u32() == 0x504D4D53);
+	cr.u16();
+	CHECK(cr.u8() == 8); // CHALLENGE
+	CHECK(cr.u32() == 77);
+	const uint64_t cookie = cr.u64();
+	CHECK(cr.ok && cookie != 0);
+	CHECK(mp_players() == before);
+	// a wrong cookie gets another challenge, still no slot
+	mp::Writer c2(buf, sizeof buf);
+	c2.u32(0x504D4D53);
+	c2.u16(2);
+	c2.u8(3);
+	c2.u32(77);
+	c2.str(kBuild, 63);
+	c2.str("spoof", 23);
+	c2.u64(cookie ^ 0x10);
+	n = -1;
+	for (int tries = 0; tries < 20 && n <= 0; tries++) {
+		CHECK(s.send(buf, c2.len, to));
+		if (s.wait(200))
+			n = s.recv(buf, sizeof buf, from);
+	}
+	CHECK(n > 0 && buf[6] == 8);
+	CHECK(mp_players() == before);
+	fprintf(stderr, "[probe] a short probe and a CONNECT without the cookie get nothing more\n");
 }
 
 static pid_t spawn(int (*fn)(int, bool), int index, bool linger)
@@ -240,6 +312,7 @@ static bool exitedOk(pid_t pid)
 
 int main()
 {
+	alarm(180); // a failed check in a child must not leave the host waiting forever
 	srand((unsigned)time(nullptr) ^ (unsigned)getpid());
 	g_port = 30000 + rand() % 20000;
 	g_onEvent = hostEvent;
@@ -254,6 +327,12 @@ int main()
 	kids[1] = spawn(client, 2, false);
 	kids[2] = spawn(client, 3, true); // killed later, to time out
 
+	// a world snapshot as big as allowed, beside three players' full states
+	static char world[MP_MAX_WORLD];
+	memset(world, '.', sizeof world);
+	world[0]                = 'W';
+	world[MP_MAX_WORLD - 1] = 'w';
+	mp_set_world(world, sizeof world);
 	CHECK(pump(10, [](MpEvent*) { return mp_players() == 0xF; }));
 	fprintf(stderr, "[host] 3 clients joined\n");
 	// the fifth player and a different build are refused
@@ -261,7 +340,8 @@ int main()
 	CHECK(exitedOk(spawnRefused("other-build", "different version")));
 
 	// relay states and take every client's messages in order
-	State mine = {0, 0};
+	State mine = {0, 0, {}};
+	mp_set_world(world, sizeof world);
 	bool sentAll = false;
 	CHECK(pump(40, [&](MpEvent*) {
 		mine.counter++;
@@ -270,6 +350,14 @@ int main()
 			for (int i = 0; i < kMessages; i++) {
 				uint32_t v = (uint32_t)i;
 				CHECK(mp_send(-1, 8, &v, sizeof v) == 0);
+			}
+			// as big as a message can be: they do not fit beside the states
+			// and the world, so they must go on their own
+			for (int k = 0; k < kBigMessages; k++) {
+				uint8_t big[MP_MAX_MESSAGE];
+				for (int i = 0; i < MP_MAX_MESSAGE; i++)
+					big[i] = (uint8_t)(i * 7 + k);
+				CHECK(mp_send(-1, 10, big, sizeof big) == 0);
 			}
 			sentAll = true;
 		}
