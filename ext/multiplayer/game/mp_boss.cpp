@@ -2,7 +2,9 @@
 // is taught here on its own: Petey Piranha, Gooper Blooper, Eely-Mouth,
 // Phantamanta, Wiggler, King Boo, Mecha-Bowser, Bowser's hot tub, Shadow
 // Mario's chases and the Gatekeepers (the goop piranha plants of the
-// Airstrip, the plaza's statue, Bianco Hills, Ricco Harbor and Pinna Park).
+// Airstrip, Bianco Hills, and the plaza's statue and its gates to Ricco
+// Harbor and Gelato Beach). Il Piantissimo, a Shadow Mario of sorts, is left
+// to each game: every player races their own.
 //
 // The host's boss is the real one. Its state rides at the end of the world
 // snapshot as records, one per part ("unit": the boss, or one of
@@ -1024,7 +1026,9 @@ void MpBossStageSetup()
 	if (!s_shadowList)
 		for (JGadget::TList<TLiveActor*>::iterator it = gpConductor->unk30.begin(); it != gpConductor->unk30.end(); ++it)
 			if (TEMario* em = dynamic_cast<TEMario*>(*it))
-				s_shadowAlone = em;
+				// Il Piantissimo is one of these too: each player races their own
+				if (em->mEnemyMario && em->mEnemyMario->mPlayerType != TMario::PLAYER_TYPE_MONTE_MAN)
+					s_shadowAlone = em;
 	if (!s_kind)
 		if (TBathtub* tub = dynamic_cast<TBathtub*>(JDrama::TNameRefGen::search2("バスタブ")))
 			if (tub->unk168)
@@ -1266,4 +1270,18 @@ int MpBossTestShadow()
 	water.mParticleIndex  = 0;
 	s_shadow->hitWater(&water);
 	return KIND_SHADOW;
+}
+
+// Whether `actor` is one of the bosses shared here (their hits go through
+// the boss's own reports, not as hits on shared objects).
+bool MpBossIsBoss(const void* actor)
+{
+	const TLiveActor* a = static_cast<const TLiveActor*>(actor);
+	if (!a)
+		return false;
+	TLiveActor* b = const_cast<TLiveActor*>(a);
+	return dynamic_cast<TBossPakkun*>(b) || dynamic_cast<TBossGesso*>(b) || dynamic_cast<TBossEel*>(b)
+	       || dynamic_cast<TBossManta*>(b) || dynamic_cast<TBossHanachan*>(b) || dynamic_cast<TBossTelesa*>(b)
+	       || dynamic_cast<TTinKoopa*>(b) || dynamic_cast<TBiancoGateKeeper*>(b) || dynamic_cast<TEMario*>(b);
+	// (Il Piantissimo is a TEMario too: left alone, not shared as an object)
 }

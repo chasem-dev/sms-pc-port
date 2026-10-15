@@ -49,6 +49,8 @@ enum : uint32_t {
 	FLAG_BLUE_TOTAL   = 0x40001,
 	FLAG_COINS        = 0x40002,
 	FLAG_RED_COINS    = 0x60000,
+	FLAG_BALLOONS     = 0x60001, // this stage: Bowser Jr. balloons popped (Pinna Park's roller coaster)
+	FLAG_ROCKETS      = 0x60002, // this stage: rockets on Mecha-Bowser
 };
 
 struct FlagSpec {
