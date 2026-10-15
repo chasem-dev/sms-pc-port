@@ -121,6 +121,7 @@ def main():
     ap.add_argument('--jpeg', action='store_true', help='keep captures as JPEG (converted while the games run)')
     ap.add_argument('--bot-join', default='', help='seconds after the host opens its first stage that each bot joins, ;-separated')
     ap.add_argument('--late', type=float, default=0, help='start the last bot this many seconds after the others')
+    ap.add_argument('--client-after', default='', help='start the client once the host\'s log has this text (e.g. a test aid\'s line)')
     ap.add_argument('--window', action='store_true',
                     help='capture the window as shown (notices and player list included) instead of the picture, '
                          'through SDL\'s offscreen driver; --shots are then GX frames')
@@ -166,6 +167,11 @@ def main():
         offsets = args.offsets.split(';')
         first_bot = 0
         if args.client:
+            while args.client_after and host.poll() is None:
+                with open(os.path.join(work, 'host.log'), errors='replace') as f:
+                    if args.client_after in f.read():
+                        break
+                time.sleep(0.05)
             craw = os.path.join(work, 'client-raw')
             os.makedirs(craw)
             csave = os.path.join(work, 'client-save')

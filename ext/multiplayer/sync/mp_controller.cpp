@@ -81,6 +81,7 @@ struct Controller {
 	int32_t sessionRed   = 0;   // red coins this session, kept over a reload
 	bool restoreRed      = false;
 	bool restartSession  = false;
+	unsigned waitingStage = 0; // players who joined while the host was between stages: told once it has arrived
 
 	// client
 	bool hasTarget     = false;
@@ -597,13 +598,18 @@ void events()
 			if (g.role == MPG_ROLE_HOST) {
 				g.hostFlags.forget(ev.slot);
 				g.reportReaders[ev.slot] = FlagReportReader();
-				// the newcomer's flags first, then where to go
+				// the newcomer's flags first, then where to go: not while the
+				// host is between stages (that stage is being left), but once
+				// it is in the next one
 				sendFull(ev.slot);
-				if (g.session)
+				if (g.session && (g.game.playing || g.game.paused))
 					sendStage(ev.slot);
+				else
+					g.waitingStage |= 1u << ev.slot;
 			}
 			break;
 		case MP_EV_PLAYER_LEFT:
+			g.waitingStage &= ~(1u << ev.slot);
 			notice(std::string(kCharacters[ev.slot]) + " left the game");
 			if (g.role == MPG_ROLE_HOST)
 				g.hostFlags.forget(ev.slot);
@@ -836,6 +842,7 @@ extern "C" int mpg_start(void)
 		else
 			notice("Hosting on port " + std::to_string(cfg.port) + ". Players who join come to the level you are in.");
 		mp_set_host_status("the title screen");
+		mp_set_accepting(0); // until the host has chosen a file and is in a stage
 	} else {
 		char msg[256];
 		mp_link_message(msg, sizeof msg);
@@ -899,6 +906,7 @@ extern "C" void mpg_frame(const MpgGame* game)
 					sendFull(i);
 					sendStage(i);
 				}
+			g.waitingStage = 0;
 			char status[96];
 			const int world = game->world >= 0 && game->world < 10 ? game->world : 1;
 			snprintf(status, sizeof status, "%s", kWorlds[world]);
@@ -911,6 +919,17 @@ extern "C" void mpg_frame(const MpgGame* game)
 			g.restoreRed = true;
 			// the stage's goop is back as it loaded: clean again what was cleaned
 			g.cleanIn.assign(g.cleanLog.begin(), g.cleanLog.end());
+		}
+		// players may join once the host has chosen a file and is in a stage
+		mp_set_accepting(g.session != 0);
+		// newcomers who came while the host was between stages: here it is
+		if (g.waitingStage && g.session && (game->playing || game->paused)) {
+			for (int i = 1; i < MP_MAX_PLAYERS; i++)
+				if ((g.waitingStage & (1u << i)) && (mp_players() & (1u << i))) {
+					sendFull(i);
+					sendStage(i);
+				}
+			g.waitingStage = 0;
 		}
 		return;
 	}

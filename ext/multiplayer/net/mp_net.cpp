@@ -183,6 +183,7 @@ struct Session {
 	std::mt19937 rng{std::random_device{}()};
 	uint32_t lastSend = 0;
 	std::vector<uint8_t> world; // host: to send; client: the newest received
+	bool accepting = true;      // host: whether players may join now (mp_set_accepting)
 	uint32_t worldSeq = 0, worldAt = 0;
 };
 
@@ -519,7 +520,7 @@ void hostPacket(Session& s, const uint8_t* buf, int n, const Address& from, uint
 		w.u32(nonce);
 		w.u8((uint8_t)count);
 		w.u8(MP_MAX_PLAYERS);
-		w.u8(version == kProtocol && count < MP_MAX_PLAYERS);
+		w.u8(version == kProtocol && count < MP_MAX_PLAYERS && s.accepting);
 		w.str(s.cfg.build, 63);
 		w.str(s.cfg.name, MP_NAME_LEN - 1);
 		w.str(s.status.c_str(), 63);
@@ -562,6 +563,10 @@ void hostPacket(Session& s, const uint8_t* buf, int n, const Address& from, uint
 		if (version != kProtocol || strcmp(build, s.cfg.build) != 0) {
 			reason = REJECT_BUILD;
 			why    = "The host is playing a different version of the game. Update both games to the same version.";
+		}
+		if (!why && !s.accepting) {
+			reason = REJECT_CLOSED;
+			why    = "The host is still choosing a save file. Join again once they're playing.";
 		}
 		if (!why) {
 			// a player reconnecting from the same address replaces their old slot
@@ -1056,6 +1061,14 @@ extern "C" int mp_poll_event(MpEvent* ev)
 		    return 1;
 	    },
 	    0);
+}
+
+extern "C" void mp_set_accepting(int accepting)
+{
+	withSession([&](Session& s) {
+		s.accepting = accepting != 0;
+		return 0;
+	}, 0);
 }
 
 extern "C" void mp_set_host_status(const char* status)
