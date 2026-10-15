@@ -900,6 +900,41 @@ void TMpPuppet::applyPose(JDrama::TGraphics* graphics)
 
 }
 
+// Debug: how smoothly another player is drawn while they move. Each frame's
+// step is held against the steps just before: a stall (barely moving) or a
+// jump (far more than lately) is a hitch the eye catches.
+void MpMeasureSmoothness(int slot, const MpgPose& pose)
+{
+	static const bool debug = getenv("SMS_MULTIPLAYER_DEBUG") != nullptr;
+	if (!debug || slot < 0 || slot >= 4)
+		return;
+	struct Track {
+		f32 x, z, avg;
+		bool have;
+		int moving, stalls, jumps, frames;
+	};
+	static Track tracks[4];
+	Track& k     = tracks[slot];
+	const f32 x  = pose.mtx[0][3], z = pose.mtx[2][3];
+	if (k.have) {
+		const f32 step = sqrtf((x - k.x) * (x - k.x) + (z - k.z) * (z - k.z));
+		if (k.avg > 3.0f && step < 400.0f) { // moving (not standing, not a warp)
+			k.moving++;
+			if (step < k.avg * 0.25f)
+				k.stalls++;
+			else if (step > k.avg * 2.5f)
+				k.jumps++;
+		}
+		k.avg += (step - k.avg) * 0.2f;
+	}
+	k.x = x, k.z = z, k.have = true;
+	if (++k.frames % 600 == 0 && k.moving) {
+		fprintf(stderr, "[multiplayer] drawn smoothness, %s: %d moving frames, %d stalls, %d jumps\n",
+		        mpg_character_name(slot), k.moving, k.stalls, k.jumps);
+		k.moving = k.stalls = k.jumps = 0;
+	}
+}
+
 void TMpPuppet::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	if (!mModel)
@@ -920,6 +955,8 @@ void TMpPuppet::perform(u32 cue, JDrama::TGraphics* graphics)
 			mActive = mpg_pose_pair(mSlot, &a, &b, &t) && (b.flags & MPG_POSE_VISIBLE);
 			if (mActive)
 				blendPoses(a, b, t, &pose);
+			if (mActive)
+				MpMeasureSmoothness(mSlot, pose);
 			static const bool trace = getenv("SMS_MULTIPLAYER_TRACE") != nullptr;
 			MpgPose newest;
 			if (trace && mActive && mpg_pose(mSlot, &newest, &age))

@@ -848,6 +848,8 @@ void run(Session* s)
 	};
 	std::vector<Packet> batch(kRecvPerPass);
 	std::uniform_real_distribution<float> chance(0.0f, 1.0f);
+	std::deque<std::pair<uint32_t, Packet>> held; // tests: delayed packets, by when they arrive
+	const bool delayed = s->cfg.delayMs > 0 || s->cfg.jitterMs > 0;
 	while (s->running.load()) {
 		s->sock.wait(5);
 		int got = 0;
@@ -862,10 +864,26 @@ void run(Session* s)
 		for (int i = 0; i < got; i++) {
 			if (s->cfg.dropRate > 0 && chance(s->rng) < s->cfg.dropRate)
 				continue;
+			if (delayed) {
+				const uint32_t due = now + (uint32_t)s->cfg.delayMs + (uint32_t)(chance(s->rng) * s->cfg.jitterMs);
+				std::deque<std::pair<uint32_t, Packet>>::iterator at = held.end();
+				while (at != held.begin() && (int32_t)((at - 1)->first - due) > 0)
+					--at;
+				held.insert(at, std::make_pair(due, batch[i]));
+				continue;
+			}
 			if (s->cfg.role == MP_ROLE_HOST)
 				hostPacket(*s, batch[i].data, batch[i].size, batch[i].from, now);
 			else
 				clientPacket(*s, batch[i].data, batch[i].size, batch[i].from, now);
+		}
+		while (!held.empty() && (int32_t)(now - held.front().first) >= 0) {
+			Packet& pk = held.front().second;
+			if (s->cfg.role == MP_ROLE_HOST)
+				hostPacket(*s, pk.data, pk.size, pk.from, now);
+			else
+				clientPacket(*s, pk.data, pk.size, pk.from, now);
+			held.pop_front();
 		}
 		tick(*s, now);
 	}
@@ -934,6 +952,9 @@ extern "C" int mp_config_from_env(MpConfig* cfg, const char* build)
 	         name && *name ? name : cfg->role == MP_ROLE_HOST ? "Host" : "Player");
 	if (const char* drop = getenv("SMS_MULTIPLAYER_DROP"))
 		cfg->dropRate = (float)atof(drop);
+	if (const char* delay = getenv("SMS_MULTIPLAYER_DELAY")) // "ms" or "ms:jitter"
+		if (sscanf(delay, "%d:%d", &cfg->delayMs, &cfg->jitterMs) < 1)
+			cfg->delayMs = cfg->jitterMs = 0;
 	const char* local = getenv("SMS_MULTIPLAYER_LOCAL");
 	cfg->loopback     = local && !strcmp(local, "1");
 	if (const char* t = getenv("SMS_MULTIPLAYER_TIMEOUT"))
