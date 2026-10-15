@@ -418,11 +418,14 @@ void readGate(In& in, int unit)
 		}
 	}
 	followNerve(g, unit, nerve, gateNerve, kGateDie, kGateDie);
-	g->mHitPoints = (u8)hp;
+	// a copy never holds its last hit point: a hit here takes it to 1, not
+	// to its defeat (the host's says when it falls)
+	const int here = hp == 1 ? 2 : hp;
+	g->mHitPoints = (u8)here;
 	g->unk17C     = (s16)wake;
 	g->unk28A     = (s16)appeared;
 	g->unk296     = (s8)revive;
-	s_setValue[unit] = hp;
+	s_setValue[unit] = here;
 }
 
 void hitGate(int unit, int kind, int count)

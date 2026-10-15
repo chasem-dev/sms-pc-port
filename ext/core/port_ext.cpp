@@ -120,3 +120,8 @@ extern "C" void port_ext_pollution_clean(float x, float y, float z, float size)
 {
 	EACH(pollutionClean) s_ext[i]->pollutionClean(x, y, z, size);
 }
+
+extern "C" void port_ext_object_move(void* object, int after)
+{
+	EACH(objectMove) s_ext[i]->objectMove(object, after);
+}

@@ -39,7 +39,8 @@ enum Kind : uint8_t {
 	K_ENEMY_KILL,   // client -> host: session, manager, index
 	K_TAKEN_AT,     // either way: session, item type, position (an item that appeared during the stage)
 	K_SHINE_GET,    // either way: session, slot, Shine event id, position (someone touched a Shine)
-	K_LEAVING,      // host -> client: area, episode (0xFF: the game decides) the host is setting off for
+	K_LEAVING,      // host -> client: area, episode (0xFF: the game decides) the host is setting off for;
+	                // then, as it goes (moveStage), its travel: 1, session flags (0x30000 on), movie (0xFF: none)
 	K_DEMO,         // either way: session, slot, the game's description of a cutscene (mp_game.cpp)
 	K_BOSS_HIT,     // client -> host: session, part, kind, count (a hit on its copy of the boss, for the real one)
 	K_CLEAN,        // either way: session, count, goop cleaned (x, y, z halved, size), the host passing it on
@@ -82,6 +83,12 @@ struct Controller {
 	bool restoreRed      = false;
 	bool restartSession  = false;
 	unsigned waitingStage = 0; // players who joined while the host was between stages: told once it has arrived
+
+	// client: the host's travel (as it went: its session flags and movie), for
+	// this game to arrive the same way
+	bool travelKnown      = false;
+	uint32_t travelFlags  = 0;
+	int travelMovie       = -1;
 
 	// client
 	bool hasTarget     = false;
@@ -514,7 +521,23 @@ void clientMessage(const MpEvent& ev)
 	}
 	case K_LEAVING: {
 		int area = r.u8(), episode = r.u8();
-		if (!r.ok || (g.hasTarget && !g.targetSession && g.targetArea == area && g.targetEpisode == episode))
+		if (!r.ok)
+			break;
+		if (r.left() >= 6 && r.u8() == 1) {
+			// the host is on its way now: how it went
+			g.travelFlags = r.u32();
+			const int movie = r.u8();
+			if (r.ok) {
+				g.travelKnown = true;
+				g.travelMovie = movie == 0xFF ? -1 : movie;
+				if (g_debug)
+					fprintf(stderr, "[multiplayer] the host went with session flags %08x, movie %d\n", g.travelFlags,
+					        g.travelMovie);
+			}
+		} else {
+			g.travelKnown = false; // its travel comes when it goes
+		}
+		if (g.hasTarget && !g.targetSession && g.targetArea == area && g.targetEpisode == episode)
 			break;
 		// the host is setting off: go now, so everyone fades out together
 		// (the session comes with K_STAGE once the host is there)
@@ -943,6 +966,7 @@ extern "C" void mpg_frame(const MpgGame* game)
 				g.takenAt.clear();
 			// new or loaded again, its goop is as it loaded: K_READY brings the session's cleaning
 			forgetCleans();
+			g.travelKnown = false;
 			g.localSession = g.targetSession;
 			uint8_t buf[4];
 			Writer w(buf, sizeof buf);
@@ -1054,6 +1078,45 @@ extern "C" void mpg_host_leaving(int area, int episode)
 	for (int i = 1; i < MP_MAX_PLAYERS; i++)
 		if (mp_players() & (1u << i))
 			mp_send(i, K_LEAVING, buf, sizeof buf);
+}
+
+extern "C" void mpg_host_going(int area, int episode, uint32_t sessionFlags, int movie)
+{
+	if (g.role != MPG_ROLE_HOST)
+		return;
+	std::lock_guard<std::mutex> hold(g_lock);
+	uint8_t buf[9];
+	Writer w(buf, sizeof buf);
+	w.u8((uint8_t)area);
+	w.u8((uint8_t)episode);
+	w.u8(1);
+	w.u32(sessionFlags);
+	w.u8(movie < 0 || movie > 0xFE ? 0xFF : (uint8_t)movie);
+	for (int i = 1; i < MP_MAX_PLAYERS; i++)
+		if (mp_players() & (1u << i))
+			mp_send(i, K_LEAVING, buf, w.len);
+}
+
+extern "C" int mpg_target_traveling(void)
+{
+	std::lock_guard<std::mutex> hold(g_lock);
+	return g.hasTarget && !g.targetSession;
+}
+
+extern "C" int mpg_travel(uint32_t* sessionFlags, int* movie)
+{
+	std::lock_guard<std::mutex> hold(g_lock);
+	if (!g.travelKnown)
+		return 0;
+	*sessionFlags = g.travelFlags;
+	*movie        = g.travelMovie;
+	return 1;
+}
+
+extern "C" void mpg_travel_done(void)
+{
+	std::lock_guard<std::mutex> hold(g_lock);
+	g.travelKnown = false;
 }
 
 extern "C" int mpg_take_shine_exit(void)
