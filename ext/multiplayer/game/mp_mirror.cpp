@@ -31,6 +31,8 @@
 #include <Enemy/SleepBossHanachan.hpp>
 #include <Animal/AnimalBase.hpp>
 #include <Animal/BirdNerve.hpp>
+#include <Animal/boid.hpp>
+#include <Animal/fishoid.hpp>
 #include <M3DUtil/MActor.hpp>
 #include <Map/MapData.hpp>
 #include <MoveBG/Item.hpp>
@@ -359,7 +361,12 @@ void takeFerrisWheel(TLiveActor* a, const u8* in, int size, int age, int*)
 	const s32 timer = g.i();
 	if (!g.ok)
 		return;
-	setFrameOf(w->getMActor(), frame + rate * age);
+	// on at its rate since (a third of a second at most), round its loop
+	f32 at = frame + rate * (f32)(age < 10 ? age : 10);
+	if (J3DFrameCtrl* c = w->getMActor() ? w->getMActor()->getFrameCtrl(ANM_TYPE_BCK) : nullptr)
+		if (c->getEnd() > 0 && at >= c->getEnd())
+			at = fmodf(at, (f32)c->getEnd());
+	setFrameOf(w->getMActor(), at);
 	w->mAnmRate    = rate;
 	w->mState      = (u16)state;
 	w->mStateTimer = timer;
@@ -860,7 +867,8 @@ bool isMachine(TLiveActor* a)
 	return dynamic_cast<TCraneRotY*>(a) || dynamic_cast<TCraneUpDown*>(a) || dynamic_cast<TBigWindmill*>(a)
 	       || dynamic_cast<TRiccoWatermill*>(a) || dynamic_cast<TCogwheel*>(a) || dynamic_cast<TBellWatermill*>(a)
 	       || dynamic_cast<TNormalLift*>(a) || dynamic_cast<TRailBlock*>(a) || dynamic_cast<TRollBlock*>(a)
-	       || dynamic_cast<TMammaYacht*>(a) || dynamic_cast<TMapObjTurn*>(a);
+	       || dynamic_cast<TMammaYacht*>(a) || dynamic_cast<TMapObjTurn*>(a) || dynamic_cast<TBiancoWatermill*>(a)
+	       || dynamic_cast<TBiancoWatermillVertical*>(a);
 }
 int saveMachine(TLiveActor* a, u8* out)
 {
@@ -895,6 +903,43 @@ void takeMachine(TLiveActor* a, const u8* in, int size, int, int*)
 	m->mRotation.y = easeDegrees(m->mRotation.y, rot.y, 0.3f);
 	m->mRotation.z = easeDegrees(m->mRotation.z, rot.z, 0.3f);
 	easeTo(m->mPosition, pos, 500.0f, 0.3f);
+}
+
+// A school of fish carrying something (a blue coin swims with Gelato's): its
+// last fish, which the coin follows, the host's. The school is moved
+// along as one toward it, so it keeps its shape. Schools carrying nothing
+// swim their own way in each game (only scenery).
+bool isCarryingSchool(TLiveActor* a)
+{
+	TFishoid* f = dynamic_cast<TFishoid*>(a);
+	return f && f->unk15C && f->getBoidLeader() && f->getBoidNum() > 0;
+}
+int saveSchool(TLiveActor* a, u8* out)
+{
+	TFishoid* f = static_cast<TFishoid*>(a);
+	TBoid* last = f->getBoid(f->getBoidNum() - 1);
+	Put o(out);
+	o.v3(last->mPosition);
+	o.v3(last->mHeading);
+	o.f(last->mSpeed);
+	return o.n;
+}
+void takeSchool(TLiveActor* a, const u8* in, int size, int age, int*)
+{
+	TFishoid* f = static_cast<TFishoid*>(a);
+	Get g(in, size);
+	const JGeometry::TVec3<f32> pos = g.v3(), heading = g.v3();
+	const f32 speed                 = g.f();
+	if (!g.ok)
+		return;
+	const f32 t = speed * (f32)(age < 10 ? age : 10);
+	const JGeometry::TVec3<f32> want(pos.x + heading.x * t, pos.y + heading.y * t, pos.z + heading.z * t);
+	TBoid* last = f->getBoid(f->getBoidNum() - 1);
+	JGeometry::TVec3<f32> by(want.x - last->mPosition.x, want.y - last->mPosition.y, want.z - last->mPosition.z);
+	const f32 k = by.x * by.x + by.y * by.y + by.z * by.z > 1500.0f * 1500.0f ? 1.0f : 0.2f;
+	by.scale(k);
+	for (int i = 0; i < f->getBoidNum(); i++)
+		f->getBoid(i)->mPosition.add(by);
 }
 
 // Swinging boards (Noki Bay, Pianta Village): their swing, run by whoever
@@ -970,6 +1015,7 @@ const Kind kKinds[] = {
 	{"pirate ship", isViking, saveViking, takeViking, OWN_HOST, 4, false},
 	{"swinging board", isSwingBoard, saveSwingBoard, takeSwingBoard, OWN_RIDER, 3, false},
 	{"machine", isMachine, saveMachine, takeMachine, OWN_RIDER, 4, false},
+	{"fish with a coin", isCarryingSchool, saveSchool, takeSchool, OWN_HOST, 3, false},
 	{"watermelon", isWatermelon, saveWatermelon, takeWatermelon, OWN_USER, 2, false},
 };
 const int kKindCount = sizeof kKinds / sizeof kKinds[0];
