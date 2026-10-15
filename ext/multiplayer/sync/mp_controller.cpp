@@ -68,7 +68,7 @@ const uint32_t kCleanFresh = 2000;
 const char* const kCharacters[MP_MAX_PLAYERS] = {"Mario", "Luigi", "Peach", "Metal Mario"};
 const char* const kWorlds[] = {"the Airstrip", "Delfino Plaza", "Bianco Hills", "Ricco Harbor", "Gelato Beach",
                                "Pinna Park", "Sirena Beach", "Pianta Village", "Noki Bay", "Corona Mountain"}; // SMS_getShineStage's order
-const size_t kPoseSize = 4 + 4 + 4 + 48 + 4 + 16 + 4 + 8 + 4 + 4 + 4 + 48 + 48 + 12 + 4;
+const size_t kPoseSize = 4 + 4 + 4 + 12 + 4 + 18 + 4 + 16 + 4 + 8 + 4 + 4 + 1 + 48 + 16; // at most (spraying from two)
 const size_t kEnemySize = 18;
 
 struct Controller {
@@ -987,6 +987,9 @@ void events()
 	}
 }
 
+// A pose as sent, about half its size in memory: the body's turn as 16-bit
+// fractions of its largest element (a turn is all ones and less), and FLUDD's
+// emitters only while it sprays.
 void packPose(const MpgPose& p, std::vector<uint8_t>& out)
 {
 	out.assign(kPoseSize, 0);
@@ -998,8 +1001,15 @@ void packPose(const MpgPose& p, std::vector<uint8_t>& out)
 	w.u8(p.nozzle);
 	w.u8(p.btp);
 	for (int r = 0; r < 3; r++)
-		for (int c = 0; c < 4; c++)
-			w.f32(p.mtx[r][c]);
+		w.f32(p.mtx[r][3]);
+	float scale = 0.0f;
+	for (int r = 0; r < 3; r++)
+		for (int c = 0; c < 3; c++)
+			scale = std::max(scale, std::fabs(p.mtx[r][c]));
+	w.f32(scale);
+	for (int r = 0; r < 3; r++)
+		for (int c = 0; c < 3; c++)
+			w.s16(scale > 0.0f ? (int16_t)std::lround(p.mtx[r][c] / scale * 32767.0f) : 0);
 	w.u16(p.bodyBck);
 	w.u16(p.upperBck);
 	w.f32(p.bodyFrame);
@@ -1015,19 +1025,18 @@ void packPose(const MpgPose& p, std::vector<uint8_t>& out)
 	w.u8(p.yoshiColor[2]);
 	w.u8(p.more);
 	w.u32(p.hiddenShapes);
-	w.u8(p.emitters);
-	w.u8(0);
-	w.u8(0);
-	w.u8(0);
-	for (int e = 0; e < 2; e++)
-		for (int c = 0; c < 3; c++)
+	const int emitters = p.emitters > 2 ? 2 : p.emitters;
+	w.u8((uint8_t)emitters);
+	for (int e = 0; e < emitters; e++)
+		for (int c = 0; c < 3; c++) {
 			w.f32(p.emitPos[e][c]);
-	for (int e = 0; e < 2; e++)
-		for (int c = 0; c < 3; c++)
 			w.f32(p.emitDir[e][c]);
-	for (int c = 0; c < 3; c++)
-		w.f32(p.emitSpeed[c]);
-	w.f32(p.pressure);
+		}
+	if (emitters) {
+		for (int c = 0; c < 3; c++)
+			w.f32(p.emitSpeed[c]);
+		w.f32(p.pressure);
+	}
 	out.resize(w.len);
 }
 
@@ -1042,8 +1051,11 @@ bool unpackPose(const uint8_t* d, size_t n, MpgPose& p)
 	p.nozzle  = r.u8();
 	p.btp     = r.u8();
 	for (int i = 0; i < 3; i++)
-		for (int c = 0; c < 4; c++)
-			p.mtx[i][c] = r.f32();
+		p.mtx[i][3] = r.f32();
+	const float scale = r.f32() / 32767.0f;
+	for (int i = 0; i < 3; i++)
+		for (int c = 0; c < 3; c++)
+			p.mtx[i][c] = r.s16() * scale;
 	p.bodyBck    = r.u16();
 	p.upperBck   = r.u16();
 	p.bodyFrame  = r.f32();
@@ -1058,22 +1070,20 @@ bool unpackPose(const uint8_t* d, size_t n, MpgPose& p)
 	p.yoshiColor[1] = r.u8();
 	p.yoshiColor[2] = r.u8();
 	p.more          = r.u8();
-	p.hiddenShapes = r.u32();
-	p.emitters     = r.u8();
-	r.u8();
-	r.u8();
-	r.u8();
-	for (int e = 0; e < 2; e++)
-		for (int c = 0; c < 3; c++)
-			p.emitPos[e][c] = r.f32();
-	for (int e = 0; e < 2; e++)
-		for (int c = 0; c < 3; c++)
-			p.emitDir[e][c] = r.f32();
-	for (int c = 0; c < 3; c++)
-		p.emitSpeed[c] = r.f32();
-	p.pressure = r.f32();
+	p.hiddenShapes  = r.u32();
+	p.emitters      = r.u8();
 	if (p.emitters > 2)
-		p.emitters = 2;
+		return false;
+	for (int e = 0; e < p.emitters; e++)
+		for (int c = 0; c < 3; c++) {
+			p.emitPos[e][c] = r.f32();
+			p.emitDir[e][c] = r.f32();
+		}
+	if (p.emitters) {
+		for (int c = 0; c < 3; c++)
+			p.emitSpeed[c] = r.f32();
+		p.pressure = r.f32();
+	}
 	return r.ok;
 }
 

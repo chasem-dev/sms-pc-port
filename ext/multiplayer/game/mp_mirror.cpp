@@ -82,6 +82,7 @@ struct Mirrored {
 	u8 sent[48];
 	int sentSize, sentAt;
 	int scratch; // the kind's own (a follower: the host's step last taken)
+	int claimedAt; // an NPC this game's player talked to (tick; 0: none): run here since
 };
 
 Mirrored s_mirrors[kMaxMirrors];
@@ -800,8 +801,15 @@ bool talkingHere(TLiveActor* a)
 bool ownedHere(Mirrored& m)
 {
 	// an NPC this game's player is talking to: run here (it stops and turns
-	// to them, as it does for everyone else too, since this game sends it)
-	if (m.actor && m.kind->match == isNpc && talkingHere(m.actor))
+	// to them, as it does for everyone else too, since this game sends it),
+	// and after, until another player talks to it (one the talk sent off
+	// somewhere, a lost child following its finder, goes where it goes here)
+	if (m.actor && m.kind->match == isNpc && talkingHere(m.actor)) {
+		if (!m.claimedAt)
+			m.claimedAt = s_clock;
+		return true;
+	}
+	if (m.claimedAt)
 		return true;
 	if (m.actor) {
 		if (m.kind->owner == OWN_RIDER && rides(m.actor))
@@ -935,6 +943,9 @@ void MpMirrorTick()
 		Mirrored* m = find(manager, index);
 		if (!m || size > 48)
 			continue;
+		// another player's game runs it now (they talked to it since)
+		if (m->claimedAt && slot != mpg_slot() && s_clock - m->claimedAt > fps())
+			m->claimedAt = 0;
 		m->heardAt   = s_clock;
 		m->heardSlot = slot;
 		memcpy(m->state, data, size);
