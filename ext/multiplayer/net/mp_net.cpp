@@ -143,6 +143,7 @@ struct Peer {
 	uint32_t peerTime  = 0; // their clock in their newest DATA, echoed back
 	uint32_t peerTimeAt = 0;
 	int rtt            = -1;
+	float srtt         = 0.0f;  // the round trip, smoothed (ms; 0: not measured yet)
 	bool flush         = false; // a new reliable message: send now
 };
 
@@ -249,14 +250,25 @@ int peerIndexForSlot(Session& s, int slot)
 
 // Writes the reliable messages due for `p` that fit in `w`, oldest first;
 // returns how many. Stops at the first that does not fit, so they go in order.
+// How long a message waits for its acknowledgement before going again: a bit
+// more than the round trip (so a slow link does not send everything twice).
+uint32_t resendMs(const Peer& p)
+{
+	if (p.srtt <= 0.0f)
+		return (uint32_t)kResendMs;
+	const float ms = p.srtt * 1.5f + 30.0f;
+	return (uint32_t)(ms < 100.0f ? 100.0f : ms > 300.0f ? 300.0f : ms);
+}
+
 int writeMessages(Peer& p, Writer& w, size_t room, uint32_t now, bool force, bool& left)
 {
 	const size_t countAt = w.len;
 	int count            = 0;
 	left                 = false;
+	const uint32_t wait  = resendMs(p);
 	w.u8(0);
 	for (Outgoing& o : p.out) {
-		if (o.lastSent && now - o.lastSent < (uint32_t)kResendMs && !force)
+		if (o.lastSent && now - o.lastSent < wait && !force)
 			continue;
 		if (count == 255 || w.len + 7 + o.data.size() > room) {
 			left = true;
@@ -283,7 +295,9 @@ void dataHeader(Writer& w, Peer& p, uint32_t now)
 	w.u32(p.peerTimeAt ? p.peerTime + (now - p.peerTimeAt) : 0);
 }
 
-void sendData(Session& s, Peer& p, int toSlot, uint32_t now, bool force)
+// `lean`: messages and acknowledgements only, between the regular updates
+// (no states, no world: they come with the next update anyway).
+void sendData(Session& s, Peer& p, int toSlot, uint32_t now, bool force, bool lean = false)
 {
 	uint8_t buf[kPacketMax];
 	Writer w(buf, sizeof buf);
@@ -293,7 +307,7 @@ void sendData(Session& s, Peer& p, int toSlot, uint32_t now, bool force)
 	size_t countAt = w.len;
 	int count      = 0;
 	w.u8(0);
-	for (int i = 0; i < MP_MAX_PLAYERS; i++) {
+	for (int i = 0; i < MP_MAX_PLAYERS && !lean; i++) {
 		const PlayerSlot& pl = s.players[i];
 		if (!pl.present || !pl.stateSize || i == toSlot)
 			continue;
@@ -308,7 +322,7 @@ void sendData(Session& s, Peer& p, int toSlot, uint32_t now, bool force)
 	buf[countAt] = count;
 
 	// the host's world snapshot
-	if (s.cfg.role == MP_ROLE_HOST && !s.world.empty()) {
+	if (s.cfg.role == MP_ROLE_HOST && !s.world.empty() && !lean) {
 		s.worldSentSeq = s.worldSeq;
 		w.u32(s.worldSeq);
 		w.u16((uint16_t)s.world.size());
@@ -411,8 +425,10 @@ void readData(Session& s, int idx, Reader& r, uint32_t now)
 	p.lastHeard  = now;
 	p.peerTime   = time;
 	p.peerTimeAt = now;
-	if (echo && now >= echo && now - echo < 10000)
-		p.rtt = (int)(now - echo);
+	if (echo && now >= echo && now - echo < 10000) {
+		p.rtt  = (int)(now - echo);
+		p.srtt = p.srtt > 0.0f ? p.srtt * 0.875f + p.rtt * 0.125f : (float)p.rtt;
+	}
 	while (!p.out.empty() && (int32_t)(p.out.front().seq - ack) < 0)
 		p.out.pop_front();
 
@@ -776,7 +792,7 @@ void tick(Session& s, uint32_t now)
 			continue;
 		}
 		if (sendTick || p.flush)
-			sendData(s, p, s.cfg.role == MP_ROLE_HOST ? i : -1, now, false);
+			sendData(s, p, s.cfg.role == MP_ROLE_HOST ? i : -1, now, false, !sendTick);
 	}
 }
 
