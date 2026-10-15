@@ -20,6 +20,7 @@
 #include <Enemy/BossPakkun.hpp>
 #include <Enemy/Conductor.hpp>
 #include <Map/Map.hpp>
+#include <Map/PollutionManager.hpp>
 #include <Enemy/EnemyManager.hpp>
 #include <Enemy/SmallEnemy.hpp>
 #include <GC2D/ConsoleStr.hpp>
@@ -1174,6 +1175,7 @@ struct TestPlan {
 	int bossWaterAt, bossWaterCount; // bosswater@N:K: K sprays in the boss's mouth, in this game
 	int bossDownAt;                  // bossdown@N: the boss loses all its hit points to ground pounds
 	int bossHitAt;                   // bosshit@N: a hit on this game's copy of the boss (mp_boss.cpp)
+	int bossSprayAt, bossSprayFrames; // bossspray@N:K: that hit every tick for K ticks (a Gatekeeper sprayed)
 	int setFlagAt;                   // setflag@N:ID: a flag of the game's set (hex), e.g. what starts a fight
 	unsigned setFlagId;
 	int frames; // in this stage
@@ -1187,6 +1189,7 @@ void runTests(TMarDirector* dir, bool arrived)
 		s_test.parsed = true;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
 		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = s_test.bossHitAt = s_test.setFlagAt = -1;
+		s_test.bossSprayAt = -1;
 		s_test.dieLives = -1;
 		if (const char* plan = getenv("SMS_MULTIPLAYER_TEST")) {
 			const char* t = strstr(plan, "take@");
@@ -1226,6 +1229,8 @@ void runTests(TMarDirector* dir, bool arrived)
 				sscanf(bd, "bossdown@%d", &s_test.bossDownAt);
 			if (const char* bh = strstr(plan, "bosshit@"))
 				sscanf(bh, "bosshit@%d", &s_test.bossHitAt);
+			if (const char* bs = strstr(plan, "bossspray@"))
+				sscanf(bs, "bossspray@%d:%d", &s_test.bossSprayAt, &s_test.bossSprayFrames);
 			if (const char* sf = strstr(plan, "setflag@"))
 				sscanf(sf, "setflag@%d:%x", &s_test.setFlagAt, &s_test.setFlagId);
 		}
@@ -1348,6 +1353,13 @@ void runTests(TMarDirector* dir, bool arrived)
 		s_test.flagSet = true;
 		TFlagManager::getInstance()->setBool(true, s_test.setFlagId);
 		fprintf(stderr, "[multiplayer] test: flag %x set\n", s_test.setFlagId);
+	}
+	if (s_test.bossSprayAt >= 0 && s_test.together >= s_test.bossSprayAt
+	    && s_test.together < s_test.bossSprayAt + s_test.bossSprayFrames) {
+		const int kind = MpBossTestHit();
+		if (s_test.together == s_test.bossSprayAt || s_test.together + 1 == s_test.bossSprayAt + s_test.bossSprayFrames)
+			fprintf(stderr, "[multiplayer] test: spraying this game's boss (kind %d), %s\n", kind,
+			        s_test.together == s_test.bossSprayAt ? "starting" : "stopping");
 	}
 	if (s_test.bossHitAt >= 0 && !s_test.bossHit && s_test.together >= s_test.bossHitAt) {
 		const int kind = MpBossTestHit();
@@ -1647,10 +1659,45 @@ void stageSetup()
 	}
 }
 
+// ------------------------------------------------------------------- goop
+
+// Cleaning what another game cleaned (not this game's own to send).
+bool s_cleaning;
+
+// Goop cleaned here (FLUDD's water, Mario's feet, an event): the others clean it too.
+void pollutionClean(float x, float y, float z, float size)
+{
+	if (s_cleaning || !enabled() || !inStage())
+		return;
+	mpg_clean(x, y, z, size);
+}
+
+// What the others cleaned, cleaned here: a few hundred a tick, so catching up
+// on a whole stage's cleaning does not hold up a frame.
+void applyCleans()
+{
+	if (!gpPollution)
+		return;
+	float x, y, z, size;
+	int n = 0;
+	for (; n < 400 && mpg_next_clean(&x, &y, &z, &size); n++) {
+		s_cleaning = true;
+		gpPollution->clean(x, y, z, size);
+		s_cleaning = false;
+	}
+	static int cleaned, reported;
+	cleaned += n;
+	if (getenv("SMS_MULTIPLAYER_DEBUG") && cleaned >= reported + 100) {
+		fprintf(stderr, "[multiplayer] goop: %d spots cleaned here that the others cleaned\n", cleaned);
+		reported = cleaned;
+	}
+}
+
 void afterMovement()
 {
 	if (!enabled() || !inStage())
 		return;
+	applyCleans();
 	if (s_role == MPG_ROLE_CLIENT) {
 		followHostEnemies();
 		MpBossClientTick();
@@ -1762,7 +1809,7 @@ const char* saveStatesOffReason() { return "Save states are off in multiplayer";
 PortExtension s_extension = {
 	"multiplayer",   frame,           afterMovement,   stageSetup,     allowNextStage, moveStage,
 	missNextArea,    takeGameOver,    keepCoinsOnMiss, afterFileSelect, itemTaken,      allowSaveStates,
-	saveStatesOffReason, hidePlayerModel, 0, demoCamera,
+	saveStatesOffReason, hidePlayerModel, 0, demoCamera, pollutionClean,
 };
 
 struct Register {

@@ -115,3 +115,8 @@ extern "C" void port_ext_demo_camera(const char* name, const float* pos, int fra
 {
 	EACH(demoCamera) s_ext[i]->demoCamera(name, pos, frames, angle, option, hasCallback, actor, flags);
 }
+
+extern "C" void port_ext_pollution_clean(float x, float y, float z, float size)
+{
+	EACH(pollutionClean) s_ext[i]->pollutionClean(x, y, z, size);
+}

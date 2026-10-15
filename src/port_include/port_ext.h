@@ -65,6 +65,9 @@ typedef struct PortExtension {
 	// whether a callback or an actor came with it, and its flags.
 	void (*demoCamera)(const char* name, const float* pos, int frames, float angle, int option, int hasCallback,
 	                   void* actor, unsigned flags);
+	// Goop was cleaned at x, y, z over `size` (TPollutionManager::clean, as
+	// FLUDD's water and Mario's feet do), about to be.
+	void (*pollutionClean)(float x, float y, float z, float size);
 } PortExtension;
 
 // Adds an extension; call from a static constructor or before the first frame.
@@ -89,6 +92,7 @@ int port_ext_hide_player_model(void* mario);
 void port_ext_pad_read(void* status);
 void port_ext_demo_camera(const char* name, const float* pos, int frames, float angle, int option, int hasCallback,
                           void* actor, unsigned flags);
+void port_ext_pollution_clean(float x, float y, float z, float size);
 
 #ifdef __cplusplus
 }

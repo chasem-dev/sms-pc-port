@@ -10,6 +10,7 @@
 #include <ctype.h>
 #include <cmath>
 #include <deque>
+#include <unordered_map>
 #include <mutex>
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,6 +42,7 @@ enum Kind : uint8_t {
 	K_LEAVING,      // host -> client: area, episode (0xFF: the game decides) the host is setting off for
 	K_DEMO,         // either way: session, slot, the game's description of a cutscene (mp_game.cpp)
 	K_BOSS_HIT,     // client -> host: session, part, kind, count (a hit on its copy of the boss, for the real one)
+	K_CLEAN,        // either way: session, count, goop cleaned (x, y, z halved, size), the host passing it on
 };
 // The host's boss rides at the end of the world snapshot, after the enemies.
 const size_t kMaxBoss = 200;
@@ -48,6 +50,13 @@ const size_t kMaxBoss = 200;
 // switch) are named by their type and where they are, not their place in the
 // item manager (every game fills that differently); at most this many a stage.
 const size_t kMaxTakenAt = 512;
+// Goop cleaned (TPollutionManager::clean): sent in batches, kept by the host
+// for the session (a newcomer, or a player starting the stage again, gets it
+// all). A spot cleaned again within kCleanFresh ms, no wider, is not sent
+// again: spraying cleans the same few spots many times a second.
+const size_t kMaxCleanLog = 16384;
+const size_t kCleanBatch  = 120; // 8 bytes each, within a message
+const uint32_t kCleanFresh = 2000;
 
 const char* const kCharacters[MP_MAX_PLAYERS] = {"Mario", "Luigi", "Peach", "Metal Mario"};
 const char* const kWorlds[] = {"the Airstrip", "Delfino Plaza", "Bianco Hills", "Ricco Harbor", "Gelato Beach",
@@ -107,6 +116,21 @@ struct Controller {
 	std::vector<MpgEnemy> enemies;
 	size_t enemyNext = 0;
 	std::deque<std::pair<int, int>> enemyKills;
+	// goop: what this game cleaned and has yet to send; what the others
+	// cleaned, for this game to clean; host: the session's, for newcomers;
+	// the spots seen lately (64 by 128 by 64 units), widest size and when
+	struct Clean {
+		int16_t x, y, z;
+		uint16_t size;
+	};
+	struct Seen {
+		uint16_t size;
+		uint32_t at;
+	};
+	std::vector<Clean> cleanOut;
+	std::deque<Clean> cleanIn;
+	std::vector<Clean> cleanLog;
+	std::unordered_map<uint32_t, Seen> cleanSeen;
 
 	// each other player's recent poses, for drawing them smoothly
 	struct Timed {
@@ -250,6 +274,112 @@ void takeOnce(uint32_t key)
 	g.taken.push_back(key);
 }
 
+// ------------------------------------------------------------------ goop
+
+void forgetCleans()
+{
+	g.cleanOut.clear();
+	g.cleanIn.clear();
+	g.cleanLog.clear();
+	g.cleanSeen.clear();
+}
+
+int16_t halved(float v)
+{
+	const float h = v * 0.5f;
+	return (int16_t)(h > 32767.0f ? 32767.0f : h < -32768.0f ? -32768.0f : h);
+}
+
+// Whether this clean says something the spot's last one (sent or received) did not.
+bool freshClean(const Controller::Clean& c)
+{
+	const uint32_t key = ((uint32_t)(c.x >> 5) & 0x7FF) << 21 | ((uint32_t)(c.y >> 6) & 0x3FF) << 11
+	                     | ((uint32_t)(c.z >> 5) & 0x7FF);
+	const uint32_t now = mp_clock_ms();
+	auto it = g.cleanSeen.find(key);
+	if (it != g.cleanSeen.end() && it->second.size >= c.size && now - it->second.at < kCleanFresh)
+		return false;
+	if (g.cleanSeen.size() > 65536)
+		g.cleanSeen.clear();
+	g.cleanSeen[key] = {c.size, now};
+	return true;
+}
+
+void logClean(const Controller::Clean& c)
+{
+	if (g.role == MPG_ROLE_HOST && g.cleanLog.size() < kMaxCleanLog)
+		g.cleanLog.push_back(c);
+}
+
+std::vector<uint8_t> cleanMessage(uint32_t session, const Controller::Clean* list, size_t n)
+{
+	std::vector<uint8_t> buf(6 + n * 8);
+	Writer w(buf.data(), buf.size());
+	w.u32(session);
+	w.u16((uint16_t)n);
+	for (size_t i = 0; i < n; i++) {
+		w.s16(list[i].x);
+		w.s16(list[i].y);
+		w.s16(list[i].z);
+		w.u16(list[i].size);
+	}
+	return buf;
+}
+
+// `list` to `slot` (-1: every client but `except`), in batches.
+void sendCleans(int slot, int except, uint32_t session, const std::vector<Controller::Clean>& list)
+{
+	for (size_t at = 0; at < list.size(); at += kCleanBatch) {
+		const size_t n = list.size() - at < kCleanBatch ? list.size() - at : kCleanBatch;
+		const std::vector<uint8_t> buf = cleanMessage(session, list.data() + at, n);
+		if (slot >= 0)
+			send(slot, K_CLEAN, buf);
+		else
+			for (int i = 1; i < MP_MAX_PLAYERS; i++)
+				if (i != except && (mp_players() & (1u << i)))
+					send(i, K_CLEAN, buf);
+	}
+}
+
+// This game's cleaning so far, to the others (every frame).
+void flushCleans()
+{
+	if (g.cleanOut.empty())
+		return;
+	if (g.role == MPG_ROLE_HOST && g.session)
+		sendCleans(-1, 0, g.session, g.cleanOut);
+	else if (g.role == MPG_ROLE_CLIENT && g.localSession)
+		sendCleans(0, -1, g.localSession, g.cleanOut);
+	g.cleanOut.clear();
+}
+
+// Another game's cleaning: to clean here too; the host keeps it and passes it on.
+void readCleans(Reader& r, int from)
+{
+	const uint32_t s = r.u32();
+	const int n = r.u16();
+	const uint32_t want = g.role == MPG_ROLE_HOST ? g.session : g.localSession;
+	if (!r.ok || !s || s != want || n > (int)kCleanBatch)
+		return;
+	std::vector<Controller::Clean> got;
+	for (int i = 0; i < n && r.ok; i++) {
+		Controller::Clean c;
+		c.x    = r.s16();
+		c.y    = r.s16();
+		c.z    = r.s16();
+		c.size = r.u16();
+		if (!r.ok)
+			break;
+		freshClean(c); // so this game's echo of it is not sent back
+		got.push_back(c);
+		if (g.cleanIn.size() < kMaxCleanLog)
+			g.cleanIn.push_back(c);
+		logClean(c);
+	}
+	if (g.role == MPG_ROLE_HOST && !got.empty())
+		sendCleans(-1, from, s, got);
+}
+
 void hostMessage(const MpEvent& ev)
 {
 	Reader r(ev.data, ev.size);
@@ -264,9 +394,13 @@ void hostMessage(const MpEvent& ev)
 			sendTakenList(ev.slot);
 			for (const MpgTakenAt& t : g.takenAt)
 				send(ev.slot, K_TAKEN_AT, takenAtMessage(g.session, t));
+			sendCleans(ev.slot, -1, g.session, g.cleanLog);
 		}
 		break;
 	}
+	case K_CLEAN:
+		readCleans(r, ev.slot);
+		break;
 	case K_SHINE_GET: {
 		uint32_t s = r.u32();
 		Controller::ShineGet sg;
@@ -369,6 +503,7 @@ void clientMessage(const MpEvent& ev)
 		if (g.wasPlaying && !g.localSession && g.game.area == area && g.game.episode == episode) {
 			g.localSession = s;
 			g.takenAt.clear();
+			forgetCleans();
 			uint8_t buf[4];
 			Writer w(buf, sizeof buf);
 			w.u32(s);
@@ -424,6 +559,9 @@ void clientMessage(const MpEvent& ev)
 		g.demos.push_back(d);
 		break;
 	}
+	case K_CLEAN:
+		readCleans(r, 0);
+		break;
 	case K_TAKEN_LIST: {
 		uint32_t s = r.u32();
 		uint16_t n = r.u16();
@@ -729,6 +867,7 @@ extern "C" void mpg_frame(const MpgGame* game)
 	g.gameMs += g.frameMs;
 	events();
 	takePoses();
+	flushCleans();
 	const bool arrived = game->playing && !g.wasPlaying;
 	g.wasPlaying       = game->playing != 0;
 
@@ -754,6 +893,7 @@ extern "C" void mpg_frame(const MpgGame* game)
 			g.enemies.clear();
 			g.enemyNext = 0;
 			g.enemyKills.clear();
+			forgetCleans();
 			for (int i = 1; i < MP_MAX_PLAYERS; i++)
 				if (mp_players() & (1u << i)) {
 					sendFull(i);
@@ -769,6 +909,8 @@ extern "C" void mpg_frame(const MpgGame* game)
 			for (uint32_t key : g.taken)
 				g.removals.push_back(key);
 			g.restoreRed = true;
+			// the stage's goop is back as it loaded: clean again what was cleaned
+			g.cleanIn.assign(g.cleanLog.begin(), g.cleanLog.end());
 		}
 		return;
 	}
@@ -780,6 +922,8 @@ extern "C" void mpg_frame(const MpgGame* game)
 		} else if (g.hasTarget && game->area == g.targetArea && game->episode == g.targetEpisode) {
 			if (g.localSession != g.targetSession)
 				g.takenAt.clear();
+			// new or loaded again, its goop is as it loaded: K_READY brings the session's cleaning
+			forgetCleans();
 			g.localSession = g.targetSession;
 			uint8_t buf[4];
 			Writer w(buf, sizeof buf);
@@ -941,6 +1085,43 @@ extern "C" void mpg_item_taken_at(int type, const float pos[3])
 		addTakenAt(t);
 		send(0, K_TAKEN_AT, takenAtMessage(g.localSession, t));
 	}
+}
+
+extern "C" void mpg_clean(float x, float y, float z, float size)
+{
+	if (g.role == MPG_ROLE_OFF)
+		return;
+	std::lock_guard<std::mutex> hold(g_lock);
+	if (!(g.role == MPG_ROLE_HOST ? g.session : g.localSession) || !(size > 0.0f))
+		return;
+	Controller::Clean c;
+	c.x    = halved(x);
+	c.y    = halved(y);
+	c.z    = halved(z);
+	c.size = (uint16_t)(size >= 65535.0f ? 65535.0f : size + 0.999f);
+	if (!freshClean(c))
+		return;
+	static int sent;
+	if (g_debug && ++sent % 100 == 0)
+		fprintf(stderr, "[multiplayer] goop: %d spots cleaned here, for the others\n", sent);
+	logClean(c);
+	g.cleanOut.push_back(c);
+	if (g.cleanOut.size() >= kCleanBatch)
+		flushCleans();
+}
+
+extern "C" int mpg_next_clean(float* x, float* y, float* z, float* size)
+{
+	std::lock_guard<std::mutex> hold(g_lock);
+	if (g.cleanIn.empty())
+		return 0;
+	const Controller::Clean& c = g.cleanIn.front();
+	*x    = c.x * 2.0f;
+	*y    = c.y * 2.0f;
+	*z    = c.z * 2.0f;
+	*size = c.size;
+	g.cleanIn.pop_front();
+	return 1;
 }
 
 extern "C" void mpg_shine_get(int eventId, const float pos[3])

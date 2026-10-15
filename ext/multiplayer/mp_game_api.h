@@ -143,6 +143,11 @@ void mpg_item_taken_at(int type, const float pos[3]);
 // The session's list so far, from 0 (new ones are added at the end); 0 past it.
 int mpg_taken_at(int i, MpgTakenAt* out);
 
+// Goop this game cleaned (TPollutionManager::clean): the others clean it too.
+void mpg_clean(float x, float y, float z, float size);
+// The next goop another game cleaned, for this game to clean; 0 when none.
+int mpg_next_clean(float* x, float* y, float* z, float* size);
+
 // This game's player touched a Shine (its event id, where it is): every other
 // game moves its player there and plays the Shine Get as well.
 void mpg_shine_get(int eventId, const float pos[3]);

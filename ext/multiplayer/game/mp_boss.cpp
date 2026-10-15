@@ -1,7 +1,8 @@
 // Bosses shared in multiplayer. Each boss is its own state machine, so each
 // is taught here on its own: Petey Piranha, Gooper Blooper, Eely-Mouth,
-// Phantamanta, Wiggler, King Boo, Mecha-Bowser, Bowser's hot tub and Shadow
-// Mario's chases.
+// Phantamanta, Wiggler, King Boo, Mecha-Bowser, Bowser's hot tub, Shadow
+// Mario's chases and the Gatekeepers (the goop piranha plants of the
+// Airstrip, the plaza's statue, Bianco Hills, Ricco Harbor and Pinna Park).
 //
 // The host's boss is the real one. Its state rides at the end of the world
 // snapshot as records, one per part ("unit": the boss, or one of
@@ -32,6 +33,7 @@
 #include <Enemy/Conductor.hpp>
 #include <Enemy/Emario.hpp>
 #include <Enemy/EnemyMario.hpp>
+#include <Enemy/GateKeeper.hpp>
 #include <Enemy/TinKoopa.hpp>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
 #include <MoveBG/MapObjCorona.hpp>
@@ -53,6 +55,7 @@ enum Kind {
 	KIND_MECHA   = 7, // Mecha-Bowser (each player rides their own coaster)
 	KIND_TUB     = 8, // Bowser's hot tub: its five corners
 	KIND_SHADOW  = 9, // Shadow Mario's chases
+	KIND_GATE    = 10, // the Gatekeepers, each a unit
 };
 
 enum Hit {
@@ -70,6 +73,8 @@ enum Hit {
 	HIT_GRIP,      // the hot tub: corner `unit` broken by a super ground pound
 	HIT_SHADOW_WATER, // Shadow Mario: sprayed
 	HIT_SHADOW_STOMP, // Shadow Mario: stomped while down
+	HIT_GATE_SPRAY,   // Gatekeeper `unit`: sprayed (asleep, it wakes after enough)
+	HIT_GATE_MOUTH,   // Gatekeeper `unit`: water in its mouth, `count` hit points
 };
 
 typedef const TNerveBase<TLiveActor>* Nerve;
@@ -331,6 +336,7 @@ Nerve mechaNerve(int i)
 int s_kind;
 TSpineEnemy* s_boss;     // the boss (Phantamanta: none, see s_mantas)
 TEnemyManager* s_mantas; // Phantamanta's pieces, by slot
+TEnemyManager* s_gates;  // the Gatekeepers, by slot
 TBathtub* s_tub;         // Bowser's hot tub
 TEnemyMario* s_shadow;   // Shadow Mario
 TEMarioManager* s_shadowList; // his hit actor's list: he is found through it once set up
@@ -340,6 +346,101 @@ int s_setHp;
 int s_setValue[kMaxUnits];
 u8 s_reported[kMaxUnits + 4];
 bool s_followed;
+
+// ------------------------------------------------------------------ the Gatekeepers
+
+Nerve gateNerve(int i)
+{
+	switch (i) {
+	case 0: return &TNerveBGKSleep::theNerve();
+	case 1: return &TNerveBGKAppear::theNerve();
+	case 2: return &TNerveBGKWait::theNerve();
+	case 3: return &TNerveBGKWait2::theNerve();
+	case 4: return &TNerveBGKSleepDamage::theNerve();
+	case 5: return &TNerveBGKAwakeDamage::theNerve();
+	case 6: return &TNerveBGKDie::theNerve();
+	case 7: return &TNerveBGKDive::theNerve();
+	case 8: return &TNerveBGKLaunchGoro::theNerve();
+	case 9: return &TNerveBGKLaunchName::theNerve();
+	default: return nullptr;
+	}
+}
+const int kGateWait = 2, kGateWait2 = 3, kGateAwakeDamage = 5, kGateDie = 6;
+const int kMaxGates = 8;
+const int kGateRecord = 6;
+int s_sprayWait[kMaxGates]; // client: frames until this game's spraying is reported again
+
+TBiancoGateKeeper* gateAt(int unit)
+{
+	if (!s_gates || unit < 0 || unit >= s_gates->getObjNum() || unit >= kMaxGates)
+		return nullptr;
+	return dynamic_cast<TBiancoGateKeeper*>(s_gates->getObj(unit));
+}
+
+int clampByte(int v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
+
+void writeGate(Out& o, int unit)
+{
+	TBiancoGateKeeper* g = gateAt(unit);
+	o.u8_((u8)nerveIndex(gateNerve, g->getLatestNerve()));
+	o.u8_(g->getHitPoints());
+	o.u8_((u8)clampByte(g->unk17C)); // how awake: it comes up at 255
+	o.u8_((u8)clampByte(g->unk28A)); // how many times it has come up
+	o.u8_(g->checkLiveFlag(LIVE_FLAG_DEAD) ? 1 : 0);
+	o.u8_((u8)g->unk296); // Ricco's and Pinna's come back once
+}
+
+void readGate(In& in, int unit)
+{
+	TBiancoGateKeeper* g = gateAt(unit);
+	const int nerve = in.u8_(), hp = in.u8_(), wake = in.u8_(), appeared = in.u8_(), dead = in.u8_();
+	const int revive = (s8)in.u8_();
+	if (!in.ok || !g)
+		return;
+	if (g->checkLiveFlag(LIVE_FLAG_DEAD))
+		return;
+	const int local = nerveIndex(gateNerve, g->getLatestNerve());
+	if (dead && local != kGateDie) { // gone at the host's before this game saw it go
+		g->mStampEnabled = 0;
+		g->kill();
+		return;
+	}
+	if (s_followed) {
+		// what this game's player did to its copy since the host's last say
+		if (g->getHitPoints() < s_setValue[unit])
+			mpg_boss_hit(unit, HIT_GATE_MOUTH, s_setValue[unit] - g->getHitPoints());
+		// sprayed this tick (the move step marks it so for 16 ticks)
+		if (s_sprayWait[unit] > 0)
+			s_sprayWait[unit]--;
+		if (g->unk17E == 0x0F && !s_sprayWait[unit]) {
+			mpg_boss_hit(unit, HIT_GATE_SPRAY, 1);
+			s_sprayWait[unit] = 8;
+		}
+	}
+	followNerve(g, unit, nerve, gateNerve, kGateDie, kGateDie);
+	g->mHitPoints = (u8)hp;
+	g->unk17C     = (s16)wake;
+	g->unk28A     = (s16)appeared;
+	g->unk296     = (s8)revive;
+	s_setValue[unit] = hp;
+}
+
+void hitGate(int unit, int kind, int count)
+{
+	TBiancoGateKeeper* g = gateAt(unit);
+	if (!g || g->checkLiveFlag(LIVE_FLAG_DEAD))
+		return;
+	if (kind == HIT_GATE_SPRAY) {
+		g->unk17E = 0x10; // as the game marks its own water on it
+		return;
+	}
+	const int nerve = nerveIndex(gateNerve, g->getLatestNerve());
+	if (kind != HIT_GATE_MOUTH || (nerve != kGateWait && nerve != kGateWait2) || !g->getHitPoints())
+		return; // asleep, diving or already hurt: as for this game's own water
+	g->decHitPoints();
+	g->mSpine->reset();
+	g->mSpine->setNext(gateNerve(g->getHitPoints() ? kGateAwakeDamage : kGateDie));
+}
 
 // ------------------------------------------------------------------ Petey Piranha
 
@@ -846,6 +947,8 @@ void MpBossStageSetup()
 	s_kind     = 0;
 	s_boss     = nullptr;
 	s_mantas   = nullptr;
+	s_gates    = nullptr;
+	memset(s_sprayWait, 0, sizeof s_sprayWait);
 	s_tub      = nullptr;
 	s_shadow   = nullptr;
 	s_shadowList = nullptr;
@@ -879,6 +982,8 @@ void MpBossStageSetup()
 			s_kind = KIND_EEL, s_boss = static_cast<TSpineEnemy*>(first);
 		} else if (dynamic_cast<TBossManta*>(first)) {
 			s_kind = KIND_MANTA, s_mantas = mgr;
+		} else if (dynamic_cast<TBiancoGateKeeper*>(first)) {
+			s_kind = KIND_GATE, s_gates = mgr;
 		} else if (dynamic_cast<TBossHanachan*>(first)) {
 			s_kind = KIND_WIGGLER, s_boss = static_cast<TSpineEnemy*>(first);
 		} else if (dynamic_cast<TBossTelesa*>(first)) {
@@ -897,7 +1002,8 @@ void MpBossStageSetup()
 			if (tub->unk168)
 				s_kind = KIND_TUB, s_tub = tub;
 	static const char* const names[] = {"",        "Petey Piranha", "Gooper Blooper", "Eely-Mouth",  "Phantamanta",
-	                                    "Wiggler", "King Boo",      "Mecha-Bowser",   "Bowser's tub", "Shadow Mario"};
+	                                    "Wiggler", "King Boo",      "Mecha-Bowser",   "Bowser's tub", "Shadow Mario",
+	                                    "The Gatekeeper"};
 	if (s_kind)
 		fprintf(stderr, "[multiplayer] %s is here: the host's is everyone's\n", names[s_kind]);
 	else if (debug())
@@ -935,11 +1041,22 @@ void MpBossHostFrame()
 		case KIND_MECHA: hitMecha(unit, kind, count); break;
 		case KIND_TUB: hitTub(unit, kind, count); break;
 		case KIND_SHADOW: hitShadow(unit, kind, count); break;
+		case KIND_GATE: hitGate(unit, kind, count); break;
 		}
 	}
 	u8 buf[200];
 	Out o(buf, sizeof buf);
-	if (s_kind == KIND_MANTA) {
+	if (s_kind == KIND_GATE) {
+		const int n = s_gates->getObjNum() < kMaxGates ? s_gates->getObjNum() : kMaxGates;
+		for (int unit = 0; unit < n && o.room(3 + kGateRecord); unit++) {
+			if (!gateAt(unit))
+				continue;
+			o.u8_(KIND_GATE);
+			o.u8_((u8)unit);
+			o.u8_((u8)kGateRecord);
+			writeGate(o, unit);
+		}
+	} else if (s_kind == KIND_MANTA) {
 		const int n = s_mantas->getObjNum() < kMaxUnits ? s_mantas->getObjNum() : kMaxUnits;
 		for (int k = 0; k < kMantaPerUpdate && k < n && o.room(3 + kMantaRecord); k++) {
 			const int slot = (s_next + k) % n;
@@ -1009,6 +1126,7 @@ void MpBossClientTick()
 		case KIND_MECHA: readMecha(rec); break;
 		case KIND_TUB: readTub(rec); break;
 		case KIND_SHADOW: readShadow(rec); break;
+		case KIND_GATE: readGate(rec, unit); break;
 		}
 	}
 	s_followed = true;
@@ -1059,6 +1177,18 @@ int MpBossTestHit()
 			}
 		return 0;
 	case KIND_SHADOW: s_shadow->hitWater(gpMarioOriginal); return s_kind;
+	case KIND_GATE:
+		// water on it asleep, or in its open mouth, as a player aims it: its
+		// own step decides what that does
+		for (int i = 0; i < kMaxGates; i++)
+			if (TBiancoGateKeeper* g = gateAt(i))
+				if (!g->checkLiveFlag(LIVE_FLAG_DEAD)) {
+					const int nerve = nerveIndex(gateNerve, g->getLatestNerve());
+					if (nerve == 0 || nerve == 4 || g->isHeadHitActive())
+						g->unk154 = 1;
+					return s_kind;
+				}
+		return 0;
 	}
 	return 0;
 }
