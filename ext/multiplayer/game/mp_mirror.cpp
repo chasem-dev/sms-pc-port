@@ -19,8 +19,14 @@
 #include "mp_boss.hpp"
 #include "../mp_game_api.h"
 
+#include <Enemy/BossWanwan.hpp>
 #include <Enemy/Conductor.hpp>
 #include <Enemy/FruitsBoat.hpp>
+#include <Enemy/Koopa.hpp>
+#include <Enemy/KoopaJr.hpp>
+#include <Enemy/KoopaNerve.hpp>
+#include <Enemy/LimitKoopaJr.hpp>
+#include <Enemy/SleepBossHanachan.hpp>
 #include <M3DUtil/MActor.hpp>
 #include <Map/MapData.hpp>
 #include <MoveBG/Item.hpp>
@@ -42,6 +48,8 @@
 namespace {
 
 const int kAlone = 255, kWaves = 254;
+
+int fps(); // ticks a second (below)
 const int kMaxMirrors = 160;
 
 enum Owner {
@@ -54,7 +62,7 @@ struct Kind {
 	const char* name;
 	bool (*match)(TLiveActor*);
 	int (*save)(TLiveActor*, u8* out);                     // bytes written
-	void (*take)(TLiveActor*, const u8* in, int size, int age); // age: ticks since it came
+	void (*take)(TLiveActor*, const u8* in, int size, int age, int* scratch); // age: ticks since it came
 	Owner owner;
 	int every;       // ticks between sends
 	bool keepsHits;  // the others' hits do not land here (the owner sends the outcome)
@@ -71,6 +79,7 @@ struct Mirrored {
 	int stateSize, stateAt;
 	u8 sent[48];
 	int sentSize, sentAt;
+	int scratch; // the kind's own (a follower: the host's step last taken)
 };
 
 Mirrored s_mirrors[kMaxMirrors];
@@ -188,7 +197,7 @@ int saveNpc(TLiveActor* a, u8* out)
 	o.f(a->mRotation.y);
 	return o.n;
 }
-void takeNpc(TLiveActor* a, const u8* in, int size, int)
+void takeNpc(TLiveActor* a, const u8* in, int size, int, int*)
 {
 	Get g(in, size);
 	const JGeometry::TVec3<f32> pos = g.v3();
@@ -208,7 +217,7 @@ int saveMover(TLiveActor* a, u8* out)
 	o.v3(a->mVelocity);
 	return o.n;
 }
-void takeMover(TLiveActor* a, const u8* in, int size, int age)
+void takeMover(TLiveActor* a, const u8* in, int size, int age, int*)
 {
 	Get g(in, size);
 	const JGeometry::TVec3<f32> pos = g.v3(), vel = g.v3();
@@ -232,7 +241,7 @@ int saveMuddyBoat(TLiveActor* a, u8* out)
 	o.i(b->mStateTimer);
 	return o.n;
 }
-void takeMuddyBoat(TLiveActor* a, const u8* in, int size, int)
+void takeMuddyBoat(TLiveActor* a, const u8* in, int size, int, int*)
 {
 	TMuddyBoat* b = static_cast<TMuddyBoat*>(a);
 	Get g(in, size);
@@ -265,7 +274,7 @@ int saveFruitsBoat(TLiveActor* a, u8* out)
 	o.i((s32)(b->mLiveFlag & 0x30000));
 	return o.n;
 }
-void takeFruitsBoat(TLiveActor* a, const u8* in, int size, int)
+void takeFruitsBoat(TLiveActor* a, const u8* in, int size, int, int*)
 {
 	TFruitsBoat* b = static_cast<TFruitsBoat*>(a);
 	Get g(in, size);
@@ -298,7 +307,7 @@ int saveFerrisWheel(TLiveActor* a, u8* out)
 	o.i(w->mStateTimer);
 	return o.n;
 }
-void takeFerrisWheel(TLiveActor* a, const u8* in, int size, int age)
+void takeFerrisWheel(TLiveActor* a, const u8* in, int size, int age, int*)
 {
 	TFerrisWheel* w = static_cast<TFerrisWheel*>(a);
 	Get g(in, size);
@@ -322,7 +331,7 @@ int saveTurner(TLiveActor* a, u8* out)
 	o.f(frameOf(a->getMActor()));
 	return o.n;
 }
-void takeTurner(TLiveActor* a, const u8* in, int size, int)
+void takeTurner(TLiveActor* a, const u8* in, int size, int, int*)
 {
 	Get g(in, size);
 	const f32 yaw = g.f(), frame = g.f();
@@ -343,7 +352,7 @@ int savePinnaCoaster(TLiveActor* a, u8* out)
 	o.f(frameOf(c->getMActor()));
 	return o.n;
 }
-void takePinnaCoaster(TLiveActor* a, const u8* in, int size, int)
+void takePinnaCoaster(TLiveActor* a, const u8* in, int size, int, int*)
 {
 	TPinnaCoaster* c = static_cast<TPinnaCoaster*>(a);
 	Get g(in, size);
@@ -365,7 +374,7 @@ int saveRoulette(TLiveActor* a, u8* out)
 	o.f(r->unk13C);
 	return o.n;
 }
-void takeRoulette(TLiveActor* a, const u8* in, int size, int)
+void takeRoulette(TLiveActor* a, const u8* in, int size, int, int*)
 {
 	TRoulette* r = static_cast<TRoulette*>(a);
 	Get g(in, size);
@@ -426,8 +435,8 @@ void takeSlotWith(TLiveActor* a, const u8* in, int size, bool turnOnly)
 	}
 	s->unk194 = won;
 }
-void takeSlotDrum(TLiveActor* a, const u8* in, int size, int) { takeSlotWith(a, in, size, false); }
-void takeItemSlotDrum(TLiveActor* a, const u8* in, int size, int) { takeSlotWith(a, in, size, true); }
+void takeSlotDrum(TLiveActor* a, const u8* in, int size, int, int*) { takeSlotWith(a, in, size, false); }
+void takeItemSlotDrum(TLiveActor* a, const u8* in, int size, int, int*) { takeSlotWith(a, in, size, true); }
 
 // Yoshi's egg: the fruit it wants (the host's draw), and whether it is still
 // there (a player who hatched it rides Yoshi; the others' eggs go).
@@ -445,7 +454,7 @@ int saveEgg(TLiveActor* a, u8* out)
 	o.b(s_eggHatchedHere ? 1 : 0);
 	return o.n;
 }
-void takeEgg(TLiveActor* a, const u8* in, int size, int)
+void takeEgg(TLiveActor* a, const u8* in, int size, int, int*)
 {
 	TEggYoshi* e = static_cast<TEggYoshi*>(a);
 	Get g(in, size);
@@ -477,7 +486,7 @@ int saveWatermelon(TLiveActor* a, u8* out)
 	o.i(w->unk19C);
 	return o.n;
 }
-void takeWatermelon(TLiveActor* a, const u8* in, int size, int age)
+void takeWatermelon(TLiveActor* a, const u8* in, int size, int age, int*)
 {
 	TBigWatermelon* w = static_cast<TBigWatermelon*>(a);
 	Get g(in, size);
@@ -496,6 +505,184 @@ void takeWatermelon(TLiveActor* a, const u8* in, int size, int age)
 	w->unk19C = coins;
 }
 
+
+// Bosses that follow the host's steps (as Shadow Mario does, mp_boss.cpp):
+// each game's copy runs, animates and is hit as ever; it takes each new step
+// of the host's (its nerve, by its place in the boss's own table), its hit
+// points, and is eased toward where the host's is. Hits a player lands on a
+// copy reach the host's as hits on shared objects (mp_game.cpp).
+typedef const TNerveBase<TLiveActor>* Nerve;
+typedef Nerve (*Steps)(int);
+
+int stepOf(Steps steps, Nerve n)
+{
+	for (int i = 0; i < 64; i++) {
+		Nerve t = steps(i);
+		if (!t)
+			break;
+		if (t == n)
+			return i;
+	}
+	return 0xFF;
+}
+
+int saveFollower(TLiveActor* a, u8* out, Steps steps)
+{
+	TSpineEnemy* e = static_cast<TSpineEnemy*>(a);
+	Put o(out);
+	o.b((u8)stepOf(steps, e->getLatestNerve()));
+	o.v3(e->mPosition);
+	o.f(e->mRotation.y);
+	o.b((u8)e->getHitPoints());
+	return o.n;
+}
+
+void takeFollower(TLiveActor* a, const u8* in, int size, int* last, Steps steps)
+{
+	TSpineEnemy* e = static_cast<TSpineEnemy*>(a);
+	Get g(in, size);
+	const int step                  = g.b();
+	const JGeometry::TVec3<f32> pos = g.v3();
+	const f32 yaw                   = g.f();
+	const int hp                    = g.b();
+	if (!g.ok || e->checkLiveFlag(LIVE_FLAG_DEAD))
+		return;
+	// *last: the host's step last taken, plus one (low byte); ticks this copy
+	// has been on another step since (above it)
+	if (step != 0xFF && steps(step)) {
+		const bool newStep = step + 1 != (*last & 0xFF);
+		int apart          = *last >> 8;
+		apart              = stepOf(steps, e->getLatestNerve()) != step ? apart + 1 : 0;
+		// a new step of the host's: taken (only then, so animations are not
+		// restarted); a copy gone its own way for a second is put back on it
+		if (newStep || apart > fps()) {
+			if (stepOf(steps, e->getLatestNerve()) != step) {
+				e->mSpine->reset();
+				e->mSpine->setNext(steps(step));
+			}
+			apart = 0;
+		}
+		*last = (step + 1) | apart << 8;
+	}
+	easeTo(e->mPosition, pos, 700.0f, 0.2f);
+	f32 d = yaw - e->mRotation.y;
+	while (d > 180.0f)
+		d -= 360.0f;
+	while (d < -180.0f)
+		d += 360.0f;
+	e->mRotation.y += d * 0.2f;
+	e->mHitPoints = (u8)hp;
+}
+
+Nerve chompStep(int i)
+{
+	switch (i) {
+	case 0: return &TNerveBWGraphWander::theNerve();
+	case 1: return &TNerveBWRoll::theNerve();
+	case 2: return &TNerveBWBark::theNerve();
+	case 3: return &TNerveBWJump::theNerve();
+	case 4: return &TNerveBWStun::theNerve();
+	case 5: return &TNerveBWWakeup::theNerve();
+	case 6: return &TNerveBWJumpToBath::theNerve();
+	case 7: return &TNerveBWDie::theNerve();
+	case 8: return &TNerveBWJumpAway::theNerve();
+	case 9: return &TNerveBWShake::theNerve();
+	case 10: return &TNerveBWFall::theNerve();
+	default: return nullptr;
+	}
+}
+Nerve bowserStep(int i)
+{
+	switch (i) {
+	case 0: return &TNerveKoopaWait::theNerve();
+	case 1: return &TNerveKoopaTurnL::theNerve();
+	case 2: return &TNerveKoopaTurnR::theNerve();
+	case 3: return &TNerveKoopaTumble::theNerve();
+	case 4: return &TNerveKoopaProvoke::theNerve();
+	case 5: return &TNerveKoopaFlame::theNerve();
+	case 6: return &TNerveKoopaGetDown::theNerve();
+	case 7: return &TNerveKoopaStagger::theNerve();
+	case 8: return &TNerveKoopaFall::theNerve();
+	case 9: return &TNerveKoopaGetShowered::theNerve();
+	default: return nullptr;
+	}
+}
+Nerve juniorStep(int i)
+{
+	switch (i) {
+	case 0: return &TNerveKoopaJrWait::theNerve();
+	case 1: return &TNerveKoopaJrDamage::theNerve();
+	case 2: return &TNerveKoopaJrDemo::theNerve();
+	case 3: return &TNerveKoopaJrLaunch::theNerve();
+	case 4: return &TNerveKoopaJrYahoo::theNerve();
+	case 5: return &TNerveKoopaJrSubmarineWait::theNerve();
+	case 6: return &TNerveKoopaJrSubmarineCannonOpenClose::theNerve();
+	case 7: return &TNerveKoopaJrSubmarineLaunchKiller::theNerve();
+	case 8: return &TNerveLimitKoopaJrWait::theNerve();
+	case 9: return &TNerveLimitKoopaJrRun::theNerve();
+	case 10: return &TNerveLimitKoopaJrLaunch::theNerve();
+	case 11: return &TNerveLimitKoopaJrYahoo::theNerve();
+	default: return nullptr;
+	}
+}
+Nerve sleepyWigglerStep(int i)
+{
+	switch (i) {
+	case 0: return &TNerveSBH_SleepContinue::theNerve();
+	case 1: return &TNerveSBH_Fall::theNerve();
+	default: return nullptr;
+	}
+}
+
+// Chain Chomp's bath (Pianta Village): run by the player dragging him by his picket, else the host.
+bool isChomp(TLiveActor* a) { return dynamic_cast<TBossWanwan*>(a) != nullptr; }
+int saveChomp(TLiveActor* a, u8* out)
+{
+	TBossWanwan* c = static_cast<TBossWanwan*>(a);
+	const int n    = saveFollower(a, out, chompStep);
+	Put o(out + n);
+	o.v3(c->mPullVelocity);
+	o.f(c->mRollAngle);
+	o.b((u8)c->mIsRolling);
+	o.b((u8)c->mIsInBath);
+	o.b((u8)c->mShineAppeared);
+	return n + o.n;
+}
+void takeChomp(TLiveActor* a, const u8* in, int size, int, int* last)
+{
+	TBossWanwan* c = static_cast<TBossWanwan*>(a);
+	const int n    = 1 + 12 + 4 + 1;
+	takeFollower(a, in, size, last, chompStep);
+	Get g(in + n, size - n);
+	const JGeometry::TVec3<f32> pull = g.v3();
+	const f32 roll                   = g.f();
+	const u8 rolling = g.b(), inBath = g.b(), shine = g.b();
+	if (!g.ok)
+		return;
+	c->mPullVelocity = pull;
+	c->mRollAngle    = roll;
+	c->mIsRolling    = rolling;
+	c->mIsInBath     = (s8)inBath;
+	if (shine)
+		c->mShineAppeared = 1;
+}
+// Bowser in the final bath, Bowser Jr. (in it, and his sub and chases), Gelato's sleeping Wiggler: the host's.
+bool isBowser(TLiveActor* a) { return dynamic_cast<TKoopa*>(a) != nullptr; }
+int saveBowser(TLiveActor* a, u8* out) { return saveFollower(a, out, bowserStep); }
+void takeBowser(TLiveActor* a, const u8* in, int size, int, int* last) { takeFollower(a, in, size, last, bowserStep); }
+bool isJunior(TLiveActor* a)
+{
+	return dynamic_cast<TKoopaJr*>(a) || dynamic_cast<TKoopaJrSubmarine*>(a) || dynamic_cast<TLimitKoopaJr*>(a);
+}
+int saveJunior(TLiveActor* a, u8* out) { return saveFollower(a, out, juniorStep); }
+void takeJunior(TLiveActor* a, const u8* in, int size, int, int* last) { takeFollower(a, in, size, last, juniorStep); }
+bool isSleepyWiggler(TLiveActor* a) { return dynamic_cast<TSleepBossHanachan*>(a) != nullptr; }
+int saveSleepyWiggler(TLiveActor* a, u8* out) { return saveFollower(a, out, sleepyWigglerStep); }
+void takeSleepyWiggler(TLiveActor* a, const u8* in, int size, int, int* last)
+{
+	takeFollower(a, in, size, last, sleepyWigglerStep);
+}
+
 const Kind kKinds[] = {
 	{"NPC", isNpc, saveNpc, takeNpc, OWN_HOST, 6, false},
 	{"leaf boat", isLeafBoat, saveMover, takeMover, OWN_RIDER, 2, false},
@@ -508,6 +695,10 @@ const Kind kKinds[] = {
 	{"slot machine", isSlotDrum, saveSlot, takeSlotDrum, OWN_USER, 2, true},
 	{"item slot", isItemSlotDrum, saveSlot, takeItemSlotDrum, OWN_USER, 2, true},
 	{"Yoshi's egg", isEgg, saveEgg, takeEgg, OWN_USER, 10, false},
+	{"Chain Chomp", isChomp, saveChomp, takeChomp, OWN_USER, 2, false},
+	{"Bowser", isBowser, saveBowser, takeBowser, OWN_HOST, 2, false},
+	{"Bowser Jr.", isJunior, saveJunior, takeJunior, OWN_HOST, 2, false},
+	{"sleeping Wiggler", isSleepyWiggler, saveSleepyWiggler, takeSleepyWiggler, OWN_HOST, 3, false},
 	{"watermelon", isWatermelon, saveWatermelon, takeWatermelon, OWN_USER, 2, false},
 };
 const int kKindCount = sizeof kKinds / sizeof kKinds[0];
@@ -539,7 +730,11 @@ bool ownedHere(Mirrored& m)
 				m.usedAt = s_clock;
 		}
 	}
-	// an egg that hatched here: ours to say so (the others' go)
+	// Chain Chomp dragged by this game's Mario (his picket in hand): ours
+	if (m.actor && m.kind->match == isChomp && gpMarioOriginal
+	    && gpMarioOriginal->mHeldObject == static_cast<TBossWanwan*>(m.actor)->mPicket)
+		m.usedAt = s_clock;
+		// an egg that hatched here: ours to say so (the others' go)
 	if (m.actor && m.kind->match == isEgg) {
 		if (eggHatching(static_cast<TEggYoshi*>(m.actor)))
 			s_eggHatchedHere = true;
@@ -680,7 +875,7 @@ void MpMirrorTick()
 		if (!m.stateSize || s_clock - m.stateAt > 2 * fps())
 			continue; // nothing lately: it runs as it would
 		if (m.actor)
-			m.kind->take(m.actor, m.state, m.stateSize, s_clock - m.stateAt);
+			m.kind->take(m.actor, m.state, m.stateSize, s_clock - m.stateAt, &m.scratch);
 		else if (m.stateAt == s_clock)
 			takeWaves(m.state, m.stateSize);
 	}
