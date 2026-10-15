@@ -5,8 +5,8 @@
     python3 tools/mods/get.py extras      only the extras: HD textures the UHD pack lacks
                                           (--if-outdated: only if not the pinned release)
     python3 tools/mods/get.py eclipse     Super Mario Eclipse (patched from your disc)
-    python3 tools/mods/get.py language fr the game's text in French (de, es, it: German,
-                                          Spanish, Italian); --if-outdated as for extras
+    python3 tools/mods/get.py language fr the game's text in French (de, es, it, pl: German,
+                                          Spanish, Italian, Polish); --if-outdated as for extras
     python3 tools/mods/get.py all         textures and Eclipse
 
 Each mod's previous install is removed first, then its release is downloaded
@@ -63,9 +63,11 @@ TEXTURES = {
 with open(os.path.join(HERE, "texture-extras.json"), encoding="utf-8") as f:
     EXTRAS = dict(json.load(f), install=os.path.join(MODS, "textures", "sms-hd-texture-extras"))
 EXTRAS_RECORD = ".release"
-# The European release's text and menus for each of its languages, which
-# `language = <code>` in settings.txt plays the game in (platform/misc/
-# language.cpp); pinned in language-packs.json, which SMS Launcher also reads.
+# The language packs `language = <code>` in settings.txt plays the game in
+# (platform/misc/language.cpp): the European release's four and community
+# translations, pinned in language-packs.json. "any_language" there tells SMS
+# Launcher that this game plays any installed pack, so the launcher can offer
+# languages released after it.
 with open(os.path.join(HERE, "language-packs.json"), encoding="utf-8") as f:
     LANGUAGE_PACKS = json.load(f)
 ECLIPSE = {
@@ -438,7 +440,7 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter,
                                  epilog="\n\n".join(__doc__.split("\n\n")[1:]))
     ap.add_argument("what", choices=["textures", "extras", "eclipse", "language", "all"])
-    ap.add_argument("language", nargs="?", help="with language: fr, de, es or it")
+    ap.add_argument("language", nargs="?", help="with language: fr, de, es, it or pl")
     ap.add_argument("--iso")
     ap.add_argument("--keep-download", action="store_true")
     ap.add_argument("--if-outdated", action="store_true")
@@ -456,7 +458,7 @@ def main():
             get_extras(args.keep_download, args.if_outdated)
         if args.what == "language":
             if not args.language:
-                raise Failure("which language? fr, de, es or it")
+                raise Failure("which language? fr, de, es, it or pl")
             get_language(args.language, args.keep_download, args.if_outdated)
         if args.what in ("eclipse", "all"):
             get_eclipse(args.keep_download, args.iso)
