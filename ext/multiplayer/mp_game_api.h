@@ -50,6 +50,8 @@ enum {
 	MPG_POSE_UPPER     = 32, // the upper body has its own animation (pumping, carrying)
 	MPG_POSE_SPECTATING = 64, // out of lives, watching the others
 	MPG_POSE_DEMO       = 128, // in a cutscene
+	// MpgPose::more
+	MPG_POSE2_ON_TUB    = 1,   // standing on Bowser's hot tub (it tips under each player)
 };
 typedef struct MpgPose {
 	uint32_t time;      // when the sender's game was like this, in its game time (ms; set by mpg_set_pose)
@@ -65,7 +67,7 @@ typedef struct MpgPose {
 	uint16_t yoshiBck;
 	float fluddFrame, yoshiFrame;
 	uint8_t yoshiColor[3];
-	uint8_t pad;
+	uint8_t more;       // MPG_POSE2_*
 	uint32_t hiddenShapes; // the body's shapes hidden (bit n: shape n): shirt, hands, hair
 	// while spraying: where FLUDD's water leaves (up to two emitters, the
 	// hover nozzle has two), the speed it inherits, and the trigger's pressure
