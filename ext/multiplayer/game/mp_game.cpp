@@ -227,8 +227,33 @@ void pressSwitch(int k)
 	}
 }
 
+// Debug: red coins out in this stage, not yet taken.
+int redCoinsOut()
+{
+	int n = 0;
+	for (int i = 0; gpItemManager && i < gpItemManager->getObjNum(); i++) {
+		TLiveActor* a = gpItemManager->getObj(i);
+		n += a && a->getActorType() == 0x2000000F && !a->checkLiveFlag(LIVE_FLAG_DEAD) && !a->checkLiveFlag(LIVE_FLAG_HIDDEN);
+	}
+	return n;
+}
+
 void syncSwitches()
 {
+	static bool redOn;
+	static int redFrames;
+	const bool on = TFlagManager::getInstance()->getBool(0x50009);
+	if (on != redOn && getenv("SMS_MULTIPLAYER_DEBUG"))
+		fprintf(stderr, "[multiplayer] red coin switch event %s\n", on ? "on (its timer runs)" : "off");
+	redOn = on;
+	if (on && getenv("SMS_MULTIPLAYER_DEBUG") && director() && ++redFrames % 150 == 0)
+		fprintf(stderr, "[multiplayer] red coin event: %d red coins here, %d of them out (talk/demo %d, on ground %d, "
+		        "jumping %d, Mario status %x)\n",
+		        (int)TFlagManager::getInstance()->getFlag(0x60000), redCoinsOut(), (int)director()->isTalkOrDemoModeNow(),
+		        (int)gpMarioOriginal->isTouchGround4cm(), (int)gpMarioOriginal->checkStatusType(MARIO_STATUS_FLAG_JUMPING),
+		        (unsigned)gpMarioOriginal->getStatus());
+	if (!on)
+		redFrames = 0;
 	for (int k = 0; k < s_switchCount; k++) {
 		const bool down = s_switches[k]->checkHitFlag(HIT_FLAG_NO_COLLISION) != 0;
 		if (down && !s_switchDown[k]) {
@@ -1314,7 +1339,13 @@ struct TestPlan {
 	bool pounded;
 	int claimAt;             // claims an NPC as a talk does, and walks it off
 	bool claimed;
-	int nearAt;              // stands before an NPC (presses of A talk to it), up to 900 frames
+	int redAt;               // ground-pounds the first red coin switch
+	bool redPressed;
+	int redTakeAt, redTakeCount; // pickred@N:K: takes K red coins that are out
+	bool redTook;
+	int toRedAt;             // goes to the red coin switch
+	bool atRed;
+	int nearAt;              // stands before an NPC (presses of B talk to it), up to 1800 frames
 	bool talked;
 	bool tookAgain;
 	int warpAt, warpArea, warpEpisode;
@@ -1359,7 +1390,7 @@ void runTests(TMarDirector* dir, bool arrived)
 {
 	if (!s_test.parsed) {
 		s_test.parsed = true;
-		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = -1;
+		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = -1;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
 		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = s_test.bossHitAt = s_test.setFlagAt = -1;
 		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.npcSprayAt = s_test.carryAt = -1;
@@ -1368,6 +1399,12 @@ void runTests(TMarDirector* dir, bool arrived)
 			const char* t = strstr(plan, "take@");
 			if (t)
 				sscanf(t, "take@%d:%d", &s_test.takeAt, &s_test.takeCount);
+			if (const char* tr = strstr(plan, "gotoswitch@"))
+				sscanf(tr, "gotoswitch@%d", &s_test.toRedAt);
+			if (const char* rt = strstr(plan, "pickred@"))
+				sscanf(rt, "pickred@%d:%d", &s_test.redTakeAt, &s_test.redTakeCount);
+			if (const char* rd = strstr(plan, "redswitch@"))
+				sscanf(rd, "redswitch@%d", &s_test.redAt);
 			if (const char* nr = strstr(plan, "nearnpc@"))
 				sscanf(nr, "nearnpc@%d", &s_test.nearAt);
 			if (const char* cl = strstr(plan, "claim@"))
@@ -1459,6 +1496,37 @@ void runTests(TMarDirector* dir, bool arrived)
 			s_test.talked = true;
 			fprintf(stderr, "[multiplayer] test: talking to an NPC\n");
 		}
+	}
+	if (s_test.toRedAt >= 0 && !s_test.atRed && s_test.frames >= s_test.toRedAt) {
+		for (int k = 0; k < s_switchCount; k++)
+			if (dynamic_cast<TRedCoinSwitch*>(s_switches[k])) {
+				const JGeometry::TVec3<f32>& at = s_switches[k]->mPosition;
+				gpMarioOriginal->mPosition.set(at.x + 150.0f, at.y + 100.0f, at.z);
+				fprintf(stderr, "[multiplayer] test: to the red coin switch\n");
+			}
+		s_test.atRed = true;
+	}
+	if (s_test.redTakeAt >= 0 && !s_test.redTook && s_test.frames >= s_test.redTakeAt && gpItemManager) {
+		int taken = 0;
+		for (int i = 0; i < gpItemManager->getObjNum() && taken < s_test.redTakeCount; i++) {
+			TLiveActor* a = gpItemManager->getObj(i);
+			if (a && a->getActorType() == 0x2000000F && !a->checkLiveFlag(LIVE_FLAG_DEAD) && !a->checkLiveFlag(LIVE_FLAG_HIDDEN)) {
+				static_cast<TItem*>(a)->taken(gpMarioOriginal);
+				taken++;
+			}
+		}
+		s_test.redTook = taken > 0;
+		if (taken)
+			fprintf(stderr, "[multiplayer] test: took %d red coins (%d here now)\n", taken,
+			        (int)TFlagManager::getInstance()->getFlag(0x60000));
+	}
+	if (s_test.redAt >= 0 && !s_test.redPressed && s_test.frames >= s_test.redAt) {
+		for (int k = 0; k < s_switchCount && !s_test.redPressed; k++)
+			if (TRedCoinSwitch* red = dynamic_cast<TRedCoinSwitch*>(s_switches[k])) {
+				fprintf(stderr, "[multiplayer] test: ground-pounding the red coin switch\n");
+				red->receiveMessage(gpMarioOriginal, HIT_MESSAGE_HIP_DROP);
+			}
+		s_test.redPressed = true;
 	}
 	if (s_test.claimAt >= 0 && !s_test.claimed && s_test.frames >= s_test.claimAt)
 		s_test.claimed = MpMirrorTestClaimNpc();
