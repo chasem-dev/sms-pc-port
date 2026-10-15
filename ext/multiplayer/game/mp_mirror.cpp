@@ -435,6 +435,14 @@ int saveSlot(TLiveActor* a, u8* out)
 	o.b(s->unk194 ? 1 : 0);
 	return o.n;
 }
+bool reelsTurning(TSlotDrum* s)
+{
+	for (int i = 0; s->unk138 && i < reelCount(s); i++)
+		if (s->unk138[i] != 0.0f)
+			return true;
+	return false;
+}
+
 void takeSlotWith(TLiveActor* a, const u8* in, int size, bool turnOnly)
 {
 	TSlotDrum* s = static_cast<TSlotDrum*>(a);
@@ -859,6 +867,18 @@ bool ownedHere(Mirrored& m)
 		if (s_eggHatchedHere)
 			m.usedAt = s_clock;
 	}
+	// a slot machine this game's player set spinning: ours until its reels
+	// stop (they land here, and pay out here; the others are sent where)
+	// (the host's states do not count against it: the host gives way once it
+	// hears from us; another player's, sent since, do: they spun it after)
+	if (m.actor && (m.kind->match == isSlotDrum || m.kind->match == isItemSlotDrum)
+	    && (m.heardSlot == 0 || m.usedAt > m.heardAt) && s_clock - m.usedAt < 2 * fps()) {
+		if (reelsTurning(static_cast<TSlotDrum*>(m.actor)))
+			m.usedAt = s_clock;
+		else if (s_clock - m.usedAt == 1 && getenv("SMS_MULTIPLAYER_DEBUG"))
+			fprintf(stderr, "[multiplayer] %s %d.%d: its reels stopped here (won %d)\n", m.kind->name, m.manager, m.index,
+			        (int)static_cast<TSlotDrum*>(m.actor)->unk194);
+	}
 	// used here lately: ours (two seconds after; riding, while on it)
 	if (m.kind->owner != OWN_HOST && s_clock - m.usedAt < 2 * fps())
 		return true;
@@ -1033,6 +1053,9 @@ void debugMirrors()
 		char extra[64] = "";
 		if (m.kind->match == isNpc)
 			snprintf(extra, sizeof extra, " (flags %x%s)", (unsigned)m.actor->mLiveFlag, m.claimedAt ? ", claimed here" : "");
+		if (m.kind->match == isSlotDrum || m.kind->match == isItemSlotDrum)
+			snprintf(extra, sizeof extra, " (reels turning %d, won %d)", (int)reelsTurning(static_cast<TSlotDrum*>(m.actor)),
+			         (int)static_cast<TSlotDrum*>(m.actor)->unk194);
 		if (m.kind->match == isEgg)
 			snprintf(extra, sizeof extra, " (egg state %d%s; Yoshi here %s)", (int)static_cast<TEggYoshi*>(m.actor)->mState,
 			         m.actor->checkLiveFlag(LIVE_FLAG_DEAD) ? ", gone" : "",
