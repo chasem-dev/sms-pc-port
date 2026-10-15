@@ -1463,6 +1463,7 @@ struct TestPlan {
 	bool pounded;
 	int claimAt;             // claims an NPC as a talk does, and walks it off
 	bool claimed;
+	int demoAt;              // endlessdemo@N: the plaza's Shadow Mario gate camera, endless, ended 4 s on
 	int flAt;                // fludd@N: touches the Airstrip's FLUDD (its story event)
 	bool flTook;
 	int redAt;               // ground-pounds the first red coin switch
@@ -1520,7 +1521,7 @@ void runTests(TMarDirector* dir, bool arrived)
 {
 	if (!s_test.parsed) {
 		s_test.parsed = true;
-		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.flAt = -1;
+		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.flAt = s_test.demoAt = -1;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
 		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = s_test.bossHitAt = s_test.setFlagAt = -1;
 		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.npcSprayAt = s_test.carryAt = s_test.slotSprayAt = s_test.melonAt = -1;
@@ -1529,6 +1530,8 @@ void runTests(TMarDirector* dir, bool arrived)
 			const char* t = strstr(plan, "take@");
 			if (t)
 				sscanf(t, "take@%d:%d", &s_test.takeAt, &s_test.takeCount);
+			if (const char* ed = strstr(plan, "endlessdemo@"))
+				sscanf(ed, "endlessdemo@%d", &s_test.demoAt);
 			if (const char* fl = strstr(plan, "fludd@"))
 				sscanf(fl, "fludd@%d", &s_test.flAt);
 			if (const char* tr = strstr(plan, "gotoswitch@"))
@@ -1632,6 +1635,17 @@ void runTests(TMarDirector* dir, bool arrived)
 			s_test.talked = true;
 			fprintf(stderr, "[multiplayer] test: talking to an NPC\n");
 		}
+	}
+	if (s_test.demoAt >= 0 && dir && s_test.frames == s_test.demoAt) {
+		// "影マリオゲートお絵かきカメラ", the camera the plaza's script holds while Shadow Mario paints
+		static const char kGateCamera[] = "\x89\x65\x83\x7d\x83\x8a\x83\x49\x83\x51\x81\x5b\x83\x67\x82\xa8"
+		                                  "\x8a\x47\x82\xa9\x82\xab\x83\x4a\x83\x81\x83\x89";
+		fprintf(stderr, "[multiplayer] test: an endless cutscene\n");
+		dir->fireStartDemoCamera(kGateCamera, nullptr, -1, 0.0f, false, nullptr, 0, nullptr, JDrama::TFlagT<u16>(0));
+	}
+	if (s_test.demoAt >= 0 && dir && s_test.frames == s_test.demoAt + 120) {
+		fprintf(stderr, "[multiplayer] test: ending it\n");
+		dir->fireEndDemoCamera();
 	}
 	if (s_test.flAt >= 0 && !s_test.flTook && s_test.frames >= s_test.flAt && gpItemManager && gpMarioOriginal) {
 		// "ウォーターガン", FLUDD lying on the Airstrip
@@ -1913,6 +1927,9 @@ void updateText()
 // opening (every game plays its own), the Shine Get (syncShineGets) or a
 // gate's camera (it follows the gate, which the others cannot be handed).
 bool s_replayingDemo; // playing another game's cutscene: not news to send back
+int s_replaySlot = -1; // whose cutscene is playing here (-1: none of the others')
+int s_replayFrames, s_starterOut;
+bool s_replayStarted;
 
 // Cutscenes seen lately, by name. One that two games both start (the host
 // leads a boss, and every copy plays its defeat) is one cutscene: the game
@@ -2036,6 +2053,39 @@ void playOthersCutscenes(TMarDirector* dir)
 		dir->fireStartDemoCamera(s_demoNames[k], hasPos ? &s_demoPos[k] : nullptr, frames, values[3], option, nullptr, 0,
 		                         nullptr, JDrama::TFlagT<u16>(0));
 		s_replayingDemo = false;
+		s_replaySlot    = slot;
+		s_replayFrames  = 0;
+		s_starterOut    = 0;
+		s_replayStarted = false;
+	}
+}
+
+// Another player's cutscene, played here, ends when theirs does. Some run
+// until the stage's script that started them ends them (Shadow Mario
+// painting an M), and this game's script did not start this one: it would
+// play on for good. Once the player who started it is out of theirs (their
+// pose says so) for half a second, or after a minute, it ends here too.
+void endReplayWithStarter(TMarDirector* dir)
+{
+	if (s_replaySlot < 0)
+		return;
+	const int fps = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
+	// (it starts a frame or two after it is asked for)
+	if (!dir || !dir->isDemoModeNow()) {
+		if (s_replayStarted || ++s_replayFrames > 3 * fps)
+			s_replaySlot = -1; // over by itself (or never began)
+		return;
+	}
+	s_replayStarted = true;
+	MpgPose pose;
+	float age;
+	const bool theirsOn = mpg_player_present(s_replaySlot) && mpg_pose(s_replaySlot, &pose, &age)
+	                      && (pose.flags & MPG_POSE_DEMO);
+	s_starterOut = theirsOn ? 0 : s_starterOut + 1;
+	if (s_starterOut > fps / 2 || ++s_replayFrames > 60 * fps) {
+		fprintf(stderr, "[multiplayer] %s's cutscene is over there: ended here too\n", mpg_character_name(s_replaySlot));
+		dir->fireEndDemoCamera();
+		s_replaySlot = -1;
 	}
 }
 
@@ -2717,6 +2767,7 @@ void frame()
 			runTests(dir, !s_wasPlaying);
 			noticeCutscenes();
 			playOthersCutscenes(dir);
+			endReplayWithStarter(dir);
 			s_stageFrames++;
 			if (s_spectating) {
 				spectateFrame(dir);
