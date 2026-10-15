@@ -25,6 +25,7 @@ Needs Python 3 and 7-Zip (7z, 7zz or 7za on PATH).
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import shutil
@@ -120,30 +121,38 @@ def md5_of(path):
     return h.hexdigest()
 
 
+# A download that stops short (a dropped connection, or the installer stopped)
+# is deleted, never kept: the next attempt starts it over.
 def download(url, dest):
     req = urllib.request.Request(url, headers={"User-Agent": "sms-pc-port mod installer"})
     part = dest + ".part"
-    with urllib.request.urlopen(req) as r, open(part, "wb") as f:
-        total = int(r.headers.get("Content-Length") or 0)
-        done, last = 0, 0.0
-        while True:
-            chunk = r.read(1 << 20)
-            if not chunk:
-                break
-            f.write(chunk)
-            done += len(chunk)
-            now = time.time()
-            if now - last > 1.0 and sys.stdout.isatty():
-                last = now
-                pct = " (%d%%)" % (100 * done // total) if total else ""
-                print("\r  %s%s   " % (mib(done), pct), end="", flush=True)
-    if sys.stdout.isatty():
-        print("\r" + " " * 30 + "\r", end="")
-    os.replace(part, dest)
+    try:
+        with urllib.request.urlopen(req) as r, open(part, "wb") as f:
+            total = int(r.headers.get("Content-Length") or 0)
+            done, last = 0, 0.0
+            while True:
+                chunk = r.read(1 << 20)
+                if not chunk:
+                    break
+                f.write(chunk)
+                done += len(chunk)
+                now = time.time()
+                if now - last > 1.0 and sys.stdout.isatty():
+                    last = now
+                    pct = " (%d%%)" % (100 * done // total) if total else ""
+                    print("\r  %s%s   " % (mib(done), pct), end="", flush=True)
+        if sys.stdout.isatty():
+            print("\r" + " " * 30 + "\r", end="")
+        if total and done != total:
+            raise OSError("the download stopped at %s of %s" % (mib(done), mib(total)))
+        os.replace(part, dest)
+    except BaseException:
+        remove(part)
+        raise
 
 
 # Downloads mod["url"], or each of mod["fallback_urls"] in turn when one
-# fails or sends a file whose MD5 is not the release's.
+# fails twice or sends a file whose MD5 is not the release's.
 def fetch(mod):
     os.makedirs(DOWNLOADS, exist_ok=True)
     dest = os.path.join(DOWNLOADS, mod["file"])
@@ -151,11 +160,15 @@ def fetch(mod):
     for url in [mod["url"]] + mod.get("fallback_urls", []):
         remove(dest)
         say("Downloading %s\n  from %s" % (mod["name"], url))
-        try:
-            download(url, dest)
-        except OSError as e:
-            say("  failed: %s" % e)
-            failed.append("%s: %s" % (url, e))
+        for attempt in (1, 2):
+            try:
+                download(url, dest)
+                break
+            except (OSError, http.client.HTTPException) as e:
+                say("  failed: %s%s" % (e, "; starting over" if attempt == 1 else ""))
+                error = e
+        else:
+            failed.append("%s: %s" % (url, error))
             continue
         got = md5_of(dest)
         if mod["md5"] and got != mod["md5"]:
@@ -391,6 +404,10 @@ def get_eclipse(keep, iso_arg):
             if sys.stdout.isatty() and now - last[0] > 1.0:
                 last[0] = now
                 print("\r  %d%%   " % (100 * done // total), end="", flush=True)
+            elif not sys.stdout.isatty() and now - last[0] > 5.0:
+                # A line now and then, so a log (SMS Launcher's) shows it is working.
+                last[0] = now
+                say("Patching your image: %d%%" % (100 * done // total))
 
         try:
             vcdiff.apply(iso, os.path.join(tmp, mod["patch"]), out + ".part", progress)
@@ -426,6 +443,12 @@ def main():
     ap.add_argument("--keep-download", action="store_true")
     ap.add_argument("--if-outdated", action="store_true")
     args = ap.parse_args()
+    # A download left unfinished by an earlier run (stopped, or the computer
+    # turned off) is only in the way, and takes space need_space counts.
+    if os.path.isdir(DOWNLOADS):
+        for name in os.listdir(DOWNLOADS):
+            if name.endswith(".part"):
+                remove(os.path.join(DOWNLOADS, name))
     try:
         if args.what in ("textures", "all"):
             get_textures(args.keep_download)

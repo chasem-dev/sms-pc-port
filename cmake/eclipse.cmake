@@ -60,10 +60,14 @@ foreach(r ${_eclipse_repos})
     if(NOT _rc EQUAL 0)
       message(FATAL_ERROR "SMS_ECLIPSE: could not fetch ${_url} at ${_rev}")
     endif()
-    execute_process(COMMAND ${GIT_EXECUTABLE} -C "${_dir}" -c advice.detachedHead=false checkout -q --progress -f FETCH_HEAD
+    # The player's own git hooks (a global core.hooksPath or init template)
+    # do not run here: a failing post-checkout hook fails the checkout
+    # without a word.
+    execute_process(COMMAND ${GIT_EXECUTABLE} -C "${_dir}" -c advice.detachedHead=false -c core.hooksPath=/dev/null
+      checkout -q --progress -f FETCH_HEAD
       RESULT_VARIABLE _rc)
     if(NOT _rc EQUAL 0)
-      message(FATAL_ERROR "SMS_ECLIPSE: could not check out ${_name}")
+      message(FATAL_ERROR "SMS_ECLIPSE: could not check out ${_name} (git: ${_rc})")
     endif()
   endif()
 endforeach()
