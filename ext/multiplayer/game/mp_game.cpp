@@ -1288,6 +1288,8 @@ int takeGameOver()
 struct TestPlan {
 	bool parsed;
 	int takeAt, takeCount;
+	int againAt, againCount; // takes the first coins even if gone (as one who had not heard): two take one
+	bool tookAgain;
 	int warpAt, warpArea, warpEpisode;
 	int killAt, killCount;
 	int dieAt, dieLives;
@@ -1328,6 +1330,9 @@ void runTests(TMarDirector* dir, bool arrived)
 			const char* t = strstr(plan, "take@");
 			if (t)
 				sscanf(t, "take@%d:%d", &s_test.takeAt, &s_test.takeCount);
+			s_test.againAt = -1;
+			if (const char* a = strstr(plan, "again@"))
+				sscanf(a, "again@%d:%d", &s_test.againAt, &s_test.againCount);
 			const char* k = strstr(plan, "kill@");
 			if (k)
 				sscanf(k, "kill@%d:%d", &s_test.killAt, &s_test.killCount);
@@ -1388,6 +1393,22 @@ void runTests(TMarDirector* dir, bool arrived)
 			break;
 		}
 	}
+	if (s_test.againAt >= 0 && s_test.frames == s_test.againAt + 300)
+		fprintf(stderr, "[multiplayer] test: coins now %d\n", (int)TFlagManager::getInstance()->getFlag(0x40002));
+	if (s_test.againAt >= 0 && !s_test.tookAgain && s_test.frames >= s_test.againAt) {
+		s_test.tookAgain = true;
+		TItemManager* mgr = items();
+		int taken         = 0;
+		for (int i = 0; mgr && i < mgr->getObjNum() && i < s_itemCount && taken < s_test.againCount; i++) {
+			TLiveActor* a = mgr->getObj(i);
+			if (a && a->getActorType() == 0x2000000E) {
+				static_cast<TItem*>(a)->taken(gpMarioOriginal);
+				taken++;
+			}
+		}
+		fprintf(stderr, "[multiplayer] test: took %d coins again (coins %d)\n", taken,
+		        (int)TFlagManager::getInstance()->getFlag(0x40002));
+	}
 	if (s_test.takeAt >= 0 && !s_test.tookHere && s_test.frames >= s_test.takeAt) {
 		s_test.tookHere = true;
 		TItemManager* mgr = items();
@@ -1400,7 +1421,8 @@ void runTests(TMarDirector* dir, bool arrived)
 				taken++;
 			}
 		}
-		fprintf(stderr, "[multiplayer] test: took %d coins\n", taken);
+		fprintf(stderr, "[multiplayer] test: took %d coins (coins %d)\n", taken,
+		        (int)TFlagManager::getInstance()->getFlag(0x40002));
 	}
 	if (s_test.killAt >= 0 && s_test.frames == s_test.killAt) {
 		int killed = 0;

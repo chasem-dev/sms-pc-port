@@ -63,7 +63,8 @@ enum SystemKind : uint8_t {
 	SYS_PLAYER_LEFT,          // slot
 };
 
-const size_t kPacketMax    = 1400;
+const size_t kPacketMax    = 1400; // the most read (and sent, by a full update of four players)
+const size_t kPacketFill   = 1200; // what messages fill packets to: through any link (tunnels, VPNs) unsplit
 const int kSendIntervalMs  = 33;  // states ~30 a second
 const int kResendMs        = 150; // an unacknowledged message goes again
 const int kConnectRetryMs  = 500;
@@ -144,6 +145,8 @@ struct Peer {
 	uint32_t peerTimeAt = 0;
 	int rtt            = -1;
 	float srtt         = 0.0f;  // the round trip, smoothed (ms; 0: not measured yet)
+	// unreliable messages for the next packet (sent once, never again)
+	std::deque<std::pair<uint8_t, std::vector<uint8_t>>> loose;
 	bool flush         = false; // a new reliable message: send now
 };
 
@@ -285,6 +288,25 @@ int writeMessages(Peer& p, Writer& w, size_t room, uint32_t now, bool force, boo
 	return count;
 }
 
+// Unreliable messages, as many as fit in `room`, each sent once (what does
+// not fit goes next time).
+int writeLoose(Peer& p, Writer& w, size_t room)
+{
+	const size_t countAt = w.len;
+	int count            = 0;
+	w.u8(0);
+	while (!p.loose.empty() && count < 255 && w.len + 3 + p.loose.front().second.size() <= room) {
+		w.u8(p.loose.front().first);
+		w.u16((uint16_t)p.loose.front().second.size());
+		w.bytes(p.loose.front().second.data(), p.loose.front().second.size());
+		p.loose.pop_front();
+		count++;
+	}
+	if (w.ok)
+		w.p[countAt] = (uint8_t)count;
+	return count;
+}
+
 void dataHeader(Writer& w, Peer& p, uint32_t now)
 {
 	header(w, PK_DATA);
@@ -332,21 +354,26 @@ void sendData(Session& s, Peer& p, int toSlot, uint32_t now, bool force, bool le
 		w.u16(0);
 	}
 
-	// reliable messages not acknowledged, oldest first, as many as fit
+	// reliable messages not acknowledged, oldest first, as many as fit, then
+	// unreliable ones, each once
 	bool left = false;
-	writeMessages(p, w, sizeof buf, now, force, left);
+	writeMessages(p, w, kPacketFill, now, force, left);
 	p.flush = false;
+	writeLoose(p, w, kPacketFill);
 	if (w.ok)
 		s.sock.send(buf, w.len, p.addr);
 	// what did not fit beside the states and the world goes in packets of its
 	// own (no states, no world), so a big message never waits for good
-	for (int extra = 0; left && extra < 4; extra++) {
+	for (int extra = 0; (left || !p.loose.empty()) && extra < 4; extra++) {
 		Writer m(buf, sizeof buf);
 		dataHeader(m, p, now);
 		m.u8(0);  // no states
 		m.u32(0); // no world
 		m.u16(0);
-		if (!writeMessages(p, m, sizeof buf, now, force, left) || !m.ok)
+		const int sent = writeMessages(p, m, kPacketFill, now, force, left);
+		if (!writeLoose(p, m, kPacketFill) && !sent)
+			break;
+		if (!m.ok)
 			break;
 		s.sock.send(buf, m.len, p.addr);
 	}
@@ -501,6 +528,20 @@ void readData(Session& s, int idx, Reader& r, uint32_t now)
 	}
 	if (got)
 		p.flush = true; // acknowledge soon
+	// unreliable messages: delivered as they come
+	if (r.left() >= 1) {
+		const int n = r.u8();
+		for (int i = 0; i < n && r.ok; i++) {
+			const uint8_t kind = r.u8();
+			const uint16_t size = r.u16();
+			const uint8_t* d    = r.skip(size);
+			if (!d || size > MP_MAX_MESSAGE || kind >= SYS_PLAYER_JOINED)
+				return;
+			deliver(s, fromSlot, kind, d, size);
+			if (!p.active)
+				return;
+		}
+	}
 }
 
 uint64_t makeCookie(Session& s, const Address& from, uint32_t nonce, uint32_t window)
@@ -1179,4 +1220,25 @@ extern "C" size_t mp_remote_next(int slot, void* data, size_t size, uint32_t* re
 extern "C" int mp_world_sent(void)
 {
 	return withSession([](Session& s) { return s.world.empty() || s.worldSentSeq == s.worldSeq ? 1 : 0; }, 1);
+}
+
+extern "C" int mp_send_unreliable(int slot, uint8_t kind, const void* data, size_t size)
+{
+	if (size > 400 || kind >= SYS_PLAYER_JOINED)
+		return -1;
+	return withSession([&](Session& s) {
+		std::vector<uint8_t> d((const uint8_t*)data, (const uint8_t*)data + size);
+		int queued = 0;
+		for (int i = 0; i < MP_MAX_PLAYERS; i++) {
+			Peer& p = s.peers[i];
+			const bool to = s.cfg.role == MP_ROLE_HOST ? (slot < 0 ? i > 0 : i == slot) : i == 0;
+			if (!p.active || !to)
+				continue;
+			p.loose.emplace_back(kind, d);
+			while (p.loose.size() > 64)
+				p.loose.pop_front(); // the oldest give way
+			queued++;
+		}
+		return queued ? 0 : -1;
+	}, -1);
 }

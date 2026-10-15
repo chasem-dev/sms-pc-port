@@ -188,24 +188,42 @@ void easeTo(JGeometry::TVec3<f32>& have, const JGeometry::TVec3<f32>& want, f32 
 // ------------------------------------------------------------------ kinds
 
 // NPCs: where the host's have walked (each game walks its own; they are
-// eased toward the host's, so they stand where everyone sees them).
+// eased toward the host's, so they stand where everyone sees them). Where
+// one is headed is sent too, so one walking between states walks on, and
+// faces the way the host's does. The first state places it outright.
 bool isNpc(TLiveActor* a) { return dynamic_cast<TBaseNPC*>(a) != nullptr; }
 int saveNpc(TLiveActor* a, u8* out)
 {
 	Put o(out);
 	o.v3(a->mPosition);
+	JGeometry::TVec3<f32> vel = a->mVelocity;
+	vel.add(a->mLinearVelocity);
+	o.v3(vel);
 	o.f(a->mRotation.y);
 	return o.n;
 }
-void takeNpc(TLiveActor* a, const u8* in, int size, int, int*)
+void takeNpc(TLiveActor* a, const u8* in, int size, int age, int* placed)
 {
 	Get g(in, size);
-	const JGeometry::TVec3<f32> pos = g.v3();
+	const JGeometry::TVec3<f32> pos = g.v3(), vel = g.v3();
 	const f32 yaw                   = g.f();
 	if (!g.ok || a->mHolder) // one being carried goes with its carrier
 		return;
-	easeTo(a->mPosition, pos, 500.0f, 0.15f);
-	(void)yaw;
+	const f32 ahead = (f32)(age < 10 ? age : 10); // ticks it has walked on since
+	const JGeometry::TVec3<f32> want(pos.x + vel.x * ahead, pos.y + vel.y * ahead, pos.z + vel.z * ahead);
+	if (!*placed) {
+		a->mPosition   = want;
+		a->mRotation.y = yaw;
+		*placed        = 1;
+		return;
+	}
+	easeTo(a->mPosition, want, 500.0f, 0.2f);
+	f32 d = yaw - a->mRotation.y;
+	while (d > 180.0f)
+		d -= 360.0f;
+	while (d < -180.0f)
+		d += 360.0f;
+	a->mRotation.y += d * 0.2f;
 }
 
 // Bianco's leaf boats: where they float and how they drift.

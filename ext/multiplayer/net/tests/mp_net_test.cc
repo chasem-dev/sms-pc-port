@@ -89,6 +89,8 @@ static int g_next;            // client: the host's messages so far
 static int g_big;             // client: the host's biggest messages so far
 const int kBigMessages = 5;
 static int g_got[MP_MAX_PLAYERS]; // host: each client's messages so far
+static int g_loose;           // client: the host's unreliable messages so far
+static int64_t g_looseLast = -1; // client: the newest one's number
 
 static void clientEvent(const MpEvent* ev)
 {
@@ -98,6 +100,15 @@ static void clientEvent(const MpEvent* ev)
 		CHECK(ev->slot == 0);
 		CHECK(v == (uint32_t)g_next);
 		g_next++;
+	}
+	if (ev->type == MP_EV_MESSAGE && ev->kind == 11) {
+		// unreliable: some lost (this client drops a third), none twice, in order
+		uint32_t v;
+		CHECK(ev->size == 300);
+		memcpy(&v, ev->data, 4);
+		CHECK((int64_t)v > g_looseLast);
+		g_looseLast = v;
+		g_loose++;
 	}
 	if (ev->type == MP_EV_MESSAGE && ev->kind == 10) {
 		CHECK(ev->size == MP_MAX_MESSAGE);
@@ -180,6 +191,9 @@ static int client(int index, bool lingerToBeKilled)
 	CHECK(pump(30, [](MpEvent* ev) { return ev && ev->type == MP_EV_MESSAGE && ev->kind == 9; }));
 	// the big ones were sent before it, so they are all in
 	CHECK(g_big == kBigMessages);
+	fprintf(stderr, "[client %d] %d unreliable messages of the host's (%lld sent)\n", index, g_loose,
+	        (long long)g_looseLast + 1);
+	CHECK(g_loose >= 5);
 	mp_stop();
 	return 0;
 }
@@ -348,9 +362,18 @@ int main()
 	State mine = {0, 0, {}};
 	mp_set_world(world, sizeof world);
 	bool sentAll = false;
+	uint32_t loose = 0;
+	{
+		uint8_t tooBig[401] = {};
+		CHECK(mp_send_unreliable(-1, 11, tooBig, sizeof tooBig) == -1);
+	}
 	CHECK(pump(40, [&](MpEvent*) {
 		mine.counter++;
 		mp_set_local_state(&mine, sizeof mine);
+		uint8_t l[300] = {};
+		memcpy(l, &loose, 4);
+		loose++;
+		CHECK(mp_send_unreliable(-1, 11, l, sizeof l) == 0);
 		if (!sentAll) {
 			for (int i = 0; i < kMessages; i++) {
 				uint32_t v = (uint32_t)i;
