@@ -111,6 +111,7 @@ int mpg_player_present(int slot);
 // if it is the same stage (everyone loads it afresh).
 void mpg_restart_session(void);
 int mpg_slot(void);    // ours; -1 before a client has one
+int mpg_ping(int slot); // round trip to `slot` (host) or to the host (client), ms; -1 unknown
 int mpg_character(int slot);
 const char* mpg_character_name(int slot);
 
