@@ -116,6 +116,10 @@ def main():
     ap.add_argument('--turn', action='store_true', help='bots face the camera')
     ap.add_argument('--test', default=None, help='SMS_MULTIPLAYER_TEST for the host (take@N:K;kill@N:K;die@N:L;warp@N:area,episode)')
     ap.add_argument('--client-test', default=None, help='SMS_MULTIPLAYER_TEST for the client')
+    ap.add_argument('--host-env', action='append', default=[],
+                    help='KEY=VALUE for the host only, over the rest (e.g. its port behind a room)')
+    ap.add_argument('--client-env', action='append', default=[],
+                    help='KEY=VALUE for the client only, over the rest (e.g. a relay link\'s address)')
     ap.add_argument('--bot-args', default='', help='extra mp_bot arguments for each bot, ;-separated per bot')
     ap.add_argument('--env', action='append', default=[], help='KEY=VALUE for the games (repeatable)')
     ap.add_argument('--jpeg', action='store_true', help='keep captures as JPEG (converted while the games run)')
@@ -157,6 +161,7 @@ def main():
             'SMS_MULTIPLAYER': 'host', 'SMS_MULTIPLAYER_PORT': port, 'SMS_MULTIPLAYER_NAME': 'Host',
             'SMS_WARP': args.warp, 'SMS_AUTOPRESS': args.autopress, 'SMS_VI_DETERMINISTIC': '1',
             'SMS_MULTIPLAYER_DEBUG': '1', **({'SMS_MULTIPLAYER_TEST': args.test} if args.test else {})})
+        env.update(dict(kv.split('=', 1) for kv in args.host_env))
         host_log = open(os.path.join(work, 'host.log'), 'w')
         host = subprocess.Popen(capped([os.path.join(args.build, 'sms'), args.disc]), cwd=args.build, env=env,
                                 stdout=host_log, stderr=subprocess.STDOUT, start_new_session=True)
@@ -181,6 +186,7 @@ def main():
                 'SMS_MULTIPLAYER_NAME': 'Client', 'SMS_VI_DETERMINISTIC': '1', 'SMS_MULTIPLAYER_DEBUG': '1',
                 **({'SMS_AUTOPRESS': args.client_autopress} if args.client_autopress else {}),
                 **({'SMS_MULTIPLAYER_TEST': args.client_test} if args.client_test else {})})
+            cenv.update(dict(kv.split('=', 1) for kv in args.client_env))
             client_log = open(os.path.join(work, 'client.log'), 'w')
             client = subprocess.Popen(capped([os.path.join(args.build, 'sms'), args.disc]), cwd=args.build,
                                       env=cenv, stdout=client_log, stderr=subprocess.STDOUT, start_new_session=True)

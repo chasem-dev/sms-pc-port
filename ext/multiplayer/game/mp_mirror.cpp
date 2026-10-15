@@ -691,7 +691,16 @@ void takeChomp(TLiveActor* a, const u8* in, int size, int, int* last)
 }
 // Bowser in the final bath, Bowser Jr. (in it, and his sub and chases), Gelato's sleeping Wiggler: the host's.
 bool isBowser(TLiveActor* a) { return dynamic_cast<TKoopa*>(a) != nullptr; }
-int saveBowser(TLiveActor* a, u8* out) { return saveFollower(a, out, bowserStep); }
+int saveBowser(TLiveActor* a, u8* out)
+{
+	static int said = -1;
+	const int step  = stepOf(bowserStep, static_cast<TSpineEnemy*>(a)->getLatestNerve());
+	if (step != said && getenv("SMS_MULTIPLAYER_DEBUG")) {
+		said = step;
+		fprintf(stderr, "[multiplayer] Bowser: step %d%s\n", step, step == 7 ? " (staggering)" : "");
+	}
+	return saveFollower(a, out, bowserStep);
+}
 void takeBowser(TLiveActor* a, const u8* in, int size, int, int* last) { takeFollower(a, in, size, last, bowserStep); }
 bool isJunior(TLiveActor* a)
 {
@@ -818,8 +827,11 @@ bool ownedHere(Mirrored& m)
 	// and after, until another player talks to it (one the talk sent off
 	// somewhere, a lost child following its finder, goes where it goes here)
 	if (m.actor && m.kind->match == isNpc && talkingHere(m.actor)) {
-		if (!m.claimedAt)
+		if (!m.claimedAt) {
 			m.claimedAt = s_clock;
+			if (getenv("SMS_MULTIPLAYER_DEBUG"))
+				fprintf(stderr, "[multiplayer] NPC %d.%d: talked to here, run here now\n", m.manager, m.index);
+		}
 		return true;
 	}
 	if (m.claimedAt)
@@ -1019,6 +1031,8 @@ void debugMirrors()
 			continue;
 		said[m.kind - kKinds] = true;
 		char extra[64] = "";
+		if (m.kind->match == isNpc)
+			snprintf(extra, sizeof extra, " (flags %x%s)", (unsigned)m.actor->mLiveFlag, m.claimedAt ? ", claimed here" : "");
 		if (m.kind->match == isEgg)
 			snprintf(extra, sizeof extra, " (egg state %d%s; Yoshi here %s)", (int)static_cast<TEggYoshi*>(m.actor)->mState,
 			         m.actor->checkLiveFlag(LIVE_FLAG_DEAD) ? ", gone" : "",
@@ -1078,6 +1092,38 @@ bool MpMirrorTestHatch()
 
 // Test aid: the first NPC is claimed as a talk to it would claim it, and
 // walked off (as an event sends one): the others' games should follow it.
+// Test aid: this game's Mario stood before the first NPC, facing it (for a
+// press of A to talk to it), until a talk starts or `frames` run out.
+bool talkable(TLiveActor* a)
+{
+	TMarDirector* d = gpMarDirector;
+	if (!d || a->checkLiveFlag(LIVE_FLAG_DEAD) || a->checkLiveFlag(LIVE_FLAG_HIDDEN) || a->checkLiveFlag(LIVE_FLAG_UNK100000))
+		return false;
+	for (JGadget::TVector_pointer<TBaseNPC*>::iterator it = d->unk88.begin(); it != d->unk88.end(); ++it)
+		if ((TLiveActor*)*it == a)
+			return true;
+	return false;
+}
+
+bool MpMirrorTestNearNpc()
+{
+	TMario* me = gpMarioOriginal;
+	static int said = -1;
+	for (int k = 0; me && k < s_count; k++)
+		if (s_mirrors[k].actor && s_mirrors[k].kind->match == isNpc && talkable(s_mirrors[k].actor)) {
+			if (said != k) {
+				said = k;
+				fprintf(stderr, "[multiplayer] test: standing before NPC %d.%d\n", s_mirrors[k].manager, s_mirrors[k].index);
+			}
+			const JGeometry::TVec3<f32>& n = s_mirrors[k].actor->mPosition;
+			const f32 yaw = s_mirrors[k].actor->mRotation.y * (3.14159265f / 180.0f);
+			me->mPosition.set(n.x + sinf(yaw) * 90.0f, n.y, n.z + cosf(yaw) * 90.0f);
+			me->mFaceAngle.y = (s16)(atan2f(n.x - me->mPosition.x, n.z - me->mPosition.z) * (32768.0f / 3.14159265f));
+			return gpMarDirector && gpMarDirector->isTalkModeNow();
+		}
+	return false;
+}
+
 bool MpMirrorTestClaimNpc()
 {
 	for (int k = 0; k < s_count; k++)
