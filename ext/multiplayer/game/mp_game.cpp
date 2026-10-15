@@ -565,6 +565,28 @@ const char* worldName(int area)
 	return names[w < 10 ? w : 1];
 }
 
+// The host's travel (TMarDirector::moveStage, as it went): the session
+// flags that shape how a stage starts (0x30000 on: this game came from an
+// event, a movie was seen) and the movie played on the way. A client takes
+// them, so it arrives as the host did (the same opening, the same movie).
+const int kSessionFlags = 0x1D; // 0x30000 to 0x3001C
+int s_travelWait; // frames this client has waited for the host's travel
+
+void takeTravel(TMarDirector* dir)
+{
+	uint32_t flags;
+	int movie;
+	if (!mpg_travel(&flags, &movie))
+		return;
+	for (int i = 0; i < kSessionFlags; i++)
+		TFlagManager::getInstance()->setBool((flags >> i) & 1, 0x30000 + i);
+	if (movie >= 0 && dir) {
+		gpApplication.setMovie((u32)movie);
+		dir->onUnk4CFlag(TMarDirector::DIRECTOR_FLAG_MOVIE_PENDING);
+	}
+	mpg_travel_done();
+}
+
 void followHost(TMarDirector* dir)
 {
 	int area, episode;
@@ -573,6 +595,17 @@ void followHost(TMarDirector* dir)
 	if (s_shineHoldFrames > 0 && area == s_shineHoldArea && episode == s_shineHoldEpisode)
 		return; // the host is still saving the Shine we got: they come to us
 	s_shineHoldFrames = 0;
+	// the host is on its way: how it goes decides how everyone arrives (a
+	// few seconds at most; then this game goes as it would)
+	uint32_t flags;
+	int movie;
+	const int fps = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
+	if (mpg_target_traveling() && !mpg_travel(&flags, &movie) && s_travelWait < 4 * fps) {
+		s_travelWait++;
+		return;
+	}
+	s_travelWait = 0;
+	takeTravel(dir);
 	// the host's flags are the game's now (synced this frame): load their stage
 	if (episode != 0xFF) // 0xFF: the game picks the episode from the flags, as the host's does
 		TFlagManager::getInstance()->setFlag(0x40003, episode);
@@ -1020,6 +1053,12 @@ bool watchable(int slot)
 	return p && slot != mpg_slot() && p->active() && !(p->pose().flags & MPG_POSE_SPECTATING);
 }
 
+f32 distance2(const JGeometry::TVec3<f32>& a, const JGeometry::TVec3<f32>& b)
+{
+	const f32 x = a.x - b.x, y = a.y - b.y, z = a.z - b.z;
+	return x * x + y * y + z * z;
+}
+
 // The next player to watch from `from`, in `step`'s direction; -1 if none.
 int nextWatch(int from, int step)
 {
@@ -1433,6 +1472,33 @@ void updateText()
 // opening (every game plays its own), the Shine Get (syncShineGets) or a
 // gate's camera (it follows the gate, which the others cannot be handed).
 bool s_replayingDemo; // playing another game's cutscene: not news to send back
+
+// Cutscenes seen lately, by name. One that two games both start (the host
+// leads a boss, and every copy plays its defeat) is one cutscene: the game
+// that gets the other's after starting its own neither plays it again nor
+// sends it back, so nobody is pulled to anybody.
+struct RecentDemo {
+	char name[64];
+	int frame;
+};
+RecentDemo s_recentDemos[8];
+int s_recentNext, s_clock; // s_clock: frames since the game started
+
+bool seenDemoLately(const char* name)
+{
+	const int fps = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
+	for (const RecentDemo& d : s_recentDemos)
+		if (d.name[0] && !strcmp(d.name, name) && s_clock - d.frame < 10 * fps)
+			return true;
+	return false;
+}
+
+void rememberDemo(const char* name)
+{
+	RecentDemo& d = s_recentDemos[s_recentNext++ & 7];
+	snprintf(d.name, sizeof d.name, "%s", name);
+	d.frame = s_clock;
+}
 int s_stageFrames;    // frames of play in this stage
 char s_demoNames[8][64];
 JGeometry::TVec3<f32> s_demoPos[8];
@@ -1443,6 +1509,8 @@ void demoCamera(const char* name, const float* pos, int frames, float angle, int
 {
 	(void)hasCallback;
 	(void)actor;
+	if (getenv("SMS_MULTIPLAYER_DEBUG") && name)
+		fprintf(stderr, "[multiplayer] cutscene asked for: %s (stage frame %d)\n", name, s_stageFrames);
 	TMario* m = gpMarioOriginal;
 	if (!enabled() || s_replayingDemo || !inStage() || !s_playing || !name || !m || s_spectating || flags == 1
 	    || m->mStatus == MARIO_STATUS_WIN_DEMO)
@@ -1450,6 +1518,14 @@ void demoCamera(const char* name, const float* pos, int frames, float angle, int
 	const int fps = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
 	if (s_stageFrames < 3 * fps)
 		return;
+	if (getenv("SMS_MULTIPLAYER_DEBUG"))
+		fprintf(stderr, "[multiplayer] cutscene here: %s%s\n", name, seenDemoLately(name) ? " (seen lately)" : "");
+	// another game's, just got (or ours, again): nothing to tell anyone
+	if (seenDemoLately(name)) {
+		rememberDemo(name);
+		return;
+	}
+	rememberDemo(name);
 	uint8_t buf[128];
 	size_t n         = 0;
 	const size_t len = strnlen(name, 63);
@@ -1483,6 +1559,9 @@ void playOthersCutscenes(TMarDirector* dir)
 		const int k = s_demoNext++ & 7;
 		memcpy(s_demoNames[k], buf + 1, len);
 		s_demoNames[k][len] = 0;
+		if (seenDemoLately(s_demoNames[k]))
+			continue; // this game played it already (its own copy started it too)
+		rememberDemo(s_demoNames[k]);
 		const bool hasPos   = buf[1 + len] != 0;
 		float values[8];
 		memcpy(values, buf + 2 + len, sizeof values);
@@ -1490,9 +1569,26 @@ void playOthersCutscenes(TMarDirector* dir)
 		memcpy(&frames, buf + 2 + len + sizeof values, 4);
 		const bool option = buf[2 + len + sizeof values + 4] != 0;
 		s_demoPos[k].set(values[0], values[1], values[2]);
-		// to the player who started it, then their cutscene
+		// to the player who started it, then their cutscene; one about a
+		// place (a boss, a statue) brings everyone to the player nearest it,
+		// and leaves that player where they are
 		JGeometry::TVec3<f32> at(values[4], values[5], values[6]);
-		m->warpRequest(at, values[7]);
+		f32 face = values[7];
+		bool warp = true;
+		if (hasPos) {
+			const JGeometry::TVec3<f32>& focus = s_demoPos[k];
+			f32 best = distance2(m->mPosition, focus);
+			warp     = false;
+			for (int other = 0; other < 4; other++)
+				if (watchable(other) && distance2(s_puppets[other]->mPosition, focus) < best) {
+					best = distance2(s_puppets[other]->mPosition, focus);
+					at   = s_puppets[other]->mPosition;
+					face = m->mFaceAngle.y * (360.0f / 65536.0f);
+					warp = true;
+				}
+		}
+		if (warp)
+			m->warpRequest(at, face);
 		fprintf(stderr, "[multiplayer] %s started a cutscene (%s): everyone watches\n", mpg_character_name(slot),
 		        s_demoNames[k]);
 		s_replayingDemo = true;
@@ -1522,6 +1618,85 @@ void noticeCutscenes()
 	}
 }
 
+// ------------------------------------------------------------------- the nearest player
+
+// Most of the game decides by where Mario is (gpMarioPos): an enemy chases
+// him, a goop blob leaps at him, a switch or an event waits for him, a
+// clipped-out object waits for him to come near. On the host, which runs the
+// shared world, "Mario" is the player nearest each object while it moves
+// (JDrama::TViewObj::testPerform: before and after), so all of that happens
+// for every player, not just the host. An object near another player and
+// off the host's screen counts as on screen while it moves (some wait for
+// that), as if the host were watching it.
+const f32 kNearOnScreen = 2500.0f;
+
+bool s_nearestOn; // host, in a stage, with another player in it
+int s_swapCount[4]; // debug: object moves led by each other player lately
+struct MoveSwap {
+	void* object;
+	JGeometry::TVec3<f32>* was;
+	bool unclipped;
+};
+MoveSwap s_swaps[32];
+int s_swapDepth;
+
+void objectMove(void* object, int after)
+{
+	if (after) {
+		if (s_swapDepth > 0 && s_swaps[s_swapDepth - 1].object == object) {
+			MoveSwap& w = s_swaps[--s_swapDepth];
+			gpMarioPos  = w.was;
+			if (w.unclipped)
+				static_cast<TLiveActor*>(object)->onLiveFlag(LIVE_FLAG_CLIPPED_OUT);
+		}
+		return;
+	}
+	if (!s_nearestOn || s_swapDepth >= 32 || !gpMarioPos)
+		return;
+	TLiveActor* a = dynamic_cast<TLiveActor*>(static_cast<JDrama::TViewObj*>(object));
+	if (!a)
+		return;
+	int best    = -1;
+	f32 nearest = distance2(a->mPosition, *gpMarioPos);
+	for (int slot = 0; slot < 4; slot++)
+		if (watchable(slot)) {
+			const f32 d = distance2(a->mPosition, s_puppets[slot]->mPosition);
+			if (d < nearest)
+				nearest = d, best = slot;
+		}
+	if (best < 0)
+		return; // the host is nearest: as ever
+	s_swapCount[best]++;
+	MoveSwap& w = s_swaps[s_swapDepth++];
+	w.object    = object;
+	w.was       = gpMarioPos;
+	w.unclipped = false;
+	gpMarioPos  = &s_puppets[best]->mPosition;
+	if (a->checkLiveFlag(LIVE_FLAG_CLIPPED_OUT) && nearest < kNearOnScreen * kNearOnScreen) {
+		a->offLiveFlag(LIVE_FLAG_CLIPPED_OUT);
+		w.unclipped = true;
+	}
+}
+
+void updateNearest()
+{
+	const int fps = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
+	if (s_clock % (10 * fps) == 0) {
+		if (getenv("SMS_MULTIPLAYER_DEBUG"))
+			for (int slot = 0; slot < 4; slot++)
+				if (s_swapCount[slot])
+					fprintf(stderr, "[multiplayer] nearest: %d object moves led by %s lately\n", s_swapCount[slot],
+					        mpg_character_name(slot));
+		memset(s_swapCount, 0, sizeof s_swapCount);
+	}
+	s_nearestOn = false;
+	if (s_role != MPG_ROLE_HOST || !inStage() || s_swapDepth)
+		return;
+	for (int slot = 0; slot < 4; slot++)
+		if (watchable(slot))
+			s_nearestOn = true;
+}
+
 // ------------------------------------------------------------------- hooks
 
 void frame()
@@ -1530,6 +1705,8 @@ void frame()
 		s_role = mpg_start();
 	if (!enabled())
 		return;
+	s_clock++;
+	updateNearest();
 	TMarDirector* dir = director();
 	const int area    = gpApplication.mCurrArea.getStage();
 	MpgGame g;
@@ -1734,13 +1911,22 @@ void moveStage()
 {
 	int area, episode;
 	if (s_role == MPG_ROLE_HOST) {
-		// any other way out (the pause menu's, a Shine's): the others go too
+		// on its way (any way out: the pause menu's, a Shine's, an event's),
+		// with what shapes the arrival: the others go too, and arrive alike
 		const TGameSequence& next = gpApplication.mNextArea;
-		mpg_host_leaving(next.getStage(), next.getScenario());
+		uint32_t flags = 0;
+		for (int i = 0; i < kSessionFlags; i++)
+			if (TFlagManager::getInstance()->getBool(0x30000 + i))
+				flags |= 1u << i;
+		TMarDirector* dir = director();
+		const int movie   = dir && dir->checkUnk4CFlag(TMarDirector::DIRECTOR_FLAG_MOVIE_PENDING)
+		                        ? (int)gpApplication.getMovie() : -1;
+		mpg_host_going(next.getStage(), next.getScenario(), flags, movie);
 		return;
 	}
 	if (s_role != MPG_ROLE_CLIENT || !mpg_target(&area, &episode))
 		return;
+	takeTravel(director()); // if it came after this game set off
 	// after its own Shine it goes to the plaza, as the host will once saved
 	TMarDirector* dir = director();
 	if (dir && dir->checkFlag(TMarDirector::DIRECTOR_FLAG_SHINE_TAKEN))
@@ -1809,7 +1995,7 @@ const char* saveStatesOffReason() { return "Save states are off in multiplayer";
 PortExtension s_extension = {
 	"multiplayer",   frame,           afterMovement,   stageSetup,     allowNextStage, moveStage,
 	missNextArea,    takeGameOver,    keepCoinsOnMiss, afterFileSelect, itemTaken,      allowSaveStates,
-	saveStatesOffReason, hidePlayerModel, 0, demoCamera, pollutionClean,
+	saveStatesOffReason, hidePlayerModel, 0, demoCamera, pollutionClean, objectMove,
 };
 
 struct Register {

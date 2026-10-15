@@ -157,6 +157,15 @@ int mpg_next_shine_get(int* slot, int* eventId, float pos[3]);
 // Host: setting off for another area (episode 0xFF: the game decides on
 // arrival); the others start their own trip there at once.
 void mpg_host_leaving(int area, int episode);
+// Host: on its way now (TMarDirector::moveStage): its session flags (0x30000
+// on, bit n for flag n) and the movie it plays on the way (-1: none), so the
+// others arrive as it does.
+void mpg_host_going(int area, int episode, uint32_t sessionFlags, int movie);
+// Client: the host's travel, once it has gone (1); 0 before.
+int mpg_travel(uint32_t* sessionFlags, int* movie);
+// Client: the host is between stages (set off, not arrived).
+int mpg_target_traveling(void);
+void mpg_travel_done(void);
 
 // A cutscene this game started (the game's own description of it, at most 256
 // bytes): the others play it too. mpg_next_demo gives one another player's

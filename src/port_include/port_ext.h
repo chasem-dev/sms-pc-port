@@ -68,6 +68,11 @@ typedef struct PortExtension {
 	// Goop was cleaned at x, y, z over `size` (TPollutionManager::clean, as
 	// FLUDD's water and Mario's feet do), about to be.
 	void (*pollutionClean)(float x, float y, float z, float size);
+	// An object (a JDrama::TViewObj) is about to move this tick (`after` 0),
+	// or has (`after` 1): each "before" has its "after", nested as objects
+	// move their parts. Many objects decide things by where Mario is
+	// (gpMarioPos), which the hook may point elsewhere until the "after".
+	void (*objectMove)(void* object, int after);
 } PortExtension;
 
 // Adds an extension; call from a static constructor or before the first frame.
@@ -93,6 +98,7 @@ void port_ext_pad_read(void* status);
 void port_ext_demo_camera(const char* name, const float* pos, int frames, float angle, int option, int hasCallback,
                           void* actor, unsigned flags);
 void port_ext_pollution_clean(float x, float y, float z, float size);
+void port_ext_object_move(void* object, int after);
 
 #ifdef __cplusplus
 }
