@@ -2,8 +2,9 @@
 // clients as separate processes on this machine, as four games would be.
 //   make run
 //
-// Checks: three clients get the three free slots and hear of each other; a
-// fifth player and a different build are refused; player states reach every
+// Checks: a host not yet taking players refuses them; three clients get the
+// three free slots and hear of each other; a fifth player and a different
+// build are refused; player states reach every
 // other player through the host; reliable messages arrive complete and in
 // order with a third of all packets dropped; a client that leaves is gone at
 // once, one that dies after the timeout; a probe gets the host's answer.
@@ -320,6 +321,10 @@ int main()
 	CHECK(mp_start(&h) == 0);
 	CHECK(mp_link() == MP_LINK_CONNECTED && mp_local_slot() == 0);
 	mp_set_host_status("Delfino Plaza");
+	// a host still choosing its file takes nobody yet
+	mp_set_accepting(0);
+	CHECK(exitedOk(spawnRefused(kBuild, "choosing a save file")));
+	mp_set_accepting(1);
 	probe();
 
 	pid_t kids[3];

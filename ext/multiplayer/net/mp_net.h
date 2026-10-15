@@ -134,6 +134,9 @@ int mp_poll_event(MpEvent* ev);
 // What a host answers to a probe (the launcher's join check): the host
 // sets a short status ("Delfino Plaza") as it plays.
 void mp_set_host_status(const char* status);
+// Host: whether players may join now (they are refused, and probes answer
+// "not open", while not); yes until set.
+void mp_set_accepting(int accepting);
 
 #ifdef __cplusplus
 }
