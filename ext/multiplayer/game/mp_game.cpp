@@ -1126,6 +1126,13 @@ void followHostEnemies()
 						fprintf(stderr, "[multiplayer] enemy %d.%d defeated in the host's game\n", h.manager, h.index);
 					if (TKiller* killer = dynamic_cast<TKiller*>(e)) {
 						if (killer->getSpine()->getCurrentNerve() != &TNerveKillerExplosion::theNerve()) {
+							// last seen at the sea's face in the host's game: it
+							// splashed in there, which drops its coins (as here)
+							const EnemyTarget& last = s_targets[h.manager][h.index];
+							if (last.known && last.pos.y < 60.0f) {
+								killer->mPosition = last.pos;
+								killer->genEventCoin();
+							}
 							killer->getSpine()->pushNerve(&TNerveKillerExplosion::theNerve());
 							killer->onHitFlag(HIT_FLAG_NO_COLLISION);
 						}
