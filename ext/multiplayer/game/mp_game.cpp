@@ -13,6 +13,7 @@
 //      client got a Shine.
 #include "../mp_game_api.h"
 #include "mp_boss.hpp"
+#include "mp_mirror.hpp"
 #include "mp_puppet.hpp"
 #include "port_ext.h"
 #include "port_framerate.h"
@@ -1852,6 +1853,7 @@ int objectHit(void* object, void* sender, unsigned message)
 		return 1; // another player's water, drawn here: their game sends what it hits
 	if ((!water && sender != gpMarioOriginal) || !sharedHit(message))
 		return 0;
+	MpMirrorUsed(object); // this game runs it a while (a slot machine sprayed here)
 	const THitActor* from = static_cast<THitActor*>(sender);
 	mpg_hit((int)(where >> 16), (int)(where & 0xFFFF), (int)message, water, &from->mPosition.x);
 	return 0;
@@ -1889,8 +1891,8 @@ void landHits()
 	float pos[3];
 	while (mpg_next_hit(&slot, &manager, &index, &message, &water, &count, pos)) {
 		THitActor* to = sharedAt(manager, index);
-		if (!to)
-			continue;
+		if (!to || MpMirrorKeepsHits(to))
+			continue; // its owner runs it, and sends how it went
 		THitActor* from = nullptr;
 		if (water) {
 			TWaterHitActor& waterHit = TModelWaterManager::mStaticHitActor;
@@ -2098,6 +2100,7 @@ void frame()
 		snapshotItems();
 		collectManagers();
 		collectShared();
+		MpMirrorCollect();
 		s_myHeld = nullptr;
 		for (int slot = 0; slot < 4; slot++)
 			if (s_holders[slot])
@@ -2258,6 +2261,7 @@ void afterMovement()
 	watchMyCarry();
 	landCarries();
 	tickHolders();
+	MpMirrorTick();
 	if (s_role == MPG_ROLE_CLIENT) {
 		followHostEnemies();
 		MpBossClientTick();

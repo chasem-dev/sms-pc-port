@@ -46,6 +46,7 @@ enum Kind : uint8_t {
 	K_CLEAN,        // either way: session, count, goop cleaned (x, y, z halved, size), the host passing it on
 	K_HIT,          // either way: session, count, hits a player landed on shared objects (mp_game.cpp), passed on
 	K_CARRY,        // either way: session, slot, manager, index, action, position, velocity, yaw (a carried object)
+	K_MIRROR,       // either way: session, count, objects' states from the game that owns them (mp_game.cpp), passed on
 };
 // The host's boss rides at the end of the world snapshot, after the enemies.
 const size_t kMaxBoss = 200;
@@ -158,6 +159,14 @@ struct Controller {
 		int16_t yaw;
 	};
 	std::deque<Carry> carries;
+	// mirrored objects' states: this game's to send; the others', to take
+	struct Mirror {
+		uint8_t slot, manager, len;
+		uint16_t index;
+		uint8_t data[48];
+	};
+	std::vector<Mirror> mirrorOut;
+	std::deque<Mirror> mirrorIn;
 
 	// each other player's recent poses, for drawing them smoothly
 	struct Timed {
@@ -305,6 +314,8 @@ void takeOnce(uint32_t key)
 
 void forgetCleans()
 {
+	g.mirrorOut.clear();
+	g.mirrorIn.clear();
 	g.carries.clear();
 	g.hitOut.clear();
 	g.hitIn.clear();
@@ -541,6 +552,84 @@ void readCarry(Reader& r, int from)
 		g.carries.push_back(c);
 }
 
+// ------------------------------------------------------------------ mirrored objects
+
+const size_t kMirrorBatch = 16;
+const size_t kMaxMirrorsIn = 256;
+
+std::vector<uint8_t> mirrorMessage(uint32_t session, const Controller::Mirror* list, size_t n)
+{
+	size_t size = 5;
+	for (size_t i = 0; i < n; i++)
+		size += 5 + list[i].len;
+	std::vector<uint8_t> buf(size);
+	Writer w(buf.data(), buf.size());
+	w.u32(session);
+	w.u8((uint8_t)n);
+	for (size_t i = 0; i < n; i++) {
+		w.u8(list[i].slot);
+		w.u8(list[i].manager);
+		w.u16(list[i].index);
+		w.u8(list[i].len);
+		w.bytes(list[i].data, list[i].len);
+	}
+	return buf;
+}
+
+void sendMirrors(int slot, int except, uint32_t session, const std::vector<Controller::Mirror>& list)
+{
+	for (size_t at = 0; at < list.size(); at += kMirrorBatch) {
+		const size_t n = list.size() - at < kMirrorBatch ? list.size() - at : kMirrorBatch;
+		const std::vector<uint8_t> buf = mirrorMessage(session, list.data() + at, n);
+		if (slot >= 0)
+			send(slot, K_MIRROR, buf);
+		else
+			for (int i = 1; i < MP_MAX_PLAYERS; i++)
+				if (i != except && (mp_players() & (1u << i)))
+					send(i, K_MIRROR, buf);
+	}
+}
+
+void flushMirrors()
+{
+	if (g.mirrorOut.empty())
+		return;
+	if (g.role == MPG_ROLE_HOST && g.session)
+		sendMirrors(-1, 0, g.session, g.mirrorOut);
+	else if (g.role == MPG_ROLE_CLIENT && g.localSession)
+		sendMirrors(0, -1, g.localSession, g.mirrorOut);
+	g.mirrorOut.clear();
+}
+
+void readMirrors(Reader& r, int from)
+{
+	const uint32_t s = r.u32();
+	const int n = r.u8();
+	const uint32_t want = g.role == MPG_ROLE_HOST ? g.session : g.localSession;
+	if (!r.ok || !s || s != want || n > (int)kMirrorBatch)
+		return;
+	std::vector<Controller::Mirror> got;
+	for (int i = 0; i < n && r.ok; i++) {
+		Controller::Mirror m;
+		m.slot    = r.u8();
+		m.manager = r.u8();
+		m.index   = r.u16();
+		m.len     = r.u8();
+		if (!r.ok || m.len > sizeof m.data || m.slot >= MP_MAX_PLAYERS)
+			break;
+		r.bytes(m.data, m.len);
+		if (!r.ok)
+			break;
+		if (g.role == MPG_ROLE_HOST)
+			m.slot = (uint8_t)from; // a client speaks for itself only
+		got.push_back(m);
+		if (g.mirrorIn.size() < kMaxMirrorsIn)
+			g.mirrorIn.push_back(m);
+	}
+	if (g.role == MPG_ROLE_HOST && !got.empty())
+		sendMirrors(-1, from, s, got);
+}
+
 void hostMessage(const MpEvent& ev)
 {
 	Reader r(ev.data, ev.size);
@@ -567,6 +656,9 @@ void hostMessage(const MpEvent& ev)
 		break;
 	case K_CARRY:
 		readCarry(r, ev.slot);
+		break;
+	case K_MIRROR:
+		readMirrors(r, ev.slot);
 		break;
 	case K_SHINE_GET: {
 		uint32_t s = r.u32();
@@ -750,6 +842,9 @@ void clientMessage(const MpEvent& ev)
 		break;
 	case K_CARRY:
 		readCarry(r, 0);
+		break;
+	case K_MIRROR:
+		readMirrors(r, 0);
 		break;
 	case K_TAKEN_LIST: {
 		uint32_t s = r.u32();
@@ -1064,6 +1159,7 @@ extern "C" void mpg_frame(const MpgGame* game)
 	takePoses();
 	flushCleans();
 	flushHits();
+	flushMirrors();
 	const bool arrived = game->playing && !g.wasPlaying;
 	g.wasPlaying       = game->playing != 0;
 
@@ -1461,6 +1557,37 @@ extern "C" int mpg_next_carry(int* slot, int* manager, int* index, int* action, 
 	memcpy(vel, c.vel, sizeof c.vel);
 	*yaw = c.yaw;
 	g.carries.pop_front();
+	return 1;
+}
+
+extern "C" void mpg_mirror(int manager, int index, const void* data, int size)
+{
+	if (g.role == MPG_ROLE_OFF || manager < 0 || manager > 255 || index < 0 || index > 0xFFFF || size < 0 || size > 48)
+		return;
+	std::lock_guard<std::mutex> hold(g_lock);
+	if (!(g.role == MPG_ROLE_HOST ? g.session : g.localSession) || g.mirrorOut.size() >= 4 * kMirrorBatch)
+		return;
+	Controller::Mirror m;
+	m.slot    = (uint8_t)mp_local_slot();
+	m.manager = (uint8_t)manager;
+	m.index   = (uint16_t)index;
+	m.len     = (uint8_t)size;
+	memcpy(m.data, data, size);
+	g.mirrorOut.push_back(m);
+}
+
+extern "C" int mpg_next_mirror(int* slot, int* manager, int* index, void* data, int* size)
+{
+	std::lock_guard<std::mutex> hold(g_lock);
+	if (g.mirrorIn.empty())
+		return 0;
+	const Controller::Mirror& m = g.mirrorIn.front();
+	*slot    = m.slot;
+	*manager = m.manager;
+	*index   = m.index;
+	*size    = m.len;
+	memcpy(data, m.data, m.len);
+	g.mirrorIn.pop_front();
 	return 1;
 }
 
