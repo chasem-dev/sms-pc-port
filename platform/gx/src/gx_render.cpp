@@ -2227,11 +2227,12 @@ static GLuint efbReadFbo(int x0 = 0, int y0 = 0, int x1 = INT32_MAX, int y1 = IN
     return s_efbResolveFbo;
 }
 
-static void clearRect(int x, int y, int w, int h) {
+// x0 and x1: the scaled EFB's columns, as copyEfb works them out.
+static void clearRect(int x0, int x1, int y, int h) {
     uint32_t ar = g.bp[BP_CLEAR_AR], gb = g.bp[BP_CLEAR_GB], z = g.bp[BP_CLEAR_Z];
     glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
     glEnable(GL_SCISSOR_TEST);
-    glScissor(scaled(x), scaled(y), scaled(x + w) - scaled(x), scaled(y + h) - scaled(y));
+    glScissor(x0, scaled(y), x1 - x0, scaled(y + h) - scaled(y));
     bool hasAlpha = (g.bp[BP_PE_CONTROL] & 7) == 1;
     // Copy clears obey the PE write enables, just like ordinary EFB writes.
     // A copy clear in RGB8 must not overwrite the backing alpha used later by
@@ -2501,17 +2502,30 @@ static void copyEfb(uint32_t ctrl) {
     if (traceFile()) traceCopy(disp, x, y, w, h, dest, ctrl);
     // widescreen: a full-width copy takes the whole EFB, others the centred 4:3 part
     int gw = w;
+    bool stretched = false;
     if (s_efbW != EFB_W) {
         if (x <= 0 && x + w >= EFB_W) {
             x = 0;
             w = s_efbW;
         } else if (s_stretch2D) {  // a fader's pieces of the frame: stretched like its drawing
-            int r = int(float(x + w) * s_wide + 0.5f);
-            x = int(float(x) * s_wide + 0.5f);
-            w = r - x;
+            stretched = true;
         } else {
             x += s_ox;
         }
+    }
+    // its columns in the scaled EFB, and its left edge and width in EFB pixels
+    int x0 = scaled(x), x1 = scaled(x + w);
+    float fx = float(x), fw = float(w);
+    if (stretched) {
+        // A stretched piece's edges fall inside widened pixels, and its quad
+        // covers the scaled columns up to them, so the copy and its clear take
+        // those columns too. Taken to whole widened pixels, they went a column
+        // past the quad the circle wipe's blur draws its centre cell back with,
+        // which left a black line down the opening iris above 1x.
+        x0 = int(lroundf(float(x) * s_wide * s_scale));
+        x1 = int(lroundf(float(x + w) * s_wide * s_scale));
+        fx = float(x0) / s_scale;
+        fw = float(x1 - x0) / s_scale;
     }
     glDisable(GL_SCISSOR_TEST);
     glDisable(GL_BLEND);
@@ -2524,7 +2538,7 @@ static void copyEfb(uint32_t ctrl) {
 
     if (disp) {
         Xfb& xfb = s_xfbs[dest];
-        const int x0 = scaled(x), y0 = scaled(y), sw = scaled(x + w) - x0, sh = scaled(y + h) - y0;
+        const int y0 = scaled(y), sw = x1 - x0, sh = scaled(y + h) - y0;
         if (!xfb.tex || xfb.w != sw || xfb.h != sh) {
             if (!xfb.tex) glGenTextures(1, &xfb.tex);
             glBindTexture(GL_TEXTURE_2D, xfb.tex);
@@ -2545,7 +2559,7 @@ static void copyEfb(uint32_t ctrl) {
         bool intensity = ((ctrl >> 15) & 3) == 3;
         bool zcopy = (g.bp[BP_PE_CONTROL] & 7) == 3;
         bool half = (ctrl >> 9) & 1;
-        int ow = scaled(x + w) - scaled(x), oh = scaled(y + h) - scaled(y);
+        int ow = x1 - x0, oh = scaled(y + h) - scaled(y);
         if (half) {
             ow /= 2;
             oh /= 2;
@@ -2565,7 +2579,7 @@ static void copyEfb(uint32_t ctrl) {
         uint32_t mode = fmt | (intensity ? 16u : 0u) | (zcopy ? 32u : 0u);
         efbCopyRegister(dest, tex, ow, oh, mode);
         // s_efbColor (s_efbDepth for depth copies), sampled below, holds the current EFB
-        efbReadFbo(scaled(x), scaled(y), scaled(x + w), scaled(y + h), zcopy ? GL_DEPTH_BUFFER_BIT : GL_COLOR_BUFFER_BIT);
+        efbReadFbo(x0, scaled(y), x1, scaled(y + h), zcopy ? GL_DEPTH_BUFFER_BIT : GL_COLOR_BUFFER_BIT);
         glBindFramebuffer(GL_FRAMEBUFFER, s_tmpFbo);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
         glViewport(0, 0, ow, oh);
@@ -2574,7 +2588,7 @@ static void copyEfb(uint32_t ctrl) {
         glBindTexture(GL_TEXTURE_2D, s_efbDepth);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, s_efbColor);
-        float rect[4] = {float(x) / float(s_efbW), float(y) / EFB_H, float(w) / float(s_efbW), float(h) / EFB_H};
+        float rect[4] = {fx / float(s_efbW), float(y) / EFB_H, fw / float(s_efbW), float(h) / EFB_H};
         glUniform4fv(s_copyURect, 1, rect);
         glUniform1i(s_copyUMode, GLint(mode));
         glUniform1i(s_copyUAlphaOne, (g.bp[BP_PE_CONTROL] & 7) != 1);
@@ -2584,7 +2598,7 @@ static void copyEfb(uint32_t ctrl) {
         s_stats.efbCopies++;
         writeBackCopy(dest, tex, ow, oh, tw, th, copyLayout(fmt, zcopy));
     }
-    if (clear) clearRect(x, y, w, h);
+    if (clear) clearRect(x0, x1, y, h);
     glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
     if (clear) s_drawGen++;
     if (disp) {
