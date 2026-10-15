@@ -1424,6 +1424,8 @@ struct TestPlan {
 	bool pounded;
 	int claimAt;             // claims an NPC as a talk does, and walks it off
 	bool claimed;
+	int flAt;                // fludd@N: touches the Airstrip's FLUDD (its story event)
+	bool flTook;
 	int redAt;               // ground-pounds the first red coin switch
 	bool redPressed;
 	int redTakeAt, redTakeCount; // pickred@N:K: takes K red coins that are out
@@ -1479,7 +1481,7 @@ void runTests(TMarDirector* dir, bool arrived)
 {
 	if (!s_test.parsed) {
 		s_test.parsed = true;
-		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = -1;
+		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.flAt = -1;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
 		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = s_test.bossHitAt = s_test.setFlagAt = -1;
 		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.npcSprayAt = s_test.carryAt = s_test.slotSprayAt = s_test.melonAt = -1;
@@ -1488,6 +1490,8 @@ void runTests(TMarDirector* dir, bool arrived)
 			const char* t = strstr(plan, "take@");
 			if (t)
 				sscanf(t, "take@%d:%d", &s_test.takeAt, &s_test.takeCount);
+			if (const char* fl = strstr(plan, "fludd@"))
+				sscanf(fl, "fludd@%d", &s_test.flAt);
 			if (const char* tr = strstr(plan, "gotoswitch@"))
 				sscanf(tr, "gotoswitch@%d", &s_test.toRedAt);
 			if (const char* rt = strstr(plan, "pickred@"))
@@ -1589,6 +1593,20 @@ void runTests(TMarDirector* dir, bool arrived)
 			s_test.talked = true;
 			fprintf(stderr, "[multiplayer] test: talking to an NPC\n");
 		}
+	}
+	if (s_test.flAt >= 0 && !s_test.flTook && s_test.frames >= s_test.flAt && gpItemManager && gpMarioOriginal) {
+		// "ウォーターガン", FLUDD lying on the Airstrip
+		static const char kWaterGun[] = "\x83\x45\x83\x48\x81\x5b\x83\x5e\x81\x5b\x83\x4b\x83\x93";
+		for (int i = 0; i < gpItemManager->getObjNum(); i++) {
+			TLiveActor* a = gpItemManager->getObj(i);
+			if (a && a->getName() && !strcmp(a->getName(), kWaterGun) && !a->checkLiveFlag(LIVE_FLAG_DEAD)) {
+				gpMarioOriginal->mPosition = a->mPosition;
+				fprintf(stderr, "[multiplayer] test: touching FLUDD (item %d)\n", i);
+				static_cast<TItem*>(a)->touchPlayer(gpMarioOriginal);
+				break;
+			}
+		}
+		s_test.flTook = true;
 	}
 	if (s_test.toRedAt >= 0 && !s_test.atRed && s_test.frames >= s_test.toRedAt) {
 		for (int k = 0; k < s_switchCount; k++)
@@ -2567,6 +2585,7 @@ void landCarries()
 
 // ------------------------------------------------------------------- hooks
 
+void takeTrips(TMarDirector* dir); // below
 unsigned g_moves; // debug: movement passes so far
 
 void frame()
@@ -2650,7 +2669,10 @@ void frame()
 			if (s_role == MPG_ROLE_CLIENT)
 				followHost(dir);
 			else
+			{
 				hostShineExit(dir);
+				takeTrips(dir);
+			}
 			runTests(dir, !s_wasPlaying);
 			noticeCutscenes();
 			playOthersCutscenes(dir);
@@ -2682,7 +2704,19 @@ void stageSetup()
 		return;
 	s_readyDir = gpMarDirector;
 	s_stageNumber++;
-	s_managerCount = 0; // the last stage's are gone
+	// the last stage's objects are gone from here on: nothing of theirs is
+	// touched again (the lists of this stage's are made once it plays, and
+	// the game moves its objects before that, in its opening)
+	s_managerCount = 0;
+	s_sharedCount  = 0;
+	s_aloneCount   = 0;
+	memset(s_shared, 0, sizeof s_shared);
+	s_switchCount = 0;
+	s_myHeld      = nullptr;
+	for (int slot = 0; slot < 4; slot++)
+		if (s_holders[slot])
+			s_holders[slot]->mHeldObject = nullptr;
+	MpMirrorForget();
 	if (gpApplication.mCurrArea.getStage() == 15 || !gpStrategy)
 		return;
 	if (getenv("SMS_MULTIPLAYER_DEBUG"))
@@ -2820,8 +2854,18 @@ int allowNextStage(unsigned code, void* actor)
 	}
 	if (s_role != MPG_ROLE_CLIENT || !mpg_target(&area, &episode))
 		return 1;
-	if (next == area)
+	if (next == area) {
+		// on to another episode of the stage everyone is in: a story event
+		// here (taking FLUDD on the Airstrip). The host takes everyone (alone,
+		// this game would only be brought back to the host's, the event gone)
+		const int nextEpisode = code >= 0x100 ? (int)(code & 0xFF) : 0xFF;
+		if (nextEpisode != episode) {
+			mpg_request_trip(next, nextEpisode);
+			if (getenv("SMS_MULTIPLAYER_DEBUG"))
+				fprintf(stderr, "[multiplayer] on to episode %d here: the host is asked to take everyone\n", nextEpisode);
+		}
 		return 1;
+	}
 	if (!s_refusedFrames)
 		showNotice("Only the host can take everyone to another area");
 	s_refusedFrames = 60;
@@ -2831,6 +2875,25 @@ int allowNextStage(unsigned code, void* actor)
 	// collision, or a coaster or boat ride half done.
 	(void)actor;
 	return 1;
+}
+
+// Host: the clients' story events that move everyone on (mpg_request_trip),
+// taken as the host's own: everyone goes.
+void takeTrips(TMarDirector* dir)
+{
+	int slot, area, episode;
+	static uint32_t tookIn;
+	while (mpg_next_trip(&slot, &area, &episode)) {
+		const u8 here = gpApplication.mCurrArea.getStage();
+		if (!dir || !inStage() || area != here || tookIn == mpg_session())
+			continue;
+		tookIn = mpg_session();
+		char text[96];
+		snprintf(text, sizeof text, "%s moved the story on: everyone goes", mpg_character_name(slot));
+		showNotice(text);
+		fprintf(stderr, "[multiplayer] %s\n", text);
+		dir->setNextStage(episode == 0xFF ? (u16)area : (u16)(((area + 1) << 8) | episode), nullptr);
+	}
 }
 
 void moveStage()

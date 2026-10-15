@@ -9,6 +9,8 @@
 
 // A stage is in play: find its mirrored objects.
 void MpMirrorCollect();
+// A stage is loading: the last stage's objects are gone (none is touched again).
+void MpMirrorForget();
 // Every tick after movement: send what this game owns, take the rest.
 void MpMirrorTick();
 // This game's player used `object` (sprayed it, say): this game runs it for a while.
