@@ -87,6 +87,7 @@ struct XMap {
 };
 static XMap s_xmap;
 static bool s_stretch2D = false;  // GXPC_SetStretch2D: the game's faders
+static bool s_wide2D = false;     // GXPC_SetWide2D: 2D the game laid out past the 4:3 edges (the map)
 // SMS_WIDESCREEN_HUD=edges: while the game draws its gameplay HUD
 // (GXPC_SetHud), a piece in the left third of the 4:3 frame goes to the left
 // edge of the wide one and one in the right third to the right edge; the
@@ -1964,6 +1965,10 @@ static XMap drawXMap() {
         m.a = s_wide;
         return m;
     }
+    if (s_wide2D && (g.xfReg[XFR_PROJ + 6] & 1)) {  // laid out wide: the 4:3 scale, centred
+        m.b = float(s_ox);
+        return m;
+    }
     float sx = xff(XFR_VIEWPORT), cx = xff(XFR_VIEWPORT + 3) - 342.0f;
     bool fullWidth = fabsf(fabsf(sx) * 2.0f - float(EFB_W)) < 2.0f && fabsf(cx - float(EFB_W) / 2) < 2.0f;
     if (!fullWidth) {
@@ -2960,6 +2965,12 @@ void GXPC_SetStretch2D(int on) {
     if (s_efbW == EFB_W || s_stretch2D == (on != 0)) return;
     flushBatch();  // what was queued keeps its own mapping
     s_stretch2D = on != 0;
+}
+
+void GXPC_SetWide2D(int on) {
+    if (s_efbW == EFB_W || s_wide2D == (on != 0)) return;
+    flushBatch();
+    s_wide2D = on != 0;
 }
 
 void GXPC_SetWidescreen(float widthOver43) {

@@ -337,6 +337,9 @@ Measured headless on the 32-bit Linux build (Mesa llvmpipe software GL), 2026-09
   With `SMS_WIDESCREEN_HUD=edges` the gameplay HUD is anchored to the screen edges per piece, not per 2D batch (which pulls composite panes apart): `TGCConsole2::perform` marks its HUD drawing (`GXPC_SetHud`), and `J2DPane::draw` brackets each pane with its extent (`GXPC_HudPaneBegin`/`End`, patch `widescreen-03`).
   The 2D particles the HUD emits at its panes (the coin counter's sparkle, the GO! trails) are drawn by the director's 2D emitter manager, which is drawn as HUD too, so each moves with the third of the screen it is in (`widescreen-04`).
   A piece is the outermost pane narrower than three quarters of the screen (the HUD's containers are 600 wide), and moves by which third of the 4:3 frame its centre is in; draws outside any piece (the water tank, drawn in 3D) move by their own extent.
+  The map screen (`TGuide`, patch `widescreen-05`) fills the wide frame, as the 16:9 map of later releases does, instead of a 4:3 sheet over the live game.
+  As `guide_1.blo` loads, the paper, the top and bottom bands and the grid rows run on to the screen edges, the vertical grid lines past the 4:3 frame are copies of the layout's first full-height line, and the drawings beside the island (palm trees, sunflowers, fish, compass, title, sun, Totals, ship and the two texts) move out by half the extra width on their side; the island, its places and the panels stay put, and the cursor reaches the new edges.
+  It draws through `GXPC_SetWide2D`: 2D at the 4:3 scale, centred, and past the 4:3 edges, with none of it stretched.
 - **30, 60 and 120 frames per second** (`SMS_FRAME_RATE`, patches `framerate-*`): 60 is the port default, 30 is native, and 120 is optional.
   `port_active_frame_rate` is the gameplay rate while `TMarDirector` runs, and 30 for logos, menus and movies.
   `SMSGetVSyncTimesPerSec` reports that rate, so animations and fades keep their real-time duration.
