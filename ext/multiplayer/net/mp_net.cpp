@@ -345,6 +345,15 @@ void sendData(Session& s, Peer& p, int toSlot, uint32_t now, bool force, bool le
 
 	// the host's world snapshot
 	if (s.cfg.role == MP_ROLE_HOST && !s.world.empty() && !lean) {
+		static uint32_t countAt, sent, newer, lastSeq;
+		sent++;
+		newer += s.worldSeq != lastSeq;
+		lastSeq = s.worldSeq;
+		if (getenv("SMS_MULTIPLAYER_SPEEDLOG") && now - countAt >= 5000) {
+			fprintf(stderr, "[speed] net: %u world snapshots sent in %u ms, %u new\n", sent, now - countAt, newer);
+			countAt = now;
+			sent = newer = 0;
+		}
 		s.worldSentSeq = s.worldSeq;
 		w.u32(s.worldSeq);
 		w.u16((uint16_t)s.world.size());
@@ -491,6 +500,14 @@ void readData(Session& s, int idx, Reader& r, uint32_t now)
 	if (s.cfg.role == MP_ROLE_CLIENT && worldSize && (s.world.empty() || (int32_t)(worldSeq - s.worldSeq) >= 0)) {
 		// the newest snapshot (or the same one again: still current)
 		s.world.assign(worldP, worldP + worldSize);
+		static uint32_t countAt, got, newer;
+		got++;
+		newer += worldSeq != s.worldSeq;
+		if (getenv("SMS_MULTIPLAYER_SPEEDLOG") && now - countAt >= 5000) {
+			fprintf(stderr, "[speed] net: %u world snapshots in %u ms, %u new\n", got, now - countAt, newer);
+			countAt = now;
+			got = newer = 0;
+		}
 		s.worldSeq = worldSeq;
 		s.worldAt  = now;
 	}
@@ -1215,6 +1232,11 @@ extern "C" size_t mp_world(void* data, size_t size, float* age)
 		    return s.world.size();
 	    },
 	    (size_t)0);
+}
+
+extern "C" uint32_t mp_world_seq(void)
+{
+	return withSession([](Session& s) -> uint32_t { return s.cfg.role == MP_ROLE_CLIENT ? s.worldSeq : 0; }, 0u);
 }
 
 extern "C" uint32_t mp_clock_ms(void) { return nowMs(); }

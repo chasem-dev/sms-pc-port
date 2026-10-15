@@ -112,6 +112,8 @@ int mpg_player_present(int slot);
 void mpg_restart_session(void);
 int mpg_slot(void);    // ours; -1 before a client has one
 int mpg_ping(int slot); // round trip to `slot` (host) or to the host (client), ms; -1 unknown
+// Client: the newest snapshot of the host's world's number (each new one, a new number).
+uint32_t mpg_world_seq(void);
 int mpg_character(int slot);
 const char* mpg_character_name(int slot);
 

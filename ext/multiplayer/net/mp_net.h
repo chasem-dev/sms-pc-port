@@ -126,6 +126,8 @@ int mp_world_sent(void);
 // mp_clock_ms clock.
 size_t mp_remote_next(int slot, void* data, size_t size, uint32_t* receivedMs);
 // Milliseconds on a steady clock, the one states are stamped with.
+// Client: the number of the newest world snapshot (a new one, a new number).
+uint32_t mp_world_seq(void);
 uint32_t mp_clock_ms(void);
 
 // A reliable, ordered message. A client's goes to the host; the host's goes

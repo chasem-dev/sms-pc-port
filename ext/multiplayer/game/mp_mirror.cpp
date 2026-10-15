@@ -26,7 +26,11 @@
 #include <Enemy/KoopaJr.hpp>
 #include <Enemy/KoopaNerve.hpp>
 #include <Enemy/LimitKoopaJr.hpp>
+#include <Enemy/RiccoHook.hpp>
+#include <Enemy/WireTrap.hpp>
 #include <Enemy/SleepBossHanachan.hpp>
+#include <Animal/AnimalBase.hpp>
+#include <Animal/BirdNerve.hpp>
 #include <M3DUtil/MActor.hpp>
 #include <Map/MapData.hpp>
 #include <MoveBG/Item.hpp>
@@ -35,7 +39,12 @@
 #include <MoveBG/MapObjBianco.hpp>
 #include <MoveBG/MapObjCorona.hpp>
 #include <MoveBG/MapObjMare.hpp>
+#include <MoveBG/MapObjMonte.hpp>
+#include <MoveBG/MapObjMamma.hpp>
 #include <MoveBG/MapObjPinna.hpp>
+#include <MoveBG/MapObjRailBlock.hpp>
+#include <MoveBG/MapObjRicco.hpp>
+#include <MoveBG/MapObjTurn.hpp>
 #include <MoveBG/MapObjSirena.hpp>
 #include <MoveBG/MapObjWave.hpp>
 #include <NPC/NpcBase.hpp>
@@ -54,7 +63,7 @@ namespace {
 const int kAlone = 255, kWaves = 254;
 
 int fps(); // ticks a second (below)
-const int kMaxMirrors = 160;
+const int kMaxMirrors = 320;
 
 enum Owner {
 	OWN_HOST,  // the host's (no player steers it)
@@ -796,6 +805,150 @@ void weighTub(TBathtub* t)
 	}
 }
 
+// Critters and things that wander on their own (seagulls, pigeons and what
+// they carry, butterflies, Ricco's crane hooks, Pianta Village's wire traps): where the host's are, how fast they go and
+// which way they face. Each game's copy runs and animates; it is eased toward
+// the host's, carried on at its speed between states. A hook's speed is the
+// host's too, so a player hanging from it is carried along smoothly.
+bool isCritter(TLiveActor* a)
+{
+	return dynamic_cast<TAnimalBase*>(a) || dynamic_cast<TAnimalBird*>(a) || dynamic_cast<TRiccoHook*>(a)
+	       || dynamic_cast<TWireTrap*>(a);
+}
+int saveCritter(TLiveActor* a, u8* out)
+{
+	Put o(out);
+	o.v3(a->mPosition);
+	JGeometry::TVec3<f32> vel = a->mVelocity;
+	vel.add(a->mLinearVelocity);
+	o.v3(vel);
+	o.f(a->mRotation.y);
+	return o.n;
+}
+void takeCritter(TLiveActor* a, const u8* in, int size, int age, int* placed)
+{
+	Get g(in, size);
+	const JGeometry::TVec3<f32> pos = g.v3(), vel = g.v3();
+	const f32 yaw                   = g.f();
+	if (!g.ok || a->mHolder)
+		return;
+	const JGeometry::TVec3<f32> want = ahead(pos, vel, age);
+	if (!*placed) {
+		a->mPosition   = want;
+		a->mRotation.y = yaw;
+		*placed        = 1;
+		return;
+	}
+	easeTo(a->mPosition, want, 600.0f, 0.3f);
+	f32 d = yaw - a->mRotation.y;
+	while (d > 180.0f)
+		d -= 360.0f;
+	while (d < -180.0f)
+		d += 360.0f;
+	a->mRotation.y += d * 0.3f;
+	if (dynamic_cast<TRiccoHook*>(a))
+		a->mLinearVelocity = vel; // what a hanging player is moved by
+}
+
+// Machines that run on their own clocks (cranes that tip and turn, windmills
+// and watermills, cogwheels, lifts and blocks on rails, Gelato's yacht): each
+// starts when its stage does, so each game's is somewhere else in its round.
+// Their state, its timer, how they are turned and where they are: the
+// host's, or a rider's (a lift or block some move only while ridden).
+bool isMachine(TLiveActor* a)
+{
+	return dynamic_cast<TCraneRotY*>(a) || dynamic_cast<TCraneUpDown*>(a) || dynamic_cast<TBigWindmill*>(a)
+	       || dynamic_cast<TRiccoWatermill*>(a) || dynamic_cast<TCogwheel*>(a) || dynamic_cast<TBellWatermill*>(a)
+	       || dynamic_cast<TNormalLift*>(a) || dynamic_cast<TRailBlock*>(a) || dynamic_cast<TRollBlock*>(a)
+	       || dynamic_cast<TMammaYacht*>(a) || dynamic_cast<TMapObjTurn*>(a);
+}
+int saveMachine(TLiveActor* a, u8* out)
+{
+	TMapObjBase* m = static_cast<TMapObjBase*>(a);
+	Put o(out);
+	o.i((s32)m->mState);
+	o.i(m->mStateTimer);
+	o.v3(m->mRotation);
+	o.v3(m->mPosition);
+	return o.n;
+}
+f32 easeDegrees(f32 have, f32 want, f32 k)
+{
+	f32 d = want - have;
+	while (d > 180.0f)
+		d -= 360.0f;
+	while (d < -180.0f)
+		d += 360.0f;
+	return fabsf(d) > 45.0f ? want : have + d * k;
+}
+void takeMachine(TLiveActor* a, const u8* in, int size, int, int*)
+{
+	TMapObjBase* m = static_cast<TMapObjBase*>(a);
+	Get g(in, size);
+	const s32 state = g.i(), timer = g.i();
+	const JGeometry::TVec3<f32> rot = g.v3(), pos = g.v3();
+	if (!g.ok)
+		return;
+	m->mState      = (u32)state;
+	m->mStateTimer = timer;
+	m->mRotation.x = easeDegrees(m->mRotation.x, rot.x, 0.3f);
+	m->mRotation.y = easeDegrees(m->mRotation.y, rot.y, 0.3f);
+	m->mRotation.z = easeDegrees(m->mRotation.z, rot.z, 0.3f);
+	easeTo(m->mPosition, pos, 500.0f, 0.3f);
+}
+
+// Swinging boards (Noki Bay, Pianta Village): their swing, run by whoever
+// stands on one (it swings under them), else the host.
+bool isSwingBoard(TLiveActor* a) { return dynamic_cast<TSwingBoard*>(a) != nullptr; }
+int saveSwingBoard(TLiveActor* a, u8* out)
+{
+	TSwingBoard* b = static_cast<TSwingBoard*>(a);
+	Put o(out);
+	o.f(b->mAngle);
+	o.f(b->mAngleSpeed);
+	return o.n;
+}
+void takeSwingBoard(TLiveActor* a, const u8* in, int size, int, int*)
+{
+	TSwingBoard* b = static_cast<TSwingBoard*>(a);
+	Get g(in, size);
+	const f32 angle = g.f(), speed = g.f();
+	if (!g.ok)
+		return;
+	b->mAngle += (angle - b->mAngle) * 0.3f;
+	b->mAngleSpeed = speed;
+}
+
+// Pinna Park's pirate ship: its swing (or loop), the host's.
+bool isViking(TLiveActor* a) { return dynamic_cast<THorizontalViking*>(a) != nullptr; }
+int saveViking(TLiveActor* a, u8* out)
+{
+	THorizontalViking* v = static_cast<THorizontalViking*>(a);
+	Put o(out);
+	o.i(v->mState);
+	o.f(v->mSwingSpeed);
+	o.f(v->mSwingAngle);
+	return o.n;
+}
+void takeViking(TLiveActor* a, const u8* in, int size, int age, int*)
+{
+	THorizontalViking* v = static_cast<THorizontalViking*>(a);
+	Get g(in, size);
+	const s32 state = g.i();
+	const f32 speed = g.f(), angle = g.f();
+	if (!g.ok)
+		return;
+	const f32 want = angle + speed * (f32)(age < 10 ? age : 10);
+	f32 d          = want - v->mSwingAngle;
+	while (d > 180.0f)
+		d -= 360.0f;
+	while (d < -180.0f)
+		d += 360.0f;
+	v->mState = state;
+	v->mSwingSpeed = speed;
+	v->mSwingAngle += fabsf(d) > 60.0f ? d : d * 0.3f;
+}
+
 const Kind kKinds[] = {
 	{"NPC", isNpc, saveNpc, takeNpc, OWN_HOST, 6, false},
 	{"leaf boat", isLeafBoat, saveMover, takeMover, OWN_RIDER, 2, false},
@@ -813,6 +966,10 @@ const Kind kKinds[] = {
 	{"Bowser Jr.", isJunior, saveJunior, takeJunior, OWN_HOST, 2, false},
 	{"sleeping Wiggler", isSleepyWiggler, saveSleepyWiggler, takeSleepyWiggler, OWN_HOST, 3, false},
 	{"Bowser's tub", isTub, saveTub, takeTub, OWN_HOST, 2, false},
+	{"critter", isCritter, saveCritter, takeCritter, OWN_HOST, 3, false},
+	{"pirate ship", isViking, saveViking, takeViking, OWN_HOST, 4, false},
+	{"swinging board", isSwingBoard, saveSwingBoard, takeSwingBoard, OWN_RIDER, 3, false},
+	{"machine", isMachine, saveMachine, takeMachine, OWN_RIDER, 4, false},
 	{"watermelon", isWatermelon, saveWatermelon, takeWatermelon, OWN_USER, 2, false},
 };
 const int kKindCount = sizeof kKinds / sizeof kKinds[0];
@@ -1018,7 +1175,9 @@ void MpMirrorTick()
 		if (ownedHere(m)) {
 			if (m.actor && m.kind->match == isTub && mpg_role() == MPG_ROLE_HOST)
 				weighTub(static_cast<TBathtub*>(m.actor));
-			if (s_clock % m.kind->every)
+			// each on a tick of its own (by its place), so a stage's many
+			// critters are not all sent in one tick
+			if ((s_clock + i) % m.kind->every)
 				continue;
 			u8 out[48];
 			const int n = m.actor ? m.kind->save(m.actor, out) : (gpMapObjWave ? saveWaves(out) : 0);
