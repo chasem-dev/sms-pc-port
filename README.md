@@ -84,7 +84,7 @@ Options can be kept in [`settings.txt`](settings.txt) (`resolution = 2`, `textur
 | Option | Effect |
 | --- | --- |
 | `SMS_SKIP_MOVIES=1` | skip cutscenes; keep portal animations playing |
-| `SMS_LANGUAGE=fr` | play in French, German (`de`), Spanish (`es`) or Italian (`it`) instead of English (`en`, the default), with that [language pack](#languages) installed |
+| `SMS_LANGUAGE=fr` | play in French, German (`de`), Spanish (`es`), Italian (`it`) or Polish (`pl`) instead of English (`en`, the default), with that [language pack](#languages) installed |
 | `SMS_HEAT_HAZE=0` | turn off the heat-wave shimmer that distorts the picture in sunny areas |
 | `SMS_BUTTON_PROMPTS=style` | the buttons shown in the game's text and on the FLUDD gauge: `gamecube` (the game's own, the default), `xbox`, `playstation`, `steamdeck`, `keyboard`, or `auto` (keyboard and mouse or the controller in use) |
 | `SMS_BUTTON_PROMPT_PAD=style` | with `auto`, how every controller's prompts look: `xbox`, `playstation`, `steamdeck` or `gamecube` (default: match the controller) |
@@ -116,7 +116,7 @@ Options can be kept in [`settings.txt`](settings.txt) (`resolution = 2`, `textur
 | `SMS_ASPECT=stretch` | fill the window instead of keeping the picture's shape; `integer` keeps whole multiples of 640x528 |
 | `SMS_PRESENT_FILTER=sharp` | scale the picture with crisp pixels (`nearest` for none at all; default `bilinear`, which averages when the internal resolution is above the window's; `fsr` upscales a lower internal resolution with AMD FSR 1, sharpened as much as `SMS_SHARPEN` asks; `nis` with NVIDIA Image Scaling, sharpened from NVIDIA's default up as `SMS_SHARPEN` asks) |
 | `SMS_FSR_MODE=quality` | with `fsr` or `nis`, render at a share of the picture's size on screen and upscale the rest: `native` (100%), `quality` (67%), `balanced` (59%), `performance` (50%) or `ultraperformance` (33%); it sets the internal resolution in place of `SMS_GX_SCALE` |
-| `SMS_WIDESCREEN=16:9` | widescreen (also `21:9`, `16:10`): a wider view, with the HUD and menus kept 4:3 in the middle |
+| `SMS_WIDESCREEN=16:9` | widescreen (also `21:9`, `16:10`): a wider view, with the HUD and menus kept 4:3 in the middle; the map screen fills the whole width |
 | `SMS_FRAME_RATE=30`, `60`, or `120` | gameplay frame rate: 30 (GameCube native), 60 (port default), or 120 (optional); logos, menus and movies stay at 30 |
 | `SMS_WIDESCREEN_HUD=edges` | with widescreen, move the gameplay HUD's counters to the left edge and the water gauge to the right one |
 
@@ -247,7 +247,9 @@ The standalone build contains the whole game, so keep it to yourself: sharing it
 
 The North American disc is in English; the European release adds French, German, Spanish and Italian.
 A language pack holds one of those languages' text and menus, taken from the European disc, for this port to play with your North American one: dialogue, cutscene subtitles, signs, menus, the HUD, the title screen and the memory card screens.
-`python3 tools/mods/get.py language fr` installs the French pack in `mods/languages/fr` (`de`, `es`, `it` for the others), and `language = fr` in `settings.txt` (or `SMS_LANGUAGE=fr`) plays in it; SMS Launcher does both from its Language setting.
+Community translations are packs too, made from the [translation kit](https://github.com/chasem-dev/sms-hd-texture-extras#translation-kit); Polish (`pl`) is the first.
+The game plays any language whose pack is installed, so a new one needs no game update.
+`python3 tools/mods/get.py language fr` installs the French pack in `mods/languages/fr` (`de`, `es`, `it`, `pl` for the others), and `language = fr` in `settings.txt` (or `SMS_LANGUAGE=fr`) plays in it; SMS Launcher does both from its Language setting.
 Saves are the same in every language. The packs are made with the scripts in [sms-hd-texture-extras](https://github.com/chasem-dev/sms-hd-texture-extras#language-packs); [mods/README.md](mods/README.md#languages-language-packs) describes their layout.
 
 ## HD cutscenes

@@ -151,7 +151,8 @@ elseif(WIN32)
   set(_ctors COMMAND ${CMAKE_OBJCOPY} --rename-section .ctors=.data$sms_mod_ctors_m ${_obj})
 else()
   set(_ctors)
-  list(APPEND _ld_arch -Wl,-T,${CMAKE_CURRENT_SOURCE_DIR}/mod_ctors.ld)
+  # -Xlinker passes the path whole: -Wl, would split it at a comma.
+  list(APPEND _ld_arch -Xlinker -T -Xlinker ${CMAKE_CURRENT_SOURCE_DIR}/mod_ctors.ld)
 endif()
 add_custom_command(OUTPUT ${_obj}
   COMMAND ${CMAKE_CXX_COMPILER} ${_ld_arch} -r -nostdlib -o ${_obj}

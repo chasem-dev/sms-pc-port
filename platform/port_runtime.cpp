@@ -719,7 +719,7 @@ static const struct {
 	{ "widescreen_hud", "SMS_WIDESCREEN_HUD" }, // centre or edges
 	{ "frame_rate", "SMS_FRAME_RATE" },         // 30, 60 (default), or 120
 	{ "mod", "SMS_MOD" },
-	{ "language", "SMS_LANGUAGE" }, // en (default), fr, de, es or it: mods/languages/<code>
+	{ "language", "SMS_LANGUAGE" }, // en (default), or any pack in mods/languages/<code>
 	{ "resolution", "SMS_GX_SCALE" },
 	{ "anisotropic", "SMS_ANISO" }, // 0, 2, 4, 8 or 16
 	{ "window_scale", "SMS_WINDOW_SCALE" },
