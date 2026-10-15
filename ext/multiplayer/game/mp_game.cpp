@@ -31,6 +31,8 @@
 #include <JSystem/JKernel/JKRHeap.hpp>
 #include <M3DUtil/M3UModelMario.hpp>
 #include <M3DUtil/MActor.hpp>
+#include <Enemy/Koopa.hpp>
+#include <Enemy/KoopaNerve.hpp>
 #include <MoveBG/MapObjCorona.hpp>
 #include <MoveBG/Item.hpp>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
@@ -52,6 +54,7 @@
 #include <math.h>
 #include <new>
 #include <typeinfo>
+#include <dolphin/pad.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1311,6 +1314,8 @@ struct TestPlan {
 	bool pounded;
 	int claimAt;             // claims an NPC as a talk does, and walks it off
 	bool claimed;
+	int nearAt;              // stands before an NPC (presses of A talk to it), up to 900 frames
+	bool talked;
 	bool tookAgain;
 	int warpAt, warpArea, warpEpisode;
 	int killAt, killCount;
@@ -1336,6 +1341,15 @@ struct TestPlan {
 	bool tookHere, warped, died, shone, flagged, livesSet, dropped, tookDrop, coinsSet, touched, bossWatered, bossDowned, bossHit, flagSet;
 };
 TestPlan s_test;
+int s_testPressA; // test aids: frames left to hold B down (padRead; B talks)
+
+void testPadRead(void* status)
+{
+	if (s_testPressA > 0) {
+		static_cast<PADStatus*>(status)[0].button |= PAD_BUTTON_B;
+		s_testPressA--;
+	}
+}
 
 void testSprayNpc(bool first); // shared objects, below
 bool testPoundTub();
@@ -1345,7 +1359,7 @@ void runTests(TMarDirector* dir, bool arrived)
 {
 	if (!s_test.parsed) {
 		s_test.parsed = true;
-		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = -1;
+		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = -1;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
 		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = s_test.bossHitAt = s_test.setFlagAt = -1;
 		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.npcSprayAt = s_test.carryAt = -1;
@@ -1354,6 +1368,8 @@ void runTests(TMarDirector* dir, bool arrived)
 			const char* t = strstr(plan, "take@");
 			if (t)
 				sscanf(t, "take@%d:%d", &s_test.takeAt, &s_test.takeCount);
+			if (const char* nr = strstr(plan, "nearnpc@"))
+				sscanf(nr, "nearnpc@%d", &s_test.nearAt);
 			if (const char* cl = strstr(plan, "claim@"))
 				sscanf(cl, "claim@%d", &s_test.claimAt);
 			if (const char* pd = strstr(plan, "pound@"))
@@ -1427,6 +1443,23 @@ void runTests(TMarDirector* dir, bool arrived)
 	if (getenv("SMS_MULTIPLAYER_TEST") && s_test.frames % 600 == 0)
 		fprintf(stderr, "[multiplayer] test: frame %d, %d together, flag set %d, hatched %d\n", s_test.frames,
 		        s_test.together, (int)s_test.flagSet, (int)s_test.hatched);
+	if (s_test.nearAt >= 0 && !s_test.talked && s_test.frames >= s_test.nearAt && s_test.frames < s_test.nearAt + 1800) {
+		// stood there now and then, left to stand still a while (a talk wants
+		// him waiting), then B pressed, as a player talks
+		if ((s_test.frames - s_test.nearAt) % 150 == 0)
+			MpMirrorTestNearNpc();
+		if ((s_test.frames - s_test.nearAt) % 150 == 90) {
+			s_testPressA = 3;
+			TBaseNPC* near = gpMarDirector ? gpMarDirector->getTalkingNPC() : nullptr;
+			fprintf(stderr, "[multiplayer] test: B pressed (Mario status %x, talk target %p%s)\n",
+			        (unsigned)gpMarioOriginal->getStatus(), (void*)near,
+			        near && near->checkLiveFlag(LIVE_FLAG_UNK20000) ? ", in range" : "");
+		}
+		if (gpMarDirector && gpMarDirector->isTalkModeNow()) {
+			s_test.talked = true;
+			fprintf(stderr, "[multiplayer] test: talking to an NPC\n");
+		}
+	}
 	if (s_test.claimAt >= 0 && !s_test.claimed && s_test.frames >= s_test.claimAt)
 		s_test.claimed = MpMirrorTestClaimNpc();
 	if (s_test.poundAt >= 0 && !s_test.pounded && s_test.frames >= s_test.poundAt)
@@ -2127,6 +2160,14 @@ void testSprayNpc(bool first)
 // the hit hook as his landing does (patch zzzzz-ext-06).
 bool testPoundTub()
 {
+	// when Bowser can stagger (standing or turning: not breathing fire, as
+	// TKoopa::stagger leaves those be)
+	TKoopa* koopa = JDrama::TNameRefGen::search<TKoopa>("\x83\x4e\x83\x62\x83\x70");
+	if (!koopa)
+		return false;
+	const void* n = koopa->getSpine()->getCurrentNerve();
+	if (n != &TNerveKoopaWait::theNerve() && n != &TNerveKoopaTurnL::theNerve() && n != &TNerveKoopaTurnR::theNerve())
+		return false;
 	for (int m = 0; m < s_sharedCount; m++)
 		for (int i = 0; s_sharedManagers[m] && i < s_sharedManagers[m]->getObjNum(); i++)
 			if (TBathtub* tub = dynamic_cast<TBathtub*>(s_sharedManagers[m]->getObj(i))) {
@@ -2641,7 +2682,7 @@ const char* saveStatesOffReason() { return "Save states are off in multiplayer";
 PortExtension s_extension = {
 	"multiplayer",   frame,           afterMovement,   stageSetup,     allowNextStage, moveStage,
 	missNextArea,    takeGameOver,    keepCoinsOnMiss, afterFileSelect, itemTaken,      allowSaveStates,
-	saveStatesOffReason, hidePlayerModel, 0, demoCamera, pollutionClean, objectMove, objectHit,
+	saveStatesOffReason, hidePlayerModel, testPadRead, demoCamera, pollutionClean, objectMove, objectHit,
 };
 
 struct Register {
