@@ -48,6 +48,8 @@
 #include <System/MarDirector.hpp>
 #include <System/StageUtil.hpp>
 #include <math.h>
+#include <new>
+#include <typeinfo>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1226,6 +1228,7 @@ struct TestPlan {
 	int bossSprayAt, bossSprayFrames; // bossspray@N:K: that hit every tick for K ticks (a Gatekeeper sprayed)
 	int shadowSprayAt, shadowSprayFrames; // shadowspray@N:K: Shadow Mario sprayed every 4 ticks for K ticks
 	int npcSprayAt, npcSprayFrames;   // npcspray@N:K: the nearest NPC sprayed every tick for K ticks
+	int carryAt, carryFrames;         // carry@N:K: pick up the nearest thing that can be carried, put it down K ticks on
 	int setFlagAt;                   // setflag@N:ID: a flag of the game's set (hex), e.g. what starts a fight
 	unsigned setFlagId;
 	int frames; // in this stage
@@ -1234,6 +1237,7 @@ struct TestPlan {
 TestPlan s_test;
 
 void testSprayNpc(bool first); // shared objects, below
+void testCarry(bool take);
 
 void runTests(TMarDirector* dir, bool arrived)
 {
@@ -1241,7 +1245,7 @@ void runTests(TMarDirector* dir, bool arrived)
 		s_test.parsed = true;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
 		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = s_test.bossHitAt = s_test.setFlagAt = -1;
-		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.npcSprayAt = -1;
+		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.npcSprayAt = s_test.carryAt = -1;
 		s_test.dieLives = -1;
 		if (const char* plan = getenv("SMS_MULTIPLAYER_TEST")) {
 			const char* t = strstr(plan, "take@");
@@ -1287,6 +1291,8 @@ void runTests(TMarDirector* dir, bool arrived)
 				sscanf(ss, "shadowspray@%d:%d", &s_test.shadowSprayAt, &s_test.shadowSprayFrames);
 			if (const char* ns = strstr(plan, "npcspray@"))
 				sscanf(ns, "npcspray@%d:%d", &s_test.npcSprayAt, &s_test.npcSprayFrames);
+			if (const char* cs = strstr(plan, "carry@"))
+				sscanf(cs, "carry@%d:%d", &s_test.carryAt, &s_test.carryFrames);
 			if (const char* sf = strstr(plan, "setflag@"))
 				sscanf(sf, "setflag@%d:%x", &s_test.setFlagAt, &s_test.setFlagId);
 		}
@@ -1423,6 +1429,8 @@ void runTests(TMarDirector* dir, bool arrived)
 		if (s_test.frames < s_test.shadowSprayAt + 4)
 			fprintf(stderr, "[multiplayer] test: spraying this game's Shadow Mario (kind %d)\n", kind);
 	}
+	if (s_test.carryAt >= 0 && (s_test.frames == s_test.carryAt || s_test.frames == s_test.carryAt + s_test.carryFrames))
+		testCarry(s_test.frames == s_test.carryAt);
 	if (s_test.npcSprayAt >= 0 && s_test.frames >= s_test.npcSprayAt
 	    && s_test.frames < s_test.npcSprayAt + s_test.npcSprayFrames)
 		testSprayNpc(s_test.frames == s_test.npcSprayAt);
@@ -1786,8 +1794,8 @@ void collectShared()
 		TLiveActor* a       = *it;
 		const int i         = s_aloneCount++;
 		s_alone[i]          = nullptr;
-		if (!a || dynamic_cast<TSpineEnemy*>(a) || dynamic_cast<TItem*>(a))
-			continue; // enemies and items share their own way
+		if (!a || dynamic_cast<TSmallEnemy*>(a) || MpBossIsBoss(a) || dynamic_cast<TItem*>(a))
+			continue; // enemies, bosses and items share their own way
 		s_alone[i] = a;
 		shareObject(a, (uint32_t)kAlone << 16 | (uint32_t)i);
 	}
@@ -1796,7 +1804,15 @@ void collectShared()
 		TLiveManager* mgr = *it;
 		const int m       = s_sharedCount++;
 		s_sharedManagers[m] = nullptr;
-		if (!mgr || dynamic_cast<TEnemyManager*>(mgr) || dynamic_cast<TItemManager*>(mgr))
+		// enemies (the host's run them), bosses (mp_boss.cpp) and items share
+		// their own way; NPCs and animals sit in enemy managers too, and are shared here
+		TLiveActor* first = mgr && mgr->getObjNum() ? mgr->getObj(0) : nullptr;
+		const bool skip   = !mgr || dynamic_cast<TItemManager*>(mgr) || dynamic_cast<TSmallEnemy*>(first)
+		                  || MpBossIsBoss(first);
+		if (getenv("SMS_MULTIPLAYER_DEBUG") && mgr)
+			fprintf(stderr, "[multiplayer] objects: manager %d %s, %d of %s%s\n", m, typeid(*mgr).name(), mgr->getObjNum(),
+			        mgr->getObjNum() && mgr->getObj(0) ? typeid(*mgr->getObj(0)).name() : "-", skip ? " (not shared here)" : "");
+		if (skip)
 			continue;
 		s_sharedManagers[m] = mgr;
 		for (int i = 0; i < mgr->getObjNum() && i < 0x10000; i++)
@@ -1886,14 +1902,172 @@ void landHits()
 		}
 		if (!from)
 			continue;
+		// a stomp or a ground pound counts as the player's when it comes from
+		// Mario's kind of actor: the other player's character is, while it lands
+		const int type = from->mActorType;
+		if (!water)
+			from->mActorType = 0x80000001;
 		s_landingHit = true;
 		for (int i = 0; i < count && i < 30; i++)
 			to->receiveMessage(from, (u32)message);
 		s_landingHit = false;
+		from->mActorType = type;
 		static int landed;
 		if (getenv("SMS_MULTIPLAYER_DEBUG") && landed++ % 50 == 0)
 			fprintf(stderr, "[multiplayer] hits: %s's %d (message %d) landed on %d.%d here\n", mpg_character_name(slot), count,
 			        message, manager, index);
+	}
+}
+
+// ------------------------------------------------------------------- carried objects
+
+// Another player's hands, here: an object they carry is held by it, and
+// follows it (in front of their character, chest high), as one follows
+// Mario's hands. Nobody here can take it from them meanwhile.
+class TMpHolder : public TTakeActor {
+public:
+	TMpHolder() : TTakeActor("<TMpHolder>") { MTXIdentity(mMtx); }
+	virtual MtxPtr getTakingMtx() { return mMtx; }
+	Mtx mMtx;
+};
+union HolderStore {
+	char bytes[sizeof(TMpHolder)];
+	double align;
+};
+HolderStore s_holderStore[4]; // made once, kept: not on a stage's heap
+TMpHolder* s_holders[4];
+TTakeActor* s_myHeld; // what this game's Mario held last tick
+
+TMpHolder* holderFor(int slot)
+{
+	if (!s_holders[slot])
+		s_holders[slot] = new (&s_holderStore[slot]) TMpHolder();
+	return s_holders[slot];
+}
+
+void placeHolder(int slot)
+{
+	TMpHolder* h = s_holders[slot];
+	TMpPuppet* p = s_puppets[slot];
+	if (!h || !p)
+		return;
+	const f32 yaw = p->mRotation.y * (3.14159265f / 180.0f);
+	const f32 x = p->mPosition.x + sinf(yaw) * 50.0f, y = p->mPosition.y + 100.0f, z = p->mPosition.z + cosf(yaw) * 50.0f;
+	MsMtxSetXYZRPH(h->mMtx, x, y, z, 0, (s16)(p->mRotation.y * (65536.0f / 360.0f)), 0);
+	h->mPosition.set(x, y, z);
+}
+
+// Each tick: what other players carry follows them; one who left drops it.
+void tickHolders()
+{
+	for (int slot = 0; slot < 4; slot++) {
+		TMpHolder* h = s_holders[slot];
+		if (!h || !h->mHeldObject)
+			continue;
+		if (!watchable(slot)) {
+			h->mHeldObject->mHolder = nullptr; // the object goes back to lying where it is
+			h->mHeldObject          = nullptr;
+			continue;
+		}
+		placeHolder(slot);
+	}
+}
+
+// This game's Mario picked something up, put it down or threw it: the
+// others do the same with theirs (where it ends up, and how it moves).
+void watchMyCarry()
+{
+	TTakeActor* now = gpMarioOriginal ? gpMarioOriginal->mHeldObject : nullptr;
+	if (now == s_myHeld)
+		return;
+	const int yaw = gpMarioOriginal ? gpMarioOriginal->mFaceAngle.y : 0;
+	uint32_t where;
+	if (s_myHeld && sharedWhere(s_myHeld, &where)) {
+		TLiveActor* a       = static_cast<TLiveActor*>(s_myHeld);
+		// thrown: on its way sideways (put down, or dropped, it only falls)
+		const bool thrown = a->mVelocity.x * a->mVelocity.x + a->mVelocity.z * a->mVelocity.z > 1.0f;
+		mpg_carry((int)(where >> 16), (int)(where & 0xFFFF), thrown ? 2 : 1, &a->mPosition.x, &a->mVelocity.x, yaw);
+	}
+	if (now && sharedWhere(now, &where)) {
+		const float still[3] = {0.0f, 0.0f, 0.0f};
+		mpg_carry((int)(where >> 16), (int)(where & 0xFFFF), 0, &now->mPosition.x, still, yaw);
+	}
+	s_myHeld = now;
+}
+
+// Test aid (carry@N:K): this game's Mario takes the nearest shared thing
+// that can be carried, then puts it down (as the game's own take and put do).
+TLiveActor* s_testCarried;
+
+void testCarry(bool take)
+{
+	TMario* m = gpMarioOriginal;
+	if (!m)
+		return;
+	if (!take) {
+		if (s_testCarried && m->mHeldObject == s_testCarried) {
+			s_testCarried->receiveMessage(m, HIT_MESSAGE_PUT);
+			m->mHeldObject = nullptr;
+			fprintf(stderr, "[multiplayer] test: put it down\n");
+		}
+		return;
+	}
+	TMapObjBase* best = nullptr;
+	f32 nearest       = 0.0f;
+	int takeable      = 0;
+	for (int k = 0; k < kSharedSlots; k++) {
+		TMapObjBase* o = s_shared[k].object ? dynamic_cast<TMapObjBase*>((TLiveActor*)s_shared[k].object) : nullptr;
+		if (!o || !o->checkMapObjFlag(TMapObjBase::MAP_OBJ_FLAG_UNK100000))
+			continue;
+		takeable++;
+		const f32 d = distance2(o->mPosition, m->mPosition);
+		if (!best || d < nearest)
+			best = o, nearest = d;
+	}
+	fprintf(stderr, "[multiplayer] test: %d things here can be carried\n", takeable);
+	if (best && best->receiveMessage(m, HIT_MESSAGE_TAKE)) {
+		m->mHeldObject  = best;
+		s_testCarried   = best;
+		watchMyCarry(); // at once: this Mario is not really holding, and lets go next tick
+		uint32_t where  = 0;
+		sharedWhere(best, &where);
+		fprintf(stderr, "[multiplayer] test: picked up %u.%u\n", (unsigned)(where >> 16), (unsigned)(where & 0xFFFF));
+	}
+}
+
+// What the other players picked up, put down and threw, done here.
+void landCarries()
+{
+	int slot, manager, index, action, yaw;
+	float pos[3], vel[3];
+	while (mpg_next_carry(&slot, &manager, &index, &action, pos, vel, &yaw)) {
+		TLiveActor* obj = dynamic_cast<TLiveActor*>(sharedAt(manager, index));
+		if (!obj || slot < 0 || slot > 3 || slot == mpg_slot())
+			continue;
+		TMpHolder* h = holderFor(slot);
+		placeHolder(slot);
+		if (action == 0) {
+			if (obj->mHolder && obj->mHolder != h)
+				continue; // held here already (both took it at once): it stays with ours
+			if (obj->receiveMessage(h, HIT_MESSAGE_TAKE))
+				h->mHeldObject = obj;
+			if (getenv("SMS_MULTIPLAYER_DEBUG"))
+				fprintf(stderr, "[multiplayer] carry: %s picked up %d.%d (%s here)\n", mpg_character_name(slot), manager,
+				        index, h->mHeldObject == obj ? "held" : "not held");
+			continue;
+		}
+		if (obj->mHolder == h)
+			obj->receiveMessage(h, action == 2 ? HIT_MESSAGE_THROWN : HIT_MESSAGE_PUT);
+		if (obj->mHolder == h)
+			obj->mHolder = nullptr;
+		if (h->mHeldObject == obj)
+			h->mHeldObject = nullptr;
+		// where it is and how it moves, as in their game
+		obj->mPosition.set(pos[0], pos[1], pos[2]);
+		obj->mVelocity.set(vel[0], vel[1], vel[2]);
+		if (getenv("SMS_MULTIPLAYER_DEBUG"))
+			fprintf(stderr, "[multiplayer] carry: %s %s %d.%d\n", mpg_character_name(slot), action == 2 ? "threw" : "put down",
+			        manager, index);
 	}
 }
 
@@ -1924,6 +2098,10 @@ void frame()
 		snapshotItems();
 		collectManagers();
 		collectShared();
+		s_myHeld = nullptr;
+		for (int slot = 0; slot < 4; slot++)
+			if (s_holders[slot])
+				s_holders[slot]->mHeldObject = nullptr; // last stage's objects are gone
 		collectSwitches();
 		s_stageFrames = 0;
 		s_restarting = false;
@@ -2077,6 +2255,9 @@ void afterMovement()
 		return;
 	applyCleans();
 	landHits();
+	watchMyCarry();
+	landCarries();
+	tickHolders();
 	if (s_role == MPG_ROLE_CLIENT) {
 		followHostEnemies();
 		MpBossClientTick();

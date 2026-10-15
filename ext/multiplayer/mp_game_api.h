@@ -150,6 +150,12 @@ int mpg_taken_at(int i, MpgTakenAt* out);
 void mpg_hit(int manager, int index, int message, int water, const float pos[3]);
 int mpg_next_hit(int* slot, int* manager, int* index, int* message, int* water, int* count, float pos[3]);
 
+// This game's player picked up (action 0), put down (1) or threw (2) a shared
+// object; where it is and how it moves after, and the player's facing. The
+// others do the same with theirs. mpg_next_carry gives one another player did.
+void mpg_carry(int manager, int index, int action, const float pos[3], const float vel[3], int yaw);
+int mpg_next_carry(int* slot, int* manager, int* index, int* action, float pos[3], float vel[3], int* yaw);
+
 // Goop this game cleaned (TPollutionManager::clean): the others clean it too.
 void mpg_clean(float x, float y, float z, float size);
 // The next goop another game cleaned, for this game to clean; 0 when none.

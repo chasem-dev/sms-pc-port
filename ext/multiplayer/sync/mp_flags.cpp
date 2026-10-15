@@ -17,6 +17,8 @@ const std::vector<FlagSpec>& sharedFlags()
 			v.push_back({FLAG_BEST_COINS + i, FLAG_MAX});
 		v.push_back({FLAG_COINS, FLAG_COUNT_UP});
 		v.push_back({FLAG_RED_COINS, FLAG_COUNT_UP});
+		v.push_back({FLAG_BALLOONS, FLAG_COUNT_UP});
+		v.push_back({FLAG_ROCKETS, FLAG_COUNT_UP});
 		return v;
 	}();
 	return specs;
@@ -67,7 +69,7 @@ int32_t clampFlag(uint32_t id, int64_t v)
 		return lives(v);
 	if (id == FLAG_COINS || (id >= FLAG_BEST_COINS && id < FLAG_BEST_COINS + FLAG_BEST_COINS_N))
 		hi = 999;
-	else if (id == FLAG_RED_COINS)
+	else if (id == FLAG_RED_COINS || id == FLAG_BALLOONS || id == FLAG_ROCKETS)
 		hi = 99;
 	return (int32_t)(v < lo ? lo : v > hi ? hi : v);
 }

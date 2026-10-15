@@ -12,6 +12,8 @@ void MpBossHostFrame();
 void MpBossClientTick();
 // Test aid: a hit by this game's player on its copy; the boss's kind, 0 if none.
 int MpBossTestHit();
+// Whether `actor` (a TLiveActor) is a boss shared here.
+bool MpBossIsBoss(const void* actor);
 // Test aid: a spray on this game's Shadow Mario; his kind, 0 if he is not here.
 int MpBossTestShadow();
 

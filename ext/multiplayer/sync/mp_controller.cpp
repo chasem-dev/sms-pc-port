@@ -45,6 +45,7 @@ enum Kind : uint8_t {
 	K_BOSS_HIT,     // client -> host: session, part, kind, count (a hit on its copy of the boss, for the real one)
 	K_CLEAN,        // either way: session, count, goop cleaned (x, y, z halved, size), the host passing it on
 	K_HIT,          // either way: session, count, hits a player landed on shared objects (mp_game.cpp), passed on
+	K_CARRY,        // either way: session, slot, manager, index, action, position, velocity, yaw (a carried object)
 };
 // The host's boss rides at the end of the world snapshot, after the enemies.
 const size_t kMaxBoss = 200;
@@ -150,6 +151,13 @@ struct Controller {
 	};
 	std::vector<Hit> hitOut;
 	std::deque<Hit> hitIn;
+	// objects players pick up, put down and throw: the others', to do here
+	struct Carry {
+		int slot, manager, index, action;
+		float pos[3], vel[3];
+		int16_t yaw;
+	};
+	std::deque<Carry> carries;
 
 	// each other player's recent poses, for drawing them smoothly
 	struct Timed {
@@ -297,6 +305,7 @@ void takeOnce(uint32_t key)
 
 void forgetCleans()
 {
+	g.carries.clear();
 	g.hitOut.clear();
 	g.hitIn.clear();
 	g.cleanOut.clear();
@@ -483,6 +492,55 @@ void readHits(Reader& r, int from)
 		sendHits(-1, from, s, got);
 }
 
+// ------------------------------------------------------------------ carried objects
+
+std::vector<uint8_t> carryMessage(uint32_t session, const Controller::Carry& c)
+{
+	std::vector<uint8_t> buf(35);
+	Writer w(buf.data(), buf.size());
+	w.u32(session);
+	w.u8((uint8_t)c.slot);
+	w.u8((uint8_t)c.manager);
+	w.u16((uint16_t)c.index);
+	w.u8((uint8_t)c.action);
+	for (int i = 0; i < 3; i++)
+		w.f32(c.pos[i]);
+	for (int i = 0; i < 3; i++)
+		w.f32(c.vel[i]);
+	w.s16(c.yaw);
+	return buf;
+}
+
+void readCarry(Reader& r, int from)
+{
+	const uint32_t s = r.u32();
+	Controller::Carry c;
+	c.slot    = r.u8();
+	c.manager = r.u8();
+	c.index   = r.u16();
+	c.action  = r.u8();
+	for (int i = 0; i < 3; i++)
+		c.pos[i] = r.f32();
+	for (int i = 0; i < 3; i++)
+		c.vel[i] = r.f32();
+	c.yaw = r.s16();
+	const uint32_t want = g.role == MPG_ROLE_HOST ? g.session : g.localSession;
+	if (!r.ok || !s || s != want || c.slot >= MP_MAX_PLAYERS)
+		return;
+	for (int i = 0; i < 3; i++)
+		if (!(c.pos[i] == c.pos[i]) || !(c.vel[i] == c.vel[i]) || c.pos[i] > 1e6f || c.pos[i] < -1e6f
+		    || c.vel[i] > 1e4f || c.vel[i] < -1e4f)
+			return;
+	if (g.role == MPG_ROLE_HOST) {
+		c.slot = from; // a client speaks for itself only
+		for (int i = 1; i < MP_MAX_PLAYERS; i++)
+			if (i != from && (mp_players() & (1u << i)))
+				send(i, K_CARRY, carryMessage(s, c));
+	}
+	if (g.carries.size() < 64)
+		g.carries.push_back(c);
+}
+
 void hostMessage(const MpEvent& ev)
 {
 	Reader r(ev.data, ev.size);
@@ -506,6 +564,9 @@ void hostMessage(const MpEvent& ev)
 		break;
 	case K_HIT:
 		readHits(r, ev.slot);
+		break;
+	case K_CARRY:
+		readCarry(r, ev.slot);
 		break;
 	case K_SHINE_GET: {
 		uint32_t s = r.u32();
@@ -686,6 +747,9 @@ void clientMessage(const MpEvent& ev)
 		break;
 	case K_HIT:
 		readHits(r, 0);
+		break;
+	case K_CARRY:
+		readCarry(r, 0);
 		break;
 	case K_TAKEN_LIST: {
 		uint32_t s = r.u32();
@@ -1354,6 +1418,49 @@ extern "C" int mpg_next_hit(int* slot, int* manager, int* index, int* message, i
 	pos[1]   = h.y * 2.0f;
 	pos[2]   = h.z * 2.0f;
 	g.hitIn.pop_front();
+	return 1;
+}
+
+extern "C" void mpg_carry(int manager, int index, int action, const float pos[3], const float vel[3], int yaw)
+{
+	if (g.role == MPG_ROLE_OFF)
+		return;
+	std::lock_guard<std::mutex> hold(g_lock);
+	const uint32_t session = g.role == MPG_ROLE_HOST ? g.session : g.localSession;
+	if (!session)
+		return;
+	Controller::Carry c;
+	c.slot    = mp_local_slot();
+	c.manager = manager;
+	c.index   = index;
+	c.action  = action;
+	memcpy(c.pos, pos, sizeof c.pos);
+	memcpy(c.vel, vel, sizeof c.vel);
+	c.yaw = (int16_t)yaw;
+	const std::vector<uint8_t> buf = carryMessage(session, c);
+	if (g.role == MPG_ROLE_HOST) {
+		for (int i = 1; i < MP_MAX_PLAYERS; i++)
+			if (mp_players() & (1u << i))
+				send(i, K_CARRY, buf);
+	} else {
+		send(0, K_CARRY, buf);
+	}
+}
+
+extern "C" int mpg_next_carry(int* slot, int* manager, int* index, int* action, float pos[3], float vel[3], int* yaw)
+{
+	std::lock_guard<std::mutex> hold(g_lock);
+	if (g.carries.empty())
+		return 0;
+	const Controller::Carry& c = g.carries.front();
+	*slot    = c.slot;
+	*manager = c.manager;
+	*index   = c.index;
+	*action  = c.action;
+	memcpy(pos, c.pos, sizeof c.pos);
+	memcpy(vel, c.vel, sizeof c.vel);
+	*yaw = c.yaw;
+	g.carries.pop_front();
 	return 1;
 }
 
