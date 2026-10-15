@@ -87,4 +87,8 @@ private:
 	bool mSwapped;
 };
 
+// Debug: how smoothly a player moves as drawn here (their own game's player too,
+// to hold the others' against).
+void MpMeasureSmoothness(int slot, const MpgPose& pose);
+
 #endif

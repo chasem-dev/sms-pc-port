@@ -73,6 +73,9 @@ typedef struct MpConfig {
 	char build[64];    // both sides must run the same game build
 	// tests: drop this share of incoming packets (0..1), to exercise resends
 	float dropRate;
+	// tests: hold incoming packets this long, give or take up to the jitter
+	// (ms), as a far-off player's would be (late ones arrive out of order)
+	int delayMs, jitterMs;
 	// seconds of silence after which a peer counts as gone
 	float timeout;
 	// host: listen on this computer only (the launcher passes the other

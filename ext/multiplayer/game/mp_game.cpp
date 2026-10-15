@@ -565,6 +565,8 @@ void sendPose()
 	MpCapturePose(gpMarioOriginal, &p);
 	if (MpMirrorOnTub())
 		p.more |= MPG_POSE2_ON_TUB;
+	if (p.flags & MPG_POSE_VISIBLE)
+		MpMeasureSmoothness(mpg_slot(), p);
 	mpg_set_pose(&p);
 }
 
