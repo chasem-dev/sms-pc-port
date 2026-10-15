@@ -40,6 +40,8 @@
 #include <MoveBG/MapObjWave.hpp>
 #include <NPC/NpcBase.hpp>
 #include <Player/Mario.hpp>
+#include <Player/MarioAccess.hpp>
+#include <Player/Yoshi.hpp>
 #include <System/Application.hpp>
 #include <System/MarDirector.hpp>
 #include <stdio.h>
@@ -88,6 +90,8 @@ struct Mirrored {
 Mirrored s_mirrors[kMaxMirrors];
 int s_count;
 int s_clock;
+TLiveActor* s_testWalked; // test aid claim@: an NPC walked off here
+int s_testWalkFrames;
 
 // ------------------------------------------------------------------ bytes
 
@@ -735,6 +739,15 @@ void takeTub(TLiveActor* a, const u8* in, int size, int, int*)
 	t->mQuat.w += (sign * q[3] - t->mQuat.w) * k;
 	t->mQuat.normalize();
 	t->mAngleVel = spin;
+	static int taken;
+	if (getenv("SMS_MULTIPLAYER_DEBUG") && taken++ % 150 == 0) {
+		// tilt: the angle between the tub's up and the world's (a turn's w is cos(half the angle))
+		const f32 hostTilt = 2.0f * acosf(fminf(1.0f, sqrtf(q[3] * q[3] + q[1] * q[1]))) * 57.29578f;
+		const f32 hereTilt = 2.0f * acosf(fminf(1.0f, sqrtf(t->mQuat.w * t->mQuat.w + t->mQuat.y * t->mQuat.y))) * 57.29578f;
+		const f32 apart = 2.0f * acosf(fminf(1.0f, fabsf(dot))) * 57.29578f;
+		fprintf(stderr, "[multiplayer] tub: the host's tipped %.2f degrees, this one %.2f, %.2f apart\n", hostTilt, hereTilt,
+		        apart);
+	}
 }
 
 // The host: the others standing on the tub weigh on it too, as this game's
@@ -936,6 +949,13 @@ void MpMirrorCollect()
 void MpMirrorTick()
 {
 	s_clock++;
+	if (s_testWalked && s_testWalkFrames > 0) {
+		s_testWalkFrames--;
+		s_testWalked->mPosition.x += 3.0f;
+		if (!s_testWalkFrames)
+			fprintf(stderr, "[multiplayer] test: NPC walked to %.0f %.0f %.0f\n", s_testWalked->mPosition.x,
+			        s_testWalked->mPosition.y, s_testWalked->mPosition.z);
+	}
 	// the others' states, kept: taken every tick (a mover between theirs moves on)
 	int slot, manager, index, size;
 	u8 data[48];
@@ -998,9 +1018,14 @@ void debugMirrors()
 		if (!m.actor || said[m.kind - kKinds])
 			continue;
 		said[m.kind - kKinds] = true;
-		fprintf(stderr, "[multiplayer] mirror: %s %d.%d at %.0f %.0f %.0f, %s, last heard %d ticks ago\n", m.kind->name,
+		char extra[64] = "";
+		if (m.kind->match == isEgg)
+			snprintf(extra, sizeof extra, " (egg state %d%s; Yoshi here %s)", (int)static_cast<TEggYoshi*>(m.actor)->mState,
+			         m.actor->checkLiveFlag(LIVE_FLAG_DEAD) ? ", gone" : "",
+			         SMS_GetYoshi() && SMS_GetYoshi()->isHatched() ? "hatched" : "not hatched");
+		fprintf(stderr, "[multiplayer] mirror: %s %d.%d at %.0f %.0f %.0f, %s, last heard %d ticks ago%s\n", m.kind->name,
 		        m.manager, m.index, m.actor->mPosition.x, m.actor->mPosition.y, m.actor->mPosition.z,
-		        ownedHere(m) ? "run here" : "taken", s_clock - m.heardAt);
+		        ownedHere(m) ? "run here" : "taken", s_clock - m.heardAt, extra);
 	}
 }
 
@@ -1008,6 +1033,75 @@ void MpMirrorUsed(const void* object)
 {
 	if (Mirrored* m = findActor(object))
 		m->usedAt = s_clock;
+}
+
+bool MpMirrorTestHatch()
+{
+	for (int k = 0; k < s_count; k++) {
+		Mirrored& m = s_mirrors[k];
+		if (!m.actor || m.kind->match != isEgg)
+			continue;
+		TEggYoshi* e = static_cast<TEggYoshi*>(m.actor);
+		if (e->checkLiveFlag(LIVE_FLAG_DEAD) || eggHatching(e) || !gpConductor)
+			continue;
+		if (e->mState == 0xE) { // asleep until the plaza's story allows it (a new save): woken, for the test
+			e->mState = 1;
+			if (!e->unk14C)
+				e->decideRandomLoveFruit();
+		}
+		// a fruit of the stage of the kind it wants, fed as the game feeds it
+		for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end(); ++it)
+			for (int i = 0; *it && i < (*it)->getObjNum(); i++) {
+				TLiveActor* fruit = (*it)->getObj(i);
+				if (fruit && (u32)fruit->mActorType == e->unk14C) {
+					fprintf(stderr, "[multiplayer] test: feeding Yoshi's egg %d.%d its fruit (%08x)\n", m.manager, m.index,
+					        (unsigned)e->unk14C);
+					e->touchFruit(fruit);
+					return true;
+				}
+			}
+		static bool said;
+		if (!said) {
+			said = true;
+			fprintf(stderr, "[multiplayer] test: Yoshi's egg wants %08x (state %d); fruit here:", (unsigned)e->unk14C,
+			        (int)e->mState);
+			for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end(); ++it)
+				for (int i = 0; *it && i < (*it)->getObjNum(); i++)
+					if (TLiveActor* f = (*it)->getObj(i))
+						if ((f->mActorType & 0xFFFFFF00) == 0x40000300)
+							fprintf(stderr, " %08x", (unsigned)f->mActorType);
+			fprintf(stderr, "\n");
+		}
+	}
+	return false;
+}
+
+// Test aid: the first NPC is claimed as a talk to it would claim it, and
+// walked off (as an event sends one): the others' games should follow it.
+bool MpMirrorTestClaimNpc()
+{
+	for (int k = 0; k < s_count; k++)
+		if (s_mirrors[k].actor && s_mirrors[k].kind->match == isNpc) {
+			s_mirrors[k].claimedAt = s_clock;
+			s_testWalked           = s_mirrors[k].actor;
+			s_testWalkFrames       = 300;
+			fprintf(stderr, "[multiplayer] test: NPC %d.%d claimed here, walking it off\n", s_mirrors[k].manager,
+			        s_mirrors[k].index);
+			return true;
+		}
+	return false;
+}
+
+bool MpMirrorTestTubEdge()
+{
+	for (int k = 0; k < s_count; k++)
+		if (s_mirrors[k].actor && s_mirrors[k].kind->match == isTub && gpMarioOriginal) {
+			const JGeometry::TVec3<f32>& c = s_mirrors[k].actor->mPosition;
+			gpMarioOriginal->mPosition.set(c.x + 900.0f, c.y + 300.0f, c.z);
+			fprintf(stderr, "[multiplayer] test: to the tub's edge (%.0f %.0f %.0f)\n", c.x + 900.0f, c.y + 300.0f, c.z);
+			return true;
+		}
+	return false;
 }
 
 bool MpMirrorOnTub()

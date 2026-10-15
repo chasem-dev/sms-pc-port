@@ -1246,6 +1246,7 @@ extern "C" int mpg_player_present(int slot)
 }
 extern "C" void mpg_restart_session(void) { g.restartSession = true; }
 extern "C" int mpg_slot(void) { return g.role == MPG_ROLE_OFF ? -1 : mp_local_slot(); }
+extern "C" int mpg_ping(int slot) { return g.role == MPG_ROLE_OFF ? -1 : mp_ping(slot); }
 extern "C" int mpg_character(int slot) { return slot >= 0 && slot < MP_MAX_PLAYERS ? slot : 0; }
 extern "C" const char* mpg_character_name(int slot)
 {

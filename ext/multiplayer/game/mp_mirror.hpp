@@ -18,5 +18,11 @@ void MpMirrorUsed(const void* object);
 bool MpMirrorKeepsHits(const void* object);
 // Whether this game's Mario stands on Bowser's hot tub (the host tips it under him).
 bool MpMirrorOnTub();
+// Test aid: feeds this game's Yoshi's egg the fruit it wants (it hatches).
+bool MpMirrorTestHatch();
+// Test aid: puts this game's Mario by the edge of Bowser's tub (his weight tips it).
+bool MpMirrorTestTubEdge();
+// Test aid: claims the first NPC (as talking to it does) and walks it off.
+bool MpMirrorTestClaimNpc();
 
 #endif

@@ -31,6 +31,7 @@
 #include <JSystem/JKernel/JKRHeap.hpp>
 #include <M3DUtil/M3UModelMario.hpp>
 #include <M3DUtil/MActor.hpp>
+#include <MoveBG/MapObjCorona.hpp>
 #include <MoveBG/Item.hpp>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
 #include <MoveBG/ItemManager.hpp>
@@ -1016,6 +1017,15 @@ void followHostEnemies()
 	const int n    = mpg_enemies(list, 64, &age);
 	const bool fresh = n > 0 && age + 0.001f < s_lastWorldAge;
 	s_lastWorldAge   = age;
+	// nothing from the host for a second (its game is paused, or the link
+	// is down): enemies here go by themselves until it comes again
+	static bool onOwn;
+	if ((age > 1.0f) != onOwn) {
+		onOwn = age > 1.0f;
+		if (getenv("SMS_MULTIPLAYER_DEBUG"))
+			fprintf(stderr, "[multiplayer] enemies: %s\n",
+			        onOwn ? "nothing from the host lately, they go by themselves here" : "following the host's again");
+	}
 	if (age > 1.0f) {
 		steerEnemies();
 		return;
@@ -1293,6 +1303,14 @@ struct TestPlan {
 	bool parsed;
 	int takeAt, takeCount;
 	int againAt, againCount; // takes the first coins even if gone (as one who had not heard): two take one
+	int hatchAt;             // feeds Yoshi's egg its fruit
+	bool hatched;
+	int tubAt;               // goes to the edge of Bowser's tub
+	bool onTub;
+	int poundAt;             // ground-pounds Bowser's tub (as landing on it does)
+	bool pounded;
+	int claimAt;             // claims an NPC as a talk does, and walks it off
+	bool claimed;
 	bool tookAgain;
 	int warpAt, warpArea, warpEpisode;
 	int killAt, killCount;
@@ -1320,13 +1338,14 @@ struct TestPlan {
 TestPlan s_test;
 
 void testSprayNpc(bool first); // shared objects, below
+bool testPoundTub();
 void testCarry(bool take);
 
 void runTests(TMarDirector* dir, bool arrived)
 {
 	if (!s_test.parsed) {
 		s_test.parsed = true;
-		s_test.againAt = -1;
+		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = -1;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
 		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = s_test.bossHitAt = s_test.setFlagAt = -1;
 		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.npcSprayAt = s_test.carryAt = -1;
@@ -1335,6 +1354,14 @@ void runTests(TMarDirector* dir, bool arrived)
 			const char* t = strstr(plan, "take@");
 			if (t)
 				sscanf(t, "take@%d:%d", &s_test.takeAt, &s_test.takeCount);
+			if (const char* cl = strstr(plan, "claim@"))
+				sscanf(cl, "claim@%d", &s_test.claimAt);
+			if (const char* pd = strstr(plan, "pound@"))
+				sscanf(pd, "pound@%d", &s_test.poundAt);
+			if (const char* tb = strstr(plan, "tubedge@"))
+				sscanf(tb, "tubedge@%d", &s_test.tubAt);
+			if (const char* h = strstr(plan, "hatch@"))
+				sscanf(h, "hatch@%d", &s_test.hatchAt);
 			if (const char* a = strstr(plan, "again@"))
 				sscanf(a, "again@%d:%d", &s_test.againAt, &s_test.againCount);
 			const char* k = strstr(plan, "kill@");
@@ -1397,6 +1424,17 @@ void runTests(TMarDirector* dir, bool arrived)
 			break;
 		}
 	}
+	if (getenv("SMS_MULTIPLAYER_TEST") && s_test.frames % 600 == 0)
+		fprintf(stderr, "[multiplayer] test: frame %d, %d together, flag set %d, hatched %d\n", s_test.frames,
+		        s_test.together, (int)s_test.flagSet, (int)s_test.hatched);
+	if (s_test.claimAt >= 0 && !s_test.claimed && s_test.frames >= s_test.claimAt)
+		s_test.claimed = MpMirrorTestClaimNpc();
+	if (s_test.poundAt >= 0 && !s_test.pounded && s_test.frames >= s_test.poundAt)
+		s_test.pounded = testPoundTub();
+	if (s_test.tubAt >= 0 && !s_test.onTub && s_test.frames >= s_test.tubAt)
+		s_test.onTub = MpMirrorTestTubEdge();
+	if (s_test.hatchAt >= 0 && !s_test.hatched && s_test.frames >= s_test.hatchAt)
+		s_test.hatched = MpMirrorTestHatch();
 	if (s_test.againAt >= 0 && s_test.frames == s_test.againAt + 300)
 		fprintf(stderr, "[multiplayer] test: coins now %d\n", (int)TFlagManager::getInstance()->getFlag(0x40002));
 	if (s_test.againAt >= 0 && !s_test.tookAgain && s_test.frames >= s_test.againAt) {
@@ -1777,6 +1815,104 @@ struct MoveSwap {
 MoveSwap s_swaps[32];
 int s_swapDepth;
 
+// Where each other player is now, as near as the host can tell: their newest
+// pose (their puppet is drawn a little behind it, for smoothness), carried on
+// at their pace for as long as it took to get here (half the round trip, and
+// since it came). What the host's enemies chase and wait for.
+struct Aim {
+	JGeometry::TVec3<f32> at, last;
+	f32 vx, vz; // units a millisecond, along the ground
+	uint32_t lastTime;
+	bool have;
+};
+Aim s_aims[4];
+
+// Debug: how far the aim (and the drawn puppet, which the host chased before)
+// is from where the player turns out to have been at that moment, once their
+// poses from then arrive.
+struct AimCheck {
+	uint32_t when; // their game's time the aim was for
+	JGeometry::TVec3<f32> aim, drawn;
+};
+AimCheck s_aimChecks[4][64];
+int s_aimCheckNext[4];
+double s_aimErr[4], s_drawnErr[4];
+int s_aimErrCount[4];
+
+void checkAims(int slot, const JGeometry::TVec3<f32>& from, uint32_t fromTime, const JGeometry::TVec3<f32>& to,
+               uint32_t toTime)
+{
+	if (!getenv("SMS_MULTIPLAYER_DEBUG") || toTime == fromTime)
+		return;
+	for (int i = 0; i < 64; i++) {
+		AimCheck& c = s_aimChecks[slot][i];
+		if (!c.when || (int32_t)(c.when - fromTime) <= 0 || (int32_t)(c.when - toTime) > 0)
+			continue;
+		const f32 t = (f32)(int32_t)(c.when - fromTime) / (f32)(int32_t)(toTime - fromTime);
+		const JGeometry::TVec3<f32> was(from.x + (to.x - from.x) * t, from.y, from.z + (to.z - from.z) * t);
+		const f32 ax = c.aim.x - was.x, az = c.aim.z - was.z, dx = c.drawn.x - was.x, dz = c.drawn.z - was.z;
+		s_aimErr[slot] += sqrtf(ax * ax + az * az);
+		s_drawnErr[slot] += sqrtf(dx * dx + dz * dz);
+		s_aimErrCount[slot]++;
+		c.when = 0;
+	}
+	if (s_aimErrCount[slot] >= 300) {
+		fprintf(stderr, "[multiplayer] aim at %s: %.0f units off on average (the drawn puppet: %.0f)\n",
+		        mpg_character_name(slot), s_aimErr[slot] / s_aimErrCount[slot], s_drawnErr[slot] / s_aimErrCount[slot]);
+		s_aimErr[slot] = s_drawnErr[slot] = 0.0;
+		s_aimErrCount[slot]                = 0;
+	}
+}
+
+void updateAims()
+{
+	for (int slot = 0; slot < 4; slot++) {
+		Aim& a = s_aims[slot];
+		MpgPose pose;
+		float age = 0.0f;
+		if (!watchable(slot) || !mpg_pose(slot, &pose, &age)) {
+			a.have = false;
+			continue;
+		}
+		const JGeometry::TVec3<f32> pos(pose.mtx[0][3], pose.mtx[1][3], pose.mtx[2][3]);
+		if (!a.have) {
+			a.vx = a.vz = 0.0f;
+		} else if (pose.time != a.lastTime) {
+			const f32 dt = (f32)(int32_t)(pose.time - a.lastTime);
+			const f32 dx = pos.x - a.last.x, dz = pos.z - a.last.z;
+			if (dt > 0.0f && dt < 500.0f && dx * dx + dz * dz < 400.0f * 400.0f) {
+				a.vx += (dx / dt - a.vx) * 0.5f;
+				a.vz += (dz / dt - a.vz) * 0.5f;
+			} else {
+				a.vx = a.vz = 0.0f; // a warp, or a long gap: no pace to go by
+			}
+		}
+		if (!a.have || pose.time != a.lastTime) {
+			if (a.have)
+				checkAims(slot, a.last, a.lastTime, pos, pose.time);
+			a.last     = pos;
+			a.lastTime = pose.time;
+		}
+		a.have         = true;
+		const int ping = mpg_ping(slot);
+		f32 lead       = (ping > 0 ? ping * 0.5f : 0.0f) + age * 1000.0f;
+		if (lead > 200.0f)
+			lead = 200.0f;
+		a.at.set(a.last.x + a.vx * lead, a.last.y, a.last.z + a.vz * lead);
+		if (getenv("SMS_MULTIPLAYER_DEBUG")) {
+			AimCheck& c = s_aimChecks[slot][s_aimCheckNext[slot]++ & 63];
+			c.when      = a.lastTime + (uint32_t)lead;
+			c.aim       = a.at;
+			c.drawn     = s_puppets[slot]->mPosition;
+		}
+	}
+}
+
+const JGeometry::TVec3<f32>& aimOf(int slot)
+{
+	return s_aims[slot].have ? s_aims[slot].at : s_puppets[slot]->mPosition;
+}
+
 void objectMove(void* object, int after)
 {
 	if (after) {
@@ -1797,7 +1933,7 @@ void objectMove(void* object, int after)
 	f32 nearest = distance2(a->mPosition, *gpMarioPos);
 	for (int slot = 0; slot < 4; slot++)
 		if (watchable(slot)) {
-			const f32 d = distance2(a->mPosition, s_puppets[slot]->mPosition);
+			const f32 d = distance2(a->mPosition, aimOf(slot));
 			if (d < nearest)
 				nearest = d, best = slot;
 		}
@@ -1808,7 +1944,7 @@ void objectMove(void* object, int after)
 	w.object    = object;
 	w.was       = gpMarioPos;
 	w.unclipped = false;
-	gpMarioPos  = &s_puppets[best]->mPosition;
+	gpMarioPos  = const_cast<JGeometry::TVec3<f32>*>(&aimOf(best));
 	if (a->checkLiveFlag(LIVE_FLAG_CLIPPED_OUT) && nearest < kNearOnScreen * kNearOnScreen) {
 		a->offLiveFlag(LIVE_FLAG_CLIPPED_OUT);
 		w.unclipped = true;
@@ -1829,6 +1965,7 @@ void updateNearest()
 	s_nearestOn = false;
 	if (s_role != MPG_ROLE_HOST || !inStage() || s_swapDepth)
 		return;
+	updateAims();
 	for (int slot = 0; slot < 4; slot++)
 		if (watchable(slot))
 			s_nearestOn = true;
@@ -1984,6 +2121,21 @@ void testSprayNpc(bool first)
 		fprintf(stderr, "[multiplayer] test: spraying NPC %u.%u\n", (unsigned)(where >> 16), (unsigned)(where & 0xFFFF));
 	if (!objectHit(best, &water, HIT_MESSAGE_SPRAYED_BY_WATER))
 		best->receiveMessage(&water, HIT_MESSAGE_SPRAYED_BY_WATER);
+}
+
+// Test aid (pound@N): this game's Mario ground-pounds Bowser's tub, through
+// the hit hook as his landing does (patch zzzzz-ext-06).
+bool testPoundTub()
+{
+	for (int m = 0; m < s_sharedCount; m++)
+		for (int i = 0; s_sharedManagers[m] && i < s_sharedManagers[m]->getObjNum(); i++)
+			if (TBathtub* tub = dynamic_cast<TBathtub*>(s_sharedManagers[m]->getObj(i))) {
+				fprintf(stderr, "[multiplayer] test: ground-pounding the tub (%d.%d)\n", m, i);
+				if (!objectHit(tub, gpMarioOriginal, HIT_MESSAGE_HIP_DROP))
+					tub->receiveMessage(gpMarioOriginal, HIT_MESSAGE_HIP_DROP);
+				return true;
+			}
+	return false;
 }
 
 // The others' hits on shared objects, landed here as theirs were.
@@ -2410,6 +2562,11 @@ void moveStage()
 		TMarDirector* dir = director();
 		const int movie   = dir && dir->checkUnk4CFlag(TMarDirector::DIRECTOR_FLAG_MOVIE_PENDING)
 		                        ? (int)gpApplication.getMovie() : -1;
+		// the stage it is in, again (a way back in, a restart): a new session
+		// all the same, so the others load it afresh too
+		const TGameSequence& cur = gpApplication.mCurrArea;
+		if (next.getStage() == cur.getStage() && next.getScenario() == cur.getScenario())
+			mpg_restart_session();
 		mpg_host_going(next.getStage(), next.getScenario(), flags, movie);
 		return;
 	}
