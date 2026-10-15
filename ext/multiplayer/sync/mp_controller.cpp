@@ -1013,7 +1013,7 @@ void packPose(const MpgPose& p, std::vector<uint8_t>& out)
 	w.u8(p.yoshiColor[0]);
 	w.u8(p.yoshiColor[1]);
 	w.u8(p.yoshiColor[2]);
-	w.u8(0);
+	w.u8(p.more);
 	w.u32(p.hiddenShapes);
 	w.u8(p.emitters);
 	w.u8(0);
@@ -1057,7 +1057,7 @@ bool unpackPose(const uint8_t* d, size_t n, MpgPose& p)
 	p.yoshiColor[0] = r.u8();
 	p.yoshiColor[1] = r.u8();
 	p.yoshiColor[2] = r.u8();
-	r.u8();
+	p.more          = r.u8();
 	p.hiddenShapes = r.u32();
 	p.emitters     = r.u8();
 	r.u8();

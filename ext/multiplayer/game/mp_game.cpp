@@ -563,6 +563,8 @@ void sendPose()
 {
 	MpgPose p;
 	MpCapturePose(gpMarioOriginal, &p);
+	if (MpMirrorOnTub())
+		p.more |= MPG_POSE2_ON_TUB;
 	mpg_set_pose(&p);
 }
 
@@ -1322,6 +1324,7 @@ void runTests(TMarDirector* dir, bool arrived)
 {
 	if (!s_test.parsed) {
 		s_test.parsed = true;
+		s_test.againAt = -1;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
 		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = s_test.bossHitAt = s_test.setFlagAt = -1;
 		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.npcSprayAt = s_test.carryAt = -1;
@@ -1330,7 +1333,6 @@ void runTests(TMarDirector* dir, bool arrived)
 			const char* t = strstr(plan, "take@");
 			if (t)
 				sscanf(t, "take@%d:%d", &s_test.takeAt, &s_test.takeCount);
-			s_test.againAt = -1;
 			if (const char* a = strstr(plan, "again@"))
 				sscanf(a, "again@%d:%d", &s_test.againAt, &s_test.againCount);
 			const char* k = strstr(plan, "kill@");

@@ -33,6 +33,7 @@
 #include <MoveBG/ItemManager.hpp>
 #include <MoveBG/MapObjBall.hpp>
 #include <MoveBG/MapObjBianco.hpp>
+#include <MoveBG/MapObjCorona.hpp>
 #include <MoveBG/MapObjMare.hpp>
 #include <MoveBG/MapObjPinna.hpp>
 #include <MoveBG/MapObjSirena.hpp>
@@ -42,6 +43,7 @@
 #include <System/Application.hpp>
 #include <System/MarDirector.hpp>
 #include <stdio.h>
+#include <typeinfo>
 #include <stdlib.h>
 #include <string.h>
 
@@ -456,8 +458,10 @@ void takeSlotWith(TLiveActor* a, const u8* in, int size, bool turnOnly)
 void takeSlotDrum(TLiveActor* a, const u8* in, int size, int, int*) { takeSlotWith(a, in, size, false); }
 void takeItemSlotDrum(TLiveActor* a, const u8* in, int size, int, int*) { takeSlotWith(a, in, size, true); }
 
-// Yoshi's egg: the fruit it wants (the host's draw), and whether it is still
-// there (a player who hatched it rides Yoshi; the others' eggs go).
+// Yoshi's egg: the fruit it wants (the host's draw, or the last wish of the
+// game whose egg hatched). Every game has its own Yoshi, so an egg hatched by
+// one player stays in the others' games, for each of them to hatch their own
+// (the others see a player's Yoshi under them).
 bool isEgg(TLiveActor* a) { return dynamic_cast<TEggYoshi*>(a) != nullptr; }
 const u16 kEggHatching = 0xB, kEggHatched = 0xC;
 // Hatching or hatched here (seen in this game's own run, not an egg still
@@ -477,13 +481,9 @@ void takeEgg(TLiveActor* a, const u8* in, int size, int, int*)
 	TEggYoshi* e = static_cast<TEggYoshi*>(a);
 	Get g(in, size);
 	const u32 wants = (u32)g.i();
-	const bool gone = g.b() != 0;
+	g.b(); // hatched in the sender's game (theirs; this one stays)
 	if (!g.ok || s_eggHatchedHere || eggHatching(e) || e->checkLiveFlag(LIVE_FLAG_DEAD))
 		return;
-	if (gone) {
-		e->makeObjDead(); // hatched in another game: that player has Yoshi
-		return;
-	}
 	if (wants && wants != e->unk14C && e->mState == 1) {
 		e->unk14C = wants;
 		e->startBalloonAnim();
@@ -701,6 +701,61 @@ void takeSleepyWiggler(TLiveActor* a, const u8* in, int size, int, int* last)
 	takeFollower(a, in, size, last, sleepyWigglerStep);
 }
 
+// Bowser's hot tub: how it is tipped, the host's, which tips under every
+// player standing on it (each game tips its own under its own player only).
+bool isTub(TLiveActor* a) { return dynamic_cast<TBathtub*>(a) != nullptr; }
+int saveTub(TLiveActor* a, u8* out)
+{
+	TBathtub* t = static_cast<TBathtub*>(a);
+	Put o(out);
+	o.f(t->mQuat.x);
+	o.f(t->mQuat.y);
+	o.f(t->mQuat.z);
+	o.f(t->mQuat.w);
+	o.v3(t->mAngleVel);
+	return o.n;
+}
+void takeTub(TLiveActor* a, const u8* in, int size, int, int*)
+{
+	TBathtub* t = static_cast<TBathtub*>(a);
+	Get g(in, size);
+	f32 q[4];
+	for (int i = 0; i < 4; i++)
+		q[i] = g.f();
+	const JGeometry::TVec3<f32> spin = g.v3();
+	if (!g.ok || t->unk29A) // overturned: the ending, played in each game
+		return;
+	// eased toward the host's (the shorter way round), then on as it spins
+	f32 dot = q[0] * t->mQuat.x + q[1] * t->mQuat.y + q[2] * t->mQuat.z + q[3] * t->mQuat.w;
+	const f32 sign = dot < 0.0f ? -1.0f : 1.0f, k = 0.3f;
+	t->mQuat.x += (sign * q[0] - t->mQuat.x) * k;
+	t->mQuat.y += (sign * q[1] - t->mQuat.y) * k;
+	t->mQuat.z += (sign * q[2] - t->mQuat.z) * k;
+	t->mQuat.w += (sign * q[3] - t->mQuat.w) * k;
+	t->mQuat.normalize();
+	t->mAngleVel = spin;
+}
+
+// The host: the others standing on the tub weigh on it too, as this game's
+// Mario does (TBathtub::control's liftMario).
+void weighTub(TBathtub* t)
+{
+	if (t->unk29A || t->mHeldObject)
+		return;
+	for (int slot = 0; slot < 4; slot++) {
+		MpgPose pose;
+		float age;
+		if (slot == mpg_slot() || !mpg_player_present(slot) || !mpg_pose(slot, &pose, &age) || age > 0.5f
+		    || !(pose.more & MPG_POSE2_ON_TUB))
+			continue;
+		const JGeometry::TVec3<f32> at(pose.mtx[0][3], pose.mtx[1][3], pose.mtx[2][3]);
+		t->liftMario(at);
+		static int weighed;
+		if (getenv("SMS_MULTIPLAYER_DEBUG") && weighed++ % 300 == 0)
+			fprintf(stderr, "[multiplayer] tub: %s weighs on it (%.0f %.0f %.0f)\n", mpg_character_name(slot), at.x, at.y, at.z);
+	}
+}
+
 const Kind kKinds[] = {
 	{"NPC", isNpc, saveNpc, takeNpc, OWN_HOST, 6, false},
 	{"leaf boat", isLeafBoat, saveMover, takeMover, OWN_RIDER, 2, false},
@@ -717,6 +772,7 @@ const Kind kKinds[] = {
 	{"Bowser", isBowser, saveBowser, takeBowser, OWN_HOST, 2, false},
 	{"Bowser Jr.", isJunior, saveJunior, takeJunior, OWN_HOST, 2, false},
 	{"sleeping Wiggler", isSleepyWiggler, saveSleepyWiggler, takeSleepyWiggler, OWN_HOST, 3, false},
+	{"Bowser's tub", isTub, saveTub, takeTub, OWN_HOST, 2, false},
 	{"watermelon", isWatermelon, saveWatermelon, takeWatermelon, OWN_USER, 2, false},
 };
 const int kKindCount = sizeof kKinds / sizeof kKinds[0];
@@ -734,13 +790,24 @@ bool rides(TLiveActor* a)
 	return m && m->mGroundPlane && m->mGroundPlane->getActor() == a && m->isTouchGround4cm();
 }
 
+// This game's player is talking to `a` (an NPC): it stands and faces them here.
+bool talkingHere(TLiveActor* a)
+{
+	TMarDirector* d = gpMarDirector;
+	return d && d->isTalkModeNow() && (TLiveActor*)d->getTalkingNPC() == a;
+}
+
 bool ownedHere(Mirrored& m)
 {
+	// an NPC this game's player is talking to: run here (it stops and turns
+	// to them, as it does for everyone else too, since this game sends it)
+	if (m.actor && m.kind->match == isNpc && talkingHere(m.actor))
+		return true;
 	if (m.actor) {
 		if (m.kind->owner == OWN_RIDER && rides(m.actor))
 			m.usedAt = s_clock;
 		// a big melon this game's Mario is up against: bumped here
-		if (m.kind == &kKinds[kKindCount - 1] && gpMarioOriginal) {
+		if (m.kind->match == isWatermelon && gpMarioOriginal) {
 			const f32 dx = gpMarioOriginal->mPosition.x - m.actor->mPosition.x;
 			const f32 dz = gpMarioOriginal->mPosition.z - m.actor->mPosition.z;
 			const f32 r  = m.actor->mDamageRadius + 80.0f;
@@ -765,7 +832,7 @@ bool ownedHere(Mirrored& m)
 	if (mpg_role() != MPG_ROLE_HOST)
 		return false;
 	// the host runs it, unless a player is using it now
-	return !(m.heardSlot != 0 && s_clock - m.heardAt < fps() / 2);
+	return !(m.heardSlot != 0 && s_clock - m.heardAt < fps());
 }
 
 Mirrored* find(int manager, int index)
@@ -848,7 +915,7 @@ void MpMirrorCollect()
 		w.usedAt = w.heardAt = -100000;
 	}
 	if (getenv("SMS_MULTIPLAYER_DEBUG")) {
-		int counts[16] = {0};
+		int counts[kKindCount] = {0};
 		for (int k = 0; k < s_count; k++)
 			if (s_mirrors[k].kind != &kWaveKind)
 				counts[s_mirrors[k].kind - kKinds]++;
@@ -877,12 +944,17 @@ void MpMirrorTick()
 	for (int i = 0; i < s_count; i++) {
 		Mirrored& m = s_mirrors[i];
 		if (ownedHere(m)) {
+			if (m.actor && m.kind->match == isTub && mpg_role() == MPG_ROLE_HOST)
+				weighTub(static_cast<TBathtub*>(m.actor));
 			if (s_clock % m.kind->every)
 				continue;
 			u8 out[48];
 			const int n = m.actor ? m.kind->save(m.actor, out) : (gpMapObjWave ? saveWaves(out) : 0);
-			// unchanged: once a second, so a newcomer has it
-			if (n <= 0 || (n == m.sentSize && !memcmp(out, m.sent, n) && s_clock - m.sentAt < fps()))
+			// unchanged: once a second from the host, so a newcomer has it; a
+			// few times a second from a player using it, so the host (which
+			// takes it back once it hears nothing for a second) keeps letting them
+			const int keep = mpg_role() == MPG_ROLE_HOST ? fps() : fps() / 3;
+			if (n <= 0 || (n == m.sentSize && !memcmp(out, m.sent, n) && s_clock - m.sentAt < keep))
 				continue;
 			mpg_mirror(m.manager, m.index, out, n);
 			memcpy(m.sent, out, n);
@@ -905,7 +977,11 @@ void debugMirrors()
 {
 	if (!getenv("SMS_MULTIPLAYER_DEBUG") || s_clock % (10 * fps()))
 		return;
-	bool said[16] = {false};
+	bool said[kKindCount] = {false};
+	if (TMario* me = gpMarioOriginal)
+		if (me->mGroundPlane && me->mGroundPlane->getActor())
+			fprintf(stderr, "[multiplayer] standing on %s%s\n", typeid(*me->mGroundPlane->getActor()).name(),
+			        MpMirrorOnTub() ? " (the tub)" : "");
 	for (int i = 0; i < s_count; i++) {
 		Mirrored& m = s_mirrors[i];
 		if (!m.actor || said[m.kind - kKinds])
@@ -921,6 +997,13 @@ void MpMirrorUsed(const void* object)
 {
 	if (Mirrored* m = findActor(object))
 		m->usedAt = s_clock;
+}
+
+bool MpMirrorOnTub()
+{
+	TMario* m = gpMarioOriginal;
+	return m && m->mGroundPlane && m->mGroundPlane->getActor() && m->isTouchGround4cm()
+	       && dynamic_cast<TBathtub*>((TLiveActor*)m->mGroundPlane->getActor()) != nullptr;
 }
 
 bool MpMirrorKeepsHits(const void* object)

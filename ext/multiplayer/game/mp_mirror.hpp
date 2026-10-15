@@ -16,5 +16,7 @@ void MpMirrorUsed(const void* object);
 // Whether the others' hits must not land on `object` here (its owner runs
 // it, and sends the outcome: a slot machine's draw, for one).
 bool MpMirrorKeepsHits(const void* object);
+// Whether this game's Mario stands on Bowser's hot tub (the host tips it under him).
+bool MpMirrorOnTub();
 
 #endif
