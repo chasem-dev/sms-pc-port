@@ -189,6 +189,10 @@ struct Session {
 
 Session* g_session;
 std::mutex g_sessionLock; // guards g_session itself
+// A client's last slot and the host's token for it: sent when joining again
+// (after losing the host), so the host gives the same slot back.
+int g_rejoinSlot       = 0;
+uint32_t g_rejoinToken = 0;
 
 void copyName(char (&dst)[MP_NAME_LEN], const char* src)
 {
@@ -347,6 +351,10 @@ void dropPeer(Session& s, int idx, const char* why)
 			if (s.peers[i].active)
 				queueReliable(s.peers[i], SYS_PLAYER_LEFT, &slot, 1);
 	} else {
+		if (s.localSlot > 0 && p.token) { // to ask for this slot back when joining again
+			g_rejoinSlot  = s.localSlot;
+			g_rejoinToken = p.token;
+		}
 		p      = Peer();
 		s.link = MP_LINK_FAILED;
 		s.message = why;
@@ -568,13 +576,26 @@ void hostPacket(Session& s, const uint8_t* buf, int n, const Address& from, uint
 			reason = REJECT_CLOSED;
 			why    = "The host is still choosing a save file. Join again once they're playing.";
 		}
+		// a player joining again names the slot they had (and its token):
+		// they get it back, the old one (perhaps not timed out yet) let go
+		const int rejoinSlot       = r.u8();
+		const uint32_t rejoinToken = r.u32();
+		int slot                   = -1;
+		if (!why && r.ok && rejoinSlot > 0 && rejoinSlot < MP_MAX_PLAYERS && rejoinToken) {
+			Peer& old = s.peers[rejoinSlot];
+			if (old.active && old.token == rejoinToken) {
+				dropPeer(s, rejoinSlot, "reconnected");
+				slot = rejoinSlot;
+			} else if (!old.active) {
+				slot = rejoinSlot;
+			}
+		}
 		if (!why) {
 			// a player reconnecting from the same address replaces their old slot
 			for (int i = 1; i < MP_MAX_PLAYERS; i++)
 				if (s.peers[i].active && s.peers[i].addr == from)
 					dropPeer(s, i, "reconnected");
 		}
-		int slot = -1;
 		for (int i = 1; i < MP_MAX_PLAYERS && slot < 0; i++)
 			if (!s.peers[i].active)
 				slot = i;
@@ -733,6 +754,8 @@ void tick(Session& s, uint32_t now)
 			w.str(s.cfg.build, 63);
 			w.str(s.cfg.name, MP_NAME_LEN - 1);
 			w.u64(s.connectCookie);
+			w.u8((uint8_t)g_rejoinSlot);
+			w.u32(g_rejoinToken);
 			s.sock.send(out, w.len, s.hostAddr);
 			s.connectLastTry = now;
 		}
@@ -923,6 +946,10 @@ extern "C" void mp_stop(void)
 	s->running = false;
 	if (s->thread.joinable())
 		s->thread.join();
+	if (s->cfg.role == MP_ROLE_CLIENT && s->localSlot > 0 && s->peers[0].token) {
+		g_rejoinSlot  = s->localSlot;
+		g_rejoinToken = s->peers[0].token;
+	}
 	delete s;
 }
 
