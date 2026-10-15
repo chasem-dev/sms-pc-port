@@ -44,6 +44,7 @@ enum Kind : uint8_t {
 	K_DEMO,         // either way: session, slot, the game's description of a cutscene (mp_game.cpp)
 	K_BOSS_HIT,     // client -> host: session, part, kind, count (a hit on its copy of the boss, for the real one)
 	K_CLEAN,        // either way: session, count, goop cleaned (x, y, z halved, size), the host passing it on
+	K_HIT,          // either way: session, count, hits a player landed on shared objects (mp_game.cpp), passed on
 };
 // The host's boss rides at the end of the world snapshot, after the enemies.
 const size_t kMaxBoss = 200;
@@ -139,6 +140,16 @@ struct Controller {
 	std::deque<Clean> cleanIn;
 	std::vector<Clean> cleanLog;
 	std::unordered_map<uint32_t, Seen> cleanSeen;
+	// hits players landed on shared objects (NPCs, map objects): this
+	// game's, to send (repeats within a frame counted); the others', to land here
+	struct Hit {
+		uint8_t slot, manager;
+		uint16_t index;
+		uint8_t message, water, count;
+		int16_t x, y, z;
+	};
+	std::vector<Hit> hitOut;
+	std::deque<Hit> hitIn;
 
 	// each other player's recent poses, for drawing them smoothly
 	struct Timed {
@@ -286,6 +297,8 @@ void takeOnce(uint32_t key)
 
 void forgetCleans()
 {
+	g.hitOut.clear();
+	g.hitIn.clear();
 	g.cleanOut.clear();
 	g.cleanIn.clear();
 	g.cleanLog.clear();
@@ -388,6 +401,88 @@ void readCleans(Reader& r, int from)
 		sendCleans(-1, from, s, got);
 }
 
+// ------------------------------------------------------------------ hits on shared objects
+
+const size_t kHitBatch = 60; // 13 bytes each, within a message
+const size_t kMaxHitsIn = 512;
+
+std::vector<uint8_t> hitMessage(uint32_t session, const Controller::Hit* list, size_t n)
+{
+	std::vector<uint8_t> buf(5 + n * 13);
+	Writer w(buf.data(), buf.size());
+	w.u32(session);
+	w.u8((uint8_t)n);
+	for (size_t i = 0; i < n; i++) {
+		const Controller::Hit& h = list[i];
+		w.u8(h.slot);
+		w.u8(h.manager);
+		w.u16(h.index);
+		w.u8(h.message);
+		w.u8(h.water);
+		w.u8(h.count);
+		w.s16(h.x);
+		w.s16(h.y);
+		w.s16(h.z);
+	}
+	return buf;
+}
+
+void sendHits(int slot, int except, uint32_t session, const std::vector<Controller::Hit>& list)
+{
+	for (size_t at = 0; at < list.size(); at += kHitBatch) {
+		const size_t n = list.size() - at < kHitBatch ? list.size() - at : kHitBatch;
+		const std::vector<uint8_t> buf = hitMessage(session, list.data() + at, n);
+		if (slot >= 0)
+			send(slot, K_HIT, buf);
+		else
+			for (int i = 1; i < MP_MAX_PLAYERS; i++)
+				if (i != except && (mp_players() & (1u << i)))
+					send(i, K_HIT, buf);
+	}
+}
+
+void flushHits()
+{
+	if (g.hitOut.empty())
+		return;
+	if (g.role == MPG_ROLE_HOST && g.session)
+		sendHits(-1, 0, g.session, g.hitOut);
+	else if (g.role == MPG_ROLE_CLIENT && g.localSession)
+		sendHits(0, -1, g.localSession, g.hitOut);
+	g.hitOut.clear();
+}
+
+void readHits(Reader& r, int from)
+{
+	const uint32_t s = r.u32();
+	const int n = r.u8();
+	const uint32_t want = g.role == MPG_ROLE_HOST ? g.session : g.localSession;
+	if (!r.ok || !s || s != want || n > (int)kHitBatch)
+		return;
+	std::vector<Controller::Hit> got;
+	for (int i = 0; i < n && r.ok; i++) {
+		Controller::Hit h;
+		h.slot    = r.u8();
+		h.manager = r.u8();
+		h.index   = r.u16();
+		h.message = r.u8();
+		h.water   = r.u8();
+		h.count   = r.u8();
+		h.x       = r.s16();
+		h.y       = r.s16();
+		h.z       = r.s16();
+		if (!r.ok || h.slot >= MP_MAX_PLAYERS || !h.count)
+			break;
+		if (g.role == MPG_ROLE_HOST)
+			h.slot = (uint8_t)from; // a client speaks for itself only
+		got.push_back(h);
+		if (g.hitIn.size() < kMaxHitsIn)
+			g.hitIn.push_back(h);
+	}
+	if (g.role == MPG_ROLE_HOST && !got.empty())
+		sendHits(-1, from, s, got);
+}
+
 void hostMessage(const MpEvent& ev)
 {
 	Reader r(ev.data, ev.size);
@@ -408,6 +503,9 @@ void hostMessage(const MpEvent& ev)
 	}
 	case K_CLEAN:
 		readCleans(r, ev.slot);
+		break;
+	case K_HIT:
+		readHits(r, ev.slot);
 		break;
 	case K_SHINE_GET: {
 		uint32_t s = r.u32();
@@ -585,6 +683,9 @@ void clientMessage(const MpEvent& ev)
 	}
 	case K_CLEAN:
 		readCleans(r, 0);
+		break;
+	case K_HIT:
+		readHits(r, 0);
 		break;
 	case K_TAKEN_LIST: {
 		uint32_t s = r.u32();
@@ -898,6 +999,7 @@ extern "C" void mpg_frame(const MpgGame* game)
 	events();
 	takePoses();
 	flushCleans();
+	flushHits();
 	const bool arrived = game->playing && !g.wasPlaying;
 	g.wasPlaying       = game->playing != 0;
 
@@ -1203,6 +1305,55 @@ extern "C" int mpg_next_clean(float* x, float* y, float* z, float* size)
 	*z    = c.z * 2.0f;
 	*size = c.size;
 	g.cleanIn.pop_front();
+	return 1;
+}
+
+extern "C" void mpg_hit(int manager, int index, int message, int water, const float pos[3])
+{
+	if (g.role == MPG_ROLE_OFF || manager < 0 || manager > 255 || index < 0 || index > 0xFFFF || message < 0
+	    || message > 255)
+		return;
+	std::lock_guard<std::mutex> hold(g_lock);
+	if (!(g.role == MPG_ROLE_HOST ? g.session : g.localSession))
+		return;
+	// the same hit again this frame (a stream of water): counted, not repeated
+	for (Controller::Hit& h : g.hitOut)
+		if (h.manager == manager && h.index == index && h.message == message && h.water == (water != 0)) {
+			if (h.count < 255)
+				h.count++;
+			return;
+		}
+	if (g.hitOut.size() >= 4 * kHitBatch)
+		return;
+	Controller::Hit h;
+	h.slot    = (uint8_t)mp_local_slot();
+	h.manager = (uint8_t)manager;
+	h.index   = (uint16_t)index;
+	h.message = (uint8_t)message;
+	h.water   = water != 0;
+	h.count   = 1;
+	h.x       = halved(pos[0]);
+	h.y       = halved(pos[1]);
+	h.z       = halved(pos[2]);
+	g.hitOut.push_back(h);
+}
+
+extern "C" int mpg_next_hit(int* slot, int* manager, int* index, int* message, int* water, int* count, float pos[3])
+{
+	std::lock_guard<std::mutex> hold(g_lock);
+	if (g.hitIn.empty())
+		return 0;
+	const Controller::Hit& h = g.hitIn.front();
+	*slot    = h.slot;
+	*manager = h.manager;
+	*index   = h.index;
+	*message = h.message;
+	*water   = h.water;
+	*count   = h.count;
+	pos[0]   = h.x * 2.0f;
+	pos[1]   = h.y * 2.0f;
+	pos[2]   = h.z * 2.0f;
+	g.hitIn.pop_front();
 	return 1;
 }
 

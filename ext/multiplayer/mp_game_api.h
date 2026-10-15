@@ -143,6 +143,13 @@ void mpg_item_taken_at(int type, const float pos[3]);
 // The session's list so far, from 0 (new ones are added at the end); 0 past it.
 int mpg_taken_at(int i, MpgTakenAt* out);
 
+// A hit this game's player (`water`: its water) landed on a shared object
+// (manager and index in the stage's lists, mp_game.cpp): the others land it
+// on theirs. mpg_next_hit gives one another player landed (repeated `count`
+// times), 0 when there is none.
+void mpg_hit(int manager, int index, int message, int water, const float pos[3]);
+int mpg_next_hit(int* slot, int* manager, int* index, int* message, int* water, int* count, float pos[3]);
+
 // Goop this game cleaned (TPollutionManager::clean): the others clean it too.
 void mpg_clean(float x, float y, float z, float size);
 // The next goop another game cleaned, for this game to clean; 0 when none.
