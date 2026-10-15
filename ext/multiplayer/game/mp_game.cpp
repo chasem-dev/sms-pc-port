@@ -35,6 +35,7 @@
 #include <Enemy/Koopa.hpp>
 #include <Enemy/KoopaNerve.hpp>
 #include <MoveBG/MapObjSirena.hpp>
+#include <MoveBG/ModelGate.hpp>
 #include <MoveBG/MapObjCorona.hpp>
 #include <MoveBG/Item.hpp>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
@@ -192,6 +193,32 @@ const int kMaxSwitches  = 32;
 TMapObjBase* s_switches[kMaxSwitches];
 bool s_switchDown[kMaxSwitches];
 int s_switchCount;
+
+// The plaza's M gates (Shadow Mario paints them): a stage script opens one
+// as its story event plays and sets its save flag; the others' scripts wait
+// on their own copies of that event, so there the flag comes (shared) but the
+// gate stays shut until the stage loads again. Each game opens a gate whose
+// flag is set, as the script does.
+TModelGate* s_gates[5];
+bool s_gatesFound;
+
+void openGatesFromFlags()
+{
+	static const char* const names[] = {"Gate", "GateToRicco", "GateToMamma", "GateToMonte", "GateToMare"};
+	static const u32 flags[]         = {0x10385, 0x10386, 0x10387, 0x10387, 0x10387}; // as TModelGate's load
+	if (!s_gatesFound) {
+		s_gatesFound = true;
+		for (int i = 0; i < 5; i++)
+			s_gates[i] = JDrama::TNameRefGen::search<TModelGate>(names[i]);
+	}
+	for (int i = 0; i < 5; i++) {
+		TModelGate* g = s_gates[i];
+		if (g && !(g->mFlags & TModelGate::GATE_FLAG_ACTIVE) && TFlagManager::getInstance()->getBool(flags[i])) {
+			fprintf(stderr, "[multiplayer] the %s M gate opened in the host's game: opened here\n", names[i]);
+			g->startOpen();
+		}
+	}
+}
 
 void collectSwitches()
 {
@@ -650,6 +677,18 @@ void followHost(TMarDirector* dir)
 	uint32_t flags;
 	int movie;
 	const int fps = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
+	// off to a world whose episode the host is still choosing (its episode
+	// select): this game waits where it is and goes straight to the one the
+	// host picks once the host is there (no episode select of its own)
+	if (episode == 0xFF && mpg_target_traveling()) {
+		static int told;
+		if (told++ % (5 * fps) == 0) {
+			char text[128];
+			snprintf(text, sizeof text, "%s is choosing an episode of %s", mpg_character_name(0), worldName(area));
+			showNotice(text);
+		}
+		return;
+	}
 	if (mpg_target_traveling() && !mpg_travel(&flags, &movie) && s_travelWait < 4 * fps) {
 		s_travelWait++;
 		return;
@@ -2651,6 +2690,8 @@ void frame()
 		syncFlags();
 		takeRemovals();
 		syncTakenAt();
+		if (s_playing)
+			openGatesFromFlags();
 		sendPose();
 		if (s_role == MPG_ROLE_HOST) {
 			// paused, the host's enemies stand still: the others' games would
@@ -2712,6 +2753,8 @@ void stageSetup()
 	s_aloneCount   = 0;
 	memset(s_shared, 0, sizeof s_shared);
 	s_switchCount = 0;
+	s_gatesFound  = false;
+	memset(s_gates, 0, sizeof s_gates);
 	s_myHeld      = nullptr;
 	for (int slot = 0; slot < 4; slot++)
 		if (s_holders[slot])
