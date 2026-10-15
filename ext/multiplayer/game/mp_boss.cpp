@@ -163,13 +163,17 @@ void writeWhere(Out& o, TLiveActor* a)
 	o.s16_(yawOf(a->mRotation.y));
 }
 
-// Where the host's is, eased (a step's own motion carries it between).
+// Where the host's is, eased (a step's own motion carries it between); at
+// once when far (it jumped, or a lost update or two left it behind).
 void readWhere(In& in, TLiveActor* a, f32 k = 0.25f)
 {
 	const f32 x = in.f32_(), y = in.f32_(), z = in.f32_();
 	const s16 yaw = in.s16_();
 	if (!in.ok)
 		return;
+	const f32 dx = x - a->mPosition.x, dy = y - a->mPosition.y, dz = z - a->mPosition.z;
+	if (dx * dx + dy * dy + dz * dz > 800.0f * 800.0f)
+		k = 1.0f;
 	a->mPosition.x += (x - a->mPosition.x) * k;
 	a->mPosition.y += (y - a->mPosition.y) * k;
 	a->mPosition.z += (z - a->mPosition.z) * k;
@@ -191,15 +195,28 @@ int nerveIndex(NerveTable table, Nerve n)
 }
 
 int s_hostNerve[kMaxUnits]; // the host's last step taken, per unit
+int s_localNerve[kMaxUnits], s_localSince[kMaxUnits]; // the copy's step, and since when (tick)
+int s_bossTick;
+const int kOwnStepTicks = 12; // a step the copy took on its own (hit here) is let run this long
 
-// A new step of the host's: take it. And a copy is not down (its `die`
-// steps) before the host's is.
+// A new step of the host's: take it. But not over a step this copy took on
+// its own just now (hurt by a hit here, which the host has not had yet): the
+// host's from before the hit would cut it short, and its own hurt step, once
+// it comes, play it again. And a copy is not down (its `die` steps) before
+// the host's is.
 void followNerve(TLiveActor* a, int unit, int host, NerveTable table, int die1, int die2)
 {
 	if (host == 0xFF || !table(host))
 		return;
 	const int local = nerveIndex(table, a->getLatestNerve());
+	if (local != s_localNerve[unit]) {
+		s_localNerve[unit] = local;
+		s_localSince[unit] = s_bossTick;
+	}
 	if (host != s_hostNerve[unit]) {
+		if (local != host && local != s_hostNerve[unit] && s_hostNerve[unit] >= 0
+		    && s_bossTick - s_localSince[unit] < kOwnStepTicks)
+			return; // taken once it has run a little (the host's is kept until then)
 		s_hostNerve[unit] = host;
 		if (local != host) {
 			a->mSpine->reset();
@@ -927,8 +944,8 @@ void readShadow(In& in)
 	// This game's Shadow Mario runs, animates and is hit as ever (so he
 	// walks and sounds right, and water lands where it is seen to); the
 	// host's says how much water he has left and when he goes down, and
-	// gives each new step of his. He is kept near the host's: gently while
-	// close, at once when far.
+	// gives each new step of his. He is kept near the host's: left alone
+	// within a step or so, pulled harder the further off, at once when far.
 	if (doing != s_shadowHostDoing) {
 		s_shadowHostDoing = doing;
 		if (doing != e->mEMDoing) {
@@ -943,8 +960,8 @@ void readShadow(In& in)
 	if (far > 700.0f * 700.0f) {
 		e->mPosition.set(x, y, z);
 		e->mFaceAngle.y = face;
-	} else if (far > 120.0f * 120.0f) {
-		const f32 k = 0.08f;
+	} else if (far > 30.0f * 30.0f) {
+		const f32 k = far > 200.0f * 200.0f ? 0.15f : 0.06f;
 		e->mPosition.x += dx * k;
 		e->mPosition.y += dy * k;
 		e->mPosition.z += dz * k;
@@ -993,7 +1010,7 @@ void MpBossStageSetup()
 	memset(s_setValue, 0, sizeof s_setValue);
 	memset(s_reported, 0, sizeof s_reported);
 	for (int i = 0; i < kMaxUnits; i++)
-		s_hostNerve[i] = -1;
+		s_hostNerve[i] = s_localNerve[i] = -1;
 	if (!gpConductor)
 		return;
 	// every boss here, not just the first found: a stage can have its boss
@@ -1169,6 +1186,7 @@ void MpBossClientTick()
 {
 	if (!bossReady())
 		return;
+	s_bossTick++;
 	u8 buf[200];
 	float age     = 0.0f;
 	const int got = (int)mpg_boss(buf, sizeof buf, &age);

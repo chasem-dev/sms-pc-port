@@ -129,6 +129,10 @@ uint32_t mp_clock_ms(void);
 // to `slot`, or to every client with slot -1. Returns -1 when it cannot be
 // sent (too big, not connected).
 int mp_send(int slot, uint8_t kind, const void* data, size_t size);
+// An unreliable message (at most 400 bytes): it goes once in the next update
+// and may be lost or arrive out of order (for state sent again and again,
+// the newest of which is all that matters). Arrives as MP_EV_MESSAGE.
+int mp_send_unreliable(int slot, uint8_t kind, const void* data, size_t size);
 
 // The next event for the game, oldest first; 0 when there is none.
 int mp_poll_event(MpEvent* ev);

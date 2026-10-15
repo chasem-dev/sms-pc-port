@@ -87,6 +87,16 @@ struct Controller {
 	bool shineExit       = false;
 	int32_t sessionRed   = 0;   // red coins this session, kept over a reload
 	bool restoreRed      = false;
+	// coins and red coins two players took at once, the later one's to give
+	// back (the host counted the coin for whoever was first)
+	int refundCoins = 0, refundRed = 0;
+	struct RecentTake {
+		MpgTakenAt t;
+		uint32_t ms;
+		int slot;
+	};
+	RecentTake recentTakes[16];
+	int recentTake = 0;
 	bool restartSession  = false;
 	unsigned waitingStage = 0; // players who joined while the host was between stages: told once it has arrived
 
@@ -312,12 +322,46 @@ void addTakenAt(const MpgTakenAt& t)
 		g.takenAt.push_back(t);
 }
 
-void takeOnce(uint32_t key)
+// Whether this is the first time `key` was taken this session.
+bool takeOnce(uint32_t key)
 {
 	for (uint32_t k : g.taken)
 		if (k == key)
-			return;
+			return false;
 	g.taken.push_back(key);
+	return true;
+}
+
+// A coin (or red coin) taken a second time, by a player whose game had not
+// yet heard it was gone: theirs is given back, so it counts once.
+void refundItem(int type)
+{
+	if (type == 0x0E)
+		g.refundCoins++;
+	else if (type == 0x0F)
+		g.refundRed++;
+	if (g_debug && (type == 0x0E || type == 0x0F))
+		fprintf(stderr, "[multiplayer] %s taken twice: counted once\n", type == 0x0E ? "a coin" : "a red coin");
+}
+
+// An item that appeared during the stage, taken by `slot` where another
+// player just took one (within two seconds, close by): the same one, taken
+// twice. (One player's own are always different ones: a spill of coins.)
+bool takenAtTwice(int slot, const MpgTakenAt& t)
+{
+	const uint32_t now = mp_clock_ms();
+	for (const Controller::RecentTake& r : g.recentTakes) {
+		if (!r.ms || r.slot == slot || r.t.type != t.type || now - r.ms > 2000)
+			continue;
+		const float dx = r.t.pos[0] - t.pos[0], dy = r.t.pos[1] - t.pos[1], dz = r.t.pos[2] - t.pos[2];
+		if (dx * dx + dy * dy + dz * dz < 60.0f * 60.0f)
+			return true;
+	}
+	Controller::RecentTake& r = g.recentTakes[g.recentTake++ % 16];
+	r.t    = t;
+	r.ms   = now ? now : 1;
+	r.slot = slot;
+	return false;
 }
 
 // ------------------------------------------------------------------ goop
@@ -564,7 +608,7 @@ void readCarry(Reader& r, int from)
 
 // ------------------------------------------------------------------ mirrored objects
 
-const size_t kMirrorBatch = 16;
+const size_t kMirrorBatch = 6; // unreliable, within a message's 400 bytes
 const size_t kMaxMirrorsIn = 256;
 
 std::vector<uint8_t> mirrorMessage(uint32_t session, const Controller::Mirror* list, size_t n)
@@ -590,13 +634,15 @@ void sendMirrors(int slot, int except, uint32_t session, const std::vector<Contr
 {
 	for (size_t at = 0; at < list.size(); at += kMirrorBatch) {
 		const size_t n = list.size() - at < kMirrorBatch ? list.size() - at : kMirrorBatch;
+		// unreliable: state sent again and again, the newest all that matters
+		// (a lost one must not hold up the reliable messages behind it)
 		const std::vector<uint8_t> buf = mirrorMessage(session, list.data() + at, n);
 		if (slot >= 0)
-			send(slot, K_MIRROR, buf);
+			mp_send_unreliable(slot, K_MIRROR, buf.data(), buf.size());
 		else
 			for (int i = 1; i < MP_MAX_PLAYERS; i++)
 				if (i != except && (mp_players() & (1u << i)))
-					send(i, K_MIRROR, buf);
+					mp_send_unreliable(i, K_MIRROR, buf.data(), buf.size());
 	}
 }
 
@@ -710,6 +756,10 @@ void hostMessage(const MpEvent& ev)
 		MpgTakenAt t;
 		if (!readTakenAt(r, t) || s != g.session || !g.session || g.takenAt.size() >= kMaxTakenAt)
 			break;
+		if (takenAtTwice(ev.slot, t)) {
+			refundItem(t.type);
+			break;
+		}
 		addTakenAt(t);
 		for (int i = 1; i < MP_MAX_PLAYERS; i++)
 			if (i != ev.slot && (mp_players() & (1u << i)))
@@ -737,7 +787,10 @@ void hostMessage(const MpEvent& ev)
 		uint32_t s = r.u32(), key = r.u32();
 		if (!r.ok || s != g.session || !g.session)
 			break;
-		takeOnce(key);
+		if (!takeOnce(key)) {
+			refundItem((int)(key >> 16));
+			break;
+		}
 		g.removals.push_back(key);
 		// everyone else hears of it
 		uint8_t buf[8];
@@ -1224,6 +1277,8 @@ extern "C" void mpg_frame(const MpgGame* game)
 			g.sessionArea    = game->area;
 			g.sessionEpisode = game->episode;
 			g.taken.clear();
+			g.refundCoins = g.refundRed = 0;
+			memset(g.recentTakes, 0, sizeof g.recentTakes);
 			g.removals.clear();
 			g.takenAt.clear();
 			g.shineGets.clear();
@@ -1328,6 +1383,10 @@ extern "C" void mpg_flags_sync(int32_t* values)
 					notice(std::string(kCharacters[slot]) + " got a Shine!");
 				}
 		}
+		static const int coins = sharedFlagIndex(FLAG_COINS);
+		game[coins] = std::max(0, game[coins] - g.refundCoins);
+		game[red]   = std::max(0, game[red] - g.refundRed);
+		g.refundCoins = g.refundRed = 0;
 		g.sessionRed = game[red];
 		for (int i = 1; i < MP_MAX_PLAYERS; i++) {
 			if (!(mp_players() & (1u << i)))
@@ -1451,7 +1510,10 @@ extern "C" void mpg_item_taken(uint32_t key)
 	if (g.role == MPG_ROLE_HOST) {
 		if (!g.session)
 			return;
-		takeOnce(key);
+		if (!takeOnce(key)) {
+			refundItem((int)(key >> 16));
+			return;
+		}
 		w.u32(g.session);
 		w.u32(key);
 		mp_send(-1, K_TAKEN, buf, w.len);
@@ -1473,6 +1535,10 @@ extern "C" void mpg_item_taken_at(int type, const float pos[3])
 	if (g.role == MPG_ROLE_HOST) {
 		if (!g.session)
 			return;
+		if (takenAtTwice(0, t)) {
+			refundItem(t.type);
+			return;
+		}
 		addTakenAt(t);
 		for (int i = 1; i < MP_MAX_PLAYERS; i++)
 			if (mp_players() & (1u << i))
