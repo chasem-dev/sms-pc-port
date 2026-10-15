@@ -198,6 +198,7 @@ struct Controller {
 	// (their updates come in bursts; their game may run faster or slower)
 	double theirsPerFrame[MP_MAX_PLAYERS] = {};
 	uint32_t newestSeen[MP_MAX_PLAYERS]   = {};
+	int framesSinceNew[MP_MAX_PLAYERS]    = {}; // our frames since their newest pose came
 	// the usual gap between their poses, in their game's time
 	double poseGap[MP_MAX_PLAYERS] = {};
 	// our game's clock: the frames played, in ms (poses are stamped with it,
@@ -1026,6 +1027,9 @@ bool unpackPose(const uint8_t* d, size_t n, MpgPose& p)
 // How far behind their newest pose others are drawn: about three of their
 // updates, so a late or lost one does not show.
 const int32_t kDrawBehindMs = 100;
+// With nothing new from a player, the moment drawn goes at most this far past
+// their newest pose (then holds) rather than running on.
+const double kDrawAheadMs = 80.0;
 
 // Every pose that arrived since the last frame, into each player's buffer;
 // then each player's drawing moment moves on a frame.
@@ -1080,16 +1084,29 @@ void takePoses()
 			const double target  = (double)q.back().pose.time - behind;
 			const double error   = target - g.drawAt[slot];
 			const uint32_t newest = q.back().pose.time;
-			if (!g.drawing[slot] || error > 2000.0 || error < -2000.0) {
-				g.drawAt[slot]         = target; // first sight, or far off: start there
+			g.framesSinceNew[slot]++;
+			if (!g.drawing[slot] || error > 300.0 || error < -2000.0) {
+				// first sight, or fallen well behind (a stall, a loading
+				// screen): start there, not fast-forward to it
+				g.drawAt[slot]         = target;
 				g.drawing[slot]        = true;
 				g.theirsPerFrame[slot] = g.frameMs;
+				g.framesSinceNew[slot] = 0;
 			} else {
-				const double advanced  = (double)(int32_t)(newest - g.newestSeen[slot]);
-				g.theirsPerFrame[slot] = g.theirsPerFrame[slot] * 0.98 + (advanced > 0.0 ? advanced : 0.0) * 0.02;
-				// leaning harder the further off it is, never by a jump
-				const double lean = 0.015 + std::min(0.25, std::fabs(error) / 4000.0);
+				// how fast their game runs against ours: measured only as their
+				// poses come (a stall must not slow it), within a fifth of ours
+				const double advanced = (double)(int32_t)(newest - g.newestSeen[slot]);
+				if (advanced > 0.0) {
+					const double perFrame  = advanced / std::max(1, g.framesSinceNew[slot]);
+					const double rate      = g.theirsPerFrame[slot] * 0.9 + perFrame * 0.1;
+					g.theirsPerFrame[slot] = std::min(g.frameMs * 1.2, std::max(g.frameMs * 0.8, rate));
+					g.framesSinceNew[slot] = 0;
+				}
+				// a gentle lean toward where it should be, never a jump
+				const double lean = 0.01 + std::min(0.08, std::fabs(error) / 8000.0);
 				g.drawAt[slot] += g.theirsPerFrame[slot] + error * lean;
+				// nothing new for a while: not past their newest by more than a little
+				g.drawAt[slot] = std::min(g.drawAt[slot], (double)newest + kDrawAheadMs);
 			}
 			g.newestSeen[slot] = newest;
 		}
