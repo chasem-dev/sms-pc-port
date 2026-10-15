@@ -115,6 +115,8 @@ size_t mp_remote_state(int slot, void* data, size_t size, float* age);
 // received, its size (0 when none) and how many seconds ago it arrived.
 void mp_set_world(const void* data, size_t size);
 size_t mp_world(void* data, size_t size, float* age);
+// Host: whether the snapshot last set has gone out (in at least one update).
+int mp_world_sent(void);
 
 // The states of `slot` in the order they arrived, each once (the oldest
 // unread first): its size, or 0 when none is left; *receivedMs on the

@@ -76,6 +76,7 @@ uint8_t s_itemLive[kMaxItems]; // every item, alive last frame
 int s_takenAtSeen;             // the session's taken-at list, looked at so far
 int s_lastCoins = -1;          // the coin count after the last sync (the 100-coin Shine)
 TMpPuppet* s_puppets[4];
+int s_clock; // frames since the game started
 
 TMpPuppet* s_self; // our own character, when we are not Mario
 unsigned s_stageNumber;
@@ -833,6 +834,22 @@ bool s_enemiesSeen; // the first look at this stage's enemies is not news
 u8 s_hostAlive[kMaxManagers][kMaxEnemies];  // as the host's last word had it (2: no word yet)
 u16 s_enemyGrace[kMaxManagers][kMaxEnemies]; // frames since we brought it back
 
+// The host's last word on each enemy: where it was, which way it faced, how
+// fast it went, and when that came (this game's ticks). Every enemy is
+// steered toward it every tick (each update carries only some of them),
+// a little ahead by its speed, smoothly whatever the frame rate.
+struct EnemyTarget {
+	JGeometry::TVec3<f32> pos, vel;
+	f32 yaw;
+	int at;
+	bool known;
+};
+EnemyTarget s_targets[kMaxManagers][kMaxEnemies];
+f32 s_lastWorldAge = 99.0f;
+const f32 kEnemySettle  = 0.1f;  // seconds to close most of a gap
+const f32 kEnemyAhead   = 0.15f; // the furthest an enemy is led on by its speed
+const f32 kEnemyStale   = 1.5f;  // seconds without word: left to itself
+
 void collectManagers()
 {
 	s_managerCount = 0;
@@ -841,6 +858,7 @@ void collectManagers()
 	memset(s_enemyDownFrames, 0, sizeof s_enemyDownFrames);
 	memset(s_hostAlive, 2, sizeof s_hostAlive);
 	memset(s_enemyGrace, 0xFF, sizeof s_enemyGrace);
+	memset(s_targets, 0, sizeof s_targets);
 	s_enemiesSeen = false;
 	if (!gpConductor)
 		return;
@@ -937,14 +955,68 @@ void reportEnemyDefeats()
 
 // Client, every tick after the movement pass: the host's enemies where the
 // host has them (eased in), defeated or back as the host's are.
+f32 shortestTurn(f32 from, f32 to)
+{
+	f32 d = to - from;
+	while (d > 180.0f)
+		d -= 360.0f;
+	while (d < -180.0f)
+		d += 360.0f;
+	return d;
+}
+
+void steerEnemies()
+{
+	const int fps  = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
+	const f32 tick = 1.0f / fps;
+	const f32 k    = 1.0f - expf(-tick / kEnemySettle);
+	int followed = 0;
+	f32 off = 0.0f, worst = 0.0f;
+	for (int m = 0; m < s_managerCount; m++)
+		for (int i = 0; i < kMaxEnemies; i++) {
+			EnemyTarget& t = s_targets[m][i];
+			if (!t.known)
+				continue;
+			const f32 since = (s_clock - t.at) * tick;
+			if (since > kEnemyStale)
+				continue;
+			TSmallEnemy* e = enemyAt(m, i);
+			if (!e || enemyDown(e))
+				continue;
+			const f32 lead = since < kEnemyAhead ? since : kEnemyAhead;
+			const JGeometry::TVec3<f32> want(t.pos.x + t.vel.x * lead, t.pos.y + t.vel.y * lead, t.pos.z + t.vel.z * lead);
+			const f32 dx = want.x - e->mPosition.x, dy = want.y - e->mPosition.y, dz = want.z - e->mPosition.z;
+			if (dx * dx + dy * dy + dz * dz > 500.0f * 500.0f) {
+				e->mPosition = want;
+				e->mRotation.y = t.yaw;
+				continue;
+			}
+			e->mPosition.x += dx * k;
+			e->mPosition.y += dy * k;
+			e->mPosition.z += dz * k;
+			e->mRotation.y += shortestTurn(e->mRotation.y, t.yaw) * k;
+			const f32 d = sqrtf(dx * dx + dy * dy + dz * dz);
+			followed++;
+			off += d;
+			worst = d > worst ? d : worst;
+		}
+	if (getenv("SMS_MULTIPLAYER_DEBUG") && s_clock % (10 * fps) == 0 && followed)
+		fprintf(stderr, "[multiplayer] enemies: %d followed, %.0f units off on average, %.0f at most\n", followed,
+		        off / followed, worst);
+}
+
 void followHostEnemies()
 {
 	static MpgEnemy list[64];
 	f32 age        = 0.0f;
 	const int n    = mpg_enemies(list, 64, &age);
-	if (age > 1.0f)
+	const bool fresh = n > 0 && age + 0.001f < s_lastWorldAge;
+	s_lastWorldAge   = age;
+	if (age > 1.0f) {
+		steerEnemies();
 		return;
-	for (int k = 0; k < n; k++) {
+	}
+	for (int k = 0; fresh && k < n; k++) {
 		const MpgEnemy& h = list[k];
 		TSmallEnemy* e    = enemyAt(h.manager, h.index);
 		if (!e)
@@ -983,16 +1055,20 @@ void followHostEnemies()
 			}
 			continue;
 		}
-		const f32 dx = at.x - e->mPosition.x, dy = at.y - e->mPosition.y, dz = at.z - e->mPosition.z;
-		if (dx * dx + dy * dy + dz * dz > 500.0f * 500.0f) {
-			e->mPosition = at;
-		} else {
-			e->mPosition.x += dx * 0.35f;
-			e->mPosition.y += dy * 0.35f;
-			e->mPosition.z += dz * 0.35f;
-		}
-		e->mRotation.y = h.rotY * (360.0f / 65536.0f);
+		// the host's word on it: kept, with how fast it went since the last
+		EnemyTarget& t = s_targets[h.manager][h.index];
+		const int fps  = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
+		const f32 dt   = (s_clock - t.at) / (f32)fps;
+		if (t.known && dt > 0.02f && dt < 1.0f)
+			t.vel.set((at.x - t.pos.x) / dt, (at.y - t.pos.y) / dt, (at.z - t.pos.z) / dt);
+		else
+			t.vel.set(0.0f, 0.0f, 0.0f);
+		t.pos   = at;
+		t.yaw   = h.rotY * (360.0f / 65536.0f);
+		t.at    = s_clock;
+		t.known = true;
 	}
+	steerEnemies();
 }
 
 // ------------------------------------------------------------------- arriving
@@ -1517,7 +1593,7 @@ struct RecentDemo {
 	int frame;
 };
 RecentDemo s_recentDemos[8];
-int s_recentNext, s_clock; // s_clock: frames since the game started
+int s_recentNext;
 
 bool seenDemoLately(const char* name)
 {
