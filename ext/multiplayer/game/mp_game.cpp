@@ -33,6 +33,7 @@
 #include <M3DUtil/MActor.hpp>
 #include <Enemy/Koopa.hpp>
 #include <Enemy/KoopaNerve.hpp>
+#include <MoveBG/MapObjSirena.hpp>
 #include <MoveBG/MapObjCorona.hpp>
 #include <MoveBG/Item.hpp>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
@@ -1365,6 +1366,8 @@ struct TestPlan {
 	int bossSprayAt, bossSprayFrames; // bossspray@N:K: that hit every tick for K ticks (a Gatekeeper sprayed)
 	int shadowSprayAt, shadowSprayFrames; // shadowspray@N:K: Shadow Mario sprayed every 4 ticks for K ticks
 	int npcSprayAt, npcSprayFrames;   // npcspray@N:K: the nearest NPC sprayed every tick for K ticks
+	int slotSprayAt;                  // slotspray@N: the first item slot machine sprayed (it spins)
+	bool slotSprayed;
 	int carryAt, carryFrames;         // carry@N:K: pick up the nearest thing that can be carried, put it down K ticks on
 	int setFlagAt;                   // setflag@N:ID: a flag of the game's set (hex), e.g. what starts a fight
 	unsigned setFlagId;
@@ -1384,6 +1387,7 @@ void testPadRead(void* status)
 
 void testSprayNpc(bool first); // shared objects, below
 bool testPoundTub();
+bool testSpraySlot();
 void testCarry(bool take);
 
 void runTests(TMarDirector* dir, bool arrived)
@@ -1393,7 +1397,7 @@ void runTests(TMarDirector* dir, bool arrived)
 		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = -1;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
 		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = s_test.bossHitAt = s_test.setFlagAt = -1;
-		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.npcSprayAt = s_test.carryAt = -1;
+		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.npcSprayAt = s_test.carryAt = s_test.slotSprayAt = -1;
 		s_test.dieLives = -1;
 		if (const char* plan = getenv("SMS_MULTIPLAYER_TEST")) {
 			const char* t = strstr(plan, "take@");
@@ -1457,6 +1461,8 @@ void runTests(TMarDirector* dir, bool arrived)
 				sscanf(ss, "shadowspray@%d:%d", &s_test.shadowSprayAt, &s_test.shadowSprayFrames);
 			if (const char* ns = strstr(plan, "npcspray@"))
 				sscanf(ns, "npcspray@%d:%d", &s_test.npcSprayAt, &s_test.npcSprayFrames);
+			if (const char* ss = strstr(plan, "slotspray@"))
+				sscanf(ss, "slotspray@%d", &s_test.slotSprayAt);
 			if (const char* cs = strstr(plan, "carry@"))
 				sscanf(cs, "carry@%d:%d", &s_test.carryAt, &s_test.carryFrames);
 			if (const char* sf = strstr(plan, "setflag@"))
@@ -1673,6 +1679,19 @@ void runTests(TMarDirector* dir, bool arrived)
 	}
 	if (s_test.carryAt >= 0 && (s_test.frames == s_test.carryAt || s_test.frames == s_test.carryAt + s_test.carryFrames))
 		testCarry(s_test.frames == s_test.carryAt);
+	// sprayed again every 20 seconds, six times: some spins pay out
+	if (s_test.slotSprayAt >= 0 && s_test.frames >= s_test.slotSprayAt && (s_test.frames - s_test.slotSprayAt) % 600 == 0
+	    && (s_test.frames - s_test.slotSprayAt) / 600 < 6)
+		testSpraySlot();
+	if (getenv("SMS_MULTIPLAYER_DEBUG") && s_test.frames % 150 == 0 && gpItemManager) {
+		int coins = 0;
+		for (int i = 0; i < gpItemManager->getObjNum(); i++) {
+			TLiveActor* a = gpItemManager->getObj(i);
+			coins += a && a->getActorType() == 0x2000000E && appearedDuringStage(i) && !a->checkLiveFlag(LIVE_FLAG_DEAD);
+		}
+		if (coins)
+			fprintf(stderr, "[multiplayer] coins that came out during the stage: %d\n", coins);
+	}
 	if (s_test.npcSprayAt >= 0 && s_test.frames >= s_test.npcSprayAt
 	    && s_test.frames < s_test.npcSprayAt + s_test.npcSprayFrames)
 		testSprayNpc(s_test.frames == s_test.npcSprayAt);
@@ -2222,6 +2241,27 @@ void testSprayNpc(bool first)
 		fprintf(stderr, "[multiplayer] test: spraying NPC %u.%u\n", (unsigned)(where >> 16), (unsigned)(where & 0xFFFF));
 	if (!objectHit(best, &water, HIT_MESSAGE_SPRAYED_BY_WATER))
 		best->receiveMessage(&water, HIT_MESSAGE_SPRAYED_BY_WATER);
+}
+
+// Test aid (slotspray@N): this game's water on the first item slot machine,
+// through the hit hook (so it is sent like any spray, and runs it here).
+bool testSpraySlot()
+{
+	for (int m = 0; m < s_sharedCount; m++)
+		for (int i = 0; s_sharedManagers[m] && i < s_sharedManagers[m]->getObjNum(); i++)
+			if (TItemSlotDrum* slot = dynamic_cast<TItemSlotDrum*>(s_sharedManagers[m]->getObj(i))) {
+				TWaterHitActor& water = TModelWaterManager::mStaticHitActor;
+				water.mPosition       = slot->mPosition;
+				water.mParticleIndex  = -1; // not a drawn drop: this game's own
+				fprintf(stderr, "[multiplayer] test: spraying item slot machine %d.%d\n", m, i);
+				if (!objectHit(slot, &water, HIT_MESSAGE_SPRAYED_BY_WATER))
+					slot->receiveMessage(&water, HIT_MESSAGE_SPRAYED_BY_WATER);
+				fprintf(stderr, "[multiplayer] test: its reels now %.1f %.1f %.1f (ready %d, won %d)\n",
+				        slot->unk138 ? slot->unk138[0] : -1.0f, slot->unk138 ? slot->unk138[1] : -1.0f,
+				        slot->unk138 ? slot->unk138[2] : -1.0f, (int)slot->unk1A2, (int)slot->unk194);
+				return true;
+			}
+	return false;
 }
 
 // Test aid (pound@N): this game's Mario ground-pounds Bowser's tub, through
