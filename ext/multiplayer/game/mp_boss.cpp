@@ -893,6 +893,7 @@ void hitTub(int unit, int kind, int)
 // doing, his water meter and the stomps left once he is down.
 const int kShadowRecord = 2 + 2 + 2 + 12 + 2;
 int s_shadowWater, s_shadowStomps; // client: what was last set from the host's Shadow Mario
+int s_shadowHostDoing = -1; // client: the host's step last taken
 bool s_mainDownSaid;
 
 void writeShadow(Out& o)
@@ -923,17 +924,31 @@ void readShadow(In& in)
 		if (e->mTrampleCount < s_shadowStomps) // stomped here
 			mpg_boss_hit(0, HIT_SHADOW_STOMP, s_shadowStomps - e->mTrampleCount);
 	}
-	if (doing != e->mEMDoing) {
-		e->mEMDoing      = doing;
-		e->mEMDoingTimer = 0;
+	// This game's Shadow Mario runs, animates and is hit as ever (so he
+	// walks and sounds right, and water lands where it is seen to); the
+	// host's says how much water he has left and when he goes down, and
+	// gives each new step of his. He is kept near the host's: gently while
+	// close, at once when far.
+	if (doing != s_shadowHostDoing) {
+		s_shadowHostDoing = doing;
+		if (doing != e->mEMDoing) {
+			e->mEMDoing      = doing;
+			e->mEMDoingTimer = 0;
+		}
 	}
 	e->mWaterCounter = water;
 	e->mTrampleCount = stomps;
-	const f32 k = 0.5f; // he is quick: keep close
-	e->mPosition.x += (x - e->mPosition.x) * k;
-	e->mPosition.y += (y - e->mPosition.y) * k;
-	e->mPosition.z += (z - e->mPosition.z) * k;
-	e->mFaceAngle.y = face;
+	const f32 dx = x - e->mPosition.x, dy = y - e->mPosition.y, dz = z - e->mPosition.z;
+	const f32 far = dx * dx + dy * dy + dz * dz;
+	if (far > 700.0f * 700.0f) {
+		e->mPosition.set(x, y, z);
+		e->mFaceAngle.y = face;
+	} else if (far > 120.0f * 120.0f) {
+		const f32 k = 0.08f;
+		e->mPosition.x += dx * k;
+		e->mPosition.y += dy * k;
+		e->mPosition.z += dz * k;
+	}
 	s_shadowWater  = water;
 	s_shadowStomps = stomps;
 }
@@ -970,6 +985,7 @@ void MpBossStageSetup()
 	s_shadowList = nullptr;
 	s_shadowAlone = nullptr;
 	s_shadowWater = s_shadowStomps = 0;
+	s_shadowHostDoing = -1;
 	s_mainDownSaid = false;
 	s_next     = 0;
 	s_followed = false;

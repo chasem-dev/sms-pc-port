@@ -156,6 +156,12 @@ int mpg_next_hit(int* slot, int* manager, int* index, int* message, int* water, 
 void mpg_carry(int manager, int index, int action, const float pos[3], const float vel[3], int yaw);
 int mpg_next_carry(int* slot, int* manager, int* index, int* action, float pos[3], float vel[3], int* yaw);
 
+// A mirrored object's state (at most 48 bytes, mp_game.cpp's mirror kinds)
+// from the game that owns it now: the others take it. mpg_next_mirror gives
+// one another game sent (its size in *size), 0 when there is none.
+void mpg_mirror(int manager, int index, const void* data, int size);
+int mpg_next_mirror(int* slot, int* manager, int* index, void* data, int* size);
+
 // Goop this game cleaned (TPollutionManager::clean): the others clean it too.
 void mpg_clean(float x, float y, float z, float size);
 // The next goop another game cleaned, for this game to clean; 0 when none.
