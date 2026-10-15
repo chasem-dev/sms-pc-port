@@ -867,6 +867,7 @@ int s_managerCount;
 u8 s_enemyWasDown[kMaxManagers][kMaxEnemies]; // dying or dead last frame
 u8 s_enemySyncKill[kMaxManagers][kMaxEnemies]; // we killed it on the host's word
 u8 s_enemyWeDefeated[kMaxManagers][kMaxEnemies]; // this game's player defeated it (the host was told)
+int s_spawnsHeld; // debug: enemies that came out here by themselves and went again
 u16 s_enemyDownFrames[kMaxManagers][kMaxEnemies];
 bool s_enemiesSeen; // the first look at this stage's enemies is not news
 u8 s_hostAlive[kMaxManagers][kMaxEnemies];  // as the host's last word had it (2: no word yet)
@@ -999,6 +1000,19 @@ void reportEnemyDefeats()
 				mpg_enemy_killed(m, i);
 				s_enemyWeDefeated[m][i] = 1;
 			}
+			// come out here by itself (its own cannon or spawner) while the host's
+			// game has it gone: the host's word decides what is about, so it
+			// goes again, quietly (if it is about there, it comes back at once,
+			// where the host's is)
+			if (!down && s_enemyWasDown[m][i] && s_enemiesSeen && s_hostAlive[m][i] == 0 && s_enemyGrace[m][i] > 2
+			    && s_lastWorldAge < 1.0f) {
+				e->TLiveActor::kill();
+				e->onLiveFlag(LIVE_FLAG_HIDDEN);
+				s_enemySyncKill[m][i] = 1;
+				s_enemyWasDown[m][i]  = true;
+				s_spawnsHeld++;
+				continue;
+			}
 			if (!down)
 				s_enemySyncKill[m][i] = s_enemyWeDefeated[m][i] = 0;
 			s_enemyDownFrames[m][i] = down ? (u16)(s_enemyDownFrames[m][i] < 60000 ? s_enemyDownFrames[m][i] + 1 : 60000) : 0;
@@ -1066,8 +1080,8 @@ void steerEnemies()
 			worst = d > worst ? d : worst;
 		}
 	if (getenv("SMS_MULTIPLAYER_DEBUG") && s_clock % (10 * fps) == 0 && followed)
-		fprintf(stderr, "[multiplayer] enemies: %d followed, %.0f units off on average, %.0f at most\n", followed,
-		        off / followed, worst);
+		fprintf(stderr, "[multiplayer] enemies: %d followed, %.0f units off on average, %.0f at most; %d came out here alone\n",
+		        followed, off / followed, worst, s_spawnsHeld);
 }
 
 void followHostEnemies()

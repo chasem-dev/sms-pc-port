@@ -817,6 +817,24 @@ void weighTub(TBathtub* t)
 // which way they face. Each game's copy runs and animates; it is eased toward
 // the host's, carried on at its speed between states. A hook's speed is the
 // host's too, so a player hanging from it is carried along smoothly.
+// A pigeon's steps (on the ground, taking off, flying round, landing):
+// the host's, or a copy stays on its perch while the host's flies.
+Nerve birdStep(int i)
+{
+	switch (i) {
+	case 0: return &TNerveAnimalBirdWaitOnGround::theNerve();
+	case 1: return &TNerveAnimalBirdActionOnGround::theNerve();
+	case 2: return &TNerveAnimalBirdWalkOnGround::theNerve();
+	case 3: return &TNerveAnimalBirdTakeoff::theNerve();
+	case 4: return &TNerveAnimalBirdGraphWander::theNerve();
+	case 5: return &TNerveAnimalBirdChangeToCoin::theNerve();
+	case 6: return &TNerveAnimalBirdComeback::theNerve();
+	case 7: return &TNerveAnimalBirdPreLanding::theNerve();
+	case 8: return &TNerveAnimalBirdLanding::theNerve();
+	default: return nullptr;
+	}
+}
+
 bool isCritter(TLiveActor* a)
 {
 	return dynamic_cast<TAnimalBase*>(a) || dynamic_cast<TAnimalBird*>(a) || dynamic_cast<TRiccoHook*>(a)
@@ -830,6 +848,8 @@ int saveCritter(TLiveActor* a, u8* out)
 	vel.add(a->mLinearVelocity);
 	o.v3(vel);
 	o.f(a->mRotation.y);
+	TAnimalBird* bird = dynamic_cast<TAnimalBird*>(a);
+	o.b(bird ? (u8)stepOf(birdStep, bird->getLatestNerve()) : 0xFF);
 	return o.n;
 }
 void takeCritter(TLiveActor* a, const u8* in, int size, int age, int* placed)
@@ -837,13 +857,24 @@ void takeCritter(TLiveActor* a, const u8* in, int size, int age, int* placed)
 	Get g(in, size);
 	const JGeometry::TVec3<f32> pos = g.v3(), vel = g.v3();
 	const f32 yaw                   = g.f();
+	const int step                  = g.b(); // a pigeon's (else 0xFF)
 	if (!g.ok || a->mHolder)
 		return;
+	// a new step of the host's pigeon: taken (not its turning to a coin, which
+	// a spray brings about here too); scratch: bit 0 placed, bits 8-15 the step
+	if (TAnimalBird* bird = dynamic_cast<TAnimalBird*>(a))
+		if (step != 0xFF && step != 5 && birdStep(step) && step + 1 != ((*placed >> 8) & 0xFF)) {
+			*placed = (*placed & 0xFF) | ((step + 1) << 8);
+			if (stepOf(birdStep, bird->getLatestNerve()) != step) {
+				bird->getSpine()->reset();
+				bird->getSpine()->setNext(birdStep(step));
+			}
+		}
 	const JGeometry::TVec3<f32> want = ahead(pos, vel, age);
-	if (!*placed) {
+	if (!(*placed & 1)) {
 		a->mPosition   = want;
 		a->mRotation.y = yaw;
-		*placed        = 1;
+		*placed |= 1;
 		return;
 	}
 	easeTo(a->mPosition, want, 600.0f, 0.3f);
