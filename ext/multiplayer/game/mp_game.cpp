@@ -36,6 +36,10 @@
 #include <Enemy/KoopaNerve.hpp>
 #include <MoveBG/MapObjSirena.hpp>
 #include <MoveBG/ModelGate.hpp>
+#include <GC2D/BoundPane.hpp>
+#include <GC2D/ExPane.hpp>
+#include <JSystem/JUtility/JUTTexture.hpp>
+#include <JSystem/J2D/J2DPicture.hpp>
 #include <MoveBG/MapObjCorona.hpp>
 #include <MoveBG/Item.hpp>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
@@ -470,11 +474,26 @@ void syncFlags()
 	if (inStage())
 		s_lastCoins = coins;
 	if (hud && inStage()) {
-		// lives the HUD only shows going up (a lost life is drawn by the miss)
-		if (TGCConsole2* console = director()->getConsole()) {
-			int lives        = fm->getFlag(0x20001);
-			console->unk3AC  = (u8)(lives > 99 ? 99 : lives < 0 ? 0 : lives);
-		}
+		// another player's lost life: the lives panel comes down and counts
+		// down, as at a start over after a miss (TGCConsole2::startAppearMario
+		// shows one more, then the count). One gained (a 1-up of theirs) the
+		// console shows by itself, counting up, so its count is left to it.
+		for (int i = 0; i < s_flagCount; i++)
+			if (s_flagIds[i] == 0x20001 && s_flags[i] < before[i])
+				if (TGCConsole2* console = director()->getConsole()) {
+					const int lives = s_flags[i] > 99 ? 99 : s_flags[i] < 0 ? 0 : s_flags[i];
+					console->unk3AC = (u8)lives;
+					if (console->unk3A8->getPane()->isVisible() && !console->unk3B) {
+						// up already (a stage's start): the new count, kept up a while
+						((J2DPicture*)console->unk39C[0]->getPane())
+						    ->changeTexture(console->unkE0[(int)(lives * 0.1f)]->getTexInfo(), 0);
+						((J2DPicture*)console->unk39C[1]->getPane())->changeTexture(console->unkE0[lives % 10]->getTexInfo(), 0);
+						console->unk3AE_US = 0;
+						console->unk70     = 0;
+					} else {
+						console->startAppearMario(true);
+					}
+				}
 	}
 }
 
