@@ -110,6 +110,11 @@ int mpg_player_present(int slot);
 // Host: the next time we arrive in a stage, open a new session there even
 // if it is the same stage (everyone loads it afresh).
 void mpg_restart_session(void);
+// Client: a story event here moved on to another episode of the stage
+// everyone is in (taking FLUDD on the Airstrip): the host is asked to take
+// everyone there. Host: such a request, next in line (1), else 0.
+void mpg_request_trip(int area, int episode);
+int mpg_next_trip(int* slot, int* area, int* episode);
 int mpg_slot(void);    // ours; -1 before a client has one
 int mpg_ping(int slot); // round trip to `slot` (host) or to the host (client), ms; -1 unknown
 // Client: the newest snapshot of the host's world's number (each new one, a new number).

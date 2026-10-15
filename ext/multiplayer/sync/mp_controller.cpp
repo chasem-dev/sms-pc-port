@@ -47,6 +47,7 @@ enum Kind : uint8_t {
 	K_HIT,          // either way: session, count, hits a player landed on shared objects (mp_game.cpp), passed on
 	K_CARRY,        // either way: session, slot, manager, index, action, position, velocity, yaw (a carried object)
 	K_MIRROR,       // either way: session, count, objects' states from the game that owns them (mp_game.cpp), passed on
+	K_TRIP,         // client -> host: session, area, episode (a story event there moved on: everyone goes)
 };
 // The host's boss rides at the end of the world snapshot, after the enemies.
 const size_t kMaxBoss = 200;
@@ -83,6 +84,10 @@ struct Controller {
 	HostFlags hostFlags;
 	FlagValues hostValues;       // the host's flags as of the last sync
 	std::deque<std::pair<int, FlagReport>> reports;
+	struct Trip {
+		int slot, area, episode;
+	};
+	std::deque<Trip> trips; // host: clients' story events that move everyone on
 	FlagReportReader reportReaders[MP_MAX_PLAYERS];
 	bool shineExit       = false;
 	int32_t sessionRed   = 0;   // red coins this session, kept over a reload
@@ -691,6 +696,13 @@ void hostMessage(const MpEvent& ev)
 {
 	Reader r(ev.data, ev.size);
 	switch (ev.kind) {
+	case K_TRIP: {
+		const uint32_t s = r.u32();
+		const int area = r.u8(), episode = r.u8();
+		if (r.ok && s == g.session && g.session && g.trips.size() < 4)
+			g.trips.push_back({ev.slot, area, episode});
+		break;
+	}
 	case K_REPORT:
 		if (ev.slot > 0 && ev.slot < MP_MAX_PLAYERS && g.reportReaders[ev.slot].add(ev.data, ev.size))
 			g.reports.emplace_back(ev.slot, g.reportReaders[ev.slot].r);
@@ -1290,6 +1302,7 @@ extern "C" void mpg_frame(const MpgGame* game)
 			g.sessionArea    = game->area;
 			g.sessionEpisode = game->episode;
 			g.taken.clear();
+			g.trips.clear();
 			g.refundCoins = g.refundRed = 0;
 			memset(g.recentTakes, 0, sizeof g.recentTakes);
 			g.removals.clear();
@@ -1455,6 +1468,33 @@ extern "C" int mpg_in_target(void)
 		return g.game.playing && g.game.area == g.targetArea
 		       && (g.targetEpisode == 0xFF || g.game.episode == g.targetEpisode);
 	return g.localSession && g.localSession == g.targetSession;
+}
+
+extern "C" void mpg_request_trip(int area, int episode)
+{
+	if (g.role != MPG_ROLE_CLIENT || area < 0 || area > 255 || episode < 0 || episode > 255)
+		return;
+	std::lock_guard<std::mutex> hold(g_lock);
+	if (!g.localSession)
+		return;
+	uint8_t buf[6];
+	Writer w(buf, sizeof buf);
+	w.u32(g.localSession);
+	w.u8((uint8_t)area);
+	w.u8((uint8_t)episode);
+	mp_send(0, K_TRIP, buf, w.len);
+}
+
+extern "C" int mpg_next_trip(int* slot, int* area, int* episode)
+{
+	std::lock_guard<std::mutex> hold(g_lock);
+	if (g.trips.empty())
+		return 0;
+	*slot    = g.trips.front().slot;
+	*area    = g.trips.front().area;
+	*episode = g.trips.front().episode;
+	g.trips.pop_front();
+	return 1;
 }
 
 extern "C" void mpg_host_leaving(int area, int episode)

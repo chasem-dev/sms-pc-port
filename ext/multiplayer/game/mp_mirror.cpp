@@ -1186,6 +1186,13 @@ void takeWaves(const u8* in, int size)
 
 void debugMirrors();
 
+void MpMirrorForget()
+{
+	s_count          = 0;
+	s_eggHatchedHere = false;
+	s_testWalked     = nullptr;
+}
+
 void MpMirrorCollect()
 {
 	s_count          = 0;
@@ -1239,7 +1246,9 @@ void MpMirrorTick()
 		if (!m || size > 48)
 			continue;
 		// another player's game runs it now (they talked to it since)
-		if (m->claimedAt && slot != mpg_slot() && s_clock - m->claimedAt > fps())
+		// (not while this game's player is still talking to it: two players
+		// talking to one NPC each have it face them, in their own game)
+		if (m->claimedAt && slot != mpg_slot() && s_clock - m->claimedAt > fps() && !(m->actor && talkingHere(m->actor)))
 			m->claimedAt = 0;
 		m->heardAt   = s_clock;
 		m->heardSlot = slot;
