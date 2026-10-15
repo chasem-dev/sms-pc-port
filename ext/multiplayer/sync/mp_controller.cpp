@@ -144,7 +144,8 @@ struct Controller {
 	// enemies: the host's list and where the next share starts; a client's
 	// newest share; kills reported to the host
 	std::vector<MpgEnemy> enemies;
-	size_t enemyNext = 0, enemyBatch = 0;
+	size_t enemyNext = 0, enemyBatch = 0; // the enemies about: where the next share starts, the last share
+	size_t goneNext = 0, goneBatch = 0;   // the gone ones, likewise
 	std::deque<std::pair<int, int>> enemyKills;
 	// goop: what this game cleaned and has yet to send; what the others
 	// cleaned, for this game to clean; host: the session's, for newcomers;
@@ -1247,6 +1248,7 @@ extern "C" int mpg_player_present(int slot)
 extern "C" void mpg_restart_session(void) { g.restartSession = true; }
 extern "C" int mpg_slot(void) { return g.role == MPG_ROLE_OFF ? -1 : mp_local_slot(); }
 extern "C" int mpg_ping(int slot) { return g.role == MPG_ROLE_OFF ? -1 : mp_ping(slot); }
+extern "C" uint32_t mpg_world_seq(void) { return g.role == MPG_ROLE_CLIENT ? mp_world_seq() : 0; }
 extern "C" int mpg_character(int slot) { return slot >= 0 && slot < MP_MAX_PLAYERS ? slot : 0; }
 extern "C" const char* mpg_character_name(int slot)
 {
@@ -1302,6 +1304,8 @@ extern "C" void mpg_frame(const MpgGame* game)
 			g.enemies.clear();
 			g.enemyNext  = 0;
 			g.enemyBatch = 0;
+			g.goneNext   = 0;
+			g.goneBatch  = 0;
 			g.enemyKills.clear();
 			forgetCleans();
 			for (int i = 1; i < MP_MAX_PLAYERS; i++)
@@ -1694,7 +1698,9 @@ extern "C" void mpg_mirror(int manager, int index, const void* data, int size)
 	if (g.role == MPG_ROLE_OFF || manager < 0 || manager > 255 || index < 0 || index > 0xFFFF || size < 0 || size > 48)
 		return;
 	std::lock_guard<std::mutex> hold(g_lock);
-	if (!(g.role == MPG_ROLE_HOST ? g.session : g.localSession) || g.mirrorOut.size() >= 4 * kMirrorBatch)
+	// (a tick's share: states spread over ticks, game side, so this many is
+	// a busy stage's worth with room to spare)
+	if (!(g.role == MPG_ROLE_HOST ? g.session : g.localSession) || g.mirrorOut.size() >= 16 * kMirrorBatch)
 		return;
 	Controller::Mirror m;
 	m.slot    = (uint8_t)mp_local_slot();
@@ -1918,20 +1924,31 @@ extern "C" void mpg_set_enemies(const MpgEnemy* list, int count)
 		return;
 	}
 	g.enemies.assign(list, list + (count > 0 ? count : 0));
-	// this update's share: as many as fit, from where the last one sent
-	// stopped (a share not sent yet, the game running faster than the
-	// updates, is made again with the newest places, not skipped)
-	if (mp_world_sent())
+	// this update's share: the enemies about (as many as fit, from where the
+	// last share stopped), then a few of the gone ones (a stage keeps many
+	// in reserve: sent all alike, one about was heard of only every few
+	// tenths of a second). A share not sent yet, the game running faster
+	// than the updates, is made again with the newest places, not skipped.
+	std::vector<const MpgEnemy*> about, gone;
+	for (const MpgEnemy& e : g.enemies)
+		(e.alive ? about : gone).push_back(&e);
+	if (mp_world_sent()) {
 		g.enemyNext += g.enemyBatch;
+		g.goneNext += g.goneBatch;
+	}
 	uint8_t buf[MP_MAX_WORLD];
 	Writer w(buf, sizeof buf);
 	w.u32(g.session);
-	const size_t per = (sizeof buf - 6 - 1 - g.boss.size()) / kEnemySize;
-	const size_t n   = std::min(per, g.enemies.size());
-	w.u16((uint16_t)n);
-	g.enemyNext = g.enemies.empty() ? 0 : g.enemyNext % g.enemies.size();
-	for (size_t k = 0; k < n; k++) {
-		const MpgEnemy& e = g.enemies[(g.enemyNext + k) % g.enemies.size()];
+	const size_t per   = (sizeof buf - 6 - 1 - g.boss.size()) / kEnemySize;
+	const size_t gones = std::min(gone.size(), std::max<size_t>(4, per > about.size() ? per - about.size() : 0));
+	const size_t abouts = std::min(about.size(), per > gones ? per - gones : 0);
+	const size_t goneN  = std::min(gones, per - abouts);
+	w.u16((uint16_t)(abouts + goneN));
+	g.enemyNext = about.empty() ? 0 : g.enemyNext % about.size();
+	g.goneNext  = gone.empty() ? 0 : g.goneNext % gone.size();
+	for (size_t k = 0; k < abouts + goneN; k++) {
+		const MpgEnemy& e = k < abouts ? *about[(g.enemyNext + k) % about.size()]
+		                               : *gone[(g.goneNext + k - abouts) % gone.size()];
 		w.u8(e.manager);
 		w.u8(e.alive);
 		w.u16(e.index);
@@ -1940,7 +1957,8 @@ extern "C" void mpg_set_enemies(const MpgEnemy* list, int count)
 		w.f32(e.pos[2]);
 		w.s16(e.rotY);
 	}
-	g.enemyBatch = n;
+	g.enemyBatch = abouts;
+	g.goneBatch  = goneN;
 	w.u8((uint8_t)g.boss.size());
 	w.bytes(g.boss.data(), g.boss.size());
 	mp_set_world(buf, w.len);

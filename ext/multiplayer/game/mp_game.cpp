@@ -31,6 +31,7 @@
 #include <JSystem/JKernel/JKRHeap.hpp>
 #include <M3DUtil/M3UModelMario.hpp>
 #include <M3DUtil/MActor.hpp>
+#include <Enemy/Killer.hpp>
 #include <Enemy/Koopa.hpp>
 #include <Enemy/KoopaNerve.hpp>
 #include <MoveBG/MapObjSirena.hpp>
@@ -55,7 +56,9 @@
 #include <math.h>
 #include <new>
 #include <typeinfo>
+#include <time.h>
 #include <dolphin/pad.h>
+#include <dolphin/vi.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -863,6 +866,7 @@ TEnemyManager* s_managers[kMaxManagers];
 int s_managerCount;
 u8 s_enemyWasDown[kMaxManagers][kMaxEnemies]; // dying or dead last frame
 u8 s_enemySyncKill[kMaxManagers][kMaxEnemies]; // we killed it on the host's word
+u8 s_enemyWeDefeated[kMaxManagers][kMaxEnemies]; // this game's player defeated it (the host was told)
 u16 s_enemyDownFrames[kMaxManagers][kMaxEnemies];
 bool s_enemiesSeen; // the first look at this stage's enemies is not news
 u8 s_hostAlive[kMaxManagers][kMaxEnemies];  // as the host's last word had it (2: no word yet)
@@ -920,6 +924,15 @@ bool enemyDown(TSmallEnemy* e)
 s16 yaw(f32 degrees) { return (s16)(degrees * (65536.0f / 360.0f)); }
 
 // Host, once a frame: kills from the clients' games, then every enemy as it is.
+f32 distance2(const JGeometry::TVec3<f32>& a, const JGeometry::TVec3<f32>& b); // below
+
+unsigned mp_clock_ms_game()
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (unsigned)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+}
+
 void hostEnemies()
 {
 	int manager, index;
@@ -929,6 +942,22 @@ void hostEnemies()
 				fprintf(stderr, "[multiplayer] enemy %d.%d defeated in a client's game\n", manager, index);
 				e->kill();
 			}
+	if (const char* sl = getenv("SMS_MULTIPLAYER_SPEEDLOG")) {
+		static JGeometry::TVec3<f32> prev[3];
+		static int frames;
+		const int fps = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
+		int m = 0;
+		while (m < s_managerCount && !(s_managers[m]->getObjNum() && enemyAt(m, 0) && strstr(typeid(*enemyAt(m, 0)).name(), sl)))
+			m++;
+		frames++;
+		for (int i = 0; m < s_managerCount && i < 3 && i < s_managers[m]->getObjNum(); i++)
+			if (TSmallEnemy* e = enemyAt(m, i)) {
+				const f32 d = sqrtf(distance2(e->mPosition, prev[i])) * fps;
+				if (frames % 10 == 0 && !enemyDown(e))
+					fprintf(stderr, "[speed] host %d.%d speed %.0f\n", m, i, d);
+				prev[i] = e->mPosition;
+			}
+	}
 	static MpgEnemy list[kMaxManagers * 16];
 	int n = 0;
 	for (int m = 0; m < s_managerCount; m++)
@@ -966,10 +995,12 @@ void reportEnemyDefeats()
 			// not one we just brought back (it can fall while it settles)
 			if (s_enemyGrace[m][i] < 0xFFFF)
 				s_enemyGrace[m][i]++;
-			if (down && !s_enemyWasDown[m][i] && !s_enemySyncKill[m][i] && s_enemiesSeen && s_enemyGrace[m][i] > 180)
+			if (down && !s_enemyWasDown[m][i] && !s_enemySyncKill[m][i] && s_enemiesSeen && s_enemyGrace[m][i] > 180) {
 				mpg_enemy_killed(m, i);
+				s_enemyWeDefeated[m][i] = 1;
+			}
 			if (!down)
-				s_enemySyncKill[m][i] = 0;
+				s_enemySyncKill[m][i] = s_enemyWeDefeated[m][i] = 0;
 			s_enemyDownFrames[m][i] = down ? (u16)(s_enemyDownFrames[m][i] < 60000 ? s_enemyDownFrames[m][i] + 1 : 60000) : 0;
 			s_enemyWasDown[m][i] = down;
 		}
@@ -1044,7 +1075,23 @@ void followHostEnemies()
 	static MpgEnemy list[64];
 	f32 age        = 0.0f;
 	const int n    = mpg_enemies(list, 64, &age);
-	const bool fresh = n > 0 && age + 0.001f < s_lastWorldAge;
+	// a new snapshot, by its number (its age cannot tell: snapshots come
+	// about as often as frames, so most are as old at each frame as the last)
+	static uint32_t lastSeq;
+	const uint32_t seq = mpg_world_seq();
+	const bool fresh   = n > 0 && seq != lastSeq;
+	lastSeq            = seq;
+	if (getenv("SMS_MULTIPLAYER_SPEEDLOG")) {
+		static int frames, freshes, entries;
+		frames++;
+		freshes += fresh;
+		entries += fresh ? n : 0;
+		if (frames % 300 == 0) {
+			fprintf(stderr, "[speed] snapshots: %d fresh in 300 frames, %d enemies in them on average\n", freshes,
+			        freshes ? entries / freshes : 0);
+			freshes = entries = 0;
+		}
+	}
 	s_lastWorldAge   = age;
 	// nothing from the host for a second (its game is paused, or the link
 	// is down): enemies here go by themselves until it comes again
@@ -1071,10 +1118,20 @@ void followHostEnemies()
 			if (!down) {
 				s_enemySyncKill[h.manager][h.index] = 1;
 				if (hostWas == 1) {
-					// defeated in the host's game just now: defeated here
+					// defeated in the host's game just now: defeated here. A
+					// Bullet Bill gone there blew up at its flight's end (one
+					// sprayed here drops its coins here, from the water drawn
+					// here): it blows up here too, without coins
 					if (getenv("SMS_MULTIPLAYER_DEBUG"))
 						fprintf(stderr, "[multiplayer] enemy %d.%d defeated in the host's game\n", h.manager, h.index);
-					e->kill();
+					if (TKiller* killer = dynamic_cast<TKiller*>(e)) {
+						if (killer->getSpine()->getCurrentNerve() != &TNerveKillerExplosion::theNerve()) {
+							killer->getSpine()->pushNerve(&TNerveKillerExplosion::theNerve());
+							killer->onHitFlag(HIT_FLAG_NO_COLLISION);
+						}
+					} else {
+						e->kill();
+					}
 				} else {
 					// one this game brought out by itself (its own spawner, near
 					// this player) that the host's game has not: gone, quietly
@@ -1086,9 +1143,11 @@ void followHostEnemies()
 		}
 		const JGeometry::TVec3<f32> at(h.pos[0], h.pos[1], h.pos[2]);
 		if (down) {
-			// back on the host: back here, once ours has been gone a while
-			// (not one we defeated a moment ago, whose news is on its way)
-			if (e->checkLiveFlag(LIVE_FLAG_DEAD) && s_enemyDownFrames[h.manager][h.index] > 90) {
+			// back on the host: back here, at once if ours went by itself or
+			// never came (a Bullet Bill the host's cannon fired), after a while
+			// if this player defeated it (the news is on its way to the host)
+			const u16 wait = s_enemyWeDefeated[h.manager][h.index] ? 90 : 2;
+			if (e->checkLiveFlag(LIVE_FLAG_DEAD) && s_enemyDownFrames[h.manager][h.index] > wait) {
 				const JGeometry::TVec3<f32> rot(0.0f, h.rotY * (360.0f / 65536.0f), 0.0f);
 				const JGeometry::TVec3<f32> still(0.0f, 0.0f, 0.0f);
 				if (getenv("SMS_MULTIPLAYER_DEBUG"))
@@ -1106,6 +1165,10 @@ void followHostEnemies()
 			t.vel.set((at.x - t.pos.x) / dt, (at.y - t.pos.y) / dt, (at.z - t.pos.z) / dt);
 		else
 			t.vel.set(0.0f, 0.0f, 0.0f);
+		if (getenv("SMS_MULTIPLAYER_SPEEDLOG") && h.index < 3 && enemyAt(h.manager, h.index)
+		    && strstr(typeid(*enemyAt(h.manager, h.index)).name(), getenv("SMS_MULTIPLAYER_SPEEDLOG")))
+			fprintf(stderr, "[speed] client %d.%d at %u ms dt %.3f speed %.0f\n", h.manager, h.index, mp_clock_ms_game(), dt,
+			        sqrtf(t.vel.x * t.vel.x + t.vel.y * t.vel.y + t.vel.z * t.vel.z));
 		t.pos   = at;
 		t.yaw   = h.rotY * (360.0f / 65536.0f);
 		t.at    = s_clock;
@@ -2483,6 +2546,8 @@ void landCarries()
 
 // ------------------------------------------------------------------- hooks
 
+unsigned g_moves; // debug: movement passes so far
+
 void frame()
 {
 	if (s_role < 0)
@@ -2490,6 +2555,17 @@ void frame()
 	if (!enabled())
 		return;
 	s_clock++;
+	if (getenv("SMS_MULTIPLAYER_SPEEDLOG") && s_clock % 600 == 0) {
+		static unsigned lastMs, lastMoves;
+		const unsigned ms = mp_clock_ms_game();
+		static unsigned lastRetrace;
+		const unsigned retrace = VIGetRetraceCount();
+		fprintf(stderr, "[speed] clock: 600 frames in %u ms, %u movement passes, %u retraces, game frame rate %d\n",
+		        ms - lastMs, g_moves - lastMoves, retrace - lastRetrace, port_active_frame_rate);
+		lastRetrace = retrace;
+		lastMs    = ms;
+		lastMoves = g_moves;
+	}
 	updateNearest();
 	TMarDirector* dir = director();
 	const int area    = gpApplication.mCurrArea.getStage();
@@ -2660,10 +2736,44 @@ void applyCleans()
 	}
 }
 
+// Debug (SMS_MULTIPLAYER_DUMP=1): every actor of the stage, where it is and
+// how it is, every two seconds on the wall clock, so two games on one
+// computer can be laid side by side (tools/mp_desync.py) to find what each
+// game runs its own way.
+void dumpActors()
+{
+	static const bool on = getenv("SMS_MULTIPLAYER_DUMP") != nullptr;
+	if (!on || !gpConductor)
+		return;
+	struct timespec ts;
+	clock_gettime(CLOCK_REALTIME, &ts);
+	const long long ms = (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+	static long long last;
+	if (ms / 2000 == last / 2000)
+		return;
+	last = ms;
+	const long long at = ms / 2000 * 2000;
+	int m = 0;
+	for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end(); ++it, ++m)
+		for (int i = 0; *it && i < (*it)->getObjNum(); i++)
+			if (TLiveActor* a = (*it)->getObj(i))
+				fprintf(stderr, "[mpdump] %lld %d.%d %s %.0f %.0f %.0f %.0f %x %.0f %.0f %s\n", at, m, i, typeid(*a).name(),
+				        a->mPosition.x, a->mPosition.y, a->mPosition.z, a->mRotation.y, (unsigned)a->mLiveFlag, a->mRotation.x,
+				        a->mRotation.z, a->getName() ? a->getName() : "-");
+	int i = 0;
+	for (JGadget::TList<TLiveActor*>::iterator it = gpConductor->unk30.begin(); it != gpConductor->unk30.end(); ++it, ++i)
+		if (TLiveActor* a = *it)
+			fprintf(stderr, "[mpdump] %lld 255.%d %s %.0f %.0f %.0f %.0f %x %.0f %.0f %s\n", at, i, typeid(*a).name(),
+			        a->mPosition.x, a->mPosition.y, a->mPosition.z, a->mRotation.y, (unsigned)a->mLiveFlag, a->mRotation.x,
+			        a->mRotation.z, a->getName() ? a->getName() : "-");
+}
+
 void afterMovement()
 {
+	g_moves++;
 	if (!enabled() || !inStage())
 		return;
+	dumpActors();
 	applyCleans();
 	landHits();
 	watchMyCarry();

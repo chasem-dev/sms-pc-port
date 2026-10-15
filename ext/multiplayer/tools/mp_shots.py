@@ -116,6 +116,9 @@ def main():
     ap.add_argument('--turn', action='store_true', help='bots face the camera')
     ap.add_argument('--test', default=None, help='SMS_MULTIPLAYER_TEST for the host (take@N:K;kill@N:K;die@N:L;warp@N:area,episode)')
     ap.add_argument('--client-test', default=None, help='SMS_MULTIPLAYER_TEST for the client')
+    ap.add_argument('--realtime', action='store_true',
+                    help='games paced by the wall clock, as players play (else as fast as they run: '
+                         'repeatable, but game time then outruns the network\'s real time)')
     ap.add_argument('--host-env', action='append', default=[],
                     help='KEY=VALUE for the host only, over the rest (e.g. its port behind a room)')
     ap.add_argument('--client-env', action='append', default=[],
@@ -159,7 +162,7 @@ def main():
         os.makedirs(host_save)
         env = game_env(host_save, raw, args.shots, {
             'SMS_MULTIPLAYER': 'host', 'SMS_MULTIPLAYER_PORT': port, 'SMS_MULTIPLAYER_NAME': 'Host',
-            'SMS_WARP': args.warp, 'SMS_AUTOPRESS': args.autopress, 'SMS_VI_DETERMINISTIC': '1',
+            'SMS_WARP': args.warp, 'SMS_AUTOPRESS': args.autopress, 'SMS_VI_DETERMINISTIC': '0' if args.realtime else '1',
             'SMS_MULTIPLAYER_DEBUG': '1', **({'SMS_MULTIPLAYER_TEST': args.test} if args.test else {})})
         env.update(dict(kv.split('=', 1) for kv in args.host_env))
         host_log = open(os.path.join(work, 'host.log'), 'w')
@@ -183,7 +186,7 @@ def main():
             os.makedirs(csave)
             cenv = game_env(csave, craw, args.client_shots or args.shots, {
                 'SMS_MULTIPLAYER': 'join', 'SMS_MULTIPLAYER_ADDRESS': '127.0.0.1:' + port,
-                'SMS_MULTIPLAYER_NAME': 'Client', 'SMS_VI_DETERMINISTIC': '1', 'SMS_MULTIPLAYER_DEBUG': '1',
+                'SMS_MULTIPLAYER_NAME': 'Client', 'SMS_VI_DETERMINISTIC': '0' if args.realtime else '1', 'SMS_MULTIPLAYER_DEBUG': '1',
                 **({'SMS_AUTOPRESS': args.client_autopress} if args.client_autopress else {}),
                 **({'SMS_MULTIPLAYER_TEST': args.client_test} if args.client_test else {})})
             cenv.update(dict(kv.split('=', 1) for kv in args.client_env))
