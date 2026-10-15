@@ -95,6 +95,7 @@ bool s_spectating;
 u32 s_spectateSession;
 int s_watching = -1;  // the slot whose player we watch
 bool s_restarting;    // host: everyone is out, the stage is starting again
+bool s_missReload;    // this stage again after a lost life (or a game over): no new session
 char s_notice[256];
 int s_noticeFrames, s_statusFrames;
 int s_refusedFrames;
@@ -1425,11 +1426,23 @@ void hostCheckEveryoneOut(TMarDirector* dir)
 			return;
 	}
 	s_restarting = true;
-	showNotice("Everyone is out of lives: back to the start");
-	TFlagManager::getInstance()->setFlag(0x20001, 3);
-	mpg_restart_session();
+	TFlagManager::getInstance()->setFlag(0x20001, 3); // as a continue gives
 	const TGameSequence& cur = gpApplication.mCurrArea;
-	gpApplication.mNextArea.set(cur.getStage(), cur.getScenario(), 0);
+	if (cur.getStage() == 1) {
+		// the plaza: nowhere to leave to; it starts again
+		showNotice("Everyone is out of lives: back to the start");
+		fprintf(stderr, "[multiplayer] everyone is out of lives: the plaza starts again\n");
+		mpg_restart_session();
+		gpApplication.mNextArea.set(cur.getStage(), cur.getScenario(), 0);
+	} else {
+		// a real game over: out of the world, as the pause menu's Exit Area
+		// leaves it (TMarDirector::changeState: the plaza, by the world's
+		// way in), everyone with it
+		showNotice("Everyone is out of lives: game over");
+		fprintf(stderr, "[multiplayer] everyone is out of lives: out of the world to Delfino Plaza\n");
+		gpApplication.mNextArea.set(1, 0xFF, 0);
+		dir->unkE4 = 2;
+	}
 	dir->onFlag(TMarDirector::DIRECTOR_FLAG_STAGE_TRANSITION_PENDING);
 }
 
@@ -1438,6 +1451,7 @@ int takeGameOver()
 	if (!enabled())
 		return 0;
 	// no game over screen: back into the stage, watching the others
+	s_missReload      = true;
 	s_spectating      = true;
 	s_spectateSession = mpg_session();
 	s_watching        = -1;
@@ -2942,8 +2956,13 @@ int allowNextStage(unsigned code, void* actor)
 	int area, episode;
 	const int next = code >= 0x100 ? (int)(code >> 8) - 1 : (int)code;
 	if (s_role == MPG_ROLE_HOST && inStage()) {
-		// setting off: everyone sets off now, so the fades go together
-		mpg_host_leaving(next, code >= 0x100 ? (int)(code & 0xFF) : 0xFF);
+		// setting off: everyone sets off now, so the fades go together. Not
+		// into the stage it is in (a lost life's start over is the host's
+		// alone; a way back in brings a new session, which the others follow)
+		const TGameSequence& cur = gpApplication.mCurrArea;
+		const int nextEpisode    = code >= 0x100 ? (int)(code & 0xFF) : 0xFF;
+		if (next != cur.getStage() || (nextEpisode != 0xFF && nextEpisode != cur.getScenario()))
+			mpg_host_leaving(next, nextEpisode);
 		return 1;
 	}
 	if (s_role != MPG_ROLE_CLIENT || !mpg_target(&area, &episode))
@@ -3006,8 +3025,14 @@ void moveStage()
 		                        ? (int)gpApplication.getMovie() : -1;
 		// the stage it is in, again (a way back in, a restart): a new session
 		// all the same, so the others load it afresh too
+		// (not a lost life's: that player alone starts over, the others play on)
 		const TGameSequence& cur = gpApplication.mCurrArea;
-		if (next.getStage() == cur.getStage() && next.getScenario() == cur.getScenario())
+		const bool same = next.getStage() == cur.getStage() && next.getScenario() == cur.getScenario();
+		const bool miss = s_missReload;
+		s_missReload    = false;
+		if (same && miss)
+			return; // the host's own start over: nothing for the others
+		if (same)
 			mpg_restart_session();
 		mpg_host_going(next.getStage(), next.getScenario(), flags, movie);
 		return;
@@ -3032,6 +3057,7 @@ void missNextArea()
 {
 	if (!enabled())
 		return;
+	s_missReload = true; // the same stage again for this player only (moveStage)
 	// back into the same stage, not out to the plaza: the others are still here
 	const TGameSequence& cur = gpApplication.mCurrArea;
 	gpApplication.mNextArea.set(cur.getStage(), cur.getScenario(), 0);
