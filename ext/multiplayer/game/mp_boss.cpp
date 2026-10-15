@@ -38,6 +38,7 @@
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
 #include <MoveBG/MapObjCorona.hpp>
 #include <Player/Mario.hpp>
+#include <Player/ModelWaterManager.hpp>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -340,6 +341,7 @@ TEnemyManager* s_gates;  // the Gatekeepers, by slot
 TBathtub* s_tub;         // Bowser's hot tub
 TEnemyMario* s_shadow;   // Shadow Mario
 TEMarioManager* s_shadowList; // his hit actor's list: he is found through it once set up
+TEMario* s_shadowAlone;       // or he is one on his own (the plaza's chase with Peach)
 int s_next;              // the next piece to send
 // client: what was last set from the host (to find this game's own hits)
 int s_setHp;
@@ -887,6 +889,10 @@ void hitTub(int unit, int kind, int)
 
 // The host's Shadow Mario is the one everyone chases: where he is, what he is
 // doing, his water meter and the stomps left once he is down.
+const int kShadowRecord = 2 + 2 + 2 + 12 + 2;
+int s_shadowWater, s_shadowStomps; // client: what was last set from the host's Shadow Mario
+bool s_mainDownSaid;
+
 void writeShadow(Out& o)
 {
 	TEnemyMario* e = s_shadow;
@@ -910,10 +916,10 @@ void readShadow(In& in)
 	if (!in.ok)
 		return;
 	if (s_followed) {
-		if (e->mWaterCounter < s_setHp) // sprayed here
-			mpg_boss_hit(0, HIT_SHADOW_WATER, s_setHp - e->mWaterCounter);
-		if (e->mTrampleCount < s_setValue[0]) // stomped here
-			mpg_boss_hit(0, HIT_SHADOW_STOMP, s_setValue[0] - e->mTrampleCount);
+		if (e->mWaterCounter < s_shadowWater) // sprayed here
+			mpg_boss_hit(0, HIT_SHADOW_WATER, s_shadowWater - e->mWaterCounter);
+		if (e->mTrampleCount < s_shadowStomps) // stomped here
+			mpg_boss_hit(0, HIT_SHADOW_STOMP, s_shadowStomps - e->mTrampleCount);
 	}
 	if (doing != e->mEMDoing) {
 		e->mEMDoing      = doing;
@@ -926,16 +932,21 @@ void readShadow(In& in)
 	e->mPosition.y += (y - e->mPosition.y) * k;
 	e->mPosition.z += (z - e->mPosition.z) * k;
 	e->mFaceAngle.y = face;
-	s_setHp       = water;
-	s_setValue[0] = stomps;
+	s_shadowWater  = water;
+	s_shadowStomps = stomps;
 }
 
 void hitShadow(int, int kind, int count)
 {
 	TEnemyMario* e = s_shadow;
 	for (int i = 0; i < count; i++) {
-		if (kind == HIT_SHADOW_WATER)
-			e->hitWater(gpMarioOriginal);
+		if (kind == HIT_SHADOW_WATER) {
+			// a spray on him (its splash where he is, not at this game's Mario)
+			TWaterHitActor& water = TModelWaterManager::mStaticHitActor;
+			water.mPosition       = e->mPosition;
+			water.mParticleIndex  = 0;
+			e->hitWater(&water);
+		}
 		else if (kind == HIT_SHADOW_STOMP && e->mEMDoing == TEnemyMario::EM_DOING_DOWN_ANIMATION)
 			e->thinkTrample();
 	}
@@ -955,6 +966,9 @@ void MpBossStageSetup()
 	s_tub      = nullptr;
 	s_shadow   = nullptr;
 	s_shadowList = nullptr;
+	s_shadowAlone = nullptr;
+	s_shadowWater = s_shadowStomps = 0;
+	s_mainDownSaid = false;
 	s_next     = 0;
 	s_followed = false;
 	s_setHp    = 0;
@@ -964,16 +978,24 @@ void MpBossStageSetup()
 		s_hostNerve[i] = -1;
 	if (!gpConductor)
 		return;
-	for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end() && !s_kind;
-	     ++it) {
+	// every boss here, not just the first found: a stage can have its boss
+	// and Gatekeepers and Shadow Mario (the plaza has a sleeping Gatekeeper
+	// beside Shadow Mario's chase)
+	for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it) {
 		TEnemyManager* mgr = *it;
 		if (TEMarioManager* em = dynamic_cast<TEMarioManager*>(mgr)) {
-			s_kind = KIND_SHADOW, s_shadowList = em; // Shadow Mario himself comes later
+			s_shadowList = em; // Shadow Mario himself comes later
 			continue;
 		}
 		if (!mgr || !mgr->getObjNum())
 			continue;
 		TLiveActor* first = mgr->getObj(0);
+		if (dynamic_cast<TBiancoGateKeeper*>(first)) {
+			s_gates = mgr;
+			continue;
+		}
+		if (s_kind)
+			continue;
 		if (TBossPakkunManager* pm = dynamic_cast<TBossPakkunManager*>(mgr)) {
 			if (debug())
 				fprintf(stderr, "[multiplayer] a Petey manager (%s)\n", pm->mIsLightVersion ? "light" : "full");
@@ -985,8 +1007,6 @@ void MpBossStageSetup()
 			s_kind = KIND_EEL, s_boss = static_cast<TSpineEnemy*>(first);
 		} else if (dynamic_cast<TBossManta*>(first)) {
 			s_kind = KIND_MANTA, s_mantas = mgr;
-		} else if (dynamic_cast<TBiancoGateKeeper*>(first)) {
-			s_kind = KIND_GATE, s_gates = mgr;
 		} else if (dynamic_cast<TBossHanachan*>(first)) {
 			s_kind = KIND_WIGGLER, s_boss = static_cast<TSpineEnemy*>(first);
 		} else if (dynamic_cast<TBossTelesa*>(first)) {
@@ -996,10 +1016,15 @@ void MpBossStageSetup()
 		}
 	}
 	// Shadow Mario's list may sit with the other object lists, not the enemies'
-	for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end() && !s_kind;
-	     ++it)
-		if (TEMarioManager* em = dynamic_cast<TEMarioManager*>(*it))
-			s_kind = KIND_SHADOW, s_shadowList = em;
+	if (!s_shadowList)
+		for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end(); ++it)
+			if (TEMarioManager* em = dynamic_cast<TEMarioManager*>(*it))
+				s_shadowList = em;
+	// or on his own (the conductor's lone actors: the plaza's Shadow Mario)
+	if (!s_shadowList)
+		for (JGadget::TList<TLiveActor*>::iterator it = gpConductor->unk30.begin(); it != gpConductor->unk30.end(); ++it)
+			if (TEMario* em = dynamic_cast<TEMario*>(*it))
+				s_shadowAlone = em;
 	if (!s_kind)
 		if (TBathtub* tub = dynamic_cast<TBathtub*>(JDrama::TNameRefGen::search2("バスタブ")))
 			if (tub->unk168)
@@ -1009,7 +1034,11 @@ void MpBossStageSetup()
 	                                    "The Gatekeeper"};
 	if (s_kind)
 		fprintf(stderr, "[multiplayer] %s is here: the host's is everyone's\n", names[s_kind]);
-	else if (debug())
+	if (s_gates)
+		fprintf(stderr, "[multiplayer] %s is here: the host's is everyone's\n", names[KIND_GATE]);
+	if (s_shadowList || s_shadowAlone)
+		fprintf(stderr, "[multiplayer] %s is here: the host's is everyone's\n", names[KIND_SHADOW]);
+	if (!s_kind && !s_gates && !s_shadowList && !s_shadowAlone && debug())
 		for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
 			if (*it && (*it)->getObjNum())
 				fprintf(stderr, "[multiplayer] enemies here: %d of actor type %x\n", (*it)->getObjNum(),
@@ -1019,47 +1048,19 @@ void MpBossStageSetup()
 // Shadow Mario is set up after the stage's objects: found when he is there.
 bool bossReady()
 {
-	if (s_kind == KIND_SHADOW && !s_shadow && s_shadowList)
+	if (!s_shadow && s_shadowList)
 		for (int i = 0; i < s_shadowList->getObjNum() && !s_shadow; i++)
 			if (TEMario* em = dynamic_cast<TEMario*>(s_shadowList->getObj(i)))
 				s_shadow = em->mEnemyMario;
-	return s_kind && (s_kind != KIND_SHADOW || s_shadow);
+	if (!s_shadow && s_shadowAlone)
+		s_shadow = s_shadowAlone->mEnemyMario;
+	return s_kind || s_gates || s_shadow;
 }
 
-void MpBossHostFrame()
+// The record of the stage's main boss (one kind a stage), as [kind, unit, length, payload].
+void writeMain(Out& o)
 {
-	if (!bossReady())
-		return;
-	int unit, kind, count;
-	while (mpg_next_boss_hit(&unit, &kind, &count)) {
-		if (debug())
-			fprintf(stderr, "[multiplayer] boss: %d hit(s) of kind %d on part %d from another game\n", count, kind, unit);
-		switch (s_kind) {
-		case KIND_PETEY: hitPetey(unit, kind, count); break;
-		case KIND_GESSO: hitGesso(unit, kind, count); break;
-		case KIND_EEL: hitEel(unit, kind, count); break;
-		case KIND_MANTA: hitManta(unit, kind, count); break;
-		case KIND_WIGGLER: hitWiggler(unit, kind, count); break;
-		case KIND_KINGBOO: hitKingBoo(unit, kind, count); break;
-		case KIND_MECHA: hitMecha(unit, kind, count); break;
-		case KIND_TUB: hitTub(unit, kind, count); break;
-		case KIND_SHADOW: hitShadow(unit, kind, count); break;
-		case KIND_GATE: hitGate(unit, kind, count); break;
-		}
-	}
-	u8 buf[200];
-	Out o(buf, sizeof buf);
-	if (s_kind == KIND_GATE) {
-		const int n = s_gates->getObjNum() < kMaxGates ? s_gates->getObjNum() : kMaxGates;
-		for (int unit = 0; unit < n && o.room(3 + kGateRecord); unit++) {
-			if (!gateAt(unit))
-				continue;
-			o.u8_(KIND_GATE);
-			o.u8_((u8)unit);
-			o.u8_((u8)kGateRecord);
-			writeGate(o, unit);
-		}
-	} else if (s_kind == KIND_MANTA) {
+	if (s_kind == KIND_MANTA) {
 		const int n = s_mantas->getObjNum() < kMaxUnits ? s_mantas->getObjNum() : kMaxUnits;
 		for (int k = 0; k < kMantaPerUpdate && k < n && o.room(3 + kMantaRecord); k++) {
 			const int slot = (s_next + k) % n;
@@ -1070,22 +1071,73 @@ void MpBossHostFrame()
 		}
 		if (n)
 			s_next = (s_next + kMantaPerUpdate) % n;
-	} else {
-		o.u8_((u8)s_kind);
-		o.u8_(0);
-		const int lenAt = o.n;
-		o.u8_(0);
-		switch (s_kind) {
-		case KIND_PETEY: writePetey(o); break;
-		case KIND_GESSO: writeGesso(o); break;
-		case KIND_EEL: writeEel(o); break;
-		case KIND_WIGGLER: writeWiggler(o); break;
-		case KIND_KINGBOO: writeKingBoo(o); break;
-		case KIND_MECHA: writeMecha(o); break;
-		case KIND_TUB: writeTub(o); break;
-		case KIND_SHADOW: writeShadow(o); break;
+		return;
+	}
+	o.u8_((u8)s_kind);
+	o.u8_(0);
+	const int lenAt = o.n;
+	o.u8_(0);
+	switch (s_kind) {
+	case KIND_PETEY: writePetey(o); break;
+	case KIND_GESSO: writeGesso(o); break;
+	case KIND_EEL: writeEel(o); break;
+	case KIND_WIGGLER: writeWiggler(o); break;
+	case KIND_KINGBOO: writeKingBoo(o); break;
+	case KIND_MECHA: writeMecha(o); break;
+	case KIND_TUB: writeTub(o); break;
+	}
+	o.p[lenAt] = (u8)(o.n - lenAt - 1);
+}
+
+void MpBossHostFrame()
+{
+	if (!bossReady())
+		return;
+	int unit, kind, count;
+	while (mpg_next_boss_hit(&unit, &kind, &count)) {
+		if (debug())
+			fprintf(stderr, "[multiplayer] boss: %d hit(s) of kind %d on part %d from another game\n", count, kind, unit);
+		// the kind of hit says whose it is
+		if (kind == HIT_GATE_SPRAY || kind == HIT_GATE_MOUTH) {
+			hitGate(unit, kind, count);
+			continue;
 		}
-		o.p[lenAt] = (u8)(o.n - lenAt - 1);
+		if (kind == HIT_SHADOW_WATER || kind == HIT_SHADOW_STOMP) {
+			if (s_shadow)
+				hitShadow(unit, kind, count);
+			continue;
+		}
+		switch (s_kind) {
+		case KIND_PETEY: hitPetey(unit, kind, count); break;
+		case KIND_GESSO: hitGesso(unit, kind, count); break;
+		case KIND_EEL: hitEel(unit, kind, count); break;
+		case KIND_MANTA: hitManta(unit, kind, count); break;
+		case KIND_WIGGLER: hitWiggler(unit, kind, count); break;
+		case KIND_KINGBOO: hitKingBoo(unit, kind, count); break;
+		case KIND_MECHA: hitMecha(unit, kind, count); break;
+		case KIND_TUB: hitTub(unit, kind, count); break;
+		}
+	}
+	u8 buf[200];
+	Out o(buf, sizeof buf);
+	if (s_kind)
+		writeMain(o);
+	if (s_shadow && o.room(3 + kShadowRecord)) {
+		o.u8_(KIND_SHADOW);
+		o.u8_(0);
+		o.u8_((u8)kShadowRecord);
+		writeShadow(o);
+	}
+	if (s_gates) {
+		const int n = s_gates->getObjNum() < kMaxGates ? s_gates->getObjNum() : kMaxGates;
+		for (int g = 0; g < n && o.room(3 + kGateRecord); g++) {
+			if (!gateAt(g))
+				continue;
+			o.u8_(KIND_GATE);
+			o.u8_((u8)g);
+			o.u8_((u8)kGateRecord);
+			writeGate(o, g);
+		}
 	}
 	mpg_set_boss(buf, o.n);
 	static int debugFrames;
@@ -1104,11 +1156,11 @@ void MpBossClientTick()
 		s_followed = false;
 		return;
 	}
-	if (s_boss && s_boss->checkLiveFlag(LIVE_FLAG_DEAD)) {
-		if (s_followed)
-			fprintf(stderr, "[multiplayer] the boss is down here too: its Shine is out\n");
-		s_followed = false;
-		return;
+	// the main boss down here too: it follows no more (the others still do)
+	const bool mainDown = s_boss && s_boss->checkLiveFlag(LIVE_FLAG_DEAD);
+	if (mainDown && s_followed && !s_mainDownSaid) {
+		fprintf(stderr, "[multiplayer] the boss is down here too: its Shine is out\n");
+		s_mainDownSaid = true;
 	}
 	In in(buf, got);
 	while (in.ok && in.at + 3 <= got) {
@@ -1117,7 +1169,17 @@ void MpBossClientTick()
 			break;
 		In rec(buf + in.at, len);
 		in.at += len;
-		if (kind != s_kind)
+		if (kind == KIND_GATE) {
+			if (s_gates)
+				readGate(rec, unit);
+			continue;
+		}
+		if (kind == KIND_SHADOW) {
+			if (s_shadow)
+				readShadow(rec);
+			continue;
+		}
+		if (kind != s_kind || mainDown)
 			continue;
 		switch (kind) {
 		case KIND_PETEY: readPetey(rec); break;
@@ -1128,8 +1190,6 @@ void MpBossClientTick()
 		case KIND_KINGBOO: readKingBoo(rec); break;
 		case KIND_MECHA: readMecha(rec); break;
 		case KIND_TUB: readTub(rec); break;
-		case KIND_SHADOW: readShadow(rec); break;
-		case KIND_GATE: readGate(rec, unit); break;
 		}
 	}
 	s_followed = true;
@@ -1142,7 +1202,7 @@ void MpBossClientTick()
 // its copy, as playing would (the report then reaches the host's boss).
 int MpBossTestHit()
 {
-	switch (s_kind) {
+	switch (s_kind ? s_kind : s_gates ? KIND_GATE : s_shadow ? KIND_SHADOW : 0) {
 	case KIND_PETEY:
 		for (int i = 0; i < 3; i++)
 			static_cast<TBossPakkun*>(s_boss)->gotWaterDamage();
@@ -1179,7 +1239,7 @@ int MpBossTestHit()
 				return s_kind;
 			}
 		return 0;
-	case KIND_SHADOW: s_shadow->hitWater(gpMarioOriginal); return s_kind;
+	case KIND_SHADOW: s_shadow->hitWater(gpMarioOriginal); return KIND_SHADOW;
 	case KIND_GATE:
 		// water on it asleep, or in its open mouth, as a player aims it: its
 		// own step decides what that does
@@ -1189,9 +1249,21 @@ int MpBossTestHit()
 					const int nerve = nerveIndex(gateNerve, g->getLatestNerve());
 					if (nerve == 0 || nerve == 4 || g->isHeadHitActive())
 						g->unk154 = 1;
-					return s_kind;
+					return KIND_GATE;
 				}
 		return 0;
 	}
 	return 0;
+}
+
+// Test aid (shadowspray@N:K): a spray on this game's Shadow Mario.
+int MpBossTestShadow()
+{
+	if (!bossReady() || !s_shadow)
+		return 0;
+	TWaterHitActor& water = TModelWaterManager::mStaticHitActor;
+	water.mPosition       = s_shadow->mPosition;
+	water.mParticleIndex  = 0;
+	s_shadow->hitWater(&water);
+	return KIND_SHADOW;
 }

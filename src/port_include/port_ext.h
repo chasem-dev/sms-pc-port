@@ -73,6 +73,11 @@ typedef struct PortExtension {
 	// move their parts. Many objects decide things by where Mario is
 	// (gpMarioPos), which the hook may point elsewhere until the "after".
 	void (*objectMove)(void* object, int after);
+	// This game's player, or its water, hit `object` (a THitActor) with
+	// `message` (HIT_MESSAGE_*: sprayed, ground-pounded, punched,
+	// stomped...), from `sender` (the player, or the water's hit actor):
+	// return 1 to stop it from reaching the object.
+	int (*objectHit)(void* object, void* sender, unsigned message);
 } PortExtension;
 
 // Adds an extension; call from a static constructor or before the first frame.
@@ -99,6 +104,7 @@ void port_ext_demo_camera(const char* name, const float* pos, int frames, float 
                           void* actor, unsigned flags);
 void port_ext_pollution_clean(float x, float y, float z, float size);
 void port_ext_object_move(void* object, int after);
+int port_ext_object_hit(void* object, void* sender, unsigned message);
 
 #ifdef __cplusplus
 }

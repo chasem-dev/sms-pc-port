@@ -125,3 +125,9 @@ extern "C" void port_ext_object_move(void* object, int after)
 {
 	EACH(objectMove) s_ext[i]->objectMove(object, after);
 }
+
+extern "C" int port_ext_object_hit(void* object, void* sender, unsigned message)
+{
+	EACH(objectHit) if (s_ext[i]->objectHit(object, sender, message)) return 1;
+	return 0;
+}

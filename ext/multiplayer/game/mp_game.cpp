@@ -33,6 +33,7 @@
 #include <MoveBG/Item.hpp>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
 #include <MoveBG/ItemManager.hpp>
+#include <NPC/NpcBase.hpp>
 #include <MoveBG/MapObjManager.hpp>
 #include <MoveBG/MapObjTown.hpp>
 #include <Player/ModelWaterManager.hpp>
@@ -72,6 +73,7 @@ uint8_t s_itemLive[kMaxItems]; // every item, alive last frame
 int s_takenAtSeen;             // the session's taken-at list, looked at so far
 int s_lastCoins = -1;          // the coin count after the last sync (the 100-coin Shine)
 TMpPuppet* s_puppets[4];
+
 TMpPuppet* s_self; // our own character, when we are not Mario
 unsigned s_stageNumber;
 // Out of lives: watching another player instead of playing (until the
@@ -498,11 +500,18 @@ void MpCapturePose(TMario* m, MpgPose* out)
 	}
 }
 
+// A drop of water drawn for another player (a bit of its flags the game leaves alone).
+static const u16 kDrawnWater = 0x8000;
+
 // Another player's water, emitted here as their FLUDD emits it
 // (TNozzleBase::emit): the same nozzle's parameters, from where their game
 // says it leaves. It is Mario's kind of water, so it cleans goop and hits
 // what it hits in this game too. `carry` keeps the fraction of a particle
 // between frames, as the nozzle does.
+//
+// Its drops carry kDrawnWater: they do not hit NPCs or map objects here
+// (that player's own game sends the hits it lands, mp_game.cpp's
+// objectHit), so nothing is hit twice.
 void MpEmitWater(const MpgPose& p, f32* carry)
 {
 	TMario* m = gpMarioOriginal;
@@ -539,7 +548,7 @@ void MpEmitWater(const MpgPose& p, f32* carry)
 		const f32 pow  = e.mEmitPow.get();
 		const f32 ctrl = e.mEmitCtrl.get();
 		info->mPow.set(pow * p.pressure * ctrl + pow * (1.0f - ctrl));
-		info->mFlag.set(0x40);
+		info->mFlag.set(0x40 | kDrawnWater);
 		gpModelWaterManager->emitRequest(*info);
 	}
 }
@@ -1215,6 +1224,8 @@ struct TestPlan {
 	int bossDownAt;                  // bossdown@N: the boss loses all its hit points to ground pounds
 	int bossHitAt;                   // bosshit@N: a hit on this game's copy of the boss (mp_boss.cpp)
 	int bossSprayAt, bossSprayFrames; // bossspray@N:K: that hit every tick for K ticks (a Gatekeeper sprayed)
+	int shadowSprayAt, shadowSprayFrames; // shadowspray@N:K: Shadow Mario sprayed every 4 ticks for K ticks
+	int npcSprayAt, npcSprayFrames;   // npcspray@N:K: the nearest NPC sprayed every tick for K ticks
 	int setFlagAt;                   // setflag@N:ID: a flag of the game's set (hex), e.g. what starts a fight
 	unsigned setFlagId;
 	int frames; // in this stage
@@ -1222,13 +1233,15 @@ struct TestPlan {
 };
 TestPlan s_test;
 
+void testSprayNpc(bool first); // shared objects, below
+
 void runTests(TMarDirector* dir, bool arrived)
 {
 	if (!s_test.parsed) {
 		s_test.parsed = true;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
 		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = s_test.bossHitAt = s_test.setFlagAt = -1;
-		s_test.bossSprayAt = -1;
+		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.npcSprayAt = -1;
 		s_test.dieLives = -1;
 		if (const char* plan = getenv("SMS_MULTIPLAYER_TEST")) {
 			const char* t = strstr(plan, "take@");
@@ -1270,6 +1283,10 @@ void runTests(TMarDirector* dir, bool arrived)
 				sscanf(bh, "bosshit@%d", &s_test.bossHitAt);
 			if (const char* bs = strstr(plan, "bossspray@"))
 				sscanf(bs, "bossspray@%d:%d", &s_test.bossSprayAt, &s_test.bossSprayFrames);
+			if (const char* ss = strstr(plan, "shadowspray@"))
+				sscanf(ss, "shadowspray@%d:%d", &s_test.shadowSprayAt, &s_test.shadowSprayFrames);
+			if (const char* ns = strstr(plan, "npcspray@"))
+				sscanf(ns, "npcspray@%d:%d", &s_test.npcSprayAt, &s_test.npcSprayFrames);
 			if (const char* sf = strstr(plan, "setflag@"))
 				sscanf(sf, "setflag@%d:%x", &s_test.setFlagAt, &s_test.setFlagId);
 		}
@@ -1400,6 +1417,15 @@ void runTests(TMarDirector* dir, bool arrived)
 			fprintf(stderr, "[multiplayer] test: spraying this game's boss (kind %d), %s\n", kind,
 			        s_test.together == s_test.bossSprayAt ? "starting" : "stopping");
 	}
+	if (s_test.shadowSprayAt >= 0 && s_test.frames >= s_test.shadowSprayAt
+	    && s_test.frames < s_test.shadowSprayAt + s_test.shadowSprayFrames && s_test.frames % 4 == 0) {
+		const int kind = MpBossTestShadow();
+		if (s_test.frames < s_test.shadowSprayAt + 4)
+			fprintf(stderr, "[multiplayer] test: spraying this game's Shadow Mario (kind %d)\n", kind);
+	}
+	if (s_test.npcSprayAt >= 0 && s_test.frames >= s_test.npcSprayAt
+	    && s_test.frames < s_test.npcSprayAt + s_test.npcSprayFrames)
+		testSprayNpc(s_test.frames == s_test.npcSprayAt);
 	if (s_test.bossHitAt >= 0 && !s_test.bossHit && s_test.together >= s_test.bossHitAt) {
 		const int kind = MpBossTestHit();
 		if (kind) {
@@ -1697,6 +1723,180 @@ void updateNearest()
 			s_nearestOn = true;
 }
 
+// ------------------------------------------------------------------- shared objects
+
+// What players do to NPCs and map objects (spray a goop-covered Pianta,
+// ground-pound a box, stomp a switch) happens in every game: each game sends
+// the hits its own player lands (objectHit, from the game's hit points), and
+// the others land them on their copies. Objects are named by their manager's
+// place in the stage's list and their place in it (every game loads a stage
+// the same way). Enemies, bosses and items have their own sharing and are
+// left out.
+// object -> manager << 16 | index, in an open-addressed table (0: empty)
+const int kSharedSlots = 8192;
+struct SharedEntry {
+	const void* object;
+	uint32_t where;
+};
+SharedEntry s_shared[kSharedSlots];
+TLiveManager* s_sharedManagers[256];
+int s_sharedCount;
+// the stage's lone actors (not in a manager: some NPCs, a statue, the
+// plaza's Shadow Mario), as manager kAlone
+const int kAlone = 255;
+TLiveActor* s_alone[512];
+int s_aloneCount;
+bool s_landingHit;
+
+uint32_t sharedSlot(const void* object) { return (uint32_t)(((uintptr_t)object >> 4) * 2654435761u) & (kSharedSlots - 1); }
+
+void shareObject(const void* object, uint32_t where)
+{
+	for (uint32_t i = sharedSlot(object), n = 0; n < kSharedSlots / 2; i = (i + 1) & (kSharedSlots - 1), n++)
+		if (!s_shared[i].object || s_shared[i].object == object) {
+			s_shared[i].object = object;
+			s_shared[i].where  = where;
+			return;
+		}
+}
+
+// Where `object` is in the shared lists; false if it is not shared.
+bool sharedWhere(const void* object, uint32_t* where)
+{
+	for (uint32_t i = sharedSlot(object), n = 0; n < kSharedSlots / 2; i = (i + 1) & (kSharedSlots - 1), n++) {
+		if (!s_shared[i].object)
+			return false;
+		if (s_shared[i].object == object) {
+			*where = s_shared[i].where;
+			return true;
+		}
+	}
+	return false;
+}
+
+void collectShared()
+{
+	memset(s_shared, 0, sizeof s_shared);
+	s_sharedCount = 0;
+	s_aloneCount  = 0;
+	if (!gpConductor)
+		return;
+	for (JGadget::TList<TLiveActor*>::iterator it = gpConductor->unk30.begin();
+	     it != gpConductor->unk30.end() && s_aloneCount < 512; ++it) {
+		TLiveActor* a       = *it;
+		const int i         = s_aloneCount++;
+		s_alone[i]          = nullptr;
+		if (!a || dynamic_cast<TSpineEnemy*>(a) || dynamic_cast<TItem*>(a))
+			continue; // enemies and items share their own way
+		s_alone[i] = a;
+		shareObject(a, (uint32_t)kAlone << 16 | (uint32_t)i);
+	}
+	for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin();
+	     it != gpConductor->unk10.end() && s_sharedCount < kAlone; ++it) {
+		TLiveManager* mgr = *it;
+		const int m       = s_sharedCount++;
+		s_sharedManagers[m] = nullptr;
+		if (!mgr || dynamic_cast<TEnemyManager*>(mgr) || dynamic_cast<TItemManager*>(mgr))
+			continue;
+		s_sharedManagers[m] = mgr;
+		for (int i = 0; i < mgr->getObjNum() && i < 0x10000; i++)
+			if (TLiveActor* a = mgr->getObj(i))
+				shareObject(a, (uint32_t)m << 16 | (uint32_t)i);
+	}
+}
+
+THitActor* sharedAt(int manager, int index)
+{
+	if (manager == kAlone)
+		return index >= 0 && index < s_aloneCount ? s_alone[index] : nullptr;
+	if (manager < 0 || manager >= s_sharedCount || !s_sharedManagers[manager])
+		return nullptr;
+	TLiveManager* mgr = s_sharedManagers[manager];
+	return index >= 0 && index < mgr->getObjNum() ? mgr->getObj(index) : nullptr;
+}
+
+bool sharedHit(unsigned message)
+{
+	return message == HIT_MESSAGE_SPRAYED_BY_WATER || message == HIT_MESSAGE_HIP_DROP
+	       || message == HIT_MESSAGE_SUPER_HIP_DROP || message == HIT_MESSAGE_PUNCH || message == HIT_MESSAGE_TRAMPLE
+	       || message == HIT_MESSAGE_PUSH_UP;
+}
+
+int objectHit(void* object, void* sender, unsigned message)
+{
+	if (!enabled() || !inStage() || s_landingHit || !gpModelWaterManager)
+		return 0;
+	uint32_t where;
+	if (!sharedWhere(object, &where))
+		return 0;
+	TWaterHitActor& waterHit = TModelWaterManager::mStaticHitActor;
+	const bool water         = sender == &waterHit;
+	if (water && waterHit.mParticleIndex >= 0 && waterHit.mParticleIndex < TModelWaterManager::SLOT_NUM
+	    && (gpModelWaterManager->getParticleFlagSOA()[waterHit.mParticleIndex] & kDrawnWater))
+		return 1; // another player's water, drawn here: their game sends what it hits
+	if ((!water && sender != gpMarioOriginal) || !sharedHit(message))
+		return 0;
+	const THitActor* from = static_cast<THitActor*>(sender);
+	mpg_hit((int)(where >> 16), (int)(where & 0xFFFF), (int)message, water, &from->mPosition.x);
+	return 0;
+}
+
+// Test aid (npcspray@N:K): this game's water on the NPC nearest its Mario,
+// through the game's own hit point (so it is sent like any spray).
+void testSprayNpc(bool first)
+{
+	TBaseNPC* best = nullptr;
+	f32 nearest    = 0.0f;
+	uint32_t where = 0;
+	for (int m = 0; m < s_sharedCount; m++)
+		for (int i = 0; s_sharedManagers[m] && i < s_sharedManagers[m]->getObjNum(); i++)
+			if (TBaseNPC* npc = dynamic_cast<TBaseNPC*>(s_sharedManagers[m]->getObj(i))) {
+				const f32 d = distance2(npc->mPosition, gpMarioOriginal->mPosition);
+				if (!best || d < nearest)
+					best = npc, nearest = d, where = (uint32_t)m << 16 | (uint32_t)i;
+			}
+	if (!best)
+		return;
+	TWaterHitActor& water = TModelWaterManager::mStaticHitActor;
+	water.mPosition       = best->mPosition;
+	water.mParticleIndex  = -1; // not a drawn drop: this game's own
+	if (first)
+		fprintf(stderr, "[multiplayer] test: spraying NPC %u.%u\n", (unsigned)(where >> 16), (unsigned)(where & 0xFFFF));
+	if (!objectHit(best, &water, HIT_MESSAGE_SPRAYED_BY_WATER))
+		best->receiveMessage(&water, HIT_MESSAGE_SPRAYED_BY_WATER);
+}
+
+// The others' hits on shared objects, landed here as theirs were.
+void landHits()
+{
+	int slot, manager, index, message, water, count;
+	float pos[3];
+	while (mpg_next_hit(&slot, &manager, &index, &message, &water, &count, pos)) {
+		THitActor* to = sharedAt(manager, index);
+		if (!to)
+			continue;
+		THitActor* from = nullptr;
+		if (water) {
+			TWaterHitActor& waterHit = TModelWaterManager::mStaticHitActor;
+			waterHit.mPosition.set(pos[0], pos[1], pos[2]);
+			waterHit.mParticleIndex = 0;
+			from = &waterHit;
+		} else if (slot >= 0 && slot < 4 && s_puppets[slot] && s_puppets[slot]->active()) {
+			from = s_puppets[slot];
+		}
+		if (!from)
+			continue;
+		s_landingHit = true;
+		for (int i = 0; i < count && i < 30; i++)
+			to->receiveMessage(from, (u32)message);
+		s_landingHit = false;
+		static int landed;
+		if (getenv("SMS_MULTIPLAYER_DEBUG") && landed++ % 50 == 0)
+			fprintf(stderr, "[multiplayer] hits: %s's %d (message %d) landed on %d.%d here\n", mpg_character_name(slot), count,
+			        message, manager, index);
+	}
+}
+
 // ------------------------------------------------------------------- hooks
 
 void frame()
@@ -1723,6 +1923,7 @@ void frame()
 	if (s_playing && !s_wasPlaying) {
 		snapshotItems();
 		collectManagers();
+		collectShared();
 		collectSwitches();
 		s_stageFrames = 0;
 		s_restarting = false;
@@ -1875,6 +2076,7 @@ void afterMovement()
 	if (!enabled() || !inStage())
 		return;
 	applyCleans();
+	landHits();
 	if (s_role == MPG_ROLE_CLIENT) {
 		followHostEnemies();
 		MpBossClientTick();
@@ -1995,7 +2197,7 @@ const char* saveStatesOffReason() { return "Save states are off in multiplayer";
 PortExtension s_extension = {
 	"multiplayer",   frame,           afterMovement,   stageSetup,     allowNextStage, moveStage,
 	missNextArea,    takeGameOver,    keepCoinsOnMiss, afterFileSelect, itemTaken,      allowSaveStates,
-	saveStatesOffReason, hidePlayerModel, 0, demoCamera, pollutionClean, objectMove,
+	saveStatesOffReason, hidePlayerModel, 0, demoCamera, pollutionClean, objectMove, objectHit,
 };
 
 struct Register {
