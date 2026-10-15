@@ -134,7 +134,7 @@ struct Controller {
 	// enemies: the host's list and where the next share starts; a client's
 	// newest share; kills reported to the host
 	std::vector<MpgEnemy> enemies;
-	size_t enemyNext = 0;
+	size_t enemyNext = 0, enemyBatch = 0;
 	std::deque<std::pair<int, int>> enemyKills;
 	// goop: what this game cleaned and has yet to send; what the others
 	// cleaned, for this game to clean; host: the session's, for newcomers;
@@ -1217,7 +1217,8 @@ extern "C" void mpg_frame(const MpgGame* game)
 			g.restoreRed = false;
 			g.shineExit  = false;
 			g.enemies.clear();
-			g.enemyNext = 0;
+			g.enemyNext  = 0;
+			g.enemyBatch = 0;
 			g.enemyKills.clear();
 			forgetCleans();
 			for (int i = 1; i < MP_MAX_PLAYERS; i++)
@@ -1799,15 +1800,18 @@ extern "C" void mpg_set_enemies(const MpgEnemy* list, int count)
 		return;
 	}
 	g.enemies.assign(list, list + (count > 0 ? count : 0));
-	// this update's share: as many as fit, from where the last one stopped
+	// this update's share: as many as fit, from where the last one sent
+	// stopped (a share not sent yet, the game running faster than the
+	// updates, is made again with the newest places, not skipped)
+	if (mp_world_sent())
+		g.enemyNext += g.enemyBatch;
 	uint8_t buf[MP_MAX_WORLD];
 	Writer w(buf, sizeof buf);
 	w.u32(g.session);
 	const size_t per = (sizeof buf - 6 - 1 - g.boss.size()) / kEnemySize;
 	const size_t n   = std::min(per, g.enemies.size());
 	w.u16((uint16_t)n);
-	if (g.enemyNext >= g.enemies.size())
-		g.enemyNext = 0;
+	g.enemyNext = g.enemies.empty() ? 0 : g.enemyNext % g.enemies.size();
 	for (size_t k = 0; k < n; k++) {
 		const MpgEnemy& e = g.enemies[(g.enemyNext + k) % g.enemies.size()];
 		w.u8(e.manager);
@@ -1818,7 +1822,7 @@ extern "C" void mpg_set_enemies(const MpgEnemy* list, int count)
 		w.f32(e.pos[2]);
 		w.s16(e.rotY);
 	}
-	g.enemyNext = g.enemies.empty() ? 0 : (g.enemyNext + n) % g.enemies.size();
+	g.enemyBatch = n;
 	w.u8((uint8_t)g.boss.size());
 	w.bytes(g.boss.data(), g.boss.size());
 	mp_set_world(buf, w.len);

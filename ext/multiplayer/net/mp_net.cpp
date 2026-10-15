@@ -185,6 +185,7 @@ struct Session {
 	std::vector<uint8_t> world; // host: to send; client: the newest received
 	bool accepting = true;      // host: whether players may join now (mp_set_accepting)
 	uint32_t worldSeq = 0, worldAt = 0;
+	uint32_t worldSentSeq = 0; // host: the snapshot last sent
 };
 
 Session* g_session;
@@ -308,6 +309,7 @@ void sendData(Session& s, Peer& p, int toSlot, uint32_t now, bool force)
 
 	// the host's world snapshot
 	if (s.cfg.role == MP_ROLE_HOST && !s.world.empty()) {
+		s.worldSentSeq = s.worldSeq;
 		w.u32(s.worldSeq);
 		w.u16((uint16_t)s.world.size());
 		w.bytes(s.world.data(), s.world.size());
@@ -1156,4 +1158,9 @@ extern "C" size_t mp_remote_next(int slot, void* data, size_t size, uint32_t* re
 		    return r.data.size();
 	    },
 	    (size_t)0);
+}
+
+extern "C" int mp_world_sent(void)
+{
+	return withSession([](Session& s) { return s.world.empty() || s.worldSentSeq == s.worldSeq ? 1 : 0; }, 1);
 }
