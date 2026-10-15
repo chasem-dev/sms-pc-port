@@ -1367,6 +1367,7 @@ struct TestPlan {
 	int shadowSprayAt, shadowSprayFrames; // shadowspray@N:K: Shadow Mario sprayed every 4 ticks for K ticks
 	int npcSprayAt, npcSprayFrames;   // npcspray@N:K: the nearest NPC sprayed every tick for K ticks
 	int slotSprayAt;                  // slotspray@N: the first item slot machine sprayed (it spins)
+	int melonAt;                      // rollmelon@N: the big watermelon rolled along for 150 frames
 	bool slotSprayed;
 	int carryAt, carryFrames;         // carry@N:K: pick up the nearest thing that can be carried, put it down K ticks on
 	int setFlagAt;                   // setflag@N:ID: a flag of the game's set (hex), e.g. what starts a fight
@@ -1397,7 +1398,7 @@ void runTests(TMarDirector* dir, bool arrived)
 		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = -1;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
 		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = s_test.bossHitAt = s_test.setFlagAt = -1;
-		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.npcSprayAt = s_test.carryAt = s_test.slotSprayAt = -1;
+		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.npcSprayAt = s_test.carryAt = s_test.slotSprayAt = s_test.melonAt = -1;
 		s_test.dieLives = -1;
 		if (const char* plan = getenv("SMS_MULTIPLAYER_TEST")) {
 			const char* t = strstr(plan, "take@");
@@ -1461,6 +1462,8 @@ void runTests(TMarDirector* dir, bool arrived)
 				sscanf(ss, "shadowspray@%d:%d", &s_test.shadowSprayAt, &s_test.shadowSprayFrames);
 			if (const char* ns = strstr(plan, "npcspray@"))
 				sscanf(ns, "npcspray@%d:%d", &s_test.npcSprayAt, &s_test.npcSprayFrames);
+			if (const char* rm = strstr(plan, "rollmelon@"))
+				sscanf(rm, "rollmelon@%d", &s_test.melonAt);
 			if (const char* ss = strstr(plan, "slotspray@"))
 				sscanf(ss, "slotspray@%d", &s_test.slotSprayAt);
 			if (const char* cs = strstr(plan, "carry@"))
@@ -1679,6 +1682,8 @@ void runTests(TMarDirector* dir, bool arrived)
 	}
 	if (s_test.carryAt >= 0 && (s_test.frames == s_test.carryAt || s_test.frames == s_test.carryAt + s_test.carryFrames))
 		testCarry(s_test.frames == s_test.carryAt);
+	if (s_test.melonAt >= 0 && s_test.frames >= s_test.melonAt && s_test.frames < s_test.melonAt + 150)
+		MpMirrorTestRollMelon(s_test.frames - s_test.melonAt);
 	// sprayed again every 20 seconds, six times: some spins pay out
 	if (s_test.slotSprayAt >= 0 && s_test.frames >= s_test.slotSprayAt && (s_test.frames - s_test.slotSprayAt) % 600 == 0
 	    && (s_test.frames - s_test.slotSprayAt) / 600 < 6)
