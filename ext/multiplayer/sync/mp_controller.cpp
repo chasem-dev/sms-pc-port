@@ -54,6 +54,9 @@ const size_t kMaxBoss = 200;
 // switch) are named by their type and where they are, not their place in the
 // item manager (every game fills that differently); at most this many a stage.
 const size_t kMaxTakenAt = 512;
+// Losing the host: tries to reach it again, this far apart.
+const int kReconnectTries = 8;
+const uint32_t kReconnectMs = 3000;
 // Goop cleaned (TPollutionManager::clean): sent in batches, kept by the host
 // for the session (a newcomer, or a player starting the stage again, gets it
 // all). A spot cleaned again within kCleanFresh ms, no wider, is not sent
@@ -92,6 +95,12 @@ struct Controller {
 	bool travelKnown      = false;
 	uint32_t travelFlags  = 0;
 	int travelMovie       = -1;
+
+	// client: reconnecting after losing the host (a few tries, a few seconds apart)
+	MpConfig cfg{};
+	bool hadSlot          = false;
+	uint32_t reconnectAt  = 0; // mp_clock_ms; 0: not reconnecting
+	int reconnectTries    = 0;
 
 	// client
 	bool hasTarget     = false;
@@ -867,11 +876,26 @@ void events()
 	while (mp_poll_event(&ev)) {
 		switch (ev.type) {
 		case MP_EV_CONNECTED:
-			notice("Joined the game as player " + std::to_string(ev.slot + 1) + " (" + kCharacters[ev.slot] + ")");
+			if (g.reconnectTries)
+				notice("Back in the game as " + std::string(kCharacters[ev.slot]));
+			else
+				notice("Joined the game as player " + std::to_string(ev.slot + 1) + " (" + kCharacters[ev.slot] + ")");
+			g.hadSlot        = true;
+			g.reconnectAt    = 0;
+			g.reconnectTries = 0;
 			break;
 		case MP_EV_FAILED: {
 			char msg[256];
 			mp_link_message(msg, sizeof msg);
+			// the host gone quiet (not refusing, not closing): try again a few
+			// times, staying where we are meanwhile
+			const bool lost = strstr(msg, "Lost the connection") || (g.reconnectTries && strstr(msg, "No game answered"));
+			if (g.role == MPG_ROLE_CLIENT && g.hadSlot && lost && g.reconnectTries < kReconnectTries) {
+				g.reconnectAt = mp_clock_ms() + kReconnectMs;
+				notice(g.reconnectTries ? "Still trying to reach the host..." : "Lost the host: reconnecting...");
+				break;
+			}
+			g.reconnectAt = 0;
 			notice(std::string("Multiplayer: ") + msg);
 			g.hasTarget = false;
 			break;
@@ -1113,6 +1137,7 @@ extern "C" int mpg_start(void)
 		return g.role = MPG_ROLE_OFF;
 	}
 	g.role = cfg.role == MP_ROLE_HOST ? MPG_ROLE_HOST : MPG_ROLE_CLIENT;
+	g.cfg  = cfg;
 	if (mp_start(&cfg) != 0) {
 		char msg[256];
 		mp_link_message(msg, sizeof msg);
@@ -1156,6 +1181,15 @@ extern "C" void mpg_frame(const MpgGame* game)
 	g.frameMs = game->frameMs > 0.0f && game->frameMs < 200.0f ? game->frameMs : 1000.0 / 30.0;
 	g.gameMs += g.frameMs;
 	events();
+	// reconnecting: the next try (the host then sends its flags and where it is)
+	if (g.role == MPG_ROLE_CLIENT && g.reconnectAt && (int32_t)(mp_clock_ms() - g.reconnectAt) >= 0) {
+		g.reconnectAt = 0;
+		g.reconnectTries++;
+		g.localSession = 0;
+		g.targetSession = 0;
+		fprintf(stderr, "[multiplayer] reconnecting (try %d)\n", g.reconnectTries);
+		mp_start(&g.cfg);
+	}
 	takePoses();
 	flushCleans();
 	flushHits();
