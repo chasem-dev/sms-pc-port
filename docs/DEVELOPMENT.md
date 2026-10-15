@@ -334,6 +334,7 @@ Measured headless on the 32-bit Linux build (Mesa llvmpipe software GL), 2026-09
   The deterministic title, plaza, gate and Eclipse captures are unchanged on NVIDIA and llvmpipe, in a window and headless.
 - **Widescreen** (`SMS_WIDESCREEN`): the game camera is widened by a port patch and sms_gx maps each draw into the wider EFB (`drawXMap` in `gx_render.cpp`).
   The HUD stays 4:3 in the middle by default.
+  Full-screen overlays the game draws with a texture are stretched across the frame like the faders (`GXPC_SetStretch2D`): the blue wall screen `TMapDrawWall` shows while the camera is inside a wall (`widescreen-06`).
   With `SMS_WIDESCREEN_HUD=edges` the gameplay HUD is anchored to the screen edges per piece, not per 2D batch (which pulls composite panes apart): `TGCConsole2::perform` marks its HUD drawing (`GXPC_SetHud`), and `J2DPane::draw` brackets each pane with its extent (`GXPC_HudPaneBegin`/`End`, patch `widescreen-03`).
   The 2D particles the HUD emits at its panes (the coin counter's sparkle, the GO! trails) are drawn by the director's 2D emitter manager, which is drawn as HUD too, so each moves with the third of the screen it is in (`widescreen-04`).
   A piece is the outermost pane narrower than three quarters of the screen (the HUD's containers are 600 wide), and moves by which third of the 4:3 frame its centre is in; draws outside any piece (the water tank, drawn in 3D) move by their own extent.
