@@ -11,11 +11,12 @@
 # SMS_STANDALONE=0 skips that copy (SMS Launcher sets it).
 # JOBS=n limits parallel compiler jobs. SMS_ECLIPSE=1 builds Super Mario
 # Eclipse in, into build/<os>-<arch>-eclipse/ (docs/ECLIPSE.md). See BUILD.md.
+# SMS_GX_BUILD_TESTS=ON also configures platform/gx's self-tests (for CI).
 set -euo pipefail
 
 cd "$(dirname "$0")"
 if [[ "${1:-}" == -h || "${1:-}" == --help ]]; then
-  sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
   exit 0
 fi
 source tools/common.sh
@@ -124,7 +125,7 @@ fi
 # Windows runs it as a shell script whose forks can fail (e.g. Windows 7).
 [[ "$(git -C decomp rev-parse HEAD 2>/dev/null)" == "$(git rev-parse :decomp)" ]] || git submodule update --init decomp
 cmake -S . -B "$bdir" ${cmake_args[@]+"${cmake_args[@]}"} \
-  -DSMS_ARCH="$sms_arch" -DSMS_GX_BUILD_TESTS=OFF -DSMS_BUNDLE_DISC="$disc"
+  -DSMS_ARCH="$sms_arch" -DSMS_GX_BUILD_TESTS="${SMS_GX_BUILD_TESTS:-OFF}" -DSMS_BUNDLE_DISC="$disc"
 cmake --build "$bdir" --target sms --parallel "$(sms_jobs)"
 if [[ "$sms_os" == macos ]]; then
   # The executable finds SDL2.framework beside itself (@executable_path).
