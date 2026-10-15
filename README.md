@@ -84,7 +84,7 @@ Options can be kept in [`settings.txt`](settings.txt) (`resolution = 2`, `textur
 | Option | Effect |
 | --- | --- |
 | `SMS_SKIP_MOVIES=1` | skip cutscenes; keep portal animations playing |
-| `SMS_LANGUAGE=fr` | play in French, German (`de`), Spanish (`es`) or Italian (`it`) instead of English (`en`, the default), with that [language pack](#languages) installed |
+| `SMS_LANGUAGE=fr` | play in French, German (`de`), Spanish (`es`), Italian (`it`) or Polish (`pl`) instead of English (`en`, the default), with that [language pack](#languages) installed |
 | `SMS_HEAT_HAZE=0` | turn off the heat-wave shimmer that distorts the picture in sunny areas |
 | `SMS_BUTTON_PROMPTS=style` | the buttons shown in the game's text and on the FLUDD gauge: `gamecube` (the game's own, the default), `xbox`, `playstation`, `steamdeck`, `keyboard`, or `auto` (keyboard and mouse or the controller in use) |
 | `SMS_BUTTON_PROMPT_PAD=style` | with `auto`, how every controller's prompts look: `xbox`, `playstation`, `steamdeck` or `gamecube` (default: match the controller) |
@@ -247,7 +247,9 @@ The standalone build contains the whole game, so keep it to yourself: sharing it
 
 The North American disc is in English; the European release adds French, German, Spanish and Italian.
 A language pack holds one of those languages' text and menus, taken from the European disc, for this port to play with your North American one: dialogue, cutscene subtitles, signs, menus, the HUD, the title screen and the memory card screens.
-`python3 tools/mods/get.py language fr` installs the French pack in `mods/languages/fr` (`de`, `es`, `it` for the others), and `language = fr` in `settings.txt` (or `SMS_LANGUAGE=fr`) plays in it; SMS Launcher does both from its Language setting.
+Community translations are packs too, made from the [translation kit](https://github.com/chasem-dev/sms-hd-texture-extras#translation-kit); Polish (`pl`) is the first.
+The game plays any language whose pack is installed, so a new one needs no game update.
+`python3 tools/mods/get.py language fr` installs the French pack in `mods/languages/fr` (`de`, `es`, `it`, `pl` for the others), and `language = fr` in `settings.txt` (or `SMS_LANGUAGE=fr`) plays in it; SMS Launcher does both from its Language setting.
 Saves are the same in every language. The packs are made with the scripts in [sms-hd-texture-extras](https://github.com/chasem-dev/sms-hd-texture-extras#language-packs); [mods/README.md](mods/README.md#languages-language-packs) describes their layout.
 
 ## HD cutscenes

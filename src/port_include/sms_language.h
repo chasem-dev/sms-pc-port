@@ -4,7 +4,8 @@
 extern "C" {
 #endif
 // The language chosen with `language` in settings.txt (SMS_LANGUAGE): "en"
-// (the disc's own text, the default), "fr", "de", "es" or "it".
+// (the disc's own text, the default), or the code of an installed pack
+// ("fr", "de", "es", "it", "pl", ...).
 const char* port_language_code(void);
 // The installed pack for that language (mods/languages/<code>), or NULL for
 // English or when the pack is missing.

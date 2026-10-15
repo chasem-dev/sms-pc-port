@@ -11,7 +11,7 @@ Nothing in this folder is needed to play, and git ignores everything in it but t
 python3 tools/mods/get.py textures    # the UHD texture pack, into mods/textures/GMS, and the extras
 python3 tools/mods/get.py extras      # only the extras, into mods/textures/sms-hd-texture-extras
 python3 tools/mods/get.py eclipse     # Super Mario Eclipse, patched from your disc, into mods/eclipse
-python3 tools/mods/get.py language fr  # the French language pack, into mods/languages/fr (de, es, it)
+python3 tools/mods/get.py language fr  # the French language pack, into mods/languages/fr (de, es, it, pl)
 python3 tools/mods/get.py all
 ```
 
@@ -57,7 +57,7 @@ Mods that also change the game's code, such as Super Mario Eclipse, need that co
 
 ## languages/: language packs
 
-`language = <code>` in `settings.txt` (`SMS_LANGUAGE`) plays the game in that language with the pack in `languages/<code>/`: `fr`, `de`, `es` or `it`; `en`, the default, is the disc's own English.
+`language = <code>` in `settings.txt` (`SMS_LANGUAGE`) plays the game in that language with the pack in `languages/<code>/`: `fr`, `de`, `es`, `it` or `pl`; `en`, the default, is the disc's own English.
 `get.py language <code>` installs one; its release is pinned in `tools/mods/language-packs.json`, and `--if-outdated` downloads only when the installed one (recorded in `languages/<code>/.release`) is not that release.
 
 A pack's `files/` is laid out like a game file mod's, with one addition: a folder named after one of the disc's archives holds files that replace the ones of the same path inside that archive (`files/data/scene/bianco0.szs/map/message.bmg`).
