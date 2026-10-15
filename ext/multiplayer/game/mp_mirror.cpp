@@ -192,6 +192,15 @@ void easeTo(JGeometry::TVec3<f32>& have, const JGeometry::TVec3<f32>& want, f32 
 	have.z += dz * k;
 }
 
+// Where a sent state's object has got to, `age` ticks on at its speed: a
+// third of a second on at most (a state unchanged is sent once a second, and
+// its speed then is no guide to where it is a second later).
+JGeometry::TVec3<f32> ahead(const JGeometry::TVec3<f32>& pos, const JGeometry::TVec3<f32>& vel, int age)
+{
+	const f32 t = (f32)(age < 10 ? age : 10);
+	return JGeometry::TVec3<f32>(pos.x + vel.x * t, pos.y + vel.y * t, pos.z + vel.z * t);
+}
+
 // ------------------------------------------------------------------ kinds
 
 // NPCs: where the host's have walked (each game walks its own; they are
@@ -248,7 +257,7 @@ void takeMover(TLiveActor* a, const u8* in, int size, int age, int*)
 	const JGeometry::TVec3<f32> pos = g.v3(), vel = g.v3();
 	if (!g.ok)
 		return;
-	a->mPosition.set(pos.x + vel.x * age, pos.y + vel.y * age, pos.z + vel.z * age);
+	a->mPosition = ahead(pos, vel, age);
 	a->mVelocity = vel;
 }
 
@@ -528,7 +537,7 @@ void takeWatermelon(TLiveActor* a, const u8* in, int size, int age, int*)
 	const s32 coins = g.i();
 	if (!g.ok || w->mHolder)
 		return;
-	w->mPosition.set(pos.x + vel.x * age, pos.y + vel.y * age, pos.z + vel.z * age);
+	easeTo(w->mPosition, ahead(pos, vel, age), 400.0f, 0.5f);
 	w->mVelocity   = vel;
 	w->mState      = (u16)state;
 	w->mStateTimer = timer;
@@ -1143,6 +1152,23 @@ bool MpMirrorTestNearNpc()
 			me->mPosition.set(n.x + sinf(yaw) * 90.0f, n.y, n.z + cosf(yaw) * 90.0f);
 			me->mFaceAngle.y = (s16)(atan2f(n.x - me->mPosition.x, n.z - me->mPosition.z) * (32768.0f / 3.14159265f));
 			return gpMarDirector && gpMarDirector->isTalkModeNow();
+		}
+	return false;
+}
+
+// Test aid: this game's Mario against the big watermelon, rolling it along
+// (as bumping it does) for `frames` ticks.
+bool MpMirrorTestRollMelon(int frame)
+{
+	for (int k = 0; k < s_count; k++)
+		if (s_mirrors[k].actor && s_mirrors[k].kind->match == isWatermelon && gpMarioOriginal) {
+			TLiveActor* w = s_mirrors[k].actor;
+			if (frame == 0)
+				fprintf(stderr, "[multiplayer] test: rolling the watermelon %d.%d from %.0f %.0f %.0f\n", s_mirrors[k].manager,
+				        s_mirrors[k].index, w->mPosition.x, w->mPosition.y, w->mPosition.z);
+			gpMarioOriginal->mPosition.set(w->mPosition.x - w->mDamageRadius - 40.0f, w->mPosition.y, w->mPosition.z);
+			w->mPosition.x += 4.0f;
+			return true;
 		}
 	return false;
 }

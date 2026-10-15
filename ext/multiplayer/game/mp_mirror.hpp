@@ -24,6 +24,8 @@ bool MpMirrorTestHatch();
 bool MpMirrorTestTubEdge();
 // Test aid: claims the first NPC (as talking to it does) and walks it off.
 bool MpMirrorTestClaimNpc();
+// Test aid: rolls the big watermelon along (this game's Mario against it); `frame` counts from 0.
+bool MpMirrorTestRollMelon(int frame);
 // Test aid: stands this game's Mario before the first NPC, facing it; true once a talk is on.
 bool MpMirrorTestNearNpc();
 
