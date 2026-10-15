@@ -1818,6 +1818,30 @@ extern "C" void mpg_set_pose(const MpgPose* pose)
 	std::vector<uint8_t> buf;
 	packPose(stamped, buf);
 	mp_set_local_state(buf.data(), buf.size());
+	if (g_debug) {
+		// how near the packed pose comes back to this one: the body's turn
+		// (largest element off), where it is, and the size sent
+		static int n, sizes;
+		static float worstTurn, worstPos;
+		MpgPose back;
+		if (unpackPose(buf.data(), buf.size(), back)) {
+			for (int r = 0; r < 3; r++) {
+				worstPos = std::max(worstPos, std::fabs(back.mtx[r][3] - stamped.mtx[r][3]));
+				for (int c = 0; c < 3; c++)
+					worstTurn = std::max(worstTurn, std::fabs(back.mtx[r][c] - stamped.mtx[r][c]));
+			}
+			if (back.bodyBck != stamped.bodyBck || back.bodyFrame != stamped.bodyFrame || back.flags != stamped.flags
+			    || back.emitters != std::min<uint8_t>(stamped.emitters, 2))
+				worstPos = 1e9f; // anything else must come back exactly
+		}
+		sizes += (int)buf.size();
+		if (++n % 900 == 0) {
+			fprintf(stderr, "[multiplayer] poses packed: %d bytes on average, turn at most %.6f off, place %.6f\n",
+			        sizes / 900, worstTurn, worstPos);
+			sizes = 0;
+			worstTurn = worstPos = 0.0f;
+		}
+	}
 }
 
 extern "C" int mpg_pose(int slot, MpgPose* pose, float* age)
