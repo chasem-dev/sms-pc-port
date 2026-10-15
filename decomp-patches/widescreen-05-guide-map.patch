@@ -126,7 +126,7 @@ Reason: port: with SMS_WIDESCREEN the map screen (TGuide) fills the wide frame, 
  	mScreen = new J2DSetScreen("guide_1.blo", archive);
 +#ifdef TARGET_PC
 +	{
-+		const u8* blo = (const u8*)JKRGetNameResource("guide_1.blo", archive);
++		u8* blo = (u8*)JKRGetNameResource("guide_1.blo", archive);
 +		GuideWiden(mScreen, blo,
 +		           blo ? JKRFileLoader::getResSize(blo, nullptr) : 0);
 +	}
