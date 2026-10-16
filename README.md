@@ -86,6 +86,7 @@ Options can be kept in [`settings.txt`](settings.txt) (`resolution = 2`, `textur
 | `SMS_SKIP_MOVIES=1` | skip cutscenes; keep portal animations playing |
 | `SMS_LANGUAGE=fr` | play in French, German (`de`), Spanish (`es`), Italian (`it`) or Polish (`pl`) instead of English (`en`, the default), with that [language pack](#languages) installed |
 | `SMS_HEAT_HAZE=0` | turn off the heat-wave shimmer that distorts the picture in sunny areas |
+| `SMS_PAUSE_TRACKER=0` | hide the pause menu's [Shine and blue coin tracker](#pause-menu-tracker) |
 | `SMS_BUTTON_PROMPTS=style` | the buttons shown in the game's text and on the FLUDD gauge: `gamecube` (the game's own, the default), `xbox`, `playstation`, `steamdeck`, `keyboard`, or `auto` (keyboard and mouse or the controller in use) |
 | `SMS_BUTTON_PROMPT_PAD=style` | with `auto`, how every controller's prompts look: `xbox`, `playstation`, `steamdeck` or `gamecube` (default: match the controller) |
 | `SMS_BUTTON_PROMPT_DIR=dir` | the prompt images, `<style>.png` (eight 64x64 icons in a row: A B X Y Z L R C-stick); SMS Launcher draws them from your bindings |
@@ -183,6 +184,7 @@ The game log says how it opened the adapter (`[pad] GameCube adapter opened (...
 | Warp menu (debug overlay open) | F8, or a controller's Back/Select button |
 | Save a save state | F5, or L1 + R1 (LB + RB) held together on a controller |
 | Save states list (in the pause menu) | the same: F5, or L1 + R1 |
+| Tracker's previous / next area (in the pause menu) | L / R (Q / E) |
 | Load the newest save state | F6 |
 | Quit | Esc |
 
@@ -190,6 +192,13 @@ The warp menu lists every stage on the disc (Eclipse's too) and, under each, its
 It warps while a stage is playing (not during a cutscene, dialogue or the pause menu); the game keeps running behind it but reads no input.
 Arrow keys or the d-pad (or the left stick) move, Enter or A opens a stage and warps, Esc, Backspace or B goes back; LB/RB and Page Up/Down skip a page, and the mouse works too.
 F8 and Back/Select open it only while the debug overlay (`` ` ``) is open; otherwise they are ordinary keys and buttons, so `PAD_BACK` can still be bound to a game control (it then opens the menu instead while the overlay is open).
+
+### Pause menu tracker
+
+The pause menu shows, at its bottom left, the Shine Sprites and blue coins of an area: how many you have of all there are, as **x20/41** in the HUD's own counters, on a green brushstroke once you have them all.
+It opens on the area you are in; L and R step through the others you have been to (Delfino Airstrip, Delfino Plaza, the seven areas and Corona Mountain), named in the file select's lettering.
+The counts are the game's: an area's eight episodes and its 100-coin and two other Shines, the Airstrip's two, and the Plaza's other 41; 30 blue coins in each area, 20 in the Plaza (the Airstrip's one included) and 10 on Corona Mountain.
+`pause_tracker = off` in `settings.txt` (`SMS_PAUSE_TRACKER=0`) hides it. Eclipse builds have Eclipse's own tracker instead.
 
 ### Save states
 

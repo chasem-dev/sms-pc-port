@@ -80,6 +80,9 @@ frame_rate = 60
 # skip_movies = off
 # The heat-wave shimmer that distorts the picture in sunny areas.
 # heat_haze = on
+# The pause menu's tracker: an area's Shine Sprites and blue coins, got out of
+# all there are; L and R step through the areas you have been to.
+# pause_tracker = on
 # The buttons shown in the game's text and on the FLUDD gauge: gamecube (the
 # game's own), xbox, playstation, steamdeck, keyboard, or auto (keyboard and
 # mouse, or the controller in use). Other than gamecube, they need the images

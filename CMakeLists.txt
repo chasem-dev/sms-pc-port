@@ -247,6 +247,9 @@ target_sources(sms_game PRIVATE ${SMS_DECOMP}/libs/dolphin/src/pad/Padclamp.c)
 # The save state menu, drawn by the game in its pause menu with the game's
 # own font and art, so it is built as game code (port_savestate_menu.h).
 target_sources(sms_game PRIVATE ${SMS_PORT_SRC}/savestate_menu.cpp)
+# The pause menu's Shine and blue coin tracker, drawn the same way
+# (port_pause_tracker.h).
+target_sources(sms_game PRIVATE ${SMS_PORT_SRC}/pause_tracker.cpp)
 # port_include must stay ahead of the game headers: its dolphin/types.h
 # overrides the decomp's (LP64 integer widths, weak AT_ADDRESS globals).
 if(DEFINED SMS_CP932_ROOT)

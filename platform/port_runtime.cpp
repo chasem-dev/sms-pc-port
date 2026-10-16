@@ -68,6 +68,9 @@ int port_skip_movies = 0;
 // SMS_HEAT_HAZE=0 turns off the heat-wave shimmer (patch zzz-heat-haze-01).
 extern "C" int port_heat_haze;
 int port_heat_haze = 1;
+// SMS_PAUSE_TRACKER=0 hides the pause menu's progress tracker (src/pause_tracker.cpp).
+extern "C" int port_pause_tracker;
+int port_pause_tracker = 1;
 // SMS_WIDESCREEN: the displayed width over the GameCube's 4:3 (1 when off);
 // the game camera (widescreen-01 patch) and sms_gx widen by it.
 extern "C" float port_widescreen;
@@ -787,6 +790,7 @@ static const struct {
 	{ "fsr_mode", "SMS_FSR_MODE" }, // with fsr or nis: native, quality, balanced, performance or ultraperformance
 	{ "skip_movies", "SMS_SKIP_MOVIES" },
 	{ "heat_haze", "SMS_HEAT_HAZE" }, // the heat-wave shimmer, on by default
+	{ "pause_tracker", "SMS_PAUSE_TRACKER" }, // the pause menu's Shine and blue coin tracker, on by default
 	{ "button_prompts", "SMS_BUTTON_PROMPTS" }, // gamecube, auto, xbox, playstation, steamdeck or keyboard
 	{ "button_prompt_pad", "SMS_BUTTON_PROMPT_PAD" }, // with auto: gamecube, xbox, playstation, steamdeck, or match the controller
 	{ "button_prompt_dir", "SMS_BUTTON_PROMPT_DIR" }, // the folder of prompt images (<style>.png)
@@ -891,6 +895,11 @@ extern "C" void port_init(int argc, char** argv)
 		port_heat_haze = !*h || strcmp(h, "0") != 0;
 	if (!port_heat_haze)
 		port_log("[port] heat-wave shimmer off\n");
+	if (const char* t = getenv("SMS_PAUSE_TRACKER"))
+		port_pause_tracker = !*t || strcmp(t, "0") != 0;
+#ifdef SMS_ECLIPSE
+	port_pause_tracker = 0; // BSE draws Eclipse's own tracker in the pause menu
+#endif
 	port_widescreen = parse_widescreen(getenv("SMS_WIDESCREEN"));
 	if (GXPC_SetWidescreen)
 		GXPC_SetWidescreen(port_widescreen);
