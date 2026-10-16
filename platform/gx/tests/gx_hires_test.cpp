@@ -82,6 +82,19 @@ static void sparseDds(const std::filesystem::path& path, int w, int h) {
             f.write(reinterpret_cast<const char*>(block), 16);
         }
 }
+// A shadow that never clears: one w x h BC7 level, black at alpha 6 but for
+// its first block, at 200.
+static void floorDds(const std::filesystem::path& path, int w, int h) {
+    dds(path, w, h, 1, true);
+    std::fstream f(path, std::ios::in | std::ios::out | std::ios::binary);
+    f.seekp(148);
+    for (int b = 0; b < (w / 4) * (h / 4); ++b) {
+        uint8_t rgba[64] = {}, block[16];
+        for (int i = 0; i < 16; ++i) rgba[i * 4 + 3] = b ? 6 : 200;
+        gx::encodeBlock(gx::BLOCK_BC7, rgba, block);
+        f.write(reinterpret_cast<const char*>(block), 16);
+    }
+}
 static PFNGLCOMPRESSEDTEXIMAGE2DPROC realCompressed;
 static PFNGLCOMPRESSEDTEXSUBIMAGE2DPROC realCompressedSub;
 static PFNGLTEXIMAGE2DPROC realImage;
@@ -224,6 +237,8 @@ int main(int argc, char** argv) {
     dds(dir/(textureName(external)+"_mip1.dds"), 8, 4, 1);
     auto cutout = bti(8);
     sparseDds(dir/(mipmappedName(cutout)+".dds"), 32, 16);
+    auto shadow = bti(9);
+    floorDds(dir/(textureName(shadow)+".dds"), 32, 16);
     std::vector<std::vector<uint8_t>> many;
     for (int i = 10; i < 34; ++i) {
         many.push_back(bti(i));
@@ -339,6 +354,20 @@ int main(int argc, char** argv) {
     for (size_t i = 0; i < watched.size(); i += 4)
         if (watched[i+3] >= 120) { ++kept; white += watched[i] >= 240; }
     expect(watched.size() == 16*8*4 && kept == 32 && white == kept, "a cut-out's made levels keep its coverage and colour");
+    // An intensity texture's replacement whose alpha never reaches 0 loses
+    // that floor (and is kept as RGBA).
+    watchLevel = 0;
+    watched.clear();
+    prepare(shadow, "shadow.bti");
+    watchLevel = -1;
+    bool clear = watched.size() == 32*16*4 && compressedCalls == 0, dark = clear;
+    for (int y = 0; y < 16 && clear; ++y)
+        for (int x = 0; x < 32; ++x) {
+            uint8_t a = watched[(size_t(y) * 32 + x) * 4 + 3];
+            if (x < 4 && y < 4) dark &= a >= 196 && a <= 200;
+            else clear &= a == 0;
+        }
+    expect(clear && dark, "a replacement's alpha floor is removed where its original is clear");
     expect(glGetError() == GL_NO_ERROR, "compressed/partial/fallback uploads are accepted by GL");
     resetRecord();
     GXPC_PrefetchResource(model.data(), 0x2C, "truncated.bmd");
