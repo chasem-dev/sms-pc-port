@@ -803,6 +803,8 @@ static const struct {
 	{ "hdr_copy", "SMS_HDR_COPY" }, // 1: frames reach Direct3D through system memory, not a shared texture
 	{ "audio", "SMS_AUDIO" },
 	{ "volume", "SMS_VOLUME" }, // master volume, 0 to 100
+	{ "music_volume", "SMS_MUSIC_VOLUME" }, // music (the BGM sequences, streams and movies), 0 to 100
+	{ "sfx_volume", "SMS_SFX_VOLUME" },     // sound effects and everything else the game's sound system plays, 0 to 100
 	{ "soft_trigger", "SMS_SOFT_TRIGGER" }, // L_SOFT / R_SOFT press depth, percent
 	{ "overlay", "SMS_OVERLAY" },
 	{ "save_dir", "SMS_SAVE_DIR" },

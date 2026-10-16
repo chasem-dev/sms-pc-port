@@ -198,7 +198,7 @@ Changes apply at once, behind the menu, and last until the game closes: they are
 
 - **Graphics:** a preset (Low, Medium, High, Ultra, as in the launcher), resolution, anti-aliasing, FXAA, anisotropic filtering, sharpening, the upscaler and its quality, HD textures and how they load, shader warm-up and the heat-wave effect.
 - **Display:** fullscreen, its type, resolution and monitor, screen format, screen icons at the edges, aspect ratio, brightness, frame rate, V-Sync, the performance overlay, and HDR with its settings (HDR can be turned on only where Windows HDR is on for the display).
-- **Gameplay:** skipping cutscenes, volume, the camera (invert, free camera, speed) and mouse look and its sensitivity.
+- **Gameplay:** skipping cutscenes, volume, separate music and sound effect volumes (`SMS_MUSIC_VOLUME`, `SMS_SFX_VOLUME`, or `music_volume` and `sfx_volume` in `settings.txt`; music is every tune the game's music sequences play, jingles included, and movie sound, and everything else is sound effects), the camera (invert, free camera, speed) and mouse look and its sensitivity.
 - **Controls:** soft trigger depth, rumble strength, and the button prompts and the controller they follow.
 
 A few take effect later: the **frame rate** from the next area (it is chosen as an area loads, so 120 can be chosen only when the game started at 120), the **screen format** as the next area loads (the camera is set up then), HD texture loading and shader warm-up as areas load. Language packs, Super Mario Eclipse, HD cutscenes, key and controller bindings and the launcher's own options (updates, Discord, theme) stay in the launcher: they are set before the game starts.

@@ -30,6 +30,7 @@
 #include <atomic>
 #include <algorithm>
 #include <dlfcn.h>
+#include "dsp_mixer.h"
 #include "port_setting_list.h"
 #include "port_settings.h"
 #include "port_host.h"
@@ -276,6 +277,19 @@ bool open_sdl()
 	return true;
 }
 
+// SMS_MUSIC_VOLUME / SMS_SFX_VOLUME (0..100): where a volume class starts. The mixer applies it
+// whatever the output (a device, SMS_AUDIO_WAV, none), unlike SMS_VOLUME, which scales the device's stream.
+void init_class_volume(const char* env, int cls, const char* name)
+{
+	const char* e = getenv(env);
+	if (!e || !*e)
+		return;
+	const int percent = std::max(0, std::min(100, atoi(e)));
+	port_dspmix_set_class_percent(cls, percent);
+	if (percent != 100)
+		port_log("[audio] %s volume %d%%\n", name, percent);
+}
+
 void init_output()
 {
 	const char* e = getenv("SMS_AUDIO");
@@ -287,6 +301,8 @@ void init_output()
 	g.volume      = e && *e ? std::max(0, std::min(100, atoi(e))) * 256 / 100 : 256;
 	if (g.volume != 256)
 		port_log("[audio] master volume %d%%\n", (g.volume * 100 + 128) / 256);
+	init_class_volume("SMS_MUSIC_VOLUME", PORT_DSPMIX_CLASS_MUSIC, "music");
+	init_class_volume("SMS_SFX_VOLUME", PORT_DSPMIX_CLASS_SFX, "SFX");
 	g.fifo.assign(32768 * 2, 0);
 	g.head = g.count = 0;
 	if (!g.enabled) {
@@ -471,31 +487,37 @@ extern "C" u32 AIGetStreamSampleRate(void) { return g.streamRate; }
 // --- Settings menu (port_settings.h) ---
 // The volume changes while the game is paused: set() stores the new Q8 gain in the atomic
 // the SDL callback reads, and the callback picks it up at its next buffer (about 10 ms).
+// Music and SFX volume are the mixer's per-class gains (dsp_mixer.h): the mixer reads them at
+// its next subframe (2.5 ms) and ramps to the new value within it.
 namespace {
 
 PortValueList g_volumeList; // percent
+PortValueList g_classList[PORT_DSPMIX_CLASSES];
+
+const int kVolumeSteps[] = { 0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100 };
+
+const char* percent_name(const PortValueList& l, int i)
+{
+	static char text[16];
+	snprintf(text, sizeof text, "%d", l.v[i < 0 ? 0 : i >= l.n ? l.n - 1 : i]);
+	return text;
+}
 
 int volume_percent() { return (g.volume.load() * 100 + 128) / 256; }
 
 const PortValueList& volume_list()
 {
-	static const int steps[] = { 0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100 };
 	if (!g_volumeList.built)
-		g_volumeList.build(steps, (int)(sizeof steps / sizeof steps[0]), volume_percent());
+		g_volumeList.build(kVolumeSteps, (int)(sizeof kVolumeSteps / sizeof kVolumeSteps[0]), volume_percent());
 	return g_volumeList;
 }
 
 // Only a run with a real output device has a volume to change; with no device (headless, SMS_AUDIO=0,
-// SMS_AUDIO_OUT=null, a failed open) or SMS_NO_AUDIO the gain is never applied.
+// SMS_AUDIO_OUT=null, a failed open) or SMS_NO_AUDIO the gain is never applied. The music and SFX
+// rows are offered under the same condition.
 int volume_available() { return g.inited && g.enabled && g.sdl; }
 int volume_count() { return volume_list().n; }
-const char* volume_name(int i)
-{
-	static char text[16];
-	const PortValueList& l = volume_list();
-	snprintf(text, sizeof text, "%d", l.v[i < 0 ? 0 : i >= l.n ? l.n - 1 : i]);
-	return text;
-}
+const char* volume_name(int i) { return percent_name(volume_list(), i); }
 int volume_get() { return volume_list().indexOf(volume_percent()); }
 int volume_set(int i)
 {
@@ -506,9 +528,42 @@ int volume_set(int i)
 	return 1;
 }
 
+const PortValueList& class_list(int cls)
+{
+	if (!g_classList[cls].built)
+		g_classList[cls].build(kVolumeSteps, (int)(sizeof kVolumeSteps / sizeof kVolumeSteps[0]),
+		                       port_dspmix_class_percent(cls));
+	return g_classList[cls];
+}
+int class_get(int cls) { return class_list(cls).indexOf(port_dspmix_class_percent(cls)); }
+int class_set(int cls, int i)
+{
+	const PortValueList& l = class_list(cls);
+	if (i < 0 || i >= l.n)
+		return 0;
+	port_dspmix_set_class_percent(cls, l.v[i]);
+	return 1;
+}
+
+int music_count() { return class_list(PORT_DSPMIX_CLASS_MUSIC).n; }
+const char* music_name(int i) { return percent_name(class_list(PORT_DSPMIX_CLASS_MUSIC), i); }
+int music_get() { return class_get(PORT_DSPMIX_CLASS_MUSIC); }
+int music_set(int i) { return class_set(PORT_DSPMIX_CLASS_MUSIC, i); }
+
+int sfx_count() { return class_list(PORT_DSPMIX_CLASS_SFX).n; }
+const char* sfx_name(int i) { return percent_name(class_list(PORT_DSPMIX_CLASS_SFX), i); }
+int sfx_get() { return class_get(PORT_DSPMIX_CLASS_SFX); }
+int sfx_set(int i) { return class_set(PORT_DSPMIX_CLASS_SFX, i); }
+
 const PortSetting kAudioSettings[] = {
 	{ "volume", PORT_SETTINGS_PAGE_GAMEPLAY, 30, "Volume", "How loud the game is. 0 is silent, 100 is full.", 0, volume_available, volume_count,
 	  volume_name, volume_get, volume_set },
+	{ "musicVolume", PORT_SETTINGS_PAGE_GAMEPLAY, 32, "Music Volume",
+	  "How loud the music is, cutscene movies included. 0 is silent, 100 is full.", 0, volume_available, music_count,
+	  music_name, music_get, music_set },
+	{ "sfxVolume", PORT_SETTINGS_PAGE_GAMEPLAY, 34, "SFX Volume",
+	  "How loud sound effects are, Mario's voice included. 0 is silent, 100 is full.", 0, volume_available, sfx_count,
+	  sfx_name, sfx_get, sfx_set },
 };
 
 } // namespace
@@ -518,3 +573,7 @@ extern "C" const PortSetting* port_audio_settings(int* count)
 	*count = (int)(sizeof kAudioSettings / sizeof kAudioSettings[0]);
 	return kAudioSettings;
 }
+
+// THP movie audio is mixed on the emulated CPU (JASystem::Kernel mixInterleaveTrack, patch audio-05):
+// the music gain as a Q15 factor.
+extern "C" int port_audio_music_gain_q15(void) { return port_dspmix_class_gain(PORT_DSPMIX_CLASS_MUSIC); }
