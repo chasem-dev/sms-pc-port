@@ -1270,6 +1270,88 @@ void hitShadow(int, int kind, int count)
 	}
 }
 
+// Host: the last record of each boss part it sent this session. Losing a
+// life reloads the host's stage in the same session while the others fight on:
+// its fresh boss would be everyone's again at full strength (corners of
+// Bowser's tub mended, a Gatekeeper healed). Once the reloaded boss has set
+// itself up, these are read into it, as a joining game reads the host's (no
+// hits come of it: a host reports none), and the fight goes on where it was.
+// Gooper Blooper, Phantamanta and Shadow Mario keep more than these records
+// say (torn tentacles, split mantas, a chase's run), and start afresh.
+struct Kept {
+	u8 kind, unit, len;
+	u8 data[96];
+};
+const int kMaxKept = 24;
+Kept s_kept[kMaxKept];
+int s_keptCount;
+uint32_t s_keptSession;
+int s_restoreWait = -1; // host, after a stage setup: ticks the boss has been ready (-1: nothing to do)
+
+bool restorable(int kind)
+{
+	return kind == KIND_PETEY || kind == KIND_EEL || kind == KIND_WIGGLER || kind == KIND_KINGBOO
+	       || kind == KIND_MECHA || kind == KIND_TUB || kind == KIND_GATE;
+}
+
+void keepRecords(const u8* buf, int n)
+{
+	In in(buf, n);
+	while (in.ok && in.at + 3 <= n) {
+		const int kind = in.u8_(), unit = in.u8_(), len = in.u8_();
+		if (!in.ok || in.at + len > n)
+			break;
+		const u8* data = buf + in.at;
+		in.at += len;
+		if (!restorable(kind) || len > (int)sizeof s_kept[0].data)
+			continue;
+		int i = 0;
+		while (i < s_keptCount && (s_kept[i].kind != kind || s_kept[i].unit != unit))
+			i++;
+		if (i == s_keptCount) {
+			if (s_keptCount == kMaxKept)
+				continue;
+			s_keptCount++;
+		}
+		s_kept[i].kind = (u8)kind, s_kept[i].unit = (u8)unit, s_kept[i].len = (u8)len;
+		memcpy(s_kept[i].data, data, len);
+	}
+}
+
+void restoreKept()
+{
+	int restored = 0;
+	for (int i = 0; i < s_keptCount; i++) {
+		const Kept& k = s_kept[i];
+		In rec(k.data, k.len);
+		if (k.kind == KIND_GATE) {
+			if (s_gates && gateAt(k.unit))
+				readGate(rec, k.unit), restored++;
+			continue;
+		}
+		if (k.kind != s_kind || (s_boss && s_boss->checkLiveFlag(LIVE_FLAG_DEAD)))
+			continue;
+		switch (k.kind) {
+		case KIND_PETEY: readPetey(rec); break;
+		case KIND_EEL: readEel(rec); break;
+		case KIND_WIGGLER: readWiggler(rec); break;
+		case KIND_KINGBOO: readKingBoo(rec); break;
+		case KIND_MECHA: readMecha(rec); break;
+		case KIND_TUB:
+			if (k.len && k.data[0] == 0x1F)
+				continue; // all five down: the fight was won (the ending is the game's)
+			readTub(rec);
+			break;
+		}
+		restored++;
+		if (debug())
+			fprintf(stderr, "[multiplayer] boss: restored kind %d part %d (first byte %02x)\n", k.kind, k.unit, k.data[0]);
+	}
+	if (restored)
+		fprintf(stderr, "[multiplayer] boss: back as the fight was before this game's player lost a life (%d part%s)\n",
+		        restored, restored == 1 ? "" : "s");
+}
+
 } // namespace
 
 // ------------------------------------------------------------------ the hooks
@@ -1290,6 +1372,7 @@ void MpBossStageSetup()
 	s_mainDownSaid = false;
 	s_next     = 0;
 	s_followed = false;
+	s_restoreWait = s_keptCount ? 0 : -1; // the host's: back in the same session, or not (MpBossHostFrame)
 	s_setHp    = 0;
 	memset(s_setValue, 0, sizeof s_setValue);
 	memset(s_reported, 0, sizeof s_reported);
@@ -1415,6 +1498,17 @@ void MpBossHostFrame()
 {
 	if (!bossReady())
 		return;
+	if (s_restoreWait >= 0) {
+		if (mpg_session() != s_keptSession) {
+			s_keptCount   = 0; // a new session: a new fight
+			s_restoreWait = -1;
+		} else if (++s_restoreWait < 30) {
+			return; // the reloaded boss sets itself up first; the others' hits wait, and nothing is sent
+		} else {
+			restoreKept();
+			s_restoreWait = -1;
+		}
+	}
 	int unit, kind, count;
 	while (mpg_next_boss_hit(&unit, &kind, &count)) {
 		if (debug())
@@ -1462,6 +1556,8 @@ void MpBossHostFrame()
 		}
 	}
 	mpg_set_boss(buf, o.n);
+	keepRecords(buf, o.n);
+	s_keptSession = mpg_session();
 	static bool saidDown;
 	if (s_boss && (s_boss->checkLiveFlag(LIVE_FLAG_DEAD) != 0) != saidDown) {
 		saidDown = s_boss->checkLiveFlag(LIVE_FLAG_DEAD) != 0;
@@ -1469,8 +1565,12 @@ void MpBossHostFrame()
 			fprintf(stderr, "[multiplayer] the boss (host) is %s\n", saidDown ? "gone" : "here");
 	}
 	static int debugFrames;
-	if (debug() && s_boss && ++debugFrames % 300 == 0)
-		fprintf(stderr, "[multiplayer] boss (host): kind %d, %d hit points\n", s_kind, s_boss->getHitPoints());
+	if (debug() && (s_boss || s_tub) && ++debugFrames % 300 == 0) {
+		if (s_boss)
+			fprintf(stderr, "[multiplayer] boss (host): kind %d, %d hit points\n", s_kind, s_boss->getHitPoints());
+		else
+			fprintf(stderr, "[multiplayer] boss (host): the tub's corners down %02x\n", buf[3]);
+	}
 }
 
 void MpBossClientTick()

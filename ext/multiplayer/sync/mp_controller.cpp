@@ -1400,8 +1400,11 @@ extern "C" void mpg_frame(const MpgGame* game)
 		if (g.hasTarget && !g.targetSession) {
 			g.localSession = 0; // the host is on its way too: K_STAGE says which session
 		} else if (g.hasTarget && game->area == g.targetArea && game->episode == g.targetEpisode) {
-			if (g.localSession != g.targetSession)
-				g.takenAt.clear();
+			// the host sends the whole list again for K_READY: kept, it would
+			// fill up with a copy each time this player loads the stage again
+			if (g_debug)
+				fprintf(stderr, "[multiplayer] arrived: %zu items had appeared and been taken\n", g.takenAt.size());
+			g.takenAt.clear();
 			// new or loaded again, its goop is as it loaded: K_READY brings the session's cleaning
 			forgetCleans();
 			g.travelKnown = false;
