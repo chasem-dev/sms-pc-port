@@ -30,6 +30,8 @@
 #include <atomic>
 #include <algorithm>
 #include <dlfcn.h>
+#include "port_setting_list.h"
+#include "port_settings.h"
 #include "port_host.h"
 #include <mutex>
 #include <pthread.h>
@@ -73,7 +75,9 @@ struct Ai {
 	bool inited;
 	bool running;
 	bool swap;
-	int volume;                // SMS_VOLUME (0..100) as a Q8 output gain; 256 is unity
+	// SMS_VOLUME (0..100) as a Q8 output gain; 256 is unity. The settings menu changes it
+	// (port_audio_settings) from the game's thread while the SDL callback reads it.
+	std::atomic<int> volume;
 	u32 start, length;         // registers
 	u32 latchedStart, latchedLen;
 	AIDCallback cb;
@@ -152,6 +156,7 @@ void sdl_callback(void*, uint8_t* stream, int len)
 {
 	int16_t* out = (int16_t*)stream;
 	size_t frames = (size_t)len / 4;
+	const int volume = g.volume.load(std::memory_order_relaxed); // one gain for the whole buffer
 	int speed = playback_speed();
 	bool low;
 	{
@@ -168,8 +173,8 @@ void sdl_callback(void*, uint8_t* stream, int len)
 			} else {
 				dry++;
 			}
-			out[i * 2]     = (int16_t)((g.lastL * g.volume) >> 8);
-			out[i * 2 + 1] = (int16_t)((g.lastR * g.volume) >> 8);
+			out[i * 2]     = (int16_t)((g.lastL * volume) >> 8);
+			out[i * 2 + 1] = (int16_t)((g.lastR * volume) >> 8);
 		}
 		// Ran dry: blocks are made on the emulated CPU, so the game's thread
 		// held it (a load, a shader compile, a slow frame) for longer than the
@@ -462,3 +467,54 @@ extern "C" u32 AIGetDSPSampleRate(void) { return g.dspRate; }
 // DVD audio streaming (DTK, dtk.cpp): retail SMS never streams; code mods do.
 extern "C" void AISetStreamSampleRate(u32 rate) { g.streamRate = rate; }
 extern "C" u32 AIGetStreamSampleRate(void) { return g.streamRate; }
+
+// --- Settings menu (port_settings.h) ---
+// The volume changes while the game is paused: set() stores the new Q8 gain in the atomic
+// the SDL callback reads, and the callback picks it up at its next buffer (about 10 ms).
+namespace {
+
+PortValueList g_volumeList; // percent
+
+int volume_percent() { return (g.volume.load() * 100 + 128) / 256; }
+
+const PortValueList& volume_list()
+{
+	static const int steps[] = { 0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100 };
+	if (!g_volumeList.built)
+		g_volumeList.build(steps, (int)(sizeof steps / sizeof steps[0]), volume_percent());
+	return g_volumeList;
+}
+
+// Only a run with a real output device has a volume to change; with no device (headless, SMS_AUDIO=0,
+// SMS_AUDIO_OUT=null, a failed open) or SMS_NO_AUDIO the gain is never applied.
+int volume_available() { return g.inited && g.enabled && g.sdl; }
+int volume_count() { return volume_list().n; }
+const char* volume_name(int i)
+{
+	static char text[16];
+	const PortValueList& l = volume_list();
+	snprintf(text, sizeof text, "%d", l.v[i < 0 ? 0 : i >= l.n ? l.n - 1 : i]);
+	return text;
+}
+int volume_get() { return volume_list().indexOf(volume_percent()); }
+int volume_set(int i)
+{
+	const PortValueList& l = volume_list();
+	if (i < 0 || i >= l.n)
+		return 0;
+	g.volume.store(l.v[i] * 256 / 100);
+	return 1;
+}
+
+const PortSetting kAudioSettings[] = {
+	{ "volume", PORT_SETTINGS_PAGE_GAMEPLAY, 30, "Volume", "How loud the game is. 0 is silent, 100 is full.", 0, volume_available, volume_count,
+	  volume_name, volume_get, volume_set },
+};
+
+} // namespace
+
+extern "C" const PortSetting* port_audio_settings(int* count)
+{
+	*count = (int)(sizeof kAudioSettings / sizeof kAudioSettings[0]);
+	return kAudioSettings;
+}

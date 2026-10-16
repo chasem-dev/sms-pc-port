@@ -191,6 +191,18 @@ It warps while a stage is playing (not during a cutscene, dialogue or the pause 
 Arrow keys or the d-pad (or the left stick) move, Enter or A opens a stage and warps, Esc, Backspace or B goes back; LB/RB and Page Up/Down skip a page, and the mouse works too.
 F8 and Back/Select open it only while the debug overlay (`` ` ``) is open; otherwise they are ordinary keys and buttons, so `PAD_BACK` can still be bound to a game control (it then opens the menu instead while the overlay is open).
 
+### Settings menu
+
+The launcher's settings can be changed while you play. Pause the game, then press Y (F by default) at the pause menu's top right, under LOAD SAVE STATE, where it reads **SETTINGS**. The menu is drawn by the game in its own lettering and plays the pause menu's sounds. It has a page for each of the launcher's panes (**Graphics**, **Display**, **Gameplay**, **Controls**): up and down choose, left and right (or A) change an option or open a page, B goes back; hold X to hide the menu and look at the picture.
+Changes apply at once, behind the menu, and last until the game closes: they are the options of the same names in the launcher and `settings.txt`, which still set what the game starts with. The menu lists only what this computer can do (anisotropic filtering up to the card's limit, fullscreen resolutions the display offers, HDR only on an HDR display), and keeps the old setting when a new resolution or sample count does not fit in the card's memory.
+
+- **Graphics:** a preset (Low, Medium, High, Ultra, as in the launcher), resolution, anti-aliasing, FXAA, anisotropic filtering, sharpening, the upscaler and its quality, HD textures and how they load, shader warm-up and the heat-wave effect.
+- **Display:** fullscreen, its type, resolution and monitor, screen format, screen icons at the edges, aspect ratio, brightness, frame rate, V-Sync, the performance overlay, and HDR with its settings (HDR can be turned on only where Windows HDR is on for the display).
+- **Gameplay:** skipping cutscenes, volume, the camera (invert, free camera, speed) and mouse look and its sensitivity.
+- **Controls:** soft trigger depth, rumble strength, and the button prompts and the controller they follow.
+
+A few take effect later: the **frame rate** from the next area (it is chosen as an area loads, so 120 can be chosen only when the game started at 120), the **screen format** as the next area loads (the camera is set up then), HD texture loading and shader warm-up as areas load. Language packs, Super Mario Eclipse, HD cutscenes, key and controller bindings and the launcher's own options (updates, Discord, theme) stay in the launcher: they are set before the game starts.
+
 ### Save states
 
 A save state is the game at one moment: in a level, F5 or L1 + R1 (LB + RB) saves it. The pause menu shows those buttons at its top right with **LOAD SAVE STATE**: press them there to open the list of states, newest first, with a picture of each; A loads one, Y deletes it, B goes back. F6 loads the newest without the menu. The buttons show as your keyboard or controller shows them, from the launcher's button prompt pictures (their names without the launcher).
