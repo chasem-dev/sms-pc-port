@@ -1290,7 +1290,7 @@ void blendSample(const Mirrored& m, f32* out)
 	const Kind& k   = *m.kind;
 	const Sample* h = m.history;
 	const int n     = m.historyCount;
-	const Lag& l    = s_lag[m.heardSlot & 3];
+	const Lag& l    = s_lag[(unsigned)m.heardSlot % MPG_MAX_PLAYERS];
 	f32 gaps = 0.0f;
 	int gapCount = 0;
 	for (int i = 0; i + 1 < n; i++) {

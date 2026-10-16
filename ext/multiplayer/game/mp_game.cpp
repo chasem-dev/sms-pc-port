@@ -1031,8 +1031,8 @@ JGeometry::TVec3<f32> shineGetSpot(int collector, const float pos[3], int yaw)
 	for (int slot = 0; slot < mpg_slot(); slot++)
 		if (slot != collector && mpg_player_present(slot))
 			rank++;
-	static const f32 kSide[3] = {170.0f, -170.0f, 340.0f};
-	const f32 side = kSide[rank < 3 ? rank : 2];
+	static const f32 kSide[MPG_MAX_PLAYERS - 1] = {170.0f, -170.0f, 340.0f, -340.0f, 510.0f, -510.0f, 680.0f};
+	const f32 side = kSide[rank < MPG_MAX_PLAYERS - 1 ? rank : MPG_MAX_PLAYERS - 2];
 	// tries: the place; nearer; the other side; the other side nearer; behind
 	const f32 tries[5][2] = {{side, 50.0f}, {side * 0.6f, 30.0f}, {-side, 50.0f}, {-side * 0.6f, 30.0f}, {0.0f, 170.0f}};
 	const f32 a  = yaw * (3.14159265f / 32768.0f);
@@ -1670,8 +1670,8 @@ f32 distance2(const JGeometry::TVec3<f32>& a, const JGeometry::TVec3<f32>& b)
 // The next player to watch from `from`, in `step`'s direction; -1 if none.
 int nextWatch(int from, int step)
 {
-	for (int k = 1; k <= 4; k++) {
-		const int slot = ((from < 0 ? 0 : from) + step * k + 8) % 4;
+	for (int k = 1; k <= MPG_MAX_PLAYERS; k++) {
+		const int slot = ((from < 0 ? 0 : from) + step * k + 2 * MPG_MAX_PLAYERS) % MPG_MAX_PLAYERS;
 		if (watchable(slot))
 			return slot;
 	}
@@ -3634,6 +3634,11 @@ void itemTaken(void* item, void*)
 	for (int i = 0; i < n; i++)
 		if ((void*)mgr->getObj(i) == item) {
 			TLiveActor* a = mgr->getObj(i);
+			// a nozzle from a nozzle box: each player's own (every game has
+			// its own box, which brings out another only once its nozzle is
+			// taken there), not taken from the others
+			if (dynamic_cast<TItemNozzle*>(a))
+				return;
 			if (!appearedDuringStage(i)) {
 				mpg_item_taken(itemKey(i, a));
 			} else {
