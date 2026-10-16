@@ -82,6 +82,7 @@ struct Controller {
 	bool wasPlaying = false;
 
 	// host
+	bool atTitle        = false; // back at the title (Save & Quit, the reset): the others were told
 	uint32_t session    = 0; // the open stage session
 	int sessionArea     = -1, sessionEpisode = -1;
 	std::vector<uint32_t> taken;
@@ -867,6 +868,12 @@ void clientMessage(const MpEvent& ev)
 		int area = r.u8(), episode = r.u8();
 		if (!r.ok)
 			break;
+		if (area == 15) {
+			// the host went back to the title: not to be followed there (a
+			// joining game's file select is its multiplayer card's)
+			notice("The host went back to the title screen. Play on: you'll join them when they're playing again");
+			break;
+		}
 		if (r.left() >= 6 && r.u8() == 1) {
 			// the host is on its way now: how it went
 			g.travelFlags = r.u32();
@@ -1334,6 +1341,18 @@ extern "C" void mpg_frame(const MpgGame* game)
 	g.wasPlaying       = game->playing != 0;
 
 	if (g.role == MPG_ROLE_HOST) {
+		// back at the title (Save & Quit and the reset leave without
+		// moveStage, so nothing told the others): they play on where they are,
+		// and come along once the host is playing again (K_STAGE)
+		const bool atTitle = game->area == 15 && !game->playing;
+		if (atTitle && !g.atTitle && g.session) {
+			const uint8_t buf[2] = {15, 0xFF};
+			for (int i = 1; i < MP_MAX_PLAYERS; i++)
+				if (mp_players() & (1u << i))
+					mp_send(i, K_LEAVING, buf, sizeof buf);
+			fprintf(stderr, "[multiplayer] back at the title: the others were told\n");
+		}
+		g.atTitle = atTitle;
 		if (game->playing
 		    && (game->area != g.sessionArea || game->episode != g.sessionEpisode || !g.session
 		        || (arrived && g.restartSession))) {
