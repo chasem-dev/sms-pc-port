@@ -81,6 +81,20 @@ struct Kind {
 	Owner owner;
 	int every;       // ticks between sends
 	bool keepsHits;  // the others' hits do not land here (the owner sends the outcome)
+	// drawn smoothly a moment in the past (smooth > 0): its state starts with
+	// `smooth` floats (those in angleMask are degrees, turned the short way
+	// round) blended between the two states either side of that moment, by
+	// the owner's clock, which each state carries at its end; `take` gets the
+	// blend and the newest state's other bytes, and sets them as they are
+	int smooth;
+	unsigned angleMask;
+};
+
+// A smooth kind's states as they came: the owner's clock (ms) and the floats.
+const int kSmoothMax = 8, kHistory = 6;
+struct Sample {
+	u32 at;
+	f32 v[kSmoothMax];
 };
 
 struct Mirrored {
@@ -96,6 +110,10 @@ struct Mirrored {
 	int sentSize, sentAt;
 	int scratch; // the kind's own (a follower: the host's step last taken)
 	int claimedAt; // an NPC this game's player talked to (tick; 0: none): run here since
+	Sample history[kHistory]; // a smooth kind's states, oldest first
+	int historyCount;
+	double arrivedAt; // a smooth kind: when its newest state came (s_ms), and the usual time between
+	f32 arrivalGap;
 };
 
 Mirrored s_mirrors[kMaxMirrors];
@@ -316,8 +334,22 @@ int saveFruitsBoat(TLiveActor* a, u8* out)
 	o.f(b->mRollAngle);
 	o.f(b->mRollSpeed);
 	o.h(b->mReversed);
-	o.i((s32)(b->mLiveFlag & 0x30000));
+	o.i((s32)(b->mLiveFlag & TFruitsBoat::LIVE_FLAG_UNK10000));
 	return o.n;
+}
+
+// A boat's roll is about mRollAxis (TFruitsBoat::calcRootMatrix), which its
+// rider steers by easing it, not normalising it, from where they stand: one
+// that eases through nothing (a rider boarding with the boat's "aboard"
+// step skipped) makes the boat's matrix nothing, and it vanishes.
+void keepRollAxis(TFruitsBoat* b)
+{
+	JGeometry::TVec3<f32>& a = b->mRollAxis;
+	const f32 len            = sqrtf(a.x * a.x + a.y * a.y + a.z * a.z);
+	if (len != len || len < 0.2f)
+		a.set(1.0f, 0.0f, 0.0f);
+	else if (len < 0.9f)
+		a.scale(1.0f / len);
 }
 void takeFruitsBoat(TLiveActor* a, const u8* in, int size, int, int*)
 {
@@ -337,7 +369,10 @@ void takeFruitsBoat(TLiveActor* a, const u8* in, int size, int, int*)
 	b->mRollAngle  = roll;
 	b->mRollSpeed  = rollSpeed;
 	b->mReversed   = reversed;
-	b->mLiveFlag   = (b->mLiveFlag & ~0x30000u) | ((u32)flags & 0x30000u);
+	// whether it may row, not whether the owner's player is aboard (this
+	// game's is not: when they board, the boat's own "came aboard" step runs)
+	b->mLiveFlag = (b->mLiveFlag & ~(u32)TFruitsBoat::LIVE_FLAG_UNK10000) | ((u32)flags & TFruitsBoat::LIVE_FLAG_UNK10000);
+	keepRollAxis(b);
 }
 
 // Pinna Park's Ferris wheel: its turn, speed and calming down.
@@ -892,48 +927,59 @@ void takeCritter(TLiveActor* a, const u8* in, int size, int age, int* placed)
 // and watermills, cogwheels, lifts and blocks on rails, Gelato's yacht): each
 // starts when its stage does, so each game's is somewhere else in its round.
 // Their state, its timer, how they are turned and where they are: the
-// host's, or a rider's (a lift or block some move only while ridden).
+// host's, or a rider's (a lift or block some move only while ridden), drawn
+// smoothly a moment behind the owner's (as other players are), not eased
+// toward its last word while running on by itself (which tugged it back and
+// forth, worst where it turns back).
 bool isMachine(TLiveActor* a)
 {
 	return dynamic_cast<TCraneRotY*>(a) || dynamic_cast<TCraneUpDown*>(a) || dynamic_cast<TBigWindmill*>(a)
 	       || dynamic_cast<TRiccoWatermill*>(a) || dynamic_cast<TCogwheel*>(a) || dynamic_cast<TBellWatermill*>(a)
-	       || dynamic_cast<TNormalLift*>(a) || dynamic_cast<TRailBlock*>(a) || dynamic_cast<TRollBlock*>(a)
 	       || dynamic_cast<TMammaYacht*>(a) || dynamic_cast<TMapObjTurn*>(a) || dynamic_cast<TBiancoWatermill*>(a)
 	       || dynamic_cast<TBiancoWatermillVertical*>(a);
 }
+// Lifts, blocks and clouds that go along rails (a secret course's are many):
+// sent more often, they turn back on their rails where they should.
+bool isRailMover(TLiveActor* a) { return dynamic_cast<TRailMapObj*>(a) != nullptr; }
+// where it is and how it is turned (blended), then its state and timer
 int saveMachine(TLiveActor* a, u8* out)
 {
 	TMapObjBase* m = static_cast<TMapObjBase*>(a);
 	Put o(out);
+	o.v3(m->mPosition);
+	o.v3(m->mRotation);
 	o.i((s32)m->mState);
 	o.i(m->mStateTimer);
-	o.v3(m->mRotation);
-	o.v3(m->mPosition);
 	return o.n;
-}
-f32 easeDegrees(f32 have, f32 want, f32 k)
-{
-	f32 d = want - have;
-	while (d > 180.0f)
-		d -= 360.0f;
-	while (d < -180.0f)
-		d += 360.0f;
-	return fabsf(d) > 45.0f ? want : have + d * k;
 }
 void takeMachine(TLiveActor* a, const u8* in, int size, int, int*)
 {
 	TMapObjBase* m = static_cast<TMapObjBase*>(a);
 	Get g(in, size);
+	const JGeometry::TVec3<f32> pos = g.v3(), rot = g.v3();
 	const s32 state = g.i(), timer = g.i();
-	const JGeometry::TVec3<f32> rot = g.v3(), pos = g.v3();
 	if (!g.ok)
 		return;
+	m->mPosition   = pos;
+	m->mRotation   = rot;
 	m->mState      = (u32)state;
 	m->mStateTimer = timer;
-	m->mRotation.x = easeDegrees(m->mRotation.x, rot.x, 0.3f);
-	m->mRotation.y = easeDegrees(m->mRotation.y, rot.y, 0.3f);
-	m->mRotation.z = easeDegrees(m->mRotation.z, rot.z, 0.3f);
-	easeTo(m->mPosition, pos, 500.0f, 0.3f);
+}
+
+// Blocks that spin round on their own (a secret course's): how far round.
+bool isRollBlock(TLiveActor* a) { return dynamic_cast<TRollBlock*>(a) != nullptr; }
+int saveRollBlock(TLiveActor* a, u8* out)
+{
+	Put o(out);
+	o.f(static_cast<TRollBlock*>(a)->unk138);
+	return o.n;
+}
+void takeRollBlock(TLiveActor* a, const u8* in, int size, int, int*)
+{
+	Get g(in, size);
+	const f32 angle = g.f();
+	if (g.ok)
+		static_cast<TRollBlock*>(a)->unk138 = angle;
 }
 
 // A school of fish carrying something (a blue coin swims with Gelato's): its
@@ -1026,37 +1072,187 @@ void takeViking(TLiveActor* a, const u8* in, int size, int age, int*)
 }
 
 const Kind kKinds[] = {
-	{"NPC", isNpc, saveNpc, takeNpc, OWN_HOST, 6, false},
-	{"leaf boat", isLeafBoat, saveMover, takeMover, OWN_RIDER, 2, false},
-	{"mud boat", isMuddyBoat, saveMuddyBoat, takeMuddyBoat, OWN_RIDER, 2, false},
-	{"fruit boat", isFruitsBoat, saveFruitsBoat, takeFruitsBoat, OWN_RIDER, 2, false},
-	{"Ferris wheel", isFerrisWheel, saveFerrisWheel, takeFerrisWheel, OWN_HOST, 15, false},
-	{"merry-go-round", isMerrygoround, saveTurner, takeTurner, OWN_HOST, 6, false},
-	{"coaster car", isPinnaCoaster, savePinnaCoaster, takePinnaCoaster, OWN_HOST, 6, false},
-	{"roulette", isRoulette, saveRoulette, takeRoulette, OWN_HOST, 3, false},
-	{"slot machine", isSlotDrum, saveSlot, takeSlotDrum, OWN_USER, 2, true},
-	{"item slot", isItemSlotDrum, saveSlot, takeItemSlotDrum, OWN_USER, 2, true},
-	{"Yoshi's egg", isEgg, saveEgg, takeEgg, OWN_USER, 10, false},
-	{"Chain Chomp", isChomp, saveChomp, takeChomp, OWN_USER, 2, false},
-	{"Bowser", isBowser, saveBowser, takeBowser, OWN_HOST, 2, false},
-	{"Bowser Jr.", isJunior, saveJunior, takeJunior, OWN_HOST, 2, false},
-	{"sleeping Wiggler", isSleepyWiggler, saveSleepyWiggler, takeSleepyWiggler, OWN_HOST, 3, false},
-	{"Bowser's tub", isTub, saveTub, takeTub, OWN_HOST, 2, false},
-	{"critter", isCritter, saveCritter, takeCritter, OWN_HOST, 3, false},
-	{"pirate ship", isViking, saveViking, takeViking, OWN_HOST, 4, false},
-	{"swinging board", isSwingBoard, saveSwingBoard, takeSwingBoard, OWN_RIDER, 3, false},
-	{"machine", isMachine, saveMachine, takeMachine, OWN_RIDER, 4, false},
-	{"fish with a coin", isCarryingSchool, saveSchool, takeSchool, OWN_HOST, 3, false},
-	{"watermelon", isWatermelon, saveWatermelon, takeWatermelon, OWN_USER, 2, false},
+	{"NPC", isNpc, saveNpc, takeNpc, OWN_HOST, 6, false, 0, 0},
+	{"leaf boat", isLeafBoat, saveMover, takeMover, OWN_RIDER, 2, false, 0, 0},
+	{"mud boat", isMuddyBoat, saveMuddyBoat, takeMuddyBoat, OWN_RIDER, 2, false, 0, 0},
+	{"fruit boat", isFruitsBoat, saveFruitsBoat, takeFruitsBoat, OWN_RIDER, 2, false, 0, 0},
+	{"Ferris wheel", isFerrisWheel, saveFerrisWheel, takeFerrisWheel, OWN_HOST, 15, false, 0, 0},
+	{"merry-go-round", isMerrygoround, saveTurner, takeTurner, OWN_HOST, 6, false, 0, 0},
+	{"coaster car", isPinnaCoaster, savePinnaCoaster, takePinnaCoaster, OWN_HOST, 6, false, 0, 0},
+	{"roulette", isRoulette, saveRoulette, takeRoulette, OWN_HOST, 3, false, 0, 0},
+	{"slot machine", isSlotDrum, saveSlot, takeSlotDrum, OWN_USER, 2, true, 0, 0},
+	{"item slot", isItemSlotDrum, saveSlot, takeItemSlotDrum, OWN_USER, 2, true, 0, 0},
+	{"Yoshi's egg", isEgg, saveEgg, takeEgg, OWN_USER, 10, false, 0, 0},
+	{"Chain Chomp", isChomp, saveChomp, takeChomp, OWN_USER, 2, false, 0, 0},
+	{"Bowser", isBowser, saveBowser, takeBowser, OWN_HOST, 2, false, 0, 0},
+	{"Bowser Jr.", isJunior, saveJunior, takeJunior, OWN_HOST, 2, false, 0, 0},
+	{"sleeping Wiggler", isSleepyWiggler, saveSleepyWiggler, takeSleepyWiggler, OWN_HOST, 3, false, 0, 0},
+	{"Bowser's tub", isTub, saveTub, takeTub, OWN_HOST, 2, false, 0, 0},
+	{"critter", isCritter, saveCritter, takeCritter, OWN_HOST, 3, false, 0, 0},
+	{"pirate ship", isViking, saveViking, takeViking, OWN_HOST, 4, false, 0, 0},
+	{"swinging board", isSwingBoard, saveSwingBoard, takeSwingBoard, OWN_RIDER, 3, false, 0, 0},
+	{"machine", isMachine, saveMachine, takeMachine, OWN_RIDER, 4, false, 6, 0x38},
+	{"rail mover", isRailMover, saveMachine, takeMachine, OWN_RIDER, 2, false, 6, 0x38},
+	{"roll block", isRollBlock, saveRollBlock, takeRollBlock, OWN_HOST, 3, false, 1, 0x1},
+	{"fish with a coin", isCarryingSchool, saveSchool, takeSchool, OWN_HOST, 3, false, 0, 0},
+	{"watermelon", isWatermelon, saveWatermelon, takeWatermelon, OWN_USER, 2, false, 0, 0},
 };
 const int kKindCount = sizeof kKinds / sizeof kKinds[0];
 
 // The sea's waves (their phases start at random): the host's.
-const Kind kWaveKind = {"waves", nullptr, nullptr, nullptr, OWN_HOST, 30, false};
+const Kind kWaveKind = {"waves", nullptr, nullptr, nullptr, OWN_HOST, 30, false, 0, 0};
 
 // ------------------------------------------------------------------ ownership
 
 int fps() { return port_active_frame_rate > 0 ? port_active_frame_rate : 30; }
+
+// ------------------------------------------------------------------ smooth kinds
+
+// This game's clock (ms of play), and each owner's as seen here: how far
+// behind ours their stamps arrive, at least (their clock's offset plus the
+// quickest trip): down at once to a quicker one, up slowly (the two games'
+// clocks drift apart as their frame rates differ); and the offset used,
+// which leans toward it gently so the moment drawn does not jump.
+double s_ms;
+int s_traceIndex = -1; // debug: the smooth mirror traced (the first that moves)
+struct Lag {
+	double min, use;
+	bool known;
+};
+Lag s_lag[4];
+
+void noteLag(int slot, u32 at)
+{
+	Lag& l         = s_lag[slot & 3];
+	const double d = s_ms - (double)at;
+	if (!l.known || d < l.min - 1000.0 || d > l.min + 1000.0) {
+		l.min = l.use = d; // the first, or a clock that jumped (a new stage, a reload)
+		l.known       = true;
+		return;
+	}
+	if (d < l.min)
+		l.min = d;
+	else
+		l.min += (d - l.min) * 0.02;
+}
+
+void tickLags()
+{
+	for (int i = 0; i < 4; i++) {
+		Lag& l = s_lag[i];
+		if (!l.known)
+			continue;
+		const double d = l.min - l.use;
+		l.use += d > 300.0 || d < -300.0 ? d : d * 0.05;
+	}
+}
+
+f32 turnBetween(f32 a, f32 b, f32 t)
+{
+	f32 d = b - a;
+	while (d > 180.0f)
+		d -= 360.0f;
+	while (d < -180.0f)
+		d += 360.0f;
+	return a + d * t;
+}
+
+// A smooth kind's new state: into its history (oldest first), unless it
+// came late. One after a long quiet (the owner sends an unchanged state
+// seldom) is taken to have started from the last a send's time before.
+void addSample(Mirrored& m, int slot, const u8* data, int size)
+{
+	const Kind& k = *m.kind;
+	if (size < k.smooth * 4 + 4)
+		return;
+	Sample n;
+	memcpy(&n.at, data + size - 4, 4);
+	memcpy(n.v, data, k.smooth * 4);
+	noteLag(slot, n.at);
+	// the time between the owner's states as they have come (or as it sends them)
+	u32 period = (u32)(k.every * 1000 / fps());
+	if (m.arrivalGap > (f32)period && m.arrivalGap < 500.0f)
+		period = (u32)m.arrivalGap;
+	if (m.historyCount) {
+		const Sample& last = m.history[m.historyCount - 1];
+		if ((s32)(n.at - last.at) <= 0)
+			return;
+		if (n.at - last.at > 3 * period + 50) {
+			Sample still = last;
+			still.at     = n.at - period;
+			if (m.historyCount == kHistory)
+				memmove(m.history, m.history + 1, sizeof(Sample) * (kHistory - 1)), m.historyCount--;
+			m.history[m.historyCount++] = still;
+		}
+	}
+	if (m.historyCount == kHistory)
+		memmove(m.history, m.history + 1, sizeof(Sample) * (kHistory - 1)), m.historyCount--;
+	m.history[m.historyCount++] = n;
+	// states come in bursts (a few a packet): the time between them, as they come
+	const f32 gap = (f32)(s_ms - m.arrivedAt);
+	if (m.arrivedAt > 0.0 && gap > 0.0f && gap < 500.0f)
+		m.arrivalGap += (gap - m.arrivalGap) * 0.1f;
+	m.arrivedAt = s_ms;
+}
+
+// A smooth kind's floats a moment in the past (about two of the owner's
+// sends behind its newest, as they have come lately): between the two states
+// either side of it; past the newest, the newest (not on as it went: where
+// it stopped or turned back it would go too far, and come back).
+void blendSample(const Mirrored& m, f32* out)
+{
+	const Kind& k   = *m.kind;
+	const Sample* h = m.history;
+	const int n     = m.historyCount;
+	const Lag& l    = s_lag[m.heardSlot & 3];
+	f32 gaps = 0.0f;
+	int gapCount = 0;
+	for (int i = 0; i + 1 < n; i++) {
+		const f32 gap = (f32)(s32)(h[i + 1].at - h[i].at);
+		if (gap > 0.0f && gap < 500.0f)
+			gaps += gap, gapCount++;
+	}
+	// behind the newest by about two of the gaps between states, or between
+	// their arrivals (the larger), so a late one seldom leaves it waiting
+	f32 every = gapCount ? gaps / gapCount : k.every * 1000.0f / fps();
+	if (m.arrivalGap > every)
+		every = m.arrivalGap;
+	double delay = every * 2.2 + 40.0;
+	delay        = delay < 120.0 ? 120.0 : delay > 400.0 ? 400.0 : delay;
+	const double at    = s_ms - l.use - delay;
+	const Sample* a = &h[n - 1];
+	const Sample* b = &h[n - 1];
+	f32 t           = 0.0f;
+	if (at < (double)h[0].at) {
+		a = b = &h[0];
+	} else {
+		for (int i = 0; i + 1 < n; i++)
+			if ((double)h[i].at <= at && at < (double)h[i + 1].at) {
+				a = &h[i];
+				b = &h[i + 1];
+				t = (f32)((at - (double)a->at) / (double)(s32)(b->at - a->at));
+				break;
+			}
+	}
+	for (int i = 0; i < k.smooth; i++)
+		out[i] = (k.angleMask >> i) & 1 ? turnBetween(a->v[i], b->v[i], t) : a->v[i] + (b->v[i] - a->v[i]) * t;
+	static const bool trace = getenv("SMS_MULTIPLAYER_TRACE") != nullptr;
+	if (trace && &m == &s_mirrors[0] + (s_traceIndex >= 0 ? s_traceIndex : 0) && s_traceIndex >= 0)
+		fprintf(stderr, "[mptrace] mirror %d.%d: at %.0f, newest %u (%d states), lag %.0f, t %.2f -> %.1f %.1f %.1f\n", m.manager,
+		        m.index, at, h[n - 1].at, n, l.use, t, out[0], out[1], out[2]);
+}
+
+void takeSmooth(Mirrored& m)
+{
+	if (!m.historyCount || m.stateSize < m.kind->smooth * 4)
+		return;
+	u8 now[48];
+	f32 v[kSmoothMax];
+	blendSample(m, v);
+	memcpy(now, v, m.kind->smooth * 4);
+	memcpy(now + m.kind->smooth * 4, m.state + m.kind->smooth * 4, m.stateSize - m.kind->smooth * 4);
+	m.kind->take(m.actor, now, m.stateSize, 0, &m.scratch);
+}
 
 bool rides(TLiveActor* a)
 {
@@ -1223,14 +1419,34 @@ void MpMirrorCollect()
 			if (s_mirrors[k].kind != &kWaveKind)
 				counts[s_mirrors[k].kind - kKinds]++;
 		for (int k = 0; k < kKindCount; k++)
-			if (counts[k])
-				fprintf(stderr, "[multiplayer] mirrored here: %d %s\n", counts[k], kKinds[k].name);
+			if (counts[k]) {
+				// and of which classes
+				const char* seen[8] = {nullptr};
+				int seenCount[8] = {0};
+				for (int i = 0; i < s_count; i++) {
+					if (s_mirrors[i].kind != &kKinds[k] || !s_mirrors[i].actor)
+						continue;
+					const char* name = typeid(*s_mirrors[i].actor).name();
+					for (int j = 0; j < 8; j++)
+						if (!seen[j] || !strcmp(seen[j], name)) {
+							seen[j] = name;
+							seenCount[j]++;
+							break;
+						}
+				}
+				char classes[256] = "";
+				for (int j = 0; j < 8 && seen[j]; j++)
+					snprintf(classes + strlen(classes), sizeof classes - strlen(classes), " %d %s", seenCount[j], seen[j]);
+				fprintf(stderr, "[multiplayer] mirrored here: %d %s (%s )\n", counts[k], kKinds[k].name, classes);
+			}
 	}
 }
 
 void MpMirrorTick()
 {
 	s_clock++;
+	s_ms += 1000.0 / fps();
+	tickLags();
 	if (s_testWalked && s_testWalkFrames > 0) {
 		s_testWalkFrames--;
 		s_testWalked->mPosition.x += 3.0f;
@@ -1242,6 +1458,10 @@ void MpMirrorTick()
 	int slot, manager, index, size;
 	u8 data[48];
 	while (mpg_next_mirror(&slot, &manager, &index, data, &size)) {
+		if (manager == 253) {
+			MpEnemyReport(slot, index, data, size); // an enemy a client's game runs
+			continue;
+		}
 		Mirrored* m = find(manager, index);
 		if (!m || size > 48)
 			continue;
@@ -1252,13 +1472,32 @@ void MpMirrorTick()
 			m->claimedAt = 0;
 		m->heardAt   = s_clock;
 		m->heardSlot = slot;
+		if (m->kind->smooth) {
+			addSample(*m, slot, data, size);
+			size -= 4; // the owner's clock
+			if (size < 0)
+				continue;
+		}
 		memcpy(m->state, data, size);
 		m->stateSize = size;
 		m->stateAt   = s_clock;
 	}
+	// paused here: what this game runs stands still, and the others' run on
+	// their own meanwhile (an unchanged state sent on would hold them still);
+	// the host paused: its states are of a world that stands still
+	const bool pausedHere = MpPausedHere(), hostPaused = MpHostPaused();
+	static bool wasHostPaused;
+	if (hostPaused != wasHostPaused && getenv("SMS_MULTIPLAYER_DEBUG"))
+		fprintf(stderr, "[multiplayer] the host %s\n",
+		        hostPaused ? "paused: this game's world runs on its own" : "plays again: its world is everyone's again");
+	wasHostPaused = hostPaused;
 	for (int i = 0; i < s_count; i++) {
 		Mirrored& m = s_mirrors[i];
+		if (m.actor && m.kind->match == isFruitsBoat)
+			keepRollAxis(static_cast<TFruitsBoat*>(m.actor));
 		if (ownedHere(m)) {
+			if (pausedHere)
+				continue;
 			if (m.actor && m.kind->match == isTub && mpg_role() == MPG_ROLE_HOST)
 				weighTub(static_cast<TBathtub*>(m.actor));
 			// each on a tick of its own (by its place), so a stage's many
@@ -1273,15 +1512,28 @@ void MpMirrorTick()
 			const int keep = mpg_role() == MPG_ROLE_HOST ? fps() : fps() / 3;
 			if (n <= 0 || (n == m.sentSize && !memcmp(out, m.sent, n) && s_clock - m.sentAt < keep))
 				continue;
-			mpg_mirror(m.manager, m.index, out, n);
+			m.historyCount = 0; // ours now: what came from another owner is old news
+			if (m.kind->smooth) {
+				// stamped with this game's clock, for the others to draw it smoothly
+				const u32 now = (u32)s_ms;
+				if (n + 4 > 48)
+					continue;
+				u8 stamped[48];
+				memcpy(stamped, out, n);
+				memcpy(stamped + n, &now, 4);
+				mpg_mirror(m.manager, m.index, stamped, n + 4);
+			} else
+				mpg_mirror(m.manager, m.index, out, n);
 			memcpy(m.sent, out, n);
 			m.sentSize = n;
 			m.sentAt   = s_clock;
 			continue;
 		}
-		if (!m.stateSize || s_clock - m.stateAt > 2 * fps())
+		if (!m.stateSize || s_clock - m.stateAt > 2 * fps() || (hostPaused && m.heardSlot == 0))
 			continue; // nothing lately: it runs as it would
-		if (m.actor)
+		if (m.actor && m.kind->smooth)
+			takeSmooth(m);
+		else if (m.actor)
 			m.kind->take(m.actor, m.state, m.stateSize, s_clock - m.stateAt, &m.scratch);
 		else if (m.stateAt == s_clock)
 			takeWaves(m.state, m.stateSize);
@@ -1289,9 +1541,57 @@ void MpMirrorTick()
 	debugMirrors();
 }
 
+// Debug: how smoothly the smooth kinds taken here move: each tick's step
+// against the last (a hitch, a tug back, shows as a large change of step).
+void measureSmooth()
+{
+	struct Track {
+		JGeometry::TVec3<f32> last, step;
+		f32 rough, moved;
+		int ticks;
+	};
+	static Track tracks[kMaxMirrors];
+	static int frames;
+	f32 rough = 0.0f, moved = 0.0f;
+	int movers = 0;
+	for (int i = 0; i < s_count; i++) {
+		Mirrored& m = s_mirrors[i];
+		Track& k    = tracks[i];
+		if (!m.actor || !m.kind->smooth || ownedHere(m) || !m.historyCount) {
+			k.ticks = 0;
+			continue;
+		}
+		const JGeometry::TVec3<f32> p = m.actor->mPosition;
+		const JGeometry::TVec3<f32> step(p.x - k.last.x, p.y - k.last.y, p.z - k.last.z);
+		if (k.ticks >= 2) {
+			const f32 dx = step.x - k.step.x, dy = step.y - k.step.y, dz = step.z - k.step.z;
+			k.rough += sqrtf(dx * dx + dy * dy + dz * dz);
+			k.moved += sqrtf(step.x * step.x + step.y * step.y + step.z * step.z);
+		}
+		k.last = p;
+		k.step = step;
+		k.ticks++;
+		if (k.moved > 0.0f && s_traceIndex < 0)
+			s_traceIndex = i;
+		if (k.moved > 0.0f) {
+			rough += k.rough;
+			moved += k.moved;
+			movers++;
+		}
+	}
+	if (++frames % (10 * fps()) == 0 && movers) {
+		fprintf(stderr, "[multiplayer] smooth movers here: %d moving, change of step %.1f%% of the distance moved\n", movers,
+		        moved > 0.0f ? 100.0f * rough / moved : 0.0f);
+		for (int i = 0; i < s_count; i++)
+			tracks[i].rough = tracks[i].moved = 0.0f;
+	}
+}
+
 // Debug: the first of each kind, where it is here and who runs it.
 void debugMirrors()
 {
+	if (getenv("SMS_MULTIPLAYER_DEBUG"))
+		measureSmooth();
 	if (!getenv("SMS_MULTIPLAYER_DEBUG") || s_clock % (10 * fps()))
 		return;
 	bool said[kKindCount] = {false};

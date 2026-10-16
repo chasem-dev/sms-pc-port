@@ -2,7 +2,7 @@
 #define SMS_MP_PUPPET_HPP
 
 // Another player, drawn in this game (ext/multiplayer): Mario's own model,
-// cap, hands, FLUDD and Yoshi, posed each frame as that player's game posed
+// cap, hands, FLUDD, Yoshi and the Blooper they surf on, posed each frame as that player's game posed
 // them (their animation, frame and root matrix, mpg_pose). It lives in the
 // stage's player group beside Mario, so the scene performs and lights it as
 // it does him; it has no collision and takes nothing.
@@ -51,6 +51,7 @@ private:
 	bool buildBody();
 	bool buildFludd();
 	bool buildYoshi();
+	bool buildSurf();
 
 	int mSlot;
 	int mCharacter;
@@ -73,6 +74,8 @@ private:
 	MActor* mNozzles[6];
 	u8 mNozzleJoint;
 	MActor* mYoshi;
+	MActor* mSurf;           // the Blooper they ride (Ricco Harbor's, Gelato's)
+	s16 mSurfColor[4];       // its colour (GXColorS10, as the game's three)
 	u16 mJointChest, mJointHandR, mJointHandL, mJointHead, mJointMHead;
 	J3DDrawBuffer* mOpa;
 	J3DDrawBuffer* mXlu;

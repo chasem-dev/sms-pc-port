@@ -47,7 +47,9 @@ enum Kind : uint8_t {
 	K_HIT,          // either way: session, count, hits a player landed on shared objects (mp_game.cpp), passed on
 	K_CARRY,        // either way: session, slot, manager, index, action, position, velocity, yaw (a carried object)
 	K_MIRROR,       // either way: session, count, objects' states from the game that owns them (mp_game.cpp), passed on
-	K_TRIP,         // client -> host: session, area, episode (a story event there moved on: everyone goes)
+	K_TRIP,         // client -> host: session, area, episode, movie (0xFF: none): the client set off there (a pipe,
+	                // a story event): the host takes everyone
+	K_SELECT,       // host -> client: area, the episode its episode select points at, whether it chose it
 };
 // The host's boss rides at the end of the world snapshot, after the enemies.
 const size_t kMaxBoss = 200;
@@ -85,9 +87,9 @@ struct Controller {
 	FlagValues hostValues;       // the host's flags as of the last sync
 	std::deque<std::pair<int, FlagReport>> reports;
 	struct Trip {
-		int slot, area, episode;
+		int slot, area, episode, movie;
 	};
-	std::deque<Trip> trips; // host: clients' story events that move everyone on
+	std::deque<Trip> trips; // host: the clients' ways out, which take everyone
 	FlagReportReader reportReaders[MP_MAX_PLAYERS];
 	bool shineExit       = false;
 	int32_t sessionRed   = 0;   // red coins this session, kept over a reload
@@ -104,6 +106,11 @@ struct Controller {
 	int recentTake = 0;
 	bool restartSession  = false;
 	unsigned waitingStage = 0; // players who joined while the host was between stages: told once it has arrived
+
+	// the host's episode select: where (its area), which episode it points
+	// at, whether it chose it (host: as last sent; client: as last heard)
+	int selectArea = -1, selectEpisode = -1, selectChosen = 0;
+	uint32_t selectSentAt = 0;
 
 	// client: the host's travel (as it went: its session flags and movie), for
 	// this game to arrive the same way
@@ -132,6 +139,7 @@ struct Controller {
 	struct ShineGet {
 		int slot, eventId;
 		float pos[3];
+		int yaw; // the way they faced (Mario's 16-bit angle)
 	};
 	std::deque<ShineGet> shineGets;
 	// cutscenes another player's game started, for this game to play too
@@ -298,9 +306,9 @@ bool readTakenAt(Reader& r, MpgTakenAt& t)
 	return r.ok && t.pos[0] == t.pos[0] && t.pos[1] == t.pos[1] && t.pos[2] == t.pos[2]; // not NaN
 }
 
-std::vector<uint8_t> shineGetMessage(uint32_t session, int slot, int eventId, const float pos[3])
+std::vector<uint8_t> shineGetMessage(uint32_t session, int slot, int eventId, const float pos[3], int yaw)
 {
-	std::vector<uint8_t> buf(4 + 1 + 1 + 12);
+	std::vector<uint8_t> buf(4 + 1 + 1 + 12 + 2);
 	Writer w(buf.data(), buf.size());
 	w.u32(session);
 	w.u8((uint8_t)slot);
@@ -308,6 +316,7 @@ std::vector<uint8_t> shineGetMessage(uint32_t session, int slot, int eventId, co
 	w.f32(pos[0]);
 	w.f32(pos[1]);
 	w.f32(pos[2]);
+	w.s16((int16_t)yaw);
 	return buf;
 }
 
@@ -318,6 +327,7 @@ bool readShineGet(Reader& r, Controller::ShineGet& out)
 	out.pos[0]  = r.f32();
 	out.pos[1]  = r.f32();
 	out.pos[2]  = r.f32();
+	out.yaw     = r.s16();
 	return r.ok && out.slot < MP_MAX_PLAYERS && out.pos[0] == out.pos[0] && out.pos[1] == out.pos[1]
 	       && out.pos[2] == out.pos[2];
 }
@@ -615,6 +625,7 @@ void readCarry(Reader& r, int from)
 // ------------------------------------------------------------------ mirrored objects
 
 const size_t kMirrorBatch = 6; // unreliable, within a message's 400 bytes
+const uint8_t kEnemyReports = 253; // "manager" of a client's word on the enemies its game runs (mp_game.cpp)
 const size_t kMaxMirrorsIn = 256;
 
 std::vector<uint8_t> mirrorMessage(uint32_t session, const Controller::Mirror* list, size_t n)
@@ -684,7 +695,8 @@ void readMirrors(Reader& r, int from)
 			break;
 		if (g.role == MPG_ROLE_HOST)
 			m.slot = (uint8_t)from; // a client speaks for itself only
-		got.push_back(m);
+		if (m.manager != kEnemyReports) // the host's alone (its copy follows; the others follow the host's)
+			got.push_back(m);
 		if (g.mirrorIn.size() < kMaxMirrorsIn)
 			g.mirrorIn.push_back(m);
 	}
@@ -698,9 +710,9 @@ void hostMessage(const MpEvent& ev)
 	switch (ev.kind) {
 	case K_TRIP: {
 		const uint32_t s = r.u32();
-		const int area = r.u8(), episode = r.u8();
+		const int area = r.u8(), episode = r.u8(), movie = r.u8();
 		if (r.ok && s == g.session && g.session && g.trips.size() < 4)
-			g.trips.push_back({ev.slot, area, episode});
+			g.trips.push_back({ev.slot, area, episode, movie == 0xFF ? -1 : movie});
 		break;
 	}
 	case K_REPORT:
@@ -741,7 +753,7 @@ void hostMessage(const MpEvent& ev)
 			g.shineGets.push_back(sg);
 		for (int i = 1; i < MP_MAX_PLAYERS; i++)
 			if (i != ev.slot && (mp_players() & (1u << i)))
-				send(i, K_SHINE_GET, shineGetMessage(s, sg.slot, sg.eventId, sg.pos));
+				send(i, K_SHINE_GET, shineGetMessage(s, sg.slot, sg.eventId, sg.pos, sg.yaw));
 		break;
 	}
 	case K_DEMO: {
@@ -873,6 +885,18 @@ void clientMessage(const MpEvent& ev)
 		g.targetEpisode = episode;
 		g.targetSession = 0;
 		fprintf(stderr, "[multiplayer] the host is leaving for area %d, episode %d\n", area, episode);
+		break;
+	}
+	case K_SELECT: {
+		const int area = r.u8(), episode = r.u8(), chosen = r.u8();
+		if (!r.ok)
+			break;
+		if (g_debug && (area != g.selectArea || episode != g.selectEpisode || chosen != g.selectChosen))
+			fprintf(stderr, "[multiplayer] the host's episode select: area %d, episode %d%s\n", area, episode,
+			        chosen ? " (chosen)" : "");
+		g.selectArea    = area;
+		g.selectEpisode = episode;
+		g.selectChosen  = chosen;
 		break;
 	}
 	case K_FLAGS:
@@ -1470,22 +1494,24 @@ extern "C" int mpg_in_target(void)
 	return g.localSession && g.localSession == g.targetSession;
 }
 
-extern "C" void mpg_request_trip(int area, int episode)
+extern "C" int mpg_request_trip(int area, int episode, int movie)
 {
 	if (g.role != MPG_ROLE_CLIENT || area < 0 || area > 255 || episode < 0 || episode > 255)
-		return;
+		return 0;
 	std::lock_guard<std::mutex> hold(g_lock);
 	if (!g.localSession)
-		return;
-	uint8_t buf[6];
+		return 0;
+	uint8_t buf[7];
 	Writer w(buf, sizeof buf);
 	w.u32(g.localSession);
 	w.u8((uint8_t)area);
 	w.u8((uint8_t)episode);
+	w.u8(movie < 0 || movie > 0xFE ? 0xFF : (uint8_t)movie);
 	mp_send(0, K_TRIP, buf, w.len);
+	return 1;
 }
 
-extern "C" int mpg_next_trip(int* slot, int* area, int* episode)
+extern "C" int mpg_next_trip(int* slot, int* area, int* episode, int* movie)
 {
 	std::lock_guard<std::mutex> hold(g_lock);
 	if (g.trips.empty())
@@ -1493,6 +1519,7 @@ extern "C" int mpg_next_trip(int* slot, int* area, int* episode)
 	*slot    = g.trips.front().slot;
 	*area    = g.trips.front().area;
 	*episode = g.trips.front().episode;
+	*movie   = g.trips.front().movie;
 	g.trips.pop_front();
 	return 1;
 }
@@ -1523,6 +1550,36 @@ extern "C" void mpg_host_going(int area, int episode, uint32_t sessionFlags, int
 	for (int i = 1; i < MP_MAX_PLAYERS; i++)
 		if (mp_players() & (1u << i))
 			mp_send(i, K_LEAVING, buf, w.len);
+}
+
+extern "C" void mpg_host_select(int area, int episode, int chosen)
+{
+	if (g.role != MPG_ROLE_HOST)
+		return;
+	std::lock_guard<std::mutex> hold(g_lock);
+	// on a change, and every half second (a player who arrives late hears it)
+	const uint32_t now = mp_clock_ms();
+	if (area == g.selectArea && episode == g.selectEpisode && chosen == g.selectChosen && now - g.selectSentAt < 500)
+		return;
+	g.selectArea    = area;
+	g.selectEpisode = episode;
+	g.selectChosen  = chosen;
+	g.selectSentAt  = now;
+	const uint8_t buf[3] = {(uint8_t)area, (uint8_t)episode, (uint8_t)(chosen != 0)};
+	for (int i = 1; i < MP_MAX_PLAYERS; i++)
+		if (mp_players() & (1u << i))
+			mp_send(i, K_SELECT, buf, sizeof buf);
+}
+
+extern "C" int mpg_select(int* area, int* episode, int* chosen)
+{
+	std::lock_guard<std::mutex> hold(g_lock);
+	if (g.role != MPG_ROLE_CLIENT || g.selectArea < 0)
+		return 0;
+	*area    = g.selectArea;
+	*episode = g.selectEpisode;
+	*chosen  = g.selectChosen;
+	return 1;
 }
 
 extern "C" int mpg_target_traveling(void)
@@ -1766,7 +1823,7 @@ extern "C" int mpg_next_mirror(int* slot, int* manager, int* index, void* data, 
 	return 1;
 }
 
-extern "C" void mpg_shine_get(int eventId, const float pos[3])
+extern "C" void mpg_shine_get(int eventId, const float pos[3], int yaw)
 {
 	if (g.role == MPG_ROLE_OFF)
 		return;
@@ -1777,13 +1834,13 @@ extern "C" void mpg_shine_get(int eventId, const float pos[3])
 			return;
 		for (int i = 1; i < MP_MAX_PLAYERS; i++)
 			if (mp_players() & (1u << i))
-				send(i, K_SHINE_GET, shineGetMessage(g.session, slot, eventId, pos));
+				send(i, K_SHINE_GET, shineGetMessage(g.session, slot, eventId, pos, yaw));
 	} else if (g.localSession) {
-		send(0, K_SHINE_GET, shineGetMessage(g.localSession, slot, eventId, pos));
+		send(0, K_SHINE_GET, shineGetMessage(g.localSession, slot, eventId, pos, yaw));
 	}
 }
 
-extern "C" int mpg_next_shine_get(int* slot, int* eventId, float pos[3])
+extern "C" int mpg_next_shine_get(int* slot, int* eventId, float pos[3], int* yaw)
 {
 	std::lock_guard<std::mutex> hold(g_lock);
 	if (g.shineGets.empty())
@@ -1791,6 +1848,7 @@ extern "C" int mpg_next_shine_get(int* slot, int* eventId, float pos[3])
 	const Controller::ShineGet& sg = g.shineGets.front();
 	*slot    = sg.slot;
 	*eventId = sg.eventId;
+	*yaw     = sg.yaw;
 	memcpy(pos, sg.pos, sizeof sg.pos);
 	g.shineGets.pop_front();
 	return 1;
@@ -1990,7 +2048,7 @@ extern "C" void mpg_set_enemies(const MpgEnemy* list, int count)
 		const MpgEnemy& e = k < abouts ? *about[(g.enemyNext + k) % about.size()]
 		                               : *gone[(g.goneNext + k - abouts) % gone.size()];
 		w.u8(e.manager);
-		w.u8(e.alive);
+		w.u8((uint8_t)((e.alive ? 1 : 0) | (e.owner & 3) << 4)); // up, and whose game runs it
 		w.u16(e.index);
 		w.f32(e.pos[0]);
 		w.f32(e.pos[1]);
@@ -2028,7 +2086,9 @@ extern "C" int mpg_enemies(MpgEnemy* out, int max, float* age)
 	for (int k = 0; k < n && got < max && r.ok; k++) {
 		MpgEnemy& e = out[got];
 		e.manager   = r.u8();
-		e.alive     = r.u8();
+		const uint8_t how = r.u8();
+		e.alive     = how & 1;
+		e.owner     = (how >> 4) & 3;
 		e.index     = r.u16();
 		e.pos[0]    = r.f32();
 		e.pos[1]    = r.f32();

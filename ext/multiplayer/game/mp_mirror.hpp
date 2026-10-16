@@ -7,6 +7,16 @@
 // others take it. The owner is whoever rides or last used the object, else
 // the host.
 
+// Client: the host's game is paused (mp_game.cpp, from its pose): its world
+// stands still, so this game's runs on its own until the host plays again.
+bool MpHostPaused();
+// This game is paused: what it runs stands still, and is not sent.
+bool MpPausedHere();
+
+// Host: a client's report of an enemy its game runs (mp_game.cpp; it comes
+// on the mirror channel as manager 253, index manager << 8 | index).
+void MpEnemyReport(int slot, int key, const void* data, int size);
+
 // A stage is in play: find its mirrored objects.
 void MpMirrorCollect();
 // A stage is loading: the last stage's objects are gone (none is touched again).
