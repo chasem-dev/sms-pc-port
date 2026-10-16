@@ -31,8 +31,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "mp_peach.hpp"
-
 namespace {
 
 const u32 kMarioLoadFlags = J3DMLF_MaterialPEFull | (16 << J3DMLF_TevStageNumShift);
@@ -108,18 +106,15 @@ void recolour(int character, int& r, int& g, int& b)
 		b     = 84 + l * 7 / 10;
 		break;
 	}
-	case MPG_CHAR_PEACH:
-		// Mario in Peach's colours, when the disc has no Peach
-		if (r > 80 && r > g * 2 && r > b * 2) {
-			int v = r;
+	case MPG_CHAR_WARIO:
+		// Mario's red (cap, shirt) becomes Wario's yellow; skin and the blue
+		// overalls stay, and so does his reddish-brown hair (a stricter test
+		// than Luigi's)
+		if (r > 80 && r > g * 3 && r > b * 3) {
+			int v = r * 9 / 10 + 25;
 			r     = v;
-			g     = v * 6 / 10;
-			b     = v * 8 / 10;
-		} else if (b > r + 20 && b > g) {
-			int v = b;
-			r     = v;
-			g     = v * 3 / 4;
-			b     = v / 3;
+			g     = v * 4 / 5;
+			b     = v / 8;
 		}
 		break;
 	default:
@@ -208,64 +203,6 @@ void setShapes(J3DModelData* data, bool hidden)
 			data->getShapeNodePointer(i)->offFlag(J3DShpFlag_Visible);
 	}
 }
-
-} // namespace
-
-// Peach posed from Mario's animation: each of her joints that shares a name
-// with one of his turns, in the world, as his does from his bind pose; her
-// own bones keep their lengths, and the joints he lacks (her skirt, her
-// hair) follow their parents.
-struct PeachRig {
-	enum { kMax = 64 };
-	int count;
-	s16 parent[kMax];
-	s16 mario[kMax];       // his joint of the same name, or -1
-	u16 order[kMax];       // parents before children
-	Mtx bindWorld[kMax];   // hers, standing at the origin
-	Mtx bindLocal[kMax];   // hers, from her parent
-	Mtx bindRot[kMax];     // her bind rotation
-	Mtx marioRotInv[kMax]; // the inverse of his bind rotation, by his joint
-	Mtx marioBind[kMax];   // his bind, by his joint
-	Mtx align[kMax];       // turns her bone to lie as his does in his bind pose
-	s16 center, kubi, handL, handR, chest;
-	s16 marioCenter;
-};
-
-namespace {
-
-void rotationOnly(const Mtx in, Mtx out)
-{
-	MTXCopy(const_cast<MtxPtr>(in), out);
-	out[0][3] = out[1][3] = out[2][3] = 0.0f;
-}
-
-// The shortest rotation taking direction `a` to direction `b`.
-void rotationBetween(Vec a, Vec b, Mtx out)
-{
-	MTXIdentity(out);
-	f32 la = sqrtf(a.x * a.x + a.y * a.y + a.z * a.z), lb = sqrtf(b.x * b.x + b.y * b.y + b.z * b.z);
-	if (la < 1e-4f || lb < 1e-4f)
-		return;
-	a.x /= la, a.y /= la, a.z /= la;
-	b.x /= lb, b.y /= lb, b.z /= lb;
-	Vec axis = {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
-	f32 sinA = sqrtf(axis.x * axis.x + axis.y * axis.y + axis.z * axis.z);
-	f32 cosA = a.x * b.x + a.y * b.y + a.z * b.z;
-	if (sinA < 1e-4f)
-		return; // already aligned (or exactly opposite: leave it)
-	axis.x /= sinA, axis.y /= sinA, axis.z /= sinA;
-	MTXRotAxisRad(out, &axis, atan2f(sinA, cosA));
-}
-
-Vec position(const Mtx m)
-{
-	Vec v = {m[0][3], m[1][3], m[2][3]};
-	return v;
-}
-
-} // namespace
-
-namespace {
 
 // Rotation matrix <-> quaternion (x, y, z, w), for turning smoothly.
 void toQuat(const f32 (*m)[4], f32 q[4])
@@ -414,8 +351,6 @@ TMpPuppet::TMpPuppet(int slot, bool self)
     , mFludd(nullptr)
     , mNozzleJoint(0)
     , mYoshi(nullptr)
-    , mPeach(nullptr)
-    , mRig(nullptr)
     , mOpa(nullptr)
     , mXlu(nullptr)
     , mSwapped(false)
@@ -424,7 +359,6 @@ TMpPuppet::TMpPuppet(int slot, bool self)
 	memset(mHands, 0, sizeof mHands);
 	memset(mCap, 0, sizeof mCap);
 	memset(mNozzles, 0, sizeof mNozzles);
-	memset(mPeachParts, 0, sizeof mPeachParts);
 	mSaved[0] = mSaved[1] = nullptr;
 	mSmoothed[0] = mSmoothed[1] = mSmoothed[2] = 0.0f;
 	mHead[0] = mHead[1] = mHead[2] = 0.0f;
@@ -586,164 +520,6 @@ bool TMpPuppet::buildYoshi()
 	return true;
 }
 
-bool TMpPuppet::buildPeach()
-{
-	const MpPeachParts* parts = MpPeachLoad();
-	if (!parts || !parts->body)
-		return false;
-	mPeach = new J3DModel(parts->body, 0, 1);
-	J3DModelData* const partData[3] = {parts->hair, parts->handL, parts->handR};
-	for (int i = 0; i < 3; i++)
-		if (partData[i]) {
-			mPeachParts[i] = new J3DModel(partData[i], 0, 1);
-			SMS_MakeDLAndLock(mPeachParts[i]);
-		}
-	SMS_MakeDLAndLock(mPeach);
-
-	PeachRig* rig = new PeachRig;
-	memset(rig, 0, sizeof *rig);
-	J3DModelData* data = parts->body;
-	rig->count         = data->getJointNum() < PeachRig::kMax ? data->getJointNum() : PeachRig::kMax;
-	// her joint tree, parents first
-	J3DJoint* stack[PeachRig::kMax];
-	s16 stackParent[PeachRig::kMax];
-	int top = 0, n = 0;
-	for (int i = 0; i < PeachRig::kMax; i++)
-		rig->parent[i] = -1;
-	stack[top] = data->getRootNode();
-	stackParent[top++] = -1;
-	while (top > 0 && n < rig->count) {
-		J3DJoint* j  = stack[--top];
-		s16 parent   = stackParent[top];
-		u16 no       = j->getJntNo();
-		if (no >= rig->count)
-			continue;
-		rig->parent[no] = parent;
-		rig->order[n++] = no;
-		for (J3DNode* c = j->getChild(); c && top < PeachRig::kMax; c = c->getYounger()) {
-			stack[top]       = (J3DJoint*)c;
-			stackParent[top++] = (s16)no;
-		}
-	}
-	rig->count = n;
-	// her bind pose, and his, standing at the origin
-	Mtx identity;
-	MTXIdentity(identity);
-	mPeach->setBaseTRMtx(identity);
-	mPeach->calc();
-	J3DModel* body = mModel->getModel();
-	body->setBaseTRMtx(identity);
-	body->calc();
-	for (u16 i = 0; i < mBodyData->getJointNum() && i < PeachRig::kMax; i++) {
-		MTXCopy(body->getAnmMtx(i), rig->marioBind[i]);
-		Mtx r;
-		rotationOnly(rig->marioBind[i], r);
-		MTXInverse(r, rig->marioRotInv[i]);
-	}
-	for (int i = 0; i < rig->count; i++) {
-		u16 j = rig->order[i];
-		MTXCopy(mPeach->getAnmMtx(j), rig->bindWorld[j]);
-		rotationOnly(rig->bindWorld[j], rig->bindRot[j]);
-		if (rig->parent[j] >= 0) {
-			Mtx inv;
-			MTXInverse(rig->bindWorld[rig->parent[j]], inv);
-			MTXConcat(inv, rig->bindWorld[j], rig->bindLocal[j]);
-		} else {
-			MTXCopy(rig->bindWorld[j], rig->bindLocal[j]);
-		}
-		const char* name = data->getJointName()->getName(j);
-		const char* his  = !strcmp(name, "kubi") ? "jnt_head" : name;
-		int m            = mBodyData->getJointName()->getIndex(his);
-		rig->mario[j]    = (s16)(m >= 0 && m < mBodyData->getJointNum() ? m : -1);
-	}
-	// her bones turned to lie as his do (her arms rest lower or higher than
-	// his in their bind poses): the direction to her first mapped child
-	// against his to the same joint
-	for (int i = 0; i < rig->count; i++) {
-		const u16 j = rig->order[i];
-		MTXIdentity(rig->align[j]);
-		if (rig->mario[j] < 0)
-			continue;
-		for (int k = 0; k < rig->count; k++) {
-			const u16 c = rig->order[k];
-			if (rig->parent[c] != (s16)j || rig->mario[c] < 0)
-				continue;
-			Vec herFrom = position(rig->bindWorld[j]), herTo = position(rig->bindWorld[c]);
-			Vec hisFrom = position(rig->marioBind[rig->mario[j]]), hisTo = position(rig->marioBind[rig->mario[c]]);
-			Vec her = {herTo.x - herFrom.x, herTo.y - herFrom.y, herTo.z - herFrom.z};
-			Vec his = {hisTo.x - hisFrom.x, hisTo.y - hisFrom.y, hisTo.z - hisFrom.z};
-			rotationBetween(her, his, rig->align[j]);
-			break;
-		}
-	}
-	rig->center      = data->getJointName()->getIndex("center");
-	rig->kubi        = data->getJointName()->getIndex("kubi");
-	rig->handL       = data->getJointName()->getIndex("jnt_hand_L");
-	rig->handR       = data->getJointName()->getIndex("jnt_hand_R");
-	rig->chest       = data->getJointName()->getIndex("jnt_chest");
-	rig->marioCenter = mBodyData->getJointName()->getIndex("center");
-	mRig             = rig;
-	return true;
-}
-
-void TMpPuppet::posePeach(f32 (*base)[4])
-{
-	PeachRig* rig       = mRig;
-	J3DModel* body      = mModel->getModel();
-	static Mtx pose[PeachRig::kMax];
-	mPeach->setBaseTRMtx(base);
-	mPeach->calc();
-	for (int i = 0; i < rig->count; i++) {
-		const u16 j = rig->order[i];
-		const s16 p = rig->parent[j];
-		const s16 m = rig->mario[j];
-		Mtx world;
-		if (m >= 0) {
-			// his turn from his bind pose, in the world, applied to hers
-			Mtx his, turn, aligned;
-			rotationOnly(body->getAnmMtx(m), his);
-			MTXConcat(his, rig->marioRotInv[m], turn);
-			MTXConcat(rig->align[j], rig->bindRot[j], aligned);
-			MTXConcat(turn, aligned, world);
-			Vec at = {rig->bindLocal[j][0][3], rig->bindLocal[j][1][3], rig->bindLocal[j][2][3]};
-			Vec t;
-			if (p >= 0) {
-				MTXMultVec(pose[p], &at, &t);
-			} else {
-				Vec w = {rig->bindWorld[j][0][3], rig->bindWorld[j][1][3], rig->bindWorld[j][2][3]};
-				MTXMultVec(base, &w, &t);
-			}
-			if ((s16)j == (s16)rig->center && rig->marioCenter >= 0) {
-				// his hips' own movement (crouching, landing)
-				Vec bindAt = {rig->marioBind[rig->marioCenter][0][3], rig->marioBind[rig->marioCenter][1][3],
-				              rig->marioBind[rig->marioCenter][2][3]};
-				Vec bindWorld;
-				MTXMultVec(base, &bindAt, &bindWorld);
-				MtxPtr now = body->getAnmMtx(rig->marioCenter);
-				t.x += now[0][3] - bindWorld.x;
-				t.y += now[1][3] - bindWorld.y;
-				t.z += now[2][3] - bindWorld.z;
-			}
-			world[0][3] = t.x;
-			world[1][3] = t.y;
-			world[2][3] = t.z;
-		} else if (p >= 0) {
-			MTXConcat(pose[p], rig->bindLocal[j], world);
-		} else {
-			MTXConcat(base, rig->bindWorld[j], world);
-		}
-		MTXCopy(world, pose[j]);
-		mPeach->setAnmMtx(j, world);
-	}
-	mPeach->calcWeightEnvelopeMtx();
-	const s16 attach[3] = {(s16)rig->kubi, (s16)rig->handL, (s16)rig->handR};
-	for (int i = 0; i < 3; i++)
-		if (mPeachParts[i] && attach[i] >= 0 && attach[i] < rig->count) {
-			mPeachParts[i]->setBaseTRMtx(mPeach->getAnmMtx(attach[i]));
-			mPeachParts[i]->calc();
-		}
-}
-
 bool TMpPuppet::init()
 {
 	JKRHeap* heap = JKRHeap::getCurrentHeap();
@@ -751,8 +527,6 @@ bool TMpPuppet::init()
 	if (!buildBody())
 		return false;
 	s32 free1 = heap->getTotalFreeSize();
-	if (mCharacter == MPG_CHAR_PEACH)
-		buildPeach();
 	buildFludd();
 	s32 free2 = heap->getTotalFreeSize();
 	buildYoshi();
@@ -850,22 +624,10 @@ void TMpPuppet::applyPose(JDrama::TGraphics* graphics)
 	cap->setBaseTRMtx(bodyModel->getAnmMtx(mJointMHead));
 	cap->calc();
 
-	if (mPeach && mRig)
-		posePeach(base);
-
 	if (mFludd && (p.flags & MPG_POSE_FLUDD)) {
 		// on the back, tilted as TWaterGun::setBaseTRMtx tilts it
 		Mtx chest;
 		MTXCopy(bodyModel->getAnmMtx(mJointChest), chest);
-		if (mPeach && mRig && mRig->kubi >= 0) {
-			// on Peach: turned as his chest is, and as far below her neck as
-			// his chest is below his head, so it reaches her shoulders as it
-			// reaches his head (her chest joint is down at her hips)
-			MtxPtr neck = mPeach->getAnmMtx(mRig->kubi);
-			MtxPtr head = bodyModel->getAnmMtx(mJointHead);
-			for (int r = 0; r < 3; r++)
-				chest[r][3] = neck[r][3] - (head[r][3] - chest[r][3]);
-		}
 		f32 lean     = chest[1][0] < 0.0f ? -chest[1][0] : chest[1][0];
 		s16 angle    = (s16)(lean * (0 - -0x1800) + -0x1800);
 		Mtx roll, gun;
@@ -985,21 +747,13 @@ void TMpPuppet::perform(u32 cue, JDrama::TGraphics* graphics)
 	if (!mActive && !mSwapped)
 		return;
 
-	const bool peach = mPeach != nullptr;
 	if (cue & CUE_CALC_VIEW) {
 		MTXCopy(graphics->mViewMtx, j3dSys.mViewMtx);
-		if (peach) {
-			mPeach->viewCalc();
-			for (int i = 0; i < 3; i++)
-				if (mPeachParts[i])
-					mPeachParts[i]->viewCalc();
-		} else {
-			mModel->getModel()->viewCalc();
-			for (int h = 0; h < 2; h++)
-				for (int s = 0; s < 2; s++)
-					mHands[h][s]->viewCalc();
-			mCap[(mPose.flags & MPG_POSE_CAP) ? 0 : 1]->viewCalc();
-		}
+		mModel->getModel()->viewCalc();
+		for (int h = 0; h < 2; h++)
+			for (int s = 0; s < 2; s++)
+				mHands[h][s]->viewCalc();
+		mCap[(mPose.flags & MPG_POSE_CAP) ? 0 : 1]->viewCalc();
 		if (mFludd && (mPose.flags & MPG_POSE_FLUDD)) {
 			mFludd->perform(CUE_CALC_VIEW, graphics);
 			if (mPose.nozzle < 6 && mNozzles[mPose.nozzle])
@@ -1018,18 +772,11 @@ void TMpPuppet::perform(u32 cue, JDrama::TGraphics* graphics)
 		mSwapped              = true;
 	}
 	if ((cue & CUE_ENTRY) && mActive) {
-		if (peach) {
-			mPeach->entry();
-			for (int i = 0; i < 3; i++)
-				if (mPeachParts[i])
-					mPeachParts[i]->entry();
-		} else {
-			mModel->perform(CUE_ENTRY, graphics);
-			for (int h = 0; h < 2; h++)
-				for (int s = 0; s < 2; s++)
-					mHands[h][s]->entry();
-			mCap[(mPose.flags & MPG_POSE_CAP) ? 0 : 1]->entry();
-		}
+		mModel->perform(CUE_ENTRY, graphics);
+		for (int h = 0; h < 2; h++)
+			for (int s = 0; s < 2; s++)
+				mHands[h][s]->entry();
+		mCap[(mPose.flags & MPG_POSE_CAP) ? 0 : 1]->entry();
 		if (mFludd && (mPose.flags & MPG_POSE_FLUDD)) {
 			mFludd->perform(CUE_ENTRY, graphics);
 			if (mPose.nozzle < 6 && mNozzles[mPose.nozzle])

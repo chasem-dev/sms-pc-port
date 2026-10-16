@@ -3,7 +3,7 @@
 Up to four players in one game: one hosts, opening their game and their save to the others, who join it by address and port.
 Everyone plays the host's level together and makes progress on the host's save.
 
-- The host is Mario. The others are Luigi, Peach and Metal Mario, in the order they join; each sees the others, and themselves, as their character.
+- The host is Mario. The others are Luigi, Wario and Metal Mario, in the order they join; each sees the others, and themselves, as their character.
 - Shines, blue coins, red coins, coins and lives are shared: what anyone collects counts for everyone, and the host's save keeps it.
 - Coins and items one player takes disappear for everyone, including those that appear during the level (from a box, a defeated enemy or a switch): those are matched by type and place, and one that appears in a game after someone took theirs is gone as it appears, so nobody collects one twice.
 - A switch pressed in any game (a red coin switch, a switch that throws out hidden coins) is pressed in every game, without taking the others' controls or camera.
@@ -46,7 +46,7 @@ The extension has three parts, kept apart so the networking can be tested, and r
 | --- | --- |
 | [`net/`](net/mp_net.h) | the network: one UDP socket, players' slots, a reliable ordered channel, the host relaying each player's state to the others. A thread of its own keeps everyone connected through loading screens. Knows nothing of the game. |
 | [`sync/`](sync/mp_controller.cpp) | the rules ([`mp_game_api.h`](mp_game_api.h)): stage sessions, the shared flags' merge ([`mp_flags.h`](sync/mp_flags.h)), items taken, players' looks as packets. Knows the game only as numbers. |
-| [`game/`](game/mp_game.cpp) | the game's side, built as game code: reads and writes `TFlagManager`, removes items, warps, and draws the other players ([`mp_puppet.cpp`](game/mp_puppet.cpp), [`mp_peach.cpp`](game/mp_peach.cpp)). |
+| [`game/`](game/mp_game.cpp) | the game's side, built as game code: reads and writes `TFlagManager`, removes items, warps, and draws the other players ([`mp_puppet.cpp`](game/mp_puppet.cpp)). |
 
 **Packets.** Every packet starts `SMMP`, the protocol version and a type: `PROBE`/`INFO` (the launcher's check), `CONNECT`/`CHALLENGE`/`ACCEPT`/`REJECT` (joining), `DATA` about 30 times a second both ways (the newest player states, and every reliable message the other side has not acknowledged, resent every 150 ms until it is), and `BYE`. Reliable messages that do not fit beside the states and the world snapshot go in packets of their own, so a big one (the whole save, for a player joining a well-played file) never waits.
 
@@ -69,7 +69,7 @@ A client sends the host its own state; the host sends each client everyone else'
 
 **Smooth movement.** Poses are stamped with the sender's game time and every one that arrives is kept. Each game draws the others a little in the past, about two and a half of their updates behind their newest pose, between the two poses either side of that moment: position and facing (the turn interpolated as a quaternion), animation frames (across a loop's end), blends, FLUDD's and Yoshi's frames. The moment drawn moves on by a steady amount each frame, the other game's time per frame of ours measured over many frames, and leans gently toward where it should be, so others move evenly even when updates arrive in bursts, frames vary in length, or the two games run at different speeds.
 
-**Players' looks.** Each player sends their body's root matrix, its animation, frame and blend, the upper body's (pumping), the face's texture pattern, the hands and shapes shown, the cap, FLUDD's animation and nozzle, and Yoshi's animation and colour. The others' games draw a puppet in the stage's player group, beside Mario, under his light: Mario's own model with his texture recoloured for Luigi (green) and Metal Mario (silver), each from its own copy of the files; Peach is her own model, read from the boss stage's archive on the disc, her joints turned as Mario's are, so she runs and jumps with the player. A player who is not Mario sees themselves the same way: the game leaves out Mario's own models and draws theirs.
+**Players' looks.** Each player sends their body's root matrix, its animation, frame and blend, the upper body's (pumping), the face's texture pattern, the hands and shapes shown, the cap, FLUDD's animation and nozzle, and Yoshi's animation and colour. The others' games draw a puppet in the stage's player group, beside Mario, under his light: Mario's own model with his texture recoloured for Luigi (green), Wario (yellow, with Mario's blue overalls) and Metal Mario (silver), each from its own copy of the files. A player who is not Mario sees themselves the same way: the game leaves out Mario's own models and draws theirs.
 
 ## Testing
 
@@ -88,6 +88,6 @@ Each game runs under a 2.5 GB memory cap.
 
 ## Limits
 
-- Each other player's model takes about 450 KB of the stage's memory (Peach about 700 KB). Every stage measured has some 44 MB to spare in the port (its arena is larger than the console's), so all four always fit.
+- Each other player's model takes about 450 KB of the stage's memory. Every stage measured has some 44 MB to spare in the port (its arena is larger than the console's), so all four always fit.
 - Enemies chase and attack only the host's Mario in the host's game; in another game they go where the host's game sends them, and still hurt the player there when they touch.
 - Bosses, switches and the like are each game's own; the save's flags, the stage, items taken, enemies and water are shared.

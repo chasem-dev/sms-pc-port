@@ -8,7 +8,7 @@
 // only: the two are compiled with different compilers' settings.
 //
 // The rules the controller keeps:
-// - Slot 0 is the host (Mario); 1, 2 and 3 are Luigi, Peach and Metal Mario.
+// - Slot 0 is the host (Mario); 1, 2 and 3 are Luigi, Wario and Metal Mario.
 // - One stage at a time: the host's. Each time the host starts playing a
 //   stage it opens a new "stage session"; clients warp into it, taking the
 //   host's flags first so the stage loads as the host's did. Only the host
@@ -36,7 +36,7 @@ enum {
 enum {
 	MPG_CHAR_MARIO = 0,
 	MPG_CHAR_LUIGI,
-	MPG_CHAR_PEACH,
+	MPG_CHAR_WARIO,
 	MPG_CHAR_METAL_MARIO,
 };
 
