@@ -1848,6 +1848,8 @@ struct TestPlan {
 	int surfAt;                 // surf@N: this player gets on a Blooper (surfing)
 	bool surfed;
 	int boatAt;                 // nearboat@N: this player stands on the first fruit boat
+	int rideAt, rideSeconds;    // rideboat@N[:S]: this player rides the nearest mud or leaf boat, driven on S seconds
+	bool rode;
 	bool onBoat;
 	int sandAt;                 // sandblock@N: this player drops onto the first sand block
 	bool onSand;
@@ -1910,7 +1912,7 @@ void runTests(TMarDirector* dir, bool arrived)
 {
 	if (!s_test.parsed) {
 		s_test.parsed = true;
-		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.gateAt = s_test.flAt = s_test.demoAt = s_test.enemyAt = s_test.tearAt = s_test.surfAt = s_test.boatAt = s_test.sandAt = -1;
+		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.gateAt = s_test.flAt = s_test.demoAt = s_test.enemyAt = s_test.tearAt = s_test.surfAt = s_test.boatAt = s_test.sandAt = s_test.rideAt = -1;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
 		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = s_test.bossHitAt = s_test.setFlagAt = -1;
 		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.shadowRunAt = s_test.npcSprayAt = s_test.carryAt = s_test.slotSprayAt = s_test.melonAt = -1;
@@ -1935,6 +1937,9 @@ void runTests(TMarDirector* dir, bool arrived)
 				sscanf(su, "surf@%d", &s_test.surfAt);
 			if (const char* nb = strstr(plan, "nearboat@"))
 				sscanf(nb, "nearboat@%d", &s_test.boatAt);
+			if (const char* rb = strstr(plan, "rideboat@"))
+				if (sscanf(rb, "rideboat@%d:%d", &s_test.rideAt, &s_test.rideSeconds) < 2)
+					s_test.rideSeconds = 10;
 			if (const char* sb = strstr(plan, "sandblock@"))
 				sscanf(sb, "sandblock@%d", &s_test.sandAt);
 			if (const char* rt = strstr(plan, "pickred@"))
@@ -2098,6 +2103,11 @@ void runTests(TMarDirector* dir, bool arrived)
 		}
 		if (!(gpMarioOriginal->mStatus & MARIO_STATUS_FLAG_UNK10000))
 			fprintf(stderr, "[multiplayer] test: no Blooper to ride here\n");
+	}
+	if (s_test.rideAt >= 0 && !s_test.rode && s_test.frames >= s_test.rideAt) {
+		s_test.rode = true;
+		if (!MpMirrorTestRide(s_test.rideSeconds))
+			fprintf(stderr, "[multiplayer] test: no mud or leaf boat here\n");
 	}
 	if (s_test.boatAt >= 0 && !s_test.onBoat && s_test.frames >= s_test.boatAt && gpConductor) {
 		s_test.onBoat = true;
@@ -3319,6 +3329,7 @@ void stageSetup()
 	if (getenv("SMS_MULTIPLAYER_DEBUG"))
 		fprintf(stderr, "[multiplayer] stage %d: %d bytes free in the stage's heap\n",
 		        (int)gpApplication.mCurrArea.getStage(), (int)JKRHeap::getCurrentHeap()->getTotalFreeSize());
+	MpMirrorPrepareRides();
 	TIdxGroupObj* group = gpStrategy->unk10[6]; // "プレーヤーグループ": Mario's
 	memset(s_puppets, 0, sizeof s_puppets);
 	if (!group)

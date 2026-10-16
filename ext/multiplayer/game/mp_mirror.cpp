@@ -35,6 +35,9 @@
 #include <Animal/boid.hpp>
 #include <Animal/fishoid.hpp>
 #include <M3DUtil/MActor.hpp>
+#include <M3DUtil/M3UModelMario.hpp>
+#include <M3DUtil/MActorUtil.hpp>
+#include <M3DUtil/SDLModel.hpp>
 #include <Map/Map.hpp>
 #include <Map/MapData.hpp>
 #include <MoveBG/Item.hpp>
@@ -75,6 +78,7 @@ enum Owner {
 	OWN_HOST,  // the host's (no player steers it)
 	OWN_RIDER, // whoever stands on it
 	OWN_USER,  // whoever used it last (sprayed it, bumped it)
+	OWN_EACH,  // every player's own; the others see a rider's under them (MpMirrorRide)
 };
 
 struct Kind {
@@ -96,6 +100,8 @@ struct Kind {
 
 // A smooth kind's states as they came: the owner's clock (ms) and the floats.
 const int kSmoothMax = 8, kHistory = 6;
+// A boat's state from its rider (saveRide): from them, its turn, its scale.
+const int kRideState = 12 + 8 + 12;
 struct Sample {
 	u32 at;
 	f32 v[kSmoothMax];
@@ -122,9 +128,23 @@ struct Mirrored {
 
 Mirrored s_mirrors[kMaxMirrors];
 int s_count;
+
+// Each other player's boat as their game last said (OWN_EACH), and a copy of
+// each kind of boat here for each of them to stand on, made as the stage loads.
+struct Ride {
+	const Kind* kind;
+	TLiveActor* here; // this game's own of the same boat
+	u8 data[kRideState];
+	int at; // s_clock; 0: none
+};
+Ride s_rides[MPG_MAX_PLAYERS];
+const int kRideKinds = 2; // leaf boat, mud boat
+MActor* s_rideCopies[MPG_MAX_PLAYERS][kRideKinds];
 int s_clock;
 TLiveActor* s_testWalked; // test aid claim@: an NPC walked off here
 int s_testWalkFrames;
+TLiveActor* s_testBoat; // test aid rideboat@: the boat this game's Mario rides, driven on
+int s_testBoatFrames;
 
 // ------------------------------------------------------------------ bytes
 
@@ -275,55 +295,52 @@ void takeNpc(TLiveActor* a, const u8* in, int size, int age, int* placed)
 	a->mRotation.y += d * 0.2f;
 }
 
-// Bianco's leaf boats: where they float and how they drift.
+// Bianco's leaf boats.
 bool isLeafBoat(TLiveActor* a) { return dynamic_cast<TLeafBoat*>(a) != nullptr; }
-int saveMover(TLiveActor* a, u8* out)
-{
-	Put o(out);
-	o.v3(a->mPosition);
-	o.v3(a->mVelocity);
-	return o.n;
-}
-void takeMover(TLiveActor* a, const u8* in, int size, int age, int*)
-{
-	Get g(in, size);
-	const JGeometry::TVec3<f32> pos = g.v3(), vel = g.v3();
-	if (!g.ok)
-		return;
-	a->mPosition = ahead(pos, vel, age);
-	a->mVelocity = vel;
-}
-
 // Noki's mud boat: steered by its rider's water.
 bool isMuddyBoat(TLiveActor* a) { return dynamic_cast<TMuddyBoat*>(a) != nullptr; }
-int saveMuddyBoat(TLiveActor* a, u8* out)
+// A boat every player has their own of (one boat for all left the others
+// stranded once its rider took it away): its rider's game sends where it is
+// from them and how it is turned and scaled, and the others draw a copy under
+// that rider's puppet (MpMirrorRide), so it moves as smoothly as they do.
+int saveRide(TLiveActor* a, u8* out)
 {
-	TMuddyBoat* b = static_cast<TMuddyBoat*>(a);
+	TMario* me = gpMarioOriginal;
+	J3DModel* model = a->getModel();
+	if (!me || !model || !me->getM3UModel())
+		return 0;
+	MtxPtr m    = model->getAnmMtx(0);
+	MtxPtr root = me->getM3UModel()->getModel()->getBaseTRMtx(); // as the pose has it
+	f32 scale[3], r[3][3];
+	for (int c = 0; c < 3; c++) {
+		scale[c] = sqrtf(m[0][c] * m[0][c] + m[1][c] * m[1][c] + m[2][c] * m[2][c]);
+		for (int row = 0; row < 3; row++)
+			r[row][c] = scale[c] > 0.0001f ? m[row][c] / scale[c] : 0.0f;
+	}
+	// its turn as a quaternion (x, y, z, w)
+	f32 q[4];
+	const f32 tr = r[0][0] + r[1][1] + r[2][2];
+	if (tr > 0.0f) {
+		const f32 s = sqrtf(tr + 1.0f) * 2.0f;
+		q[3] = 0.25f * s, q[0] = (r[2][1] - r[1][2]) / s, q[1] = (r[0][2] - r[2][0]) / s, q[2] = (r[1][0] - r[0][1]) / s;
+	} else if (r[0][0] > r[1][1] && r[0][0] > r[2][2]) {
+		const f32 s = sqrtf(1.0f + r[0][0] - r[1][1] - r[2][2]) * 2.0f;
+		q[3] = (r[2][1] - r[1][2]) / s, q[0] = 0.25f * s, q[1] = (r[0][1] + r[1][0]) / s, q[2] = (r[0][2] + r[2][0]) / s;
+	} else if (r[1][1] > r[2][2]) {
+		const f32 s = sqrtf(1.0f + r[1][1] - r[0][0] - r[2][2]) * 2.0f;
+		q[3] = (r[0][2] - r[2][0]) / s, q[0] = (r[0][1] + r[1][0]) / s, q[1] = 0.25f * s, q[2] = (r[1][2] + r[2][1]) / s;
+	} else {
+		const f32 s = sqrtf(1.0f + r[2][2] - r[0][0] - r[1][1]) * 2.0f;
+		q[3] = (r[1][0] - r[0][1]) / s, q[0] = (r[0][2] + r[2][0]) / s, q[1] = (r[1][2] + r[2][1]) / s, q[2] = 0.25f * s;
+	}
 	Put o(out);
-	o.v3(b->mPosition);
-	o.f(b->mRotation.y);
-	o.f(b->mSpeed);
-	o.f(b->mTurnSpeed);
-	o.h((s16)b->mState);
-	o.i(b->mStateTimer);
+	for (int i = 0; i < 3; i++)
+		o.f(m[i][3] - root[i][3]);
+	for (int i = 0; i < 4; i++)
+		o.h((s16)(q[i] * 32767.0f));
+	for (int i = 0; i < 3; i++)
+		o.f(scale[i]);
 	return o.n;
-}
-void takeMuddyBoat(TLiveActor* a, const u8* in, int size, int, int*)
-{
-	TMuddyBoat* b = static_cast<TMuddyBoat*>(a);
-	Get g(in, size);
-	const JGeometry::TVec3<f32> pos = g.v3();
-	const f32 yaw = g.f(), speed = g.f(), turn = g.f();
-	const s16 state = g.h();
-	const s32 timer = g.i();
-	if (!g.ok)
-		return;
-	b->mPosition    = pos;
-	b->mRotation.y  = yaw;
-	b->mSpeed       = speed;
-	b->mTurnSpeed   = turn;
-	b->mState       = (u16)state;
-	b->mStateTimer  = timer;
 }
 
 // The plaza's fruit boats: rowed along their routes, stopped and set off by riders.
@@ -1157,8 +1174,8 @@ void takeViking(TLiveActor* a, const u8* in, int size, int age, int*)
 
 const Kind kKinds[] = {
 	{"NPC", isNpc, saveNpc, takeNpc, OWN_HOST, 6, false, 0, 0},
-	{"leaf boat", isLeafBoat, saveMover, takeMover, OWN_RIDER, 2, false, 0, 0},
-	{"mud boat", isMuddyBoat, saveMuddyBoat, takeMuddyBoat, OWN_RIDER, 2, false, 0, 0},
+	{"leaf boat", isLeafBoat, saveRide, nullptr, OWN_EACH, 2, false, 0, 0},
+	{"mud boat", isMuddyBoat, saveRide, nullptr, OWN_EACH, 2, false, 0, 0},
 	{"fruit boat", isFruitsBoat, saveFruitsBoat, takeFruitsBoat, OWN_RIDER, 2, false, 0, 0},
 	{"Ferris wheel", isFerrisWheel, saveFerrisWheel, takeFerrisWheel, OWN_HOST, 15, false, 0, 0},
 	{"merry-go-round", isMerrygoround, saveTurner, takeTurner, OWN_HOST, 6, false, 0, 0},
@@ -1370,8 +1387,12 @@ bool ownedHere(Mirrored& m)
 	if (m.claimedAt)
 		return true;
 	if (m.actor) {
-		if (m.kind->owner == OWN_RIDER && rides(m.actor))
+		if ((m.kind->owner == OWN_RIDER || m.kind->owner == OWN_EACH) && rides(m.actor))
 			m.usedAt = s_clock;
+		// every player's own: "owned" (sent, for the others to draw) while
+		// this game's player rides it (a hop on it included)
+		if (m.kind->owner == OWN_EACH)
+			return s_clock - m.usedAt < fps() / 2;
 		// a big melon this game's Mario is up against: bumped here
 		if (m.kind->match == isWatermelon && gpMarioOriginal) {
 			const f32 dx = gpMarioOriginal->mPosition.x - m.actor->mPosition.x;
@@ -1473,6 +1494,112 @@ void MpMirrorForget()
 	s_count          = 0;
 	s_eggHatchedHere = false;
 	s_testWalked     = nullptr;
+	memset(s_rides, 0, sizeof s_rides);
+	s_testBoat = nullptr;
+	memset(s_rideCopies, 0, sizeof s_rideCopies); // the last stage's, gone with its memory
+}
+
+void MpMirrorPrepareRides()
+{
+	if (!gpConductor)
+		return;
+	TLiveActor* first[kRideKinds] = {};
+	for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end(); ++it)
+		for (int i = 0; *it && i < (*it)->getObjNum(); i++) {
+			TLiveActor* a = (*it)->getObj(i);
+			if (!first[0] && isLeafBoat(a))
+				first[0] = a;
+			if (!first[1] && isMuddyBoat(a))
+				first[1] = a;
+		}
+	for (int k = 0; k < kRideKinds; k++) {
+		MActor* own = first[k] ? first[k]->getMActor() : nullptr;
+		if (!own || !own->mModel)
+			continue;
+		SDLModelData* data = static_cast<SDLModel*>(own->mModel)->getSDLModelData();
+		if (!data)
+			continue;
+		const u32 flags = static_cast<TMapObjBase*>(first[k])->getSDLModelFlag();
+		int made = 0;
+		for (int slot = 0; slot < MPG_MAX_PLAYERS; slot++)
+			if ((slot != mpg_slot() || getenv("SMS_MULTIPLAYER_RIDE_ECHO"))
+			    && (s_rideCopies[slot][k] = SMS_MakeMActorFromSDLModelData(data, own->mAnmData, flags)))
+				made++;
+		fprintf(stderr, "[multiplayer] %s: a copy for each of %d other players to ride\n", k ? "mud boats" : "leaf boats", made);
+	}
+}
+
+bool MpMirrorTestRide(int seconds)
+{
+	TLiveActor* best = nullptr;
+	f32 nearest      = 1e30f;
+	for (int i = 0; i < s_count && gpMarioOriginal; i++) {
+		TLiveActor* a = s_mirrors[i].actor;
+		if (!a || s_mirrors[i].kind->owner != OWN_EACH)
+			continue;
+		const f32 dx = a->mPosition.x - gpMarioOriginal->mPosition.x, dz = a->mPosition.z - gpMarioOriginal->mPosition.z;
+		if (dx * dx + dz * dz < nearest)
+			best = a, nearest = dx * dx + dz * dz;
+	}
+	if (!best)
+		return false;
+	gpMarioOriginal->mPosition.set(best->mPosition.x, best->mPosition.y + 400.0f, best->mPosition.z);
+	s_testBoat       = best;
+	s_testBoatFrames = seconds * fps();
+	fprintf(stderr, "[multiplayer] test: on the %s at %.0f %.0f %.0f\n", isMuddyBoat(best) ? "mud boat" : "leaf boat",
+	        best->mPosition.x, best->mPosition.y, best->mPosition.z);
+	return true;
+}
+
+MActor* MpMirrorRide(int slot, const f32 root[3])
+{
+	if (slot < 0 || slot >= MPG_MAX_PLAYERS)
+		return nullptr;
+	const Ride& r = s_rides[slot];
+	if (!r.at || s_clock - r.at > fps() / 2 || !r.kind)
+		return nullptr; // not riding one
+	MActor* copy = s_rideCopies[slot][r.kind->match == isMuddyBoat ? 1 : 0];
+	if (!copy)
+		return nullptr;
+	Get g(r.data, kRideState);
+	f32 at[3], q[4], scale[3];
+	for (int i = 0; i < 3; i++)
+		at[i] = root[i] + g.f();
+	if (slot == mpg_slot())
+		at[0] += 400.0f; // the debug echo of our own (beside it)
+	for (int i = 0; i < 4; i++)
+		q[i] = g.h() / 32767.0f;
+	for (int i = 0; i < 3; i++)
+		scale[i] = g.f();
+	if (!g.ok)
+		return nullptr;
+	// where this game's own of that boat is too (they boarded it where it
+	// waits here): that one is under them, not a copy on top of it
+	if (r.here) {
+		const f32 dx = r.here->mPosition.x - at[0], dz = r.here->mPosition.z - at[2];
+		if (dx * dx + dz * dz < 250.0f * 250.0f)
+			return nullptr;
+	}
+	const f32 n = sqrtf(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+	if (n < 0.5f)
+		return nullptr;
+	const f32 x = q[0] / n, y = q[1] / n, z = q[2] / n, w = q[3] / n;
+	const f32 rot[3][3] = {{1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)},
+	                       {2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)},
+	                       {2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)}};
+	Mtx m;
+	for (int row = 0; row < 3; row++) {
+		for (int c = 0; c < 3; c++)
+			m[row][c] = rot[row][c] * scale[c];
+		m[row][3] = at[row];
+	}
+	copy->getModel()->setBaseTRMtx(m);
+	static int said;
+	if (getenv("SMS_MULTIPLAYER_DEBUG") && ++said % 60 == 1)
+		fprintf(stderr, "[multiplayer] %s rides their %s at %.0f %.0f %.0f (this game's is at %.0f %.0f %.0f)\n",
+		        mpg_character_name(slot), r.kind->name, at[0], at[1], at[2], r.here ? r.here->mPosition.x : 0.0f,
+		        r.here ? r.here->mPosition.y : 0.0f, r.here ? r.here->mPosition.z : 0.0f);
+	return copy;
 }
 
 void MpMirrorCollect()
@@ -1533,6 +1660,19 @@ void MpMirrorTick()
 	s_clock++;
 	s_ms += 1000.0 / fps();
 	tickLags();
+	if (s_testBoat && s_testBoatFrames > 0) {
+		// on, as the rider's water would drive it
+		s_testBoatFrames--;
+		if (TMuddyBoat* b = dynamic_cast<TMuddyBoat*>(s_testBoat)) {
+			b->mSpeed = 4.0f;
+			b->offLiveFlag(LIVE_FLAG_UNK10); // awake, as its rider's water wakes it (moveByWater)
+		}
+		else
+			s_testBoat->mVelocity.x = 3.0f;
+		if (s_testBoatFrames % 60 == 0)
+			fprintf(stderr, "[multiplayer] test: riding the boat at %.0f %.0f %.0f (on it: %d)\n", s_testBoat->mPosition.x,
+			        s_testBoat->mPosition.y, s_testBoat->mPosition.z, rides(s_testBoat));
+	}
 	if (s_testWalked && s_testWalkFrames > 0) {
 		s_testWalkFrames--;
 		s_testWalked->mPosition.x += 3.0f;
@@ -1551,6 +1691,17 @@ void MpMirrorTick()
 		Mirrored* m = find(manager, index);
 		if (!m || size > 48)
 			continue;
+		if (m->kind->owner == OWN_EACH) {
+			// their own boat, under them: drawn with them, this game's stays as it is
+			if (slot >= 0 && slot < MPG_MAX_PLAYERS && size == kRideState) {
+				Ride& r = s_rides[slot];
+				r.kind  = m->kind;
+				r.here  = m->actor;
+				memcpy(r.data, data, size);
+				r.at = s_clock;
+			}
+			continue;
+		}
 		// another player's game runs it now (they talked to it since)
 		// (not while this game's player is still talking to it: two players
 		// talking to one NPC each have it face them, in their own game)
@@ -1610,11 +1761,23 @@ void MpMirrorTick()
 				mpg_mirror(m.manager, m.index, stamped, n + 4);
 			} else
 				mpg_mirror(m.manager, m.index, out, n);
+			// debug (SMS_MULTIPLAYER_RIDE_ECHO=1): our own boat's state for our
+			// own puppet too, drawn beside us, to see the copy others see
+			static const bool echo = getenv("SMS_MULTIPLAYER_RIDE_ECHO") != nullptr;
+			if (echo && m.kind->owner == OWN_EACH && n == kRideState && mpg_slot() >= 0) {
+				Ride& r = s_rides[mpg_slot()];
+				r.kind  = m.kind;
+				r.here  = nullptr;
+				memcpy(r.data, out, n);
+				r.at = s_clock;
+			}
 			memcpy(m.sent, out, n);
 			m.sentSize = n;
 			m.sentAt   = s_clock;
 			continue;
 		}
+		if (m.kind->owner == OWN_EACH)
+			continue; // this game's own, whoever rides theirs
 		if (!m.stateSize || s_clock - m.stateAt > 2 * fps() || (hostPaused && m.heardSlot == 0))
 			continue; // nothing lately: it runs as it would
 		if (m.actor && m.kind->smooth)

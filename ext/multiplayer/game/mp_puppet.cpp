@@ -1,5 +1,6 @@
 // Other players drawn in this game (mp_puppet.hpp).
 #include "mp_puppet.hpp"
+#include "mp_mirror.hpp"
 
 #include <JSystem/J3D/J3DGraphAnimator/J3DMaterialAnm.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
@@ -390,6 +391,7 @@ TMpPuppet::TMpPuppet(int slot, bool self)
     , mNozzleJoint(0)
     , mYoshi(nullptr)
     , mSurf(nullptr)
+    , mRide(nullptr)
     , mOpa(nullptr)
     , mXlu(nullptr)
     , mSwapped(false)
@@ -727,6 +729,12 @@ void TMpPuppet::applyPose(JDrama::TGraphics* graphics)
 		mSurf->getModel()->setBaseTRMtx(base);
 		mSurf->perform(CUE_CALC_ANIM, graphics);
 	}
+
+	// their own boat (each player has theirs): under them, as their game has it
+	const f32 root[3] = {base[0][3], base[1][3], base[2][3]};
+	mRide             = MpMirrorRide(mSlot, root);
+	if (mRide)
+		mRide->perform(CUE_CALC_ANIM, graphics);
 }
 
 // Debug: how smoothly another player is drawn while they move. Each frame's
@@ -830,6 +838,8 @@ void TMpPuppet::perform(u32 cue, JDrama::TGraphics* graphics)
 			mYoshi->perform(CUE_CALC_VIEW, graphics);
 		if (mSurf && (mPose.more & MPG_POSE2_SURF))
 			mSurf->perform(CUE_CALC_VIEW, graphics);
+		if (mRide)
+			mRide->perform(CUE_CALC_VIEW, graphics);
 	}
 	if (cue & CUE_UNK10000000) {
 		mOpa->frameInit();
@@ -868,6 +878,11 @@ void TMpPuppet::perform(u32 cue, JDrama::TGraphics* graphics)
 			const JGeometry::TVec3<f32> at(mPosition.x, mPosition.y, mPosition.z);
 			mSurf->setLightData(nullptr, at);
 			mSurf->perform(CUE_ENTRY, graphics);
+		}
+		if (mRide) {
+			const JGeometry::TVec3<f32> at(mPosition.x, mPosition.y, mPosition.z);
+			mRide->setLightData(nullptr, at);
+			mRide->perform(CUE_ENTRY, graphics);
 		}
 	}
 	if ((cue & CUE_UNK8000000) && mSwapped) {

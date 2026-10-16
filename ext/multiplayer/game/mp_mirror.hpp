@@ -21,6 +21,16 @@ void MpEnemyReport(int slot, int key, const void* data, int size);
 // stage's objects that moved by themselves, and how each kind is shared.
 void MpMirrorSurvey(int stageFrame);
 
+// Boats every player has their own of (Noki Bay's mud boats, Bianco Hills'
+// leaf boats): as the stage loads (its memory current), a copy of each kind
+// for each other player, drawn under them as they ride theirs.
+void MpMirrorPrepareRides();
+// The boat `slot` rides in their game, placed under their puppet's root at
+// `root` (where it is drawn, so the two move as one); null when they ride none
+// (or ride where this game's own of that boat is: that one is under them).
+class MActor;
+MActor* MpMirrorRide(int slot, const float root[3]);
+
 // A stage is in play: find its mirrored objects.
 void MpMirrorCollect();
 // A stage is loading: the last stage's objects are gone (none is touched again).
@@ -34,6 +44,9 @@ void MpMirrorUsed(const void* object);
 bool MpMirrorKeepsHits(const void* object);
 // Whether this game's Mario stands on Bowser's hot tub (the host tips it under him).
 bool MpMirrorOnTub();
+// Test aid (rideboat@N[:S]): puts this game's Mario on the nearest mud or
+// leaf boat and drives it on for S seconds (10; 0: stands on it), as his water would.
+bool MpMirrorTestRide(int seconds);
 // Test aid: feeds this game's Yoshi's egg the fruit it wants (it hatches).
 bool MpMirrorTestHatch();
 // Test aid: puts this game's Mario by the edge of Bowser's tub (his weight tips it).

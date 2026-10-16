@@ -75,6 +75,7 @@ private:
 	u8 mNozzleJoint;
 	MActor* mYoshi;
 	MActor* mSurf;           // the Blooper they ride (Ricco Harbor's, Gelato's)
+	MActor* mRide;           // the boat they ride in their game, this frame (MpMirrorRide), or null
 	s16 mSurfColor[4];       // its colour (GXColorS10, as the game's three)
 	u16 mJointChest, mJointHandR, mJointHandL, mJointHead, mJointMHead;
 	J3DDrawBuffer* mOpa;
