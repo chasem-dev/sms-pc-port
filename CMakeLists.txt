@@ -418,6 +418,20 @@ if(WIN32 AND SMS_ARCH STREQUAL "64")
   target_link_options(sms_windows_stack_test PRIVATE -Wl,--image-base,0x400000
     -Wl,--disable-dynamicbase -Wl,--disable-high-entropy-va)
 endif()
+# The OSThread scheduler on its own (platform/os/tests/thread_cancel_test.cpp),
+# with the GX self-tests' option, as CI's window job builds them. Not on
+# Windows, whose host threads need windows_stack.cpp and the game's runtime.
+if(SMS_GX_BUILD_TESTS AND NOT WIN32)
+  add_executable(sms_thread_cancel_test platform/os/tests/thread_cancel_test.cpp platform/os/os_thread.cpp)
+  target_include_directories(sms_thread_cancel_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/platform
+    ${SMS_PORT_SRC} ${SMS_PORT_SRC}/port_include ${SMS_DECOMP_INCLUDE_DIRS})
+  target_compile_definitions(sms_thread_cancel_test PRIVATE ${SMS_COMMON_DEFS})
+  # gnu++11, as the game's platform code builds (the decomp headers use `register`).
+  set_target_properties(sms_thread_cancel_test PROPERTIES CXX_STANDARD 11 CXX_EXTENSIONS ON)
+  target_link_libraries(sms_thread_cancel_test PRIVATE Threads::Threads)
+  enable_testing()
+  add_test(NAME sms_thread_cancel_test COMMAND sms_thread_cancel_test)
+endif()
 if(APPLE)
   # Apple ld: -force_load pulls every member (like --whole-archive).
   # force_load does not pull INTERFACE deps, so also link sms_gx normally for SDL2.

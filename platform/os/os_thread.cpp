@@ -303,10 +303,13 @@ void switch_to(OSThread* self, OSThread* next, bool exiting)
 		}
 		pthread_mutex_lock(&g_cpu);
 	}
-	while (g_cur != self) {
-		pthread_cond_wait(&hs->cv, &g_cpu);
-		// A cancelled host never runs again, even when its OSThread object
-		// has since been recreated and scheduled (it then has a new Host).
+	// A cancelled host never runs again, even when its OSThread object has
+	// since been recreated and scheduled (it then has a new Host). The turn is
+	// told by the OSThread alone, so this is checked however it came: by the
+	// spin, by taking the lock, or by a signal. Otherwise an old host that
+	// queued for the lock while its thread was cancelled and recreated (THP's
+	// reader between two movies) resumed the old function beside the new one.
+	for (;;) {
 		if (hs->cancelled && (g_cur != self || host_of(self) != hs)) {
 			pthread_mutex_unlock(&g_cpu);
 #ifdef _WIN64
@@ -315,6 +318,9 @@ void switch_to(OSThread* self, OSThread* next, bool exiting)
 			pthread_exit(NULL);
 #endif
 		}
+		if (g_cur == self)
+			break;
+		pthread_cond_wait(&hs->cv, &g_cpu);
 	}
 	g_irq_enabled = hs->irq_enabled;
 }

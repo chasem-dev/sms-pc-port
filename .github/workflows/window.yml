@@ -56,7 +56,9 @@ jobs:
           ARCH: ${{ matrix.arch }}
         run: |
           cmake -S . -B build/window -DCMAKE_BUILD_TYPE=Release -DSMS_ARCH="$ARCH" -DSMS_GX_BUILD_TESTS=ON
-          cmake --build build/window --target gx_windowtest gx_windowsmoke gx_borderlesstest -j2
+          cmake --build build/window --target gx_windowtest gx_windowsmoke gx_borderlesstest sms_thread_cancel_test -j2
+      - name: Check that a cancelled thread never runs again
+        run: ctest --test-dir build/window -R '^sms_thread_cancel_test$' --output-on-failure --timeout 120
       - name: Check window placement, fullscreen, and headless rendering
         env:
           LIBGL_ALWAYS_SOFTWARE: '1'
