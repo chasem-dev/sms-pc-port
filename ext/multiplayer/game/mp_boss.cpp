@@ -171,6 +171,11 @@ void writeWhere(Out& o, TLiveActor* a)
 
 // Where the host's is, eased (a step's own motion carries it between); at
 // once when far (it jumped, or a lost update or two left it behind).
+// Host: reading its own last records into its reloaded boss (restoreKept):
+// put where they say at once, and its hit points as they are (a copy's
+// last-point rule is for copies)
+bool s_restoring;
+
 void readWhere(In& in, TLiveActor* a, f32 k = 0.25f)
 {
 	const f32 x = in.f32_(), y = in.f32_(), z = in.f32_();
@@ -178,7 +183,7 @@ void readWhere(In& in, TLiveActor* a, f32 k = 0.25f)
 	if (!in.ok)
 		return;
 	const f32 dx = x - a->mPosition.x, dy = y - a->mPosition.y, dz = z - a->mPosition.z;
-	if (dx * dx + dy * dy + dz * dz > 800.0f * 800.0f)
+	if (dx * dx + dy * dy + dz * dz > 800.0f * 800.0f || s_restoring)
 		k = 1.0f;
 	a->mPosition.x += (x - a->mPosition.x) * k;
 	a->mPosition.y += (y - a->mPosition.y) * k;
@@ -447,7 +452,7 @@ void readGate(In& in, int unit)
 	followNerve(g, unit, nerve, gateNerve, kGateDie, kGateDie);
 	// a copy never holds its last hit point: a hit here takes it to 1, not
 	// to its defeat (the host's says when it falls)
-	const int here = hp == 1 ? 2 : hp;
+	const int here = hp == 1 && !s_restoring ? 2 : hp;
 	g->mHitPoints = (u8)here;
 	g->unk17C     = (s16)wake;
 	g->unk28A     = (s16)appeared;
@@ -673,7 +678,7 @@ void readGesso(In& in)
 	// a copy never holds its last hit point: the beak pulled here takes it to
 	// 1, not to its defeat, whose fall, camera and Shine come once the host's
 	// goes down (each game plays its own)
-	const int here    = hp == 1 ? 2 : hp;
+	const int here    = hp == 1 && !s_restoring ? 2 : hp;
 	b->mHitPoints     = (u8)here;
 	b->mAttackMode    = mode;
 	b->unk190.color.a = (u8)ink;
@@ -851,7 +856,7 @@ void readManta(In& in, int slot)
 	m->unk19C = hits;
 	m->unk1A0 = pause;
 	followNerve(m, slot, nerve, mantaNerve, kMantaSpawn, kMantaDeath);
-	const f32 k = 0.3f;
+	const f32 k = s_restoring ? 1.0f : 0.3f;
 	m->mPosition.x += (x - m->mPosition.x) * k;
 	m->mPosition.y += (y - m->mPosition.y) * k;
 	m->mPosition.z += (z - m->mPosition.z) * k;
@@ -1241,7 +1246,7 @@ void readShadow(In& in)
 	}
 	const f32 dx = x - e->mPosition.x, dy = y - e->mPosition.y, dz = z - e->mPosition.z;
 	const f32 far = dx * dx + dy * dy + dz * dz;
-	if (far > 700.0f * 700.0f) {
+	if (far > 700.0f * 700.0f || s_restoring) {
 		e->mPosition.set(x, y, z);
 		e->mFaceAngle.y = face;
 	} else if (far > 30.0f * 30.0f) {
@@ -1276,23 +1281,17 @@ void hitShadow(int, int kind, int count)
 // Bowser's tub mended, a Gatekeeper healed). Once the reloaded boss has set
 // itself up, these are read into it, as a joining game reads the host's (no
 // hits come of it: a host reports none), and the fight goes on where it was.
-// Gooper Blooper, Phantamanta and Shadow Mario keep more than these records
-// say (torn tentacles, split mantas, a chase's run), and start afresh.
 struct Kept {
 	u8 kind, unit, len;
 	u8 data[96];
 };
-const int kMaxKept = 24;
+const int kMaxKept = kMaxUnits + 32; // each of Phantamanta's pieces has its own, the Gatekeepers theirs
 Kept s_kept[kMaxKept];
 int s_keptCount;
 uint32_t s_keptSession;
 int s_restoreWait = -1; // host, after a stage setup: ticks the boss has been ready (-1: nothing to do)
 
-bool restorable(int kind)
-{
-	return kind == KIND_PETEY || kind == KIND_EEL || kind == KIND_WIGGLER || kind == KIND_KINGBOO
-	       || kind == KIND_MECHA || kind == KIND_TUB || kind == KIND_GATE;
-}
+bool restorable(int kind) { return kind >= KIND_PETEY && kind <= KIND_GATE; }
 
 void keepRecords(const u8* buf, int n)
 {
@@ -1321,6 +1320,7 @@ void keepRecords(const u8* buf, int n)
 void restoreKept()
 {
 	int restored = 0;
+	s_restoring = true;
 	for (int i = 0; i < s_keptCount; i++) {
 		const Kept& k = s_kept[i];
 		In rec(k.data, k.len);
@@ -1329,10 +1329,21 @@ void restoreKept()
 				readGate(rec, k.unit), restored++;
 			continue;
 		}
+		if (k.kind == KIND_SHADOW) {
+			if (s_shadow)
+				readShadow(rec), restored++;
+			continue;
+		}
+		if (k.kind == KIND_MANTA) {
+			if (s_kind == KIND_MANTA)
+				readManta(rec, k.unit), restored++;
+			continue;
+		}
 		if (k.kind != s_kind || (s_boss && s_boss->checkLiveFlag(LIVE_FLAG_DEAD)))
 			continue;
 		switch (k.kind) {
 		case KIND_PETEY: readPetey(rec); break;
+		case KIND_GESSO: readGesso(rec); break;
 		case KIND_EEL: readEel(rec); break;
 		case KIND_WIGGLER: readWiggler(rec); break;
 		case KIND_KINGBOO: readKingBoo(rec); break;
@@ -1347,6 +1358,7 @@ void restoreKept()
 		if (debug())
 			fprintf(stderr, "[multiplayer] boss: restored kind %d part %d (first byte %02x)\n", k.kind, k.unit, k.data[0]);
 	}
+	s_restoring = false;
 	if (restored)
 		fprintf(stderr, "[multiplayer] boss: back as the fight was before this game's player lost a life (%d part%s)\n",
 		        restored, restored == 1 ? "" : "s");
@@ -1565,10 +1577,19 @@ void MpBossHostFrame()
 			fprintf(stderr, "[multiplayer] the boss (host) is %s\n", saidDown ? "gone" : "here");
 	}
 	static int debugFrames;
-	if (debug() && (s_boss || s_tub) && ++debugFrames % 300 == 0) {
+	if (debug() && (s_boss || s_tub || s_shadow || s_mantas) && ++debugFrames % 300 == 0) {
+		if (s_shadow)
+			fprintf(stderr, "[multiplayer] boss (host): Shadow Mario's water %d, stomps %d\n", (int)s_shadow->mWaterCounter,
+			        (int)s_shadow->mTrampleCount);
+		if (s_mantas) {
+			int alive = 0;
+			for (int i = 0; i < s_mantas->getObjNum(); i++)
+				alive += !s_mantas->getObj(i)->checkLiveFlag(LIVE_FLAG_DEAD);
+			fprintf(stderr, "[multiplayer] boss (host): %d Phantamanta pieces out\n", alive);
+		}
 		if (s_boss)
 			fprintf(stderr, "[multiplayer] boss (host): kind %d, %d hit points\n", s_kind, s_boss->getHitPoints());
-		else
+		else if (s_tub)
 			fprintf(stderr, "[multiplayer] boss (host): the tub's corners down %02x\n", buf[3]);
 	}
 }
