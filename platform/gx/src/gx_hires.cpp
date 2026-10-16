@@ -22,6 +22,7 @@
 #include "gx_glcache.h"
 #include "gx_glthread.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -382,6 +383,28 @@ static bool readFile(const std::string& path, std::vector<uint8_t>& out) {
     return ok;
 }
 
+static void decodeBlock(int fmt, const uint8_t* b, uint8_t* o, int pitch) {
+    if (fmt == DDS_BC1) bcdec_bc1(b, o, pitch);
+    else if (fmt == DDS_BC2) bcdec_bc2(b, o, pitch);
+    else if (fmt == DDS_BC3) bcdec_bc3(b, o, pitch);
+    else bcdec_bc7(b, o, pitch);
+}
+
+// A level of blocks as RGBA8: whole blocks into a padded image, then cropped.
+static std::vector<uint8_t> decodeBlocks(int fmt, const uint8_t* src, int lw, int lh) {
+    int bw = (lw + 3) / 4, bh = (lh + 3) / 4;
+    size_t bsz = fmt == DDS_BC1 ? 8 : 16;
+    std::vector<uint8_t> pad(size_t(bw) * 4 * bh * 4 * 4);
+    int pitch = bw * 4 * 4;
+    for (int by = 0; by < bh; by++)
+        for (int bx = 0; bx < bw; bx++)
+            decodeBlock(fmt, src + (size_t(by) * bw + bx) * bsz, pad.data() + size_t(by) * 4 * pitch + size_t(bx) * 16,
+                        pitch);
+    std::vector<uint8_t> px(size_t(lw) * lh * 4);
+    for (int y = 0; y < lh; y++) memcpy(&px[size_t(y) * lw * 4], &pad[size_t(y) * pitch], size_t(lw) * 4);
+    return px;
+}
+
 static bool decodeDds(const std::string& path, Loaded* L) {
     std::vector<uint8_t> file;
     if (!readFile(path, file) || file.size() < 128 || memcmp(file.data(), "DDS ", 4) != 0) return false;
@@ -427,21 +450,8 @@ static bool decodeDds(const std::string& path, Loaded* L) {
         const uint8_t* src = d + off;
         if (gpu) {
             L->levels.emplace_back(src, src + bytes);
-        } else if (block) {  // decode whole blocks into a padded image, then crop
-            std::vector<uint8_t> pad(size_t(bw) * 4 * bh * 4 * 4);
-            int pitch = bw * 4 * 4;
-            for (int by = 0; by < bh; by++)
-                for (int bx = 0; bx < bw; bx++) {
-                    const uint8_t* b = src + (size_t(by) * bw + bx) * bsz;
-                    uint8_t* o = pad.data() + size_t(by) * 4 * pitch + size_t(bx) * 16;
-                    if (fmt == DDS_BC1) bcdec_bc1(b, o, pitch);
-                    else if (fmt == DDS_BC2) bcdec_bc2(b, o, pitch);
-                    else if (fmt == DDS_BC3) bcdec_bc3(b, o, pitch);
-                    else bcdec_bc7(b, o, pitch);
-                }
-            std::vector<uint8_t> px(size_t(lw) * lh * 4);
-            for (int y = 0; y < lh; y++) memcpy(&px[size_t(y) * lw * 4], &pad[size_t(y) * pitch], size_t(lw) * 4);
-            L->levels.push_back(std::move(px));
+        } else if (block) {
+            L->levels.push_back(decodeBlocks(fmt, src, lw, lh));
         } else {
             std::vector<uint8_t> px(src, src + bytes);
             if (fmt == DDS_BGRA)
@@ -736,14 +746,9 @@ static std::vector<uint8_t> nextBlockLevel(int fmt, const std::vector<uint8_t>& 
         std::vector<uint8_t> in(size_t(pitch) * 8), out(size_t(dbw) * 16 * 4);
         for (int by = from; by < to; by++) {
             for (int k = 0; k < 2 && 2 * by + k < sbh; k++)  // source rows 8*by to 8*by+7
-                for (int bx = 0; bx < sbw; bx++) {
-                    const uint8_t* b = src.data() + (size_t(2 * by + k) * sbw + bx) * bsz;
-                    uint8_t* o = in.data() + size_t(k) * 4 * pitch + size_t(bx) * 16;
-                    if (fmt == DDS_BC1) bcdec_bc1(b, o, pitch);
-                    else if (fmt == DDS_BC2) bcdec_bc2(b, o, pitch);
-                    else if (fmt == DDS_BC3) bcdec_bc3(b, o, pitch);
-                    else bcdec_bc7(b, o, pitch);
-                }
+                for (int bx = 0; bx < sbw; bx++)
+                    decodeBlock(fmt, src.data() + (size_t(2 * by + k) * sbw + bx) * bsz,
+                                in.data() + size_t(k) * 4 * pitch + size_t(bx) * 16, pitch);
             if (hist && !cov->known)
                 for (int y = 8 * by; y < std::min(8 * by + 8, lh); y++)
                     for (int x = 0; x < lw; x++) hist[0].n[in[size_t(y - 8 * by) * pitch + x * 4 + 3]]++;
@@ -974,6 +979,55 @@ static void storeCachedLevels(const std::string& name, const PackFile& f, const 
     if (!ok || ec) std::filesystem::remove(part, ec);
 }
 
+// A few UHD-pack shadows and clouds replacing intensity textures (I4, I8, IA4,
+// IA8: alpha is the shape) never go fully clear: where the original is 0 the
+// file has alpha 3 to 7 throughout, so the whole quad darkens the ground by a
+// few percent, a square around Delfino Plaza's and Pinna Park's palm shadows
+// (Dolphin draws the same). Such a texture has hardly any texel at 0 and a
+// tenth or more at one value under 16, which no I4 texel can be (its
+// smallest step is 17), judged on a sample of level 0's texels. Its alpha is
+// then lowered by that floor and stretched back to 255, and its levels kept
+// as RGBA, since re-encoding level 0 would cost its quality.
+static void clearAlphaFloor(const std::string& name, Loaded* L) {
+    size_t u = name.rfind('_');
+    if (u == std::string::npos || u + 2 != name.size() || name[u + 1] < '0' || name[u + 1] > '3') return;
+    uint32_t hist[16] = {};
+    uint32_t n = 0;
+    auto add = [&](uint8_t a) {
+        n++;
+        if (a < 16) hist[a]++;
+    };
+    const std::vector<uint8_t>& top = L->levels.front();
+    if (L->compressed) {  // about 4096 blocks, spread over the level
+        int bw = (L->w + 3) / 4, bh = (L->h + 3) / 4, step = std::max(1, int(sqrtf(float(bw) * bh / 4096.0f)));
+        size_t bsz = L->blocks == DDS_BC1 ? 8 : 16;
+        uint8_t px[64];
+        for (int by = 0; by < bh; by += step)
+            for (int bx = 0; bx < bw; bx += step) {
+                decodeBlock(L->blocks, top.data() + (size_t(by) * bw + bx) * bsz, px, 16);
+                for (int i = 0; i < 16; i++) add(px[i * 4 + 3]);
+            }
+    } else {
+        size_t step = std::max<size_t>(1, top.size() / 4 / 65536);
+        for (size_t i = 0; i < top.size() / 4; i += step) add(top[i * 4 + 3]);
+    }
+    int floor = int(std::max_element(hist + 1, hist + 16) - hist);
+    if (!n || hist[0] * 100 >= n || hist[floor] * 10 < n) return;
+    if (L->compressed) {
+        int lw = L->w, lh = L->h;
+        for (auto& lv : L->levels) {
+            lv = decodeBlocks(L->blocks, lv.data(), lw, lh);
+            lw = std::max(1, lw / 2);
+            lh = std::max(1, lh / 2);
+        }
+        L->compressed = 0;
+        L->blocks = 0;
+    }
+    for (auto& lv : L->levels)
+        for (size_t i = 3; i < lv.size(); i += 4) lv[i] = uint8_t(std::max(0, lv[i] - floor) * 255 / (255 - floor));
+    logmsg("texture pack: %s has no clear texels; its alpha floor of %d removed", name.c_str(), floor);
+}
+
 // L->scale, as finishUpload finds it, and L->mipmapped, from `name`.
 static void originalScale(const std::string& name, Loaded* L) {
     unsigned w = 0, h = 0;
@@ -1014,6 +1068,7 @@ static Loaded* decode(const std::string& name, bool whole, bool cached = true) {
                 L->levels.push_back(std::move(mip.levels.front()));
             }
         }
+        if (!L->failed) clearAlphaFloor(name, L);
         if (cached && !L->failed && L->compressed) loadCachedLevels(name, f, L);
         originalScale(name, L);
         if (whole || !L->compressed) completeChain(L);
@@ -1041,6 +1096,7 @@ static Loaded* decode(const std::string& name, bool whole, bool cached = true) {
         L->levels.emplace_back(m, m + size_t(mw) * mh * 4);
         stbi_image_free(m);
     }
+    clearAlphaFloor(name, L);
     originalScale(name, L);
     completeChain(L);
     return L;
