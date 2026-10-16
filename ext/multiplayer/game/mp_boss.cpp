@@ -35,11 +35,14 @@
 #include <Enemy/Conductor.hpp>
 #include <Enemy/Emario.hpp>
 #include <Enemy/EnemyMario.hpp>
+#include <Enemy/Graph.hpp>
 #include <Enemy/GateKeeper.hpp>
 #include <Enemy/TinKoopa.hpp>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
+#include <MarioUtil/MathUtil.hpp>
 #include <MoveBG/MapObjCorona.hpp>
 #include <Player/Mario.hpp>
+#include <Player/MarioRecord.hpp>
 #include <Player/ModelWaterManager.hpp>
 #include <math.h>
 #include <stdio.h>
@@ -907,15 +910,33 @@ void hitTub(int unit, int kind, int)
 // ------------------------------------------------------------------ Shadow Mario
 
 // The host's Shadow Mario is the one everyone chases: where he is, what he is
-// doing, his water meter and the stomps left once he is down.
-const int kShadowRecord = 2 + 2 + 2 + 12 + 2;
+// doing, his water meter, the stomps left once he is down and the node his
+// vanished run heads for.
+const int kShadowRecord = 2 + 2 + 2 + 12 + 2 + 1;
 int s_shadowWater, s_shadowStomps; // client: what was last set from the host's Shadow Mario
 int s_shadowHostDoing = -1; // client: the host's step last taken
 bool s_mainDownSaid;
 
+// Debug: this game's Shadow Mario, whenever his step, whether he is drawn or
+// what he carries changes (and the host's step, on a client).
+void sayShadow(TEnemyMario* e, int hostDoing)
+{
+	static int said = -1;
+	const bool drawn = e->checkEMFlag(TEnemyMario::EM_FLAG_DISP_PENCIL) && e->checkUnk114(TMario::UNK114_FLAG_VISIBLE)
+	                   && e->mEMDoing != TEnemyMario::EM_DOING_HIDE;
+	const int now = e->mEMDoing | (drawn ? 0x100 : 0) | (e->getHeldObject() ? 0x200 : 0) | ((hostDoing & 0xFF) << 12);
+	if (!debug() || now == said)
+		return;
+	said = now;
+	fprintf(stderr, "[multiplayer] Shadow Mario: step 0x%x%s, %s, %s\n", e->mEMDoing,
+	        hostDoing < 0 ? "" : (hostDoing == e->mEMDoing ? " (the host's too)" : " (not the host's)"),
+	        drawn ? "drawn" : "not drawn", e->getHeldObject() ? "carrying" : "carrying nothing");
+}
+
 void writeShadow(Out& o)
 {
 	TEnemyMario* e = s_shadow;
+	sayShadow(e, -1);
 	o.bytes(&e->mEMDoing, 2);
 	o.s16_(e->mWaterCounter);
 	o.s16_(e->mTrampleCount);
@@ -923,6 +944,108 @@ void writeShadow(Out& o)
 	o.f32_(e->mPosition.y);
 	o.f32_(e->mPosition.z);
 	o.s16_(e->mFaceAngle.y);
+	o.u8_((u8)e->mRunAwayNodeIndex);
+}
+
+// How far into going down and getting away a step is (0: not part of it): in
+// the plaza, down, vanished, back on a node, waiting, to the gate, at it,
+// drawing the M, gone into it. A game whose own player has moved him further
+// on (each game runs the plaza's script for its own player) is not sent back.
+int shadowStage(u16 doing)
+{
+	switch (doing) {
+	case TEnemyMario::EM_DOING_PRE_DOWN_ANIMATION: return 1;
+	case TEnemyMario::EM_DOING_DOWN_ANIMATION: return 2;
+	case TEnemyMario::EM_DOING_RUN_AWAY_TO_NEAREST_NODE: return 3;
+	case TEnemyMario::EM_DOING_REPLAY_RUN_AWAY: return 4;
+	case TEnemyMario::EM_DOING_WAITING_TO_INVITE_MARIO: return 5;
+	case TEnemyMario::EM_DOING_REPLAY_RUN_AWAY_TO_GATE: return 6;
+	case TEnemyMario::EM_DOING_UNK18: return 7;
+	case TEnemyMario::EM_DOING_GATE_DRAWING: return 8;
+	case TEnemyMario::EM_DOING_DISAPPEAR_TO_GATE: return 9;
+	}
+	return 0;
+}
+
+// Steps in which he is not drawn, or only for a moment.
+bool shadowHidden(u16 doing)
+{
+	return doing == TEnemyMario::EM_DOING_HIDE || doing == TEnemyMario::EM_DOING_DISAPPEAR
+	    || doing == TEnemyMario::EM_DOING_DISAPPEAR_TO_GATE
+	    || doing == TEnemyMario::EM_DOING_RUN_AWAY_TO_NEAREST_NODE;
+}
+
+JGeometry::TVec3<f32> shadowNode(TEnemyMario* e, int node)
+{
+	JGeometry::TVec3<f32> p;
+	e->mEMario->getTracer()->getGraph()->getGraphNode(node).getPoint(&p);
+	return p;
+}
+
+// This game's copy takes the host's new step as if it had come to it on its
+// own: what the step's way in does (the run-away replay from the host's node,
+// the run to the gate, the M drawn) is done here too. A step only set would
+// leave him as the old one left him: hidden for good if that was his vanished
+// run, which hides him until its own end and shows him again only there.
+void enterShadowStep(TEnemyMario* e, u16 doing, int node)
+{
+	const u16 was = e->mEMDoing;
+	const bool vanished = was == TEnemyMario::EM_DOING_RUN_AWAY_TO_NEAREST_NODE;
+	if (debug())
+		fprintf(stderr, "[multiplayer] Shadow Mario takes the host's step 0x%x here (was 0x%x, %u ticks in)\n", doing, was,
+		        (unsigned)e->mEMDoingTimer);
+	switch (doing) {
+	case TEnemyMario::EM_DOING_REPLAY_RUN_AWAY:
+		if (e->mRunAwayInputReplays && node >= 0 && node < 8 && e->mRunAwayInputReplays[node]) {
+			// as his vanished run ends in the plaza: on the node, facing
+			// where he will wait, his replay from there
+			const JGeometry::TVec3<f32> at = shadowNode(e, node), wait = shadowNode(e, 7);
+			e->mFaceAngle.y    = matan(wait.z - at.z, wait.x - at.x);
+			e->mModelFaceAngle = e->mFaceAngle.y;
+			e->mPosition.set(at.x, at.y + 5.0f, at.z);
+			e->changePlayerStatus(MARIO_STATUS_WAIT, 0, true);
+			e->mRunAwayNodeIndex = node;
+			e->mReplayIndex      = node;
+			e->mInputReplays     = e->mRunAwayInputReplays;
+			e->mInputReplays[node]->reset();
+			e->mInputReplays[node]->start();
+		}
+		e->changeEMDoing(doing);
+		break;
+	case TEnemyMario::EM_DOING_REPLAY_RUN_AWAY_TO_GATE:
+		if (e->mGateReplay) {
+			const JGeometry::TVec3<f32> wait = shadowNode(e, 7), gate = shadowNode(e, 8);
+			e->mPosition       = wait;
+			e->mFaceAngle.y    = matan(gate.z - wait.z, gate.x - wait.x);
+			e->mModelFaceAngle = e->mFaceAngle.y;
+			e->changePlayerStatus(MARIO_STATUS_WAIT, 0, true);
+			e->mReplayIndex = 0;
+			e->mGateReplay->reset();
+			e->mGateReplay->start();
+		}
+		e->changeEMDoing(doing);
+		break;
+	case TEnemyMario::EM_DOING_GATE_DRAWING: e->startGateDrawing(); break;
+	case TEnemyMario::EM_DOING_DISAPPEAR:
+	case TEnemyMario::EM_DOING_DISAPPEAR_TO_GATE: e->startDisappear(doing); break;
+	default:
+		if (vanished && node >= 0 && node < e->mEMario->getTracer()->getGraph()->getNodeNum()) {
+			// as his vanished run ends elsewhere: back on the node, waiting
+			const JGeometry::TVec3<f32> at = shadowNode(e, node);
+			e->mPosition.set(at.x, at.y + 5.0f, at.z);
+			e->changePlayerStatus(MARIO_STATUS_WAIT, 0, true);
+		}
+		e->changeEMDoing(doing);
+		break;
+	}
+	if (!shadowHidden(doing)) {
+		e->onEMFlag(TEnemyMario::EM_FLAG_DISP_PENCIL);
+		e->onUnk114(TMario::UNK114_FLAG_VISIBLE);
+		if (was == TEnemyMario::EM_DOING_HIDE || was == TEnemyMario::EM_DOING_DISAPPEAR) {
+			e->offHitFlag(HIT_FLAG_NO_COLLISION);
+			e->mEMario->offHitFlag(HIT_FLAG_NO_COLLISION);
+		}
+	}
 }
 
 void readShadow(In& in)
@@ -935,6 +1058,7 @@ void readShadow(In& in)
 	const s16 face = in.s16_();
 	if (!in.ok)
 		return;
+	const int node = in.at < in.n ? in.u8_() : -1;
 	if (s_followed) {
 		if (e->mWaterCounter < s_shadowWater) // sprayed here
 			mpg_boss_hit(0, HIT_SHADOW_WATER, s_shadowWater - e->mWaterCounter);
@@ -946,15 +1070,39 @@ void readShadow(In& in)
 	// host's says how much water he has left and when he goes down, and
 	// gives each new step of his. He is kept near the host's: left alone
 	// within a step or so, pulled harder the further off, at once when far.
+	const int hostStage = shadowStage(doing);
 	if (doing != s_shadowHostDoing) {
 		s_shadowHostDoing = doing;
-		if (doing != e->mEMDoing) {
-			e->mEMDoing      = doing;
-			e->mEMDoingTimer = 0;
-		}
+		const int here = shadowStage(e->mEMDoing);
+		if (doing != e->mEMDoing && !(hostStage && here > hostStage))
+			enterShadowStep(e, doing, node);
+	}
+	// Down on the host: whoever he carries (the plaza's Peach) is let go here
+	// too, as his own fall would have (the host's fall came as a step).
+	if (hostStage && e->getHeldObject()) {
+		((TLiveActor*)e->getHeldObject())->offLiveFlag(LIVE_FLAG_UNK100000);
+		e->dropObject();
 	}
 	e->mWaterCounter = water;
 	e->mTrampleCount = stomps;
+	// His vanished run: the host's node, set before the run starts toward it
+	// (it heads from where he vanished, so it reaches the node from there
+	// whatever pulled him since he went down). Neither game's place means
+	// anything while he is vanished, and a game further on goes its own way.
+	const bool vanishedHere = e->mEMDoing == TEnemyMario::EM_DOING_RUN_AWAY_TO_NEAREST_NODE;
+	if (vanishedHere && e->mEMDoingTimer >= 1 && e->mEMDoingTimer < 100) {
+		if (node >= 0 && node < e->mEMario->getTracer()->getGraph()->getNodeNum()
+		    && (hostStage == 3 || hostStage == 4))
+			e->mRunAwayNodeIndex = node;
+		e->mReferencePosition.set(e->mDisappearPosition.x, e->mDisappearPosition.y - 80.0f,
+		                          e->mDisappearPosition.z);
+	}
+	sayShadow(e, doing);
+	if (vanishedHere || hostStage == 3 || (hostStage && shadowStage(e->mEMDoing) > hostStage)) {
+		s_shadowWater  = water;
+		s_shadowStomps = stomps;
+		return;
+	}
 	const f32 dx = x - e->mPosition.x, dy = y - e->mPosition.y, dz = z - e->mPosition.z;
 	const f32 far = dx * dx + dy * dy + dz * dz;
 	if (far > 700.0f * 700.0f) {
@@ -1318,6 +1466,28 @@ bool MpBossTestGatePos(float at[3])
 				return true;
 			}
 	return false;
+}
+
+// Test aid (SMS_MULTIPLAYER_TEST shadowrun@N, the host): Shadow Mario goes
+// down as when sprayed dry, letting go of whoever he carries (step 0), then
+// gets up and vanishes (step 1), as the plaza's script has him do once a
+// player comes to him; step 2 ends his vanished run at once.
+int MpBossTestShadowRun(int step)
+{
+	if (!bossReady() || !s_shadow)
+		return 0;
+	TEnemyMario* e = s_shadow;
+	if (step == 0) {
+		if (e->getHeldObject()) {
+			((TLiveActor*)e->getHeldObject())->offLiveFlag(LIVE_FLAG_UNK100000);
+			e->dropObject();
+		}
+		e->changeEMDoing(TEnemyMario::EM_DOING_PRE_DOWN_ANIMATION);
+	} else if (step == 1)
+		e->startRunAway();
+	else if (e->mEMDoing == TEnemyMario::EM_DOING_RUN_AWAY_TO_NEAREST_NODE)
+		e->mEMDoingTimer = 200; // (step 2) back on his node at once: this game ahead of the others
+	return KIND_SHADOW;
 }
 
 // Whether `actor` is one of the bosses shared here (their hits go through
