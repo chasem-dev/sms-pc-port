@@ -11,9 +11,10 @@
 // - Slot 0 is the host (Mario); 1, 2 and 3 are Luigi, Wario and Metal Mario.
 // - One stage at a time: the host's. Each time the host starts playing a
 //   stage it opens a new "stage session"; clients warp into it, taking the
-//   host's flags first so the stage loads as the host's did. Only the host
-//   leaves for another area; a client's own exits (losing a life, a Shine)
-//   bring it back to the host's stage.
+//   host's flags first so the stage loads as the host's did. Anyone's way
+//   out (a pipe, a painting, a secret course's entrance) takes everyone: a
+//   client's is asked of the host, who sets off with everyone. A client's
+//   own lost life, Shine or pause menu exit bring it back to the host's stage.
 // - Coins and items taken from the stage disappear for everyone in the
 //   session; a player who reloads the stage gets the session's list again.
 // - A Shine collected by anyone sends the whole group out, as it does alone.
@@ -52,6 +53,9 @@ enum {
 	MPG_POSE_DEMO       = 128, // in a cutscene
 	// MpgPose::more
 	MPG_POSE2_ON_TUB    = 1,   // standing on Bowser's hot tub (it tips under each player)
+	MPG_POSE2_SURF      = 2,   // riding a Blooper (its colour: MPG_POSE2_SURF_TYPE)
+	MPG_POSE2_SURF_TYPE = 12,  // 0 red, 4 yellow, 8 green (TMario::mSurfGessoType << 2)
+	MPG_POSE2_PAUSED    = 16,  // the game is paused (the host's: the others' worlds run on their own)
 };
 typedef struct MpgPose {
 	uint32_t time;      // when the sender's game was like this, in its game time (ms; set by mpg_set_pose)
@@ -86,7 +90,8 @@ typedef struct MpgEnemy {
 	uint16_t index;
 	float pos[3];
 	int16_t rotY; // degrees * 65536 / 360
-	int16_t pad;
+	uint8_t owner; // whose game runs it (the player nearest it): 0 the host's, else that client's, which reports it
+	uint8_t pad;
 } MpgEnemy;
 
 // What the game is doing this frame.
@@ -110,11 +115,13 @@ int mpg_player_present(int slot);
 // Host: the next time we arrive in a stage, open a new session there even
 // if it is the same stage (everyone loads it afresh).
 void mpg_restart_session(void);
-// Client: a story event here moved on to another episode of the stage
-// everyone is in (taking FLUDD on the Airstrip): the host is asked to take
-// everyone there. Host: such a request, next in line (1), else 0.
-void mpg_request_trip(int area, int episode);
-int mpg_next_trip(int* slot, int* area, int* episode);
+// Client: this game set off for another area or episode by a way out in
+// the stage everyone is in (a pipe, a secret course's entrance, a story
+// event, with the movie it plays on the way, -1: none): the host is asked to
+// take everyone there; 1 if asked. Host: such a request, next in line (1),
+// else 0.
+int mpg_request_trip(int area, int episode, int movie);
+int mpg_next_trip(int* slot, int* area, int* episode, int* movie);
 int mpg_slot(void);    // ours; -1 before a client has one
 int mpg_ping(int slot); // round trip to `slot` (host) or to the host (client), ms; -1 unknown
 // Client: the newest snapshot of the host's world's number (each new one, a new number).
@@ -177,11 +184,12 @@ void mpg_clean(float x, float y, float z, float size);
 // The next goop another game cleaned, for this game to clean; 0 when none.
 int mpg_next_clean(float* x, float* y, float* z, float* size);
 
-// This game's player touched a Shine (its event id, where it is): every other
-// game moves its player there and plays the Shine Get as well.
-void mpg_shine_get(int eventId, const float pos[3]);
+// This game's player touched a Shine (its event id, where it is, the way
+// they face, Mario's 16-bit angle): every other game moves its player beside
+// them and plays the Shine Get as well.
+void mpg_shine_get(int eventId, const float pos[3], int yaw);
 // The next Shine another player touched; 0 when there is none.
-int mpg_next_shine_get(int* slot, int* eventId, float pos[3]);
+int mpg_next_shine_get(int* slot, int* eventId, float pos[3], int* yaw);
 
 // Host: setting off for another area (episode 0xFF: the game decides on
 // arrival); the others start their own trip there at once.
@@ -194,6 +202,10 @@ void mpg_host_going(int area, int episode, uint32_t sessionFlags, int movie);
 int mpg_travel(uint32_t* sessionFlags, int* movie);
 // Client: the host is between stages (set off, not arrived).
 int mpg_target_traveling(void);
+// Host, each frame of its episode select: the world's area, the episode it
+// points at, whether it chose it. Client: the host's, as last heard (1), or 0.
+void mpg_host_select(int area, int episode, int chosen);
+int mpg_select(int* area, int* episode, int* chosen);
 void mpg_travel_done(void);
 
 // A cutscene this game started (the game's own description of it, at most 256

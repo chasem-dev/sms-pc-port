@@ -15,11 +15,14 @@
 #include <M3DUtil/M3UModelMario.hpp>
 #include <M3DUtil/MActor.hpp>
 #include <M3DUtil/MActorData.hpp>
+#include <M3DUtil/MActorUtil.hpp>
 #include <MarioUtil/DrawUtil.hpp>
 #include <MarioUtil/LightUtil.hpp>
 #include <MarioUtil/MathUtil.hpp>
 #include <MarioUtil/PacketUtil.hpp>
 #include <MarioUtil/TexUtil.hpp>
+#include <MoveBG/MapObjBase.hpp>
+#include <MoveBG/MapObjManager.hpp>
 #include <Player/Mario.hpp>
 #include <Player/MarioDirtyStrings.hpp>
 #include <Player/WaterGun.hpp>
@@ -351,6 +354,7 @@ TMpPuppet::TMpPuppet(int slot, bool self)
     , mFludd(nullptr)
     , mNozzleJoint(0)
     , mYoshi(nullptr)
+    , mSurf(nullptr)
     , mOpa(nullptr)
     , mXlu(nullptr)
     , mSwapped(false)
@@ -359,6 +363,7 @@ TMpPuppet::TMpPuppet(int slot, bool self)
 	memset(mHands, 0, sizeof mHands);
 	memset(mCap, 0, sizeof mCap);
 	memset(mNozzles, 0, sizeof mNozzles);
+	memset(mSurfColor, 0, sizeof mSurfColor);
 	mSaved[0] = mSaved[1] = nullptr;
 	mSmoothed[0] = mSmoothed[1] = mSmoothed[2] = 0.0f;
 	mHead[0] = mHead[1] = mHead[2] = 0.0f;
@@ -520,6 +525,24 @@ bool TMpPuppet::buildYoshi()
 	return true;
 }
 
+// The Blooper a player surfs on: the game draws Mario's from the stage's
+// own three (TMapObjManager, one a colour, TMario::getGesso); each puppet
+// has its own, coloured as the one its player rides.
+bool TMpPuppet::buildSurf()
+{
+	if (!gpMapObjManager || !gpMapObjManager->mSurfGessoModelData)
+		return false;
+	mSurf = SMS_MakeMActorFromSDLModelData(gpMapObjManager->mSurfGessoModelData, gpMapObjManager->getMActorAnmData(), 3);
+	if (!mSurf)
+		return false;
+	memcpy(mSurfColor, &gpMapObjManager->unkA8, sizeof mSurfColor);
+	TMapObjBase::initPacketMatColor(mSurf->mModel, GX_TEVREG1, (const GXColorS10*)mSurfColor);
+	mSurf->setBck("surfgeso_run1");
+	if (J3DFrameCtrl* fc = mSurf->getFrameCtrl(ANM_TYPE_BCK))
+		fc->setRate(0.5f);
+	return true;
+}
+
 bool TMpPuppet::init()
 {
 	JKRHeap* heap = JKRHeap::getCurrentHeap();
@@ -530,6 +553,7 @@ bool TMpPuppet::init()
 	buildFludd();
 	s32 free2 = heap->getTotalFreeSize();
 	buildYoshi();
+	buildSurf();
 	s32 free3 = heap->getTotalFreeSize();
 	mOpa = new J3DDrawBuffer(0x20);
 	mXlu = new J3DDrawBuffer(0x20);
@@ -660,6 +684,14 @@ void TMpPuppet::applyPose(JDrama::TGraphics* graphics)
 		mYoshi->perform(CUE_CALC_ANIM, graphics);
 	}
 
+	if (mSurf && (p.more & MPG_POSE2_SURF)) {
+		// under them, at their root (TMario::calcAnim), in its rider's colour
+		const GXColorS10* colours[3] = {&gpMapObjManager->unkA8, &gpMapObjManager->unkB0, &gpMapObjManager->unkB8};
+		const int type               = (p.more & MPG_POSE2_SURF_TYPE) >> 2;
+		memcpy(mSurfColor, colours[type < 3 ? type : 0], sizeof mSurfColor);
+		mSurf->getModel()->setBaseTRMtx(base);
+		mSurf->perform(CUE_CALC_ANIM, graphics);
+	}
 }
 
 // Debug: how smoothly another player is drawn while they move. Each frame's
@@ -761,6 +793,8 @@ void TMpPuppet::perform(u32 cue, JDrama::TGraphics* graphics)
 		}
 		if (mYoshi && (mPose.flags & MPG_POSE_YOSHI))
 			mYoshi->perform(CUE_CALC_VIEW, graphics);
+		if (mSurf && (mPose.more & MPG_POSE2_SURF))
+			mSurf->perform(CUE_CALC_VIEW, graphics);
 	}
 	if (cue & CUE_UNK10000000) {
 		mOpa->frameInit();
@@ -794,6 +828,11 @@ void TMpPuppet::perform(u32 cue, JDrama::TGraphics* graphics)
 				data->getMaterialNodePointer(i)->getTevBlock()->setTevColor(2, &c);
 			}
 			mYoshi->perform(CUE_ENTRY, graphics);
+		}
+		if (mSurf && (mPose.more & MPG_POSE2_SURF)) {
+			const JGeometry::TVec3<f32> at(mPosition.x, mPosition.y, mPosition.z);
+			mSurf->setLightData(nullptr, at);
+			mSurf->perform(CUE_ENTRY, graphics);
 		}
 	}
 	if ((cue & CUE_UNK8000000) && mSwapped) {

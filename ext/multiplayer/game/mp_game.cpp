@@ -21,16 +21,19 @@
 #include <Enemy/BossPakkun.hpp>
 #include <Enemy/Conductor.hpp>
 #include <Map/Map.hpp>
+#include <Map/MapData.hpp>
 #include <Map/PollutionManager.hpp>
 #include <Enemy/EnemyManager.hpp>
 #include <Enemy/SmallEnemy.hpp>
 #include <GC2D/ConsoleStr.hpp>
 #include <GC2D/GCConsole2.hpp>
 #include <GC2D/ScrnFader.hpp>
+#include <GC2D/SelectMenu.hpp>
 #include <MSound/MSoundBGM.hpp>
 #include <JSystem/JKernel/JKRHeap.hpp>
 #include <M3DUtil/M3UModelMario.hpp>
 #include <M3DUtil/MActor.hpp>
+#include <Enemy/FruitsBoat.hpp>
 #include <Enemy/Killer.hpp>
 #include <Enemy/Koopa.hpp>
 #include <Enemy/KoopaNerve.hpp>
@@ -57,6 +60,7 @@
 #include <System/Application.hpp>
 #include <System/FlagManager.hpp>
 #include <System/MarDirector.hpp>
+#include <System/SelectDir.hpp>
 #include <System/StageUtil.hpp>
 #include <math.h>
 #include <new>
@@ -102,7 +106,6 @@ bool s_restarting;    // host: everyone is out, the stage is starting again
 bool s_missReload;    // this stage again after a lost life (or a game over): no new session
 char s_notice[256];
 int s_noticeFrames, s_statusFrames;
-int s_refusedFrames;
 // Client: we got a Shine and left for the plaza ahead of the host, who is
 // still in the stage (saving): wait for the host there, not back in the stage.
 int s_shineHoldFrames;
@@ -110,6 +113,8 @@ int s_shineHoldArea = -1, s_shineHoldEpisode = -1;
 // The Shine Get together (syncShineGets)
 bool s_inWinDemo;    // our player was in the Shine Get last frame
 bool s_winRemote;    // ...because another player's Shine was played here
+int s_winCollector = -1; // ...whose (they hold it here: their character has it, in the middle)
+TShine* s_winShine;
 int s_shineGetFrames; // a Shine Get played here lately: the flag-only exit stays out of it
 
 int s_titleFrames; // a client's frames on the title screen
@@ -503,6 +508,20 @@ void syncFlags()
 
 unsigned MpStageNumber() { return s_stageNumber; }
 
+bool MpPausedHere()
+{
+	TMarDirector* dir = director();
+	return dir && dir->mState == TMarDirector::STATE_PAUSE_MENU;
+}
+
+bool MpHostPaused()
+{
+	MpgPose pose;
+	float age;
+	return s_role == MPG_ROLE_CLIENT && mpg_player_present(0) && mpg_pose(0, &pose, &age) && age < 2.0f
+	       && (pose.more & MPG_POSE2_PAUSED);
+}
+
 void MpCapturePose(TMario* m, MpgPose* out)
 {
 	MpgPose& p = *out;
@@ -530,6 +549,9 @@ void MpCapturePose(TMario* m, MpgPose* out)
 		p.flags |= MPG_POSE_CAP;
 	if (mm->unk24[1].unk3 != 0xff)
 		p.flags |= MPG_POSE_UPPER;
+	// surfing on a Blooper: the game draws it with Mario (TMario::entryModels)
+	if (m->checkStatusType(MARIO_STATUS_FLAG_UNK10000) && m->mSurfGesso)
+		p.more |= MPG_POSE2_SURF | (u8)((m->mSurfGessoType & 3) << 2);
 	memcpy(p.mtx, mm->getModel()->getBaseTRMtx(), sizeof p.mtx);
 	p.bodyBck    = mm->unk24[0].unk4[0];
 	p.bodyFrame  = mm->getFrameCtrl(0).getFrame();
@@ -645,12 +667,18 @@ void sendPose()
 	MpCapturePose(gpMarioOriginal, &p);
 	if (MpMirrorOnTub())
 		p.more |= MPG_POSE2_ON_TUB;
+	if (MpPausedHere())
+		p.more |= MPG_POSE2_PAUSED;
 	if (p.flags & MPG_POSE_VISIBLE)
 		MpMeasureSmoothness(mpg_slot(), p);
 	mpg_set_pose(&p);
 }
 
 // ------------------------------------------------------------------- warps
+
+bool leading(int area); // below
+void leadTrip(TMarDirector* dir);
+bool hasEpisodeSelect(int area);
 
 const char* worldName(int area)
 {
@@ -691,6 +719,8 @@ void followHost(TMarDirector* dir)
 		return;
 	if (s_shineHoldFrames > 0 && area == s_shineHoldArea && episode == s_shineHoldEpisode)
 		return; // the host is still saving the Shine we got: they come to us
+	if (leading(gpApplication.mCurrArea.getStage()))
+		return; // we led the way here: the others are coming
 	s_shineHoldFrames = 0;
 	// the host is on its way: how it goes decides how everyone arrives (a
 	// few seconds at most; then this game goes as it would)
@@ -698,9 +728,10 @@ void followHost(TMarDirector* dir)
 	int movie;
 	const int fps = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
 	// off to a world whose episode the host is still choosing (its episode
-	// select): this game waits where it is and goes straight to the one the
-	// host picks once the host is there (no episode select of its own)
-	if (episode == 0xFF && mpg_target_traveling()) {
+	// select): this game goes to its own, where it watches the host choose
+	// (selectFrame); another way in that the game decides (the plaza) is
+	// waited for here, and taken once the host is there
+	if (episode == 0xFF && mpg_target_traveling() && !hasEpisodeSelect(area)) {
 		static int told;
 		if (told++ % (5 * fps) == 0) {
 			char text[128];
@@ -723,6 +754,106 @@ void followHost(TMarDirector* dir)
 	char text[128];
 	snprintf(text, sizeof text, "Joining the host in %s", worldName(area));
 	showNotice(text);
+}
+
+// ------------------------------------------------------------------- episode select
+
+// The host chooses the episode for everyone. Its episode select is sent as it
+// goes: where it points and whether it chose (mpg_host_select). When the host
+// sets off for a world with an episode select, everyone sets off with it to
+// their own, where they watch: their controller does nothing there, their
+// cursor follows the host's, and the host's choice is pressed for them.
+u16 s_selectPress;    // client: the button the host's choosing presses here this frame (0: none)
+bool s_selectLocked;  // client: on an episode select the host is choosing for
+int s_selectFrames, s_selectSteps;
+TSelectMenu* s_selectSeen;
+bool s_hostChose;
+
+bool hasEpisodeSelect(int area)
+{
+	// TMarDirector::moveStage: a world's way in with no episode named goes to its select
+	return area == 2 || area == 3 || area == 4 || area == 5 || area == 6 || area == 8;
+}
+
+TSelectMenu* selectMenu()
+{
+	if (gpApplication.mAppState != TApplication::APP_STATE_TITLE || !gpApplication.mDirector)
+		return nullptr;
+	TSelectDir* dir = dynamic_cast<TSelectDir*>(gpApplication.mDirector);
+	return dir ? dir->getSelectMenu() : nullptr;
+}
+
+void selectFrame()
+{
+	s_selectPress     = 0;
+	s_selectLocked    = false;
+	TSelectMenu* menu = selectMenu();
+	if (menu != s_selectSeen) {
+		s_selectSeen  = menu;
+		s_hostChose   = false;
+		s_selectSteps = 0;
+		s_selectFrames = 0;
+	}
+	if (!menu)
+		return;
+	const int state = menu->mMenuState;
+	if (s_role == MPG_ROLE_HOST) {
+		// test aid (pickep@N:E): N frames into an episode select, the host
+		// moves to episode E and chooses it
+		static int pickAt = -2, pickEpisode;
+		if (pickAt == -2) {
+			pickAt = -1;
+			if (const char* plan = getenv("SMS_MULTIPLAYER_TEST"))
+				if (const char* pe = strstr(plan, "pickep@"))
+					sscanf(pe, "pickep@%d:%d", &pickAt, &pickEpisode);
+		}
+		if (pickAt >= 0 && ++s_selectFrames >= pickAt && state == TSelectMenu::MENU_INPUT_LOOP && !(s_selectFrames & 1)) {
+			s_selectLocked = true; // its own pad pressed for it, as a client's is
+			if (menu->mSelectedShine == pickEpisode) {
+				s_selectPress = PAD_BUTTON_A;
+				fprintf(stderr, "[multiplayer] test: choosing episode %d\n", pickEpisode);
+			} else
+				s_selectPress = pickEpisode < menu->mSelectedShine ? PAD_BUTTON_LEFT : PAD_BUTTON_RIGHT;
+		}
+		// chosen: from its press of A on (the menu fades, then closes)
+		if (state == TSelectMenu::DISAPPEAR_MENU || state == TSelectMenu::WAIT_BEFORE_CLOSE)
+			s_hostChose = true;
+		if (state != TSelectMenu::CLOSE_MENU || s_hostChose) // (not before it is set up)
+			mpg_host_select(menu->mStage, menu->mSelectedShine, s_hostChose);
+		return;
+	}
+	int area, episode, selArea, selEpisode, chosen;
+	if (s_role != MPG_ROLE_CLIENT || !mpg_target(&area, &episode) || area != menu->mStage)
+		return; // not where the host is going: this player chooses
+	s_selectLocked = true;
+	int want  = -1;
+	bool take = false;
+	if (episode != 0xFF) {
+		want = episode, take = true; // the host is there already
+	} else if (mpg_select(&selArea, &selEpisode, &chosen) && selArea == area) {
+		want = selEpisode, take = chosen != 0;
+	}
+	if (s_selectFrames++ == 0) {
+		char text[128];
+		snprintf(text, sizeof text, "%s is choosing the episode", mpg_character_name(0));
+		showNotice(text);
+	}
+	s_noticeFrames = kNoticeFrames; // the line stays while we watch
+	if (want < 0 || want > 7 || state != TSelectMenu::MENU_INPUT_LOOP || (s_selectFrames & 1))
+		return; // a press, then a frame without (the menu takes each as it starts)
+	if (menu->mSelectedShine != want && s_selectSteps > 16) {
+		menu->mSelectedShine = (u8)want; // out of the cursor's reach here: as the host's
+		fprintf(stderr, "[multiplayer] episode select: the host's episode %d set outright\n", want);
+	}
+	if (menu->mSelectedShine == want) {
+		if (take) {
+			fprintf(stderr, "[multiplayer] episode select: the host chose episode %d\n", want);
+			s_selectPress = PAD_BUTTON_A;
+		}
+		return;
+	}
+	s_selectSteps++;
+	s_selectPress = want < menu->mSelectedShine ? PAD_BUTTON_LEFT : PAD_BUTTON_RIGHT;
 }
 
 // A client needs no file of its own (it plays the host's): from the title
@@ -853,12 +984,70 @@ void noticeOwnShineGet()
 			const float pos[3] = {shine->mPosition.x, shine->mPosition.y, shine->mPosition.z};
 			fprintf(stderr, "[multiplayer] we touched Shine %d: everyone comes to it\n",
 			        (int)(static_cast<TMapObjBase*>(shine)->getEventId() & 0xFF));
-			mpg_shine_get((int)(static_cast<TMapObjBase*>(shine)->getEventId() & 0xFF), pos);
+			mpg_shine_get((int)(static_cast<TMapObjBase*>(shine)->getEventId() & 0xFF), pos, m->mFaceAngle.y);
 		}
 	}
-	if (!win)
-		s_winRemote = false;
+	if (!win) {
+		s_winRemote    = false;
+		s_winCollector = -1;
+		s_winShine     = nullptr;
+	}
 	s_inWinDemo = win;
+}
+
+bool watchable(int slot); // below
+
+// Where this game's player stands for another player's Shine Get: in a line
+// beside the one who touched it, who is in the middle holding it, each at
+// their own place (by their slot's order among the others here), a little
+// behind, facing the way they face. A place without floor at about their
+// height (a ledge, water) gives way to a nearer one, the other side, or at
+// last the Shine's own spot.
+JGeometry::TVec3<f32> shineGetSpot(int collector, const float pos[3], int yaw)
+{
+	const JGeometry::TVec3<f32> at(pos[0], pos[1], pos[2]);
+	if (!gpMap)
+		return at;
+	int rank = 0;
+	for (int slot = 0; slot < mpg_slot(); slot++)
+		if (slot != collector && mpg_player_present(slot))
+			rank++;
+	static const f32 kSide[3] = {170.0f, -170.0f, 340.0f};
+	const f32 side = kSide[rank < 3 ? rank : 2];
+	// tries: the place; nearer; the other side; the other side nearer; behind
+	const f32 tries[5][2] = {{side, 50.0f}, {side * 0.6f, 30.0f}, {-side, 50.0f}, {-side * 0.6f, 30.0f}, {0.0f, 170.0f}};
+	const f32 a  = yaw * (3.14159265f / 32768.0f);
+	const f32 rx = -cosf(a), rz = sinf(a);  // their right
+	const f32 bx = -sinf(a), bz = -cosf(a); // behind them
+	const TBGCheckData* floor = nullptr;
+	const f32 theirs = gpMap->checkGround(at.x, at.y + 80.0f, at.z, &floor);
+	const f32 base   = floor ? theirs : at.y;
+	for (int i = 0; i < 5; i++) {
+		JGeometry::TVec3<f32> p(at.x + rx * tries[i][0] + bx * tries[i][1], base, at.z + rz * tries[i][0] + bz * tries[i][1]);
+		const TBGCheckData* f = nullptr;
+		const f32 ground = gpMap->checkGround(p.x, base + 100.0f, p.z, &f);
+		if (!f || ground < base - 80.0f || ground > base + 80.0f || f->isWaterSurface())
+			continue;
+		p.y = ground;
+		return p;
+	}
+	return at;
+}
+
+// Every tick of another player's Shine Get here: the Shine is in their
+// character's hands (the game puts it where this game's Mario is, TShine::control).
+void holdOthersShine()
+{
+	if (!s_winRemote || !s_winShine || s_winShine->mState != TShine::STATE_UNK10 || !watchable(s_winCollector))
+		return;
+	TMpPuppet* p        = s_puppets[s_winCollector];
+	const MpgPose& pose = p->pose();
+	TShine* shine       = s_winShine;
+	shine->mPosition    = p->mPosition;
+	shine->mRotation.y  = atan2f(pose.mtx[0][2], pose.mtx[2][2]) * (180.0f / 3.14159265f);
+	if (J3DModel* model = shine->getModel())
+		MsMtxSetXYZRPH(model->getBaseTRMtx(), shine->mPosition.x, shine->mPosition.y - shine->mYOffset, shine->mPosition.z,
+		               shine->mRotation.x, shine->mRotation.y, shine->mRotation.z);
 }
 
 // While playing: another player's Shine Get comes here.
@@ -868,9 +1057,9 @@ void playOthersShineGets()
 	if (!m)
 		return;
 	const bool win = m->mStatus == MARIO_STATUS_WIN_DEMO;
-	int slot, eventId;
+	int slot, eventId, yaw;
 	float pos[3];
-	while (mpg_next_shine_get(&slot, &eventId, pos)) {
+	while (mpg_next_shine_get(&slot, &eventId, pos, &yaw)) {
 		if (win || s_spectating)
 			continue; // in one already, or watching
 		TShine* shine = findShine(eventId, pos);
@@ -888,10 +1077,20 @@ void playOthersShineGets()
 		char text[96];
 		snprintf(text, sizeof text, "%s got a Shine!", mpg_character_name(slot));
 		showNotice(text);
-		// where they touched it, as the game puts a player who touches it
-		m->mPosition.set(pos[0], pos[1], pos[2]);
-		s_winRemote = true;
+		// beside them, as they stand where they touched it (the touch puts
+		// Mario on the Shine and turns him its way: he is put back after)
+		const JGeometry::TVec3<f32> spot = shineGetSpot(slot, pos, yaw);
+		fprintf(stderr, "[multiplayer] Shine Get beside %s: at %.0f %.0f %.0f (they are at %.0f %.0f %.0f)\n",
+		        mpg_character_name(slot), spot.x, spot.y, spot.z, pos[0], pos[1], pos[2]);
+		s_winRemote    = true;
+		s_winCollector = slot;
+		s_winShine     = shine;
 		shine->touchPlayer(m);
+		m->mPosition       = spot;
+		m->mFaceAngle.y    = (s16)yaw;
+		m->mModelFaceAngle = (s16)yaw;
+		m->mForwardVel     = 0.0f;
+		m->mVel.set(0.0f, 0.0f, 0.0f);
 		break;
 	}
 }
@@ -930,6 +1129,19 @@ int s_spawnsHeld; // debug: enemies that came out here by themselves and went ag
 u16 s_enemyDownFrames[kMaxManagers][kMaxEnemies];
 bool s_enemiesSeen; // the first look at this stage's enemies is not news
 u8 s_hostAlive[kMaxManagers][kMaxEnemies];  // as the host's last word had it (2: no word yet)
+// Whose game runs each enemy: the player nearest it, when near (host: as it
+// decides; client: as it last heard). The owner's game runs it by itself, as
+// a game alone does, so it chases, grabs and lets go of that player as it
+// should; it reports where it is, and the host's copy (which the others
+// follow) follows that.
+u8 s_enemyOwner[kMaxManagers][kMaxEnemies];
+u8 s_enemyHeldBy[kMaxManagers][kMaxEnemies];   // host: the client whose player it holds (0: none), lately
+u16 s_enemyHeldAt[kMaxManagers][kMaxEnemies];  // host: when that was last said (s_clock, low bits)
+u16 s_enemyOwnedAt[kMaxManagers][kMaxEnemies]; // host: when its owner last changed (s_clock, low bits)
+const f32 kOwnNear   = 1500.0f; // nearer than this (and nearer than the host), a client's game runs it
+const f32 kOwnFar    = 2500.0f; // farther than this from them, it goes back
+const f32 kOwnMargin = 300.0f;  // how much nearer another player must be to take it over
+const int kEnemyMirror = 253;   // the mirror channel's "manager" for enemies a client runs (index: manager << 8 | index)
 u16 s_enemyGrace[kMaxManagers][kMaxEnemies]; // frames since we brought it back
 
 // The host's last word on each enemy: where it was, which way it faced, how
@@ -955,6 +1167,8 @@ void collectManagers()
 	memset(s_enemySyncKill, 0, sizeof s_enemySyncKill);
 	memset(s_enemyDownFrames, 0, sizeof s_enemyDownFrames);
 	memset(s_hostAlive, 2, sizeof s_hostAlive);
+	memset(s_enemyOwner, 0, sizeof s_enemyOwner);
+	memset(s_enemyHeldBy, 0, sizeof s_enemyHeldBy);
 	memset(s_enemyGrace, 0xFF, sizeof s_enemyGrace);
 	memset(s_targets, 0, sizeof s_targets);
 	s_enemiesSeen = false;
@@ -993,6 +1207,86 @@ unsigned mp_clock_ms_game()
 	return (unsigned)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
 }
 
+const JGeometry::TVec3<f32>& aimOf(int slot); // below
+
+// Host, each frame: whose game runs each enemy. A client's whose player is
+// near it and nearer than the host (and nearer than whoever ran it by a
+// step, so it does not flit between two players side by side); or whose
+// player it holds (a fish carrying them off). Else the host's.
+void decideEnemyOwners()
+{
+	const u16 now = (u16)s_clock;
+	for (int m = 0; m < s_managerCount; m++)
+		for (int i = 0; i < s_managers[m]->getObjNum() && i < kMaxEnemies; i++) {
+			TSmallEnemy* e = enemyAt(m, i);
+			u8& owner      = s_enemyOwner[m][i];
+			const u8 was   = owner;
+			if (!e || enemyDown(e)) {
+				owner = 0;
+			} else if (s_enemyHeldBy[m][i] && (u16)(now - s_enemyHeldAt[m][i]) < 30 && watchable(s_enemyHeldBy[m][i])) {
+				owner = s_enemyHeldBy[m][i];
+			} else {
+				s_enemyHeldBy[m][i] = 0;
+				const f32 host = s_spectating || !gpMarioOriginal ? 1e9f : sqrtf(distance2(e->mPosition, gpMarioOriginal->mPosition));
+				int best      = 0;
+				f32 bestD     = host;
+				for (int slot = 1; slot < 4; slot++)
+					if (watchable(slot)) {
+						const f32 d = sqrtf(distance2(e->mPosition, aimOf(slot)));
+						if (d < bestD)
+							best = slot, bestD = d;
+					}
+				const f32 ownerD = owner && watchable(owner) ? sqrtf(distance2(e->mPosition, aimOf(owner))) : 1e9f;
+				const int fps    = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
+				const bool held  = (u16)(now - s_enemyOwnedAt[m][i]) < 2 * fps; // a change stays a while
+				if (owner && ownerD < 1e8f && (held || (ownerD < kOwnFar && ownerD < bestD + kOwnMargin && ownerD < host + kOwnMargin)))
+					; // stays with them
+				else if (!owner && held)
+					; // the host's a while yet
+				else if (best && bestD < kOwnNear && bestD + kOwnMargin * 0.5f < host)
+					owner = (u8)best;
+				else
+					owner = 0;
+			}
+			if (owner != was) {
+				s_enemyOwnedAt[m][i]  = now;
+				s_targets[m][i].known = false; // whatever its last owner said is old news
+				if (getenv("SMS_MULTIPLAYER_DEBUG"))
+					fprintf(stderr, "[multiplayer] enemy %d.%d: now run by %s's game\n", m, i, mpg_character_name(owner));
+			}
+		}
+}
+
+// Client, each tick: whether this game runs `e` (the host said so, or it
+// holds this game's player: it carries them off and lets go here).
+bool runsEnemy(int m, int i, TSmallEnemy* e)
+{
+	return s_role == MPG_ROLE_CLIENT && e
+	       && (s_enemyOwner[m][i] == mpg_slot() || (gpMarioOriginal && gpMarioOriginal->mHolder == e));
+}
+
+// Client, every other tick: where the enemies this game runs are, for the host.
+void reportOwnEnemies()
+{
+	if (s_clock & 1)
+		return;
+	for (int m = 0; m < s_managerCount; m++)
+		for (int i = 0; i < s_managers[m]->getObjNum() && i < kMaxEnemies; i++) {
+			TSmallEnemy* e = enemyAt(m, i);
+			if (!runsEnemy(m, i, e) || enemyDown(e))
+				continue;
+			static int said;
+			if (getenv("SMS_MULTIPLAYER_DEBUG") && gpMarioOriginal && said++ % 60 == 0)
+				fprintf(stderr, "[multiplayer] enemy %d.%d run here (%s): %.0f from our player\n", m, i, typeid(*e).name(),
+				        sqrtf(distance2(e->mPosition, gpMarioOriginal->mPosition)));
+			u8 data[17];
+			memcpy(data, &e->mPosition.x, 12);
+			memcpy(data + 12, &e->mRotation.y, 4);
+			data[16] = gpMarioOriginal && gpMarioOriginal->mHolder == e ? 1 : 0;
+			mpg_mirror(kEnemyMirror, m << 8 | i, data, sizeof data);
+		}
+}
+
 void hostEnemies()
 {
 	int manager, index;
@@ -1018,6 +1312,7 @@ void hostEnemies()
 				prev[i] = e->mPosition;
 			}
 	}
+	decideEnemyOwners();
 	static MpgEnemy list[kMaxManagers * 16];
 	int n = 0;
 	for (int m = 0; m < s_managerCount; m++)
@@ -1033,6 +1328,7 @@ void hostEnemies()
 			out.pos[1]    = e->mPosition.y;
 			out.pos[2]    = e->mPosition.z;
 			out.rotY      = yaw(e->mRotation.y);
+			out.owner     = s_enemyOwner[m][i];
 			out.pad       = 0;
 		}
 	mpg_set_enemies(list, n);
@@ -1119,7 +1415,7 @@ void steerEnemies()
 			if (since > kEnemyStale)
 				continue;
 			TSmallEnemy* e = enemyAt(m, i);
-			if (!e || enemyDown(e))
+			if (!e || enemyDown(e) || runsEnemy(m, i, e))
 				continue;
 			const f32 lead = since < kEnemyAhead ? since : kEnemyAhead;
 			const JGeometry::TVec3<f32> want(t.pos.x + t.vel.x * lead, t.pos.y + t.vel.y * lead, t.pos.z + t.vel.z * lead);
@@ -1139,8 +1435,9 @@ void steerEnemies()
 			worst = d > worst ? d : worst;
 		}
 	if (getenv("SMS_MULTIPLAYER_DEBUG") && s_clock % (10 * fps) == 0 && followed)
-		fprintf(stderr, "[multiplayer] enemies: %d followed, %.0f units off on average, %.0f at most; %d came out here alone\n",
-		        followed, off / followed, worst, s_spawnsHeld);
+		fprintf(stderr, "[multiplayer] enemies: %d followed%s, %.0f units off on average, %.0f at most; %d came out here alone\n",
+		        followed, s_role == MPG_ROLE_HOST ? " (as the clients that run them say)" : "", off / followed, worst,
+		        s_spawnsHeld);
 }
 
 void followHostEnemies()
@@ -1165,9 +1462,12 @@ void followHostEnemies()
 			freshes = entries = 0;
 		}
 	}
-	s_lastWorldAge   = age;
 	// nothing from the host for a second (its game is paused, or the link
 	// is down): enemies here go by themselves until it comes again
+	// (or the host's pose says it is paused: at once)
+	if (MpHostPaused())
+		age = 99.0f;
+	s_lastWorldAge = age;
 	static bool onOwn;
 	if ((age > 1.0f) != onOwn) {
 		onOwn = age > 1.0f;
@@ -1176,7 +1476,8 @@ void followHostEnemies()
 			        onOwn ? "nothing from the host lately, they go by themselves here" : "following the host's again");
 	}
 	if (age > 1.0f) {
-		steerEnemies();
+		if (!MpHostPaused())
+			steerEnemies();
 		return;
 	}
 	for (int k = 0; fresh && k < n; k++) {
@@ -1184,6 +1485,12 @@ void followHostEnemies()
 		TSmallEnemy* e    = enemyAt(h.manager, h.index);
 		if (!e)
 			continue;
+		if (h.manager < kMaxManagers && h.index < kMaxEnemies && s_enemyOwner[h.manager][h.index] != h.owner) {
+			s_enemyOwner[h.manager][h.index] = h.owner;
+			if (getenv("SMS_MULTIPLAYER_DEBUG") && (h.owner == mpg_slot() || h.owner == 0))
+				fprintf(stderr, "[multiplayer] enemy %d.%d: %s\n", h.manager, h.index,
+				        h.owner == mpg_slot() ? "run here now (our player is nearest)" : "the host's again");
+		}
 		const bool down = enemyDown(e);
 		const u8 hostWas = s_hostAlive[h.manager][h.index];
 		s_hostAlive[h.manager][h.index] = h.alive;
@@ -1235,6 +1542,10 @@ void followHostEnemies()
 				e->resetSRTV(at, rot, e->mScaling, still);
 				s_enemyGrace[h.manager][h.index] = 0;
 			}
+			continue;
+		}
+		if (runsEnemy(h.manager, h.index, e)) {
+			s_targets[h.manager][h.index].known = false; // ours: the host's copy follows it
 			continue;
 		}
 		// the host's word on it: kept, with how fast it went since the last
@@ -1507,6 +1818,14 @@ struct TestPlan {
 	bool atRed;
 	int gateAt, gateDistance; // gotogate@N:D: stands D units from the first Gatekeeper
 	bool atGate;
+	int enemyAt, enemyDistance; // nearenemy@N:D: stands D units from the enemy up farthest from the host
+	bool atEnemy;
+	int tearAt;                 // tear@N: Gooper Blooper's tentacle torn off, the game's own way
+	bool tore;
+	int surfAt;                 // surf@N: this player gets on a Blooper (surfing)
+	bool surfed;
+	int boatAt;                 // nearboat@N: this player stands on the first fruit boat
+	bool onBoat;
 	int nearAt;              // stands before an NPC (presses of B talk to it), up to 1800 frames
 	bool talked;
 	bool tookAgain;
@@ -1542,6 +1861,15 @@ int s_testPressA; // test aids: frames left to hold B down (padRead; B talks)
 
 void testPadRead(void* status)
 {
+	if (s_selectLocked) {
+		// the host's episode select: this player's controller does nothing
+		// there, the host's choosing presses for them
+		PADStatus& pad = static_cast<PADStatus*>(status)[0];
+		pad.button     = s_selectPress;
+		pad.stickX = pad.stickY = pad.substickX = pad.substickY = 0;
+		pad.triggerLeft = pad.triggerRight = pad.analogA = pad.analogB = 0;
+		return;
+	}
 	if (s_testPressA > 0) {
 		static_cast<PADStatus*>(status)[0].button |= PAD_BUTTON_B;
 		s_testPressA--;
@@ -1557,7 +1885,7 @@ void runTests(TMarDirector* dir, bool arrived)
 {
 	if (!s_test.parsed) {
 		s_test.parsed = true;
-		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.gateAt = s_test.flAt = s_test.demoAt = -1;
+		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.gateAt = s_test.flAt = s_test.demoAt = s_test.enemyAt = s_test.tearAt = s_test.surfAt = s_test.boatAt = -1;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
 		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = s_test.bossHitAt = s_test.setFlagAt = -1;
 		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.shadowRunAt = s_test.npcSprayAt = s_test.carryAt = s_test.slotSprayAt = s_test.melonAt = -1;
@@ -1574,6 +1902,14 @@ void runTests(TMarDirector* dir, bool arrived)
 				sscanf(tr, "gotoswitch@%d", &s_test.toRedAt);
 			if (const char* gg = strstr(plan, "gotogate@"))
 				sscanf(gg, "gotogate@%d:%d", &s_test.gateAt, &s_test.gateDistance);
+			if (const char* ne = strstr(plan, "nearenemy@"))
+				sscanf(ne, "nearenemy@%d:%d", &s_test.enemyAt, &s_test.enemyDistance);
+			if (const char* te = strstr(plan, "tear@"))
+				sscanf(te, "tear@%d", &s_test.tearAt);
+			if (const char* su = strstr(plan, "surf@"))
+				sscanf(su, "surf@%d", &s_test.surfAt);
+			if (const char* nb = strstr(plan, "nearboat@"))
+				sscanf(nb, "nearboat@%d", &s_test.boatAt);
 			if (const char* rt = strstr(plan, "pickred@"))
 				sscanf(rt, "pickred@%d:%d", &s_test.redTakeAt, &s_test.redTakeCount);
 			if (const char* rd = strstr(plan, "redswitch@"))
@@ -1709,6 +2045,57 @@ void runTests(TMarDirector* dir, bool arrived)
 				fprintf(stderr, "[multiplayer] test: to the red coin switch\n");
 			}
 		s_test.atRed = true;
+	}
+	if (s_test.tearAt >= 0 && !s_test.tore && s_test.frames >= s_test.tearAt)
+		s_test.tore = MpBossTestTear() != 0;
+	if (s_test.surfAt >= 0 && !s_test.surfed && s_test.frames >= s_test.surfAt && gpConductor) {
+		// a Blooper to ride (a map object of the three kinds TMario::receiveMessage knows)
+		s_test.surfed = true;
+		TLiveActor* blooper = nullptr;
+		for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end() && !blooper;
+		     ++it)
+			for (int i = 0; *it && i < (*it)->getObjNum() && !blooper; i++) {
+				TLiveActor* a = (*it)->getObj(i);
+				const u32 type = a ? (u32)a->getActorType() : 0;
+				if (type >= 0x400000C5 && type <= 0x400000C7)
+					blooper = a;
+			}
+		if (blooper) {
+			gpMarioOriginal->mPosition = blooper->mPosition;
+			gpMarioOriginal->receiveMessage(blooper, HIT_MESSAGE_ATTACK);
+			fprintf(stderr, "[multiplayer] test: on a Blooper (%x) at %.0f %.0f %.0f, Mario's status %x (retrace %u)\n",
+			        (unsigned)blooper->getActorType(), blooper->mPosition.x, blooper->mPosition.y, blooper->mPosition.z,
+			        (unsigned)gpMarioOriginal->mStatus, (unsigned)VIGetRetraceCount());
+		}
+		if (!(gpMarioOriginal->mStatus & MARIO_STATUS_FLAG_UNK10000))
+			fprintf(stderr, "[multiplayer] test: no Blooper to ride here\n");
+	}
+	if (s_test.boatAt >= 0 && !s_test.onBoat && s_test.frames >= s_test.boatAt && gpConductor) {
+		s_test.onBoat = true;
+		for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
+			if (*it && (*it)->getObjNum())
+				if (TFruitsBoat* b = dynamic_cast<TFruitsBoat*>((*it)->getObj(0))) {
+					gpMarioOriginal->mPosition.set(b->mPosition.x, b->mPosition.y + 400.0f, b->mPosition.z);
+					fprintf(stderr, "[multiplayer] test: on the boat at %.0f %.0f %.0f\n", b->mPosition.x, b->mPosition.y,
+					        b->mPosition.z);
+					break;
+				}
+	}
+	if (s_test.enemyAt >= 0 && !s_test.atEnemy && s_test.frames >= s_test.enemyAt && s_puppets[0]) {
+		TSmallEnemy* best = nullptr;
+		f32 farthest      = 0.0f;
+		for (int m = 0; m < s_managerCount; m++)
+			for (int i = 0; i < s_managers[m]->getObjNum() && i < kMaxEnemies; i++)
+				if (TSmallEnemy* e = enemyAt(m, i))
+					if (!enemyDown(e) && distance2(e->mPosition, s_puppets[0]->mPosition) > farthest)
+						best = e, farthest = distance2(e->mPosition, s_puppets[0]->mPosition);
+		if (best) {
+			gpMarioOriginal->mPosition.set(best->mPosition.x + s_test.enemyDistance, best->mPosition.y + 100.0f,
+			                               best->mPosition.z);
+			fprintf(stderr, "[multiplayer] test: %d from a %s at %.0f %.0f %.0f (%.0f from the host)\n", s_test.enemyDistance,
+			        typeid(*best).name(), best->mPosition.x, best->mPosition.y, best->mPosition.z, sqrtf(farthest));
+		}
+		s_test.atEnemy = true;
 	}
 	if (s_test.gateAt >= 0 && !s_test.atGate && s_test.frames >= s_test.gateAt) {
 		float at[3];
@@ -1862,6 +2249,8 @@ void runTests(TMarDirector* dir, bool arrived)
 					fprintf(stderr, "[multiplayer] test: Petey ground-pounded down\n");
 				}
 		}
+		if (!s_test.bossDowned && MpBossTestDown())
+			s_test.bossDowned = true;
 	}
 	// (after the test's own trip, when it has one: in the stage it went to)
 	if (s_test.setFlagAt >= 0 && !s_test.flagSet && s_test.frames >= s_test.setFlagAt && s_test.together > 0
@@ -2014,6 +2403,23 @@ void rememberDemo(const char* name)
 	snprintf(d.name, sizeof d.name, "%s", name);
 	d.frame = s_clock;
 }
+// Cameras a shared boss's own steps start (its fall, its Shine coming out):
+// every game's copy takes those steps when the host's does (mp_boss.cpp),
+// and plays its own, Shine and all. Passed on, the others would watch a
+// second one, and a Shine camera with no Shine in it. The boss Shine's
+// camera is also a few events' own (a cannon's on Noki Bay): theirs come out
+// in that player's game only, and are got for everyone by the Shine Get.
+bool ownCameraEverywhere(const char* name)
+{
+	static const char* const names[] = {"bgeso_fall_camera", "bgeso_fall_camera2", "bgeso_fall_camera3", "sirena_manta",
+	                                    "bwanwan_down_camera", "btelesa_roll_camera", "meoto_mogu_camera",
+	                                    "meoto_end_camera", "ボスシャインカメラ", "めおとウナギシャインカメラ"};
+	for (size_t i = 0; i < sizeof names / sizeof *names; i++)
+		if (!strcmp(name, names[i]))
+			return true;
+	return false;
+}
+
 int s_stageFrames;    // frames of play in this stage
 const f32 kNearDemo = 3000.0f; // a player this near a cutscene's place watches it from where they are
 char s_demoNames[8][64];
@@ -2031,8 +2437,12 @@ void demoCamera(const char* name, const float* pos, int frames, float angle, int
 	if (!enabled() || s_replayingDemo || !inStage() || !s_playing || !name || !m || s_spectating || flags == 1
 	    || m->mStatus == MARIO_STATUS_WIN_DEMO)
 		return;
+	// not in this player's first seconds in the stage: what plays then is
+	// their arrival's (an opening, an episode's introduction), theirs alone;
+	// passed on, a player who joins would pull everyone else to the start
+	// to watch it
 	const int fps = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
-	if (s_stageFrames < 3 * fps)
+	if (s_stageFrames < 12 * fps || ownCameraEverywhere(name))
 		return;
 	if (getenv("SMS_MULTIPLAYER_DEBUG"))
 		fprintf(stderr, "[multiplayer] cutscene here: %s%s\n", name, seenDemoLately(name) ? " (seen lately)" : "");
@@ -2075,8 +2485,8 @@ void playOthersCutscenes(TMarDirector* dir)
 		const int k = s_demoNext++ & 7;
 		memcpy(s_demoNames[k], buf + 1, len);
 		s_demoNames[k][len] = 0;
-		if (seenDemoLately(s_demoNames[k]))
-			continue; // this game played it already (its own copy started it too)
+		if (seenDemoLately(s_demoNames[k]) || ownCameraEverywhere(s_demoNames[k]))
+			continue; // this game played it already (its own copy started it too), or plays its own
 		rememberDemo(s_demoNames[k]);
 		const bool hasPos   = buf[1 + len] != 0;
 		float values[8];
@@ -2792,6 +3202,7 @@ void frame()
 	}
 	if (s_role == MPG_ROLE_CLIENT) {
 		skipTitle(dir);
+		leadTrip(dir);
 		clientShineExit(dir);
 		if (s_shineHoldFrames > 0)
 			s_shineHoldFrames--;
@@ -2841,8 +3252,7 @@ void frame()
 		memset(&none, 0, sizeof none);
 		mpg_set_pose(&none);
 	}
-	if (s_refusedFrames > 0)
-		s_refusedFrames--;
+	selectFrame();
 	updateText();
 }
 
@@ -2851,6 +3261,8 @@ void stageSetup()
 	s_hostShineFrames = 0; // a Shine's exit belongs to the stage it was got in
 	MpBossStageSetup();
 	s_inWinDemo = s_winRemote = false;
+	s_winCollector    = -1;
+	s_winShine        = nullptr;
 	s_shineGetFrames  = 0;
 	if (!enabled())
 		return;
@@ -2989,69 +3401,124 @@ void afterMovement()
 	landCarries();
 	tickHolders();
 	MpMirrorTick();
+	holdOthersShine();
 	if (s_role == MPG_ROLE_CLIENT) {
 		followHostEnemies();
+		reportOwnEnemies();
 		MpBossClientTick();
+	} else {
+		steerEnemies(); // those a client's game runs, where it says
 	}
 	if (s_spectating)
 		spectateTick();
 }
 
+// A client's own way out (a pipe, a painting, a secret course's entrance, a
+// story event): it leads. The trip goes ahead here, and the host is asked to
+// take everyone the same way (mpg_request_trip, sent next frame, once the
+// movie the way plays is known: TMarDirector::fireStreamingMovie sets it
+// after setNextStage); meanwhile this game does not go back to the host's
+// stage, and waits a while where it went for the others to come.
+int s_leadCode = -1;           // a way out this game took, to ask the host to take (setNextStage's code)
+int s_leadArea = -1, s_leadEpisode = -1; // where this game leads
+int s_leadFrames;              // frames left to wait there for the host (0: not leading)
+bool s_leadArrived;
+
 int allowNextStage(unsigned code, void* actor)
 {
 	int area, episode;
-	const int next = code >= 0x100 ? (int)(code >> 8) - 1 : (int)code;
+	const int next        = code >= 0x100 ? (int)(code >> 8) - 1 : (int)code;
+	const int nextEpisode = code >= 0x100 ? (int)(code & 0xFF) : 0xFF;
 	if (s_role == MPG_ROLE_HOST && inStage()) {
 		// setting off: everyone sets off now, so the fades go together. Not
 		// into the stage it is in (a lost life's start over is the host's
 		// alone; a way back in brings a new session, which the others follow)
 		const TGameSequence& cur = gpApplication.mCurrArea;
-		const int nextEpisode    = code >= 0x100 ? (int)(code & 0xFF) : 0xFF;
 		if (next != cur.getStage() || (nextEpisode != 0xFF && nextEpisode != cur.getScenario()))
 			mpg_host_leaving(next, nextEpisode);
 		return 1;
 	}
-	if (s_role != MPG_ROLE_CLIENT || !mpg_target(&area, &episode))
-		return 1;
-	if (next == area) {
-		// on to another episode of the stage everyone is in: a story event
-		// here (taking FLUDD on the Airstrip). The host takes everyone (alone,
-		// this game would only be brought back to the host's, the event gone)
-		const int nextEpisode = code >= 0x100 ? (int)(code & 0xFF) : 0xFF;
-		if (nextEpisode != episode) {
-			mpg_request_trip(next, nextEpisode);
-			if (getenv("SMS_MULTIPLAYER_DEBUG"))
-				fprintf(stderr, "[multiplayer] on to episode %d here: the host is asked to take everyone\n", nextEpisode);
-		}
-		return 1;
-	}
-	if (!s_refusedFrames)
-		showNotice("Only the host can take everyone to another area");
-	s_refusedFrames = 60;
-	// Let the trip go ahead (moveStage brings this game back into the host's
-	// stage): the game's callers carry on as if it went, so refusing it would
-	// leave Mario hidden on an exit floor, a stage-change object without its
-	// collision, or a coaster or boat ride half done.
 	(void)actor;
+	if (s_role != MPG_ROLE_CLIENT || !mpg_target(&area, &episode) || !inStage() || s_spectating)
+		return 1;
+	if (next == area && (nextEpisode == 0xFF || nextEpisode == episode) && next == gpApplication.mCurrArea.getStage())
+		return 1; // the stage everyone is in, again
+	s_leadCode    = (int)code;
+	s_leadArea    = next;
+	s_leadEpisode = nextEpisode;
+	s_leadFrames  = 0;
+	s_leadArrived = false;
+	if (getenv("SMS_MULTIPLAYER_DEBUG"))
+		fprintf(stderr, "[multiplayer] our own way out to area %d, episode %d: the host is asked to take everyone\n", next,
+		        nextEpisode);
 	return 1;
 }
 
-// Host: the clients' story events that move everyone on (mpg_request_trip),
-// taken as the host's own: everyone goes.
+// Client, each frame: the way out this game took, asked of the host (with the
+// movie it plays on the way); and, arrived there, the wait for the others.
+void leadTrip(TMarDirector* dir)
+{
+	const int fps = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
+	if (s_leadCode >= 0) {
+		const int movie = dir && dir->checkUnk4CFlag(TMarDirector::DIRECTOR_FLAG_MOVIE_PENDING) ? (int)gpApplication.getMovie() : -1;
+		if (mpg_request_trip(s_leadArea, s_leadEpisode, movie)) {
+			char text[128];
+			if (SMS_getShineStage((u8)s_leadArea) == SMS_getShineStage(gpApplication.mCurrArea.getStage()))
+				snprintf(text, sizeof text, "Leading everyone on");
+			else
+				snprintf(text, sizeof text, "Leading everyone to %s", worldName(s_leadArea));
+			showNotice(text);
+			fprintf(stderr, "[multiplayer] leading everyone to area %d, episode %d (movie %d)\n", s_leadArea, s_leadEpisode,
+			        movie);
+			s_leadFrames = 60 * fps; // on the way (a movie, a load) and a while there
+		} else {
+			s_leadArea = -1; // not in the host's session: this game goes back to the host's stage
+		}
+		s_leadCode = -1;
+	}
+	if (s_leadFrames <= 0)
+		return;
+	// there: the others have this long to come (the host may not have set
+	// off: busy leaving already); then this game goes back to the host's
+	if (s_playing && gpApplication.mCurrArea.getStage() == s_leadArea && !s_leadArrived) {
+		s_leadArrived = true;
+		s_leadFrames  = 12 * fps;
+	}
+	if (--s_leadFrames == 0)
+		s_leadArea = -1;
+}
+
+// Whether this game is leading the others to where it is going (or is).
+bool leading(int area)
+{
+	return s_leadFrames > 0 && area == s_leadArea;
+}
+
+// Host: the clients' ways out (mpg_request_trip), taken as the host's own:
+// everyone goes, with the movie on the way.
 void takeTrips(TMarDirector* dir)
 {
-	int slot, area, episode;
+	int slot, area, episode, movie;
 	static uint32_t tookIn;
-	while (mpg_next_trip(&slot, &area, &episode)) {
-		const u8 here = gpApplication.mCurrArea.getStage();
-		if (!dir || !inStage() || area != here || tookIn == mpg_session())
+	while (mpg_next_trip(&slot, &area, &episode, &movie)) {
+		if (!dir || !inStage() || tookIn == mpg_session() || dir->checkFlag(TMarDirector::DIRECTOR_FLAG_STAGE_TRANSITION_PENDING))
 			continue;
 		tookIn = mpg_session();
-		char text[96];
-		snprintf(text, sizeof text, "%s moved the story on: everyone goes", mpg_character_name(slot));
+		char text[128];
+		const u8 here = gpApplication.mCurrArea.getStage();
+		if (area == here)
+			snprintf(text, sizeof text, "%s moved the story on: everyone goes", mpg_character_name(slot));
+		else if (SMS_getShineStage((u8)area) == SMS_getShineStage(here))
+			snprintf(text, sizeof text, "%s leads everyone on", mpg_character_name(slot));
+		else
+			snprintf(text, sizeof text, "%s leads everyone to %s", mpg_character_name(slot), worldName(area));
 		showNotice(text);
-		fprintf(stderr, "[multiplayer] %s\n", text);
+		fprintf(stderr, "[multiplayer] %s (area %d, episode %d, movie %d)\n", text, area, episode, movie);
 		dir->setNextStage(episode == 0xFF ? (u16)area : (u16)(((area + 1) << 8) | episode), nullptr);
+		if (movie >= 0) {
+			gpApplication.setMovie((u32)movie);
+			dir->onUnk4CFlag(TMarDirector::DIRECTOR_FLAG_MOVIE_PENDING);
+		}
 	}
 }
 
@@ -3090,8 +3557,11 @@ void moveStage()
 	TMarDirector* dir = director();
 	if (dir && dir->checkFlag(TMarDirector::DIRECTOR_FLAG_SHINE_TAKEN))
 		return;
-	// wherever this game meant to go, it goes where the host is
+	// wherever this game meant to go, it goes where the host is; unless it
+	// leads the others there (they come after it)
 	TGameSequence& next = gpApplication.mNextArea;
+	if (leading(next.getStage()))
+		return;
 	if (next.getStage() != area || (episode != 0xFF && next.getScenario() != episode)) {
 		next.set((u8)area, (u8)episode, 0);
 		if (episode != 0xFF)
@@ -3182,4 +3652,37 @@ extern "C" int mp_player_position(int slot, float* xyz)
 	xyz[1] = s_puppets[slot]->mPosition.y;
 	xyz[2] = s_puppets[slot]->mPosition.z;
 	return 1;
+}
+
+// Host: a client's word on an enemy its game runs (mp_mirror.cpp passes it
+// on): the host's copy goes where it is, as a client's copy follows the host's.
+void MpEnemyReport(int slot, int key, const void* data, int size)
+{
+	const int m = key >> 8, i = key & 0xFF;
+	if (s_role != MPG_ROLE_HOST || size < 17 || slot <= 0 || slot > 3 || m >= s_managerCount || i >= kMaxEnemies)
+		return;
+	const u8* d = static_cast<const u8*>(data);
+	if (d[16]) {
+		s_enemyHeldBy[m][i] = (u8)slot; // it holds their player
+		s_enemyHeldAt[m][i] = (u16)s_clock;
+	}
+	if (s_enemyOwner[m][i] != slot && !d[16])
+		return; // not theirs (any more)
+	JGeometry::TVec3<f32> at;
+	f32 yawDeg;
+	memcpy(&at.x, d, 12);
+	memcpy(&yawDeg, d + 12, 4);
+	if (at.x != at.x || at.y != at.y || at.z != at.z || yawDeg != yawDeg)
+		return;
+	EnemyTarget& t = s_targets[m][i];
+	const int fps  = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
+	const f32 dt   = (s_clock - t.at) / (f32)fps;
+	if (t.known && dt > 0.02f && dt < 1.0f)
+		t.vel.set((at.x - t.pos.x) / dt, (at.y - t.pos.y) / dt, (at.z - t.pos.z) / dt);
+	else
+		t.vel.set(0.0f, 0.0f, 0.0f);
+	t.pos   = at;
+	t.yaw   = yawDeg;
+	t.at    = s_clock;
+	t.known = true;
 }

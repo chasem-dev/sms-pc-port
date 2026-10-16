@@ -22,7 +22,9 @@
 // when the host's does, every copy plays the defeat and brings out the
 // boss's Shine, which anyone can get for everyone (mp_game.cpp's Shine Get).
 #include "mp_boss.hpp"
+#include "mp_mirror.hpp"
 #include "../mp_game_api.h"
+#include "port_framerate.h"
 
 #include <Enemy/BossEel.hpp>
 #include <Enemy/BossGesso.hpp>
@@ -81,6 +83,7 @@ enum Hit {
 	HIT_SHADOW_STOMP, // Shadow Mario: stomped while down
 	HIT_GATE_SPRAY,   // Gatekeeper `unit`: sprayed (asleep, it wakes after enough)
 	HIT_GATE_MOUTH,   // Gatekeeper `unit`: water in its mouth, `count` hit points
+	HIT_TENTACLE_STUN, // Gooper Blooper: tentacle `unit` stomped flat
 };
 
 typedef const TNerveBase<TLiveActor>* Nerve;
@@ -368,7 +371,7 @@ int s_next;              // the next piece to send
 // client: what was last set from the host (to find this game's own hits)
 int s_setHp;
 int s_setValue[kMaxUnits];
-u8 s_reported[kMaxUnits + 4];
+u8 s_reported[kMaxUnits + 8]; // per unit; then Gooper Blooper's eye, and his tentacles' stomps
 bool s_followed;
 
 // ------------------------------------------------------------------ the Gatekeepers
@@ -520,6 +523,12 @@ void hitPetey(int, int kind, int count)
 
 // ------------------------------------------------------------------ Gooper Blooper
 
+const int kTentacleNodes = 6; // TBossGesso's (new TBGTentacle(this, 6, i))
+f32 clampNode(f32 v) { return v < -32000.0f ? -32000.0f : v > 32000.0f ? 32000.0f : v; }
+// client: the host's tentacles' nodes (from his middle) and when they came
+JGeometry::TVec3<f32> s_hostNodes[4][kTentacleNodes];
+int s_hostNodesAt[4] = {-1000, -1000, -1000, -1000};
+
 void writeGesso(Out& o)
 {
 	TBossGesso* b = static_cast<TBossGesso*>(s_boss);
@@ -530,10 +539,73 @@ void writeGesso(Out& o)
 	for (int i = 0; i < TBossGesso::TENTACLE_NUM; i++)
 		o.u8_(b->mTentacles[i] ? (u8)b->mTentacles[i]->getState() : 0);
 	writeWhere(o, b);
+	o.u8_(b->checkLiveFlag(LIVE_FLAG_DEAD) ? 1 : 0);
+	// two tentacles' shapes a time (their nodes, from his middle): everyone
+	// sees the same tentacles, swinging at whoever they swing at here
+	static int next;
+	o.u8_((u8)next);
+	for (int k = 0; k < 2; k++) {
+		TBGTentacle* t = b->mTentacles[(next + k) % TBossGesso::TENTACLE_NUM];
+		for (int n = 0; n < kTentacleNodes; n++) {
+			const JGeometry::TVec3<f32> at = t && n < t->mNodeNum ? t->mNodes[n].getPosition() : b->mPosition;
+			o.s16_((s16)clampNode(at.x - b->mPosition.x));
+			o.s16_((s16)clampNode(at.y - b->mPosition.y));
+			o.s16_((s16)clampNode(at.z - b->mPosition.z));
+		}
+	}
+	next = (next + 2) % TBossGesso::TENTACLE_NUM;
 }
 
-// a tentacle torn off (4) or growing back (6): the host's says
-bool tornOrRegrowing(int state) { return state == 4 || state == 6; }
+// A tentacle's states (TBGTentacle::changeStateAndFixNodes): held (3, pulled
+// by a player), torn off (4), stomped flat (5), growing back (6), guarding (10).
+const int kTentacleHeld = 3, kTentacleTorn = 4, kTentacleStunned = 5, kTentacleRegrow = 6, kTentacleGuard = 10;
+// torn off or growing back: the host's says
+bool tornOrRegrowing(int state) { return state == kTentacleTorn || state == kTentacleRegrow; }
+// one a stomp can flatten (TBGTakeHit::receiveMessage)
+bool stompable(int state)
+{
+	return state != kTentacleTorn && state != kTentacleStunned && state != kTentacleHeld && state != kTentacleRegrow
+	       && state != kTentacleGuard;
+}
+int s_gessoDying; // client: ticks this copy has been in its defeat since the host's was gone
+bool s_newWorld;  // client: this tick's boss record is a new one (not the last again)
+
+// A tentacle as the host's: in its step (swinging, resting, guarding, held
+// by someone there), and its shape, eased in. Not one this game's own
+// player holds (they pull it here), nor one torn off or growing back
+// (those steps are the host's, above).
+void followTentacle(TBossGesso* b, int i, int hostState)
+{
+	TBGTentacle* t = b->mTentacles[i];
+	const int fps  = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
+	if (!t || s_bossTick - s_hostNodesAt[i] > fps)
+		return;
+	const int here = t->getState();
+	if (here == kTentacleHeld || tornOrRegrowing(here) || tornOrRegrowing(hostState) || hostState == kTentacleStunned)
+		return;
+	if (hostState != here && hostState != kTentacleHeld && hostState >= 0 && hostState <= kTentacleGuard)
+		t->changeStateAndFixNodes(hostState);
+	// node 0 is at his shoulder (TBossGesso::perform puts it there)
+	static f32 apart; // debug: how far from the host's they are, lately
+	static int counted;
+	for (int n = 1; n < t->mNodeNum && n < kTentacleNodes; n++) {
+		const JGeometry::TVec3<f32>& rel = s_hostNodes[i][n];
+		const JGeometry::TVec3<f32> want(b->mPosition.x + rel.x, b->mPosition.y + rel.y, b->mPosition.z + rel.z);
+		JGeometry::TVec3<f32> at = t->mNodes[n].getPosition();
+		const f32 dx = want.x - at.x, dy = want.y - at.y, dz = want.z - at.z;
+		if (debug()) {
+			apart += sqrtf(dx * dx + dy * dy + dz * dz);
+			if (++counted % 3000 == 0) {
+				fprintf(stderr, "[multiplayer] Gooper Blooper's tentacles: %.0f units from the host's on average\n", apart / 3000);
+				apart = 0.0f;
+			}
+		}
+		at.x += dx * 0.5f;
+		at.y += dy * 0.5f;
+		at.z += dz * 0.5f;
+		t->mNodes[n].setPosition(at);
+	}
+}
 
 void readGesso(In& in)
 {
@@ -544,6 +616,23 @@ void readGesso(In& in)
 		tentacles[i] = in.u8_();
 	if (!in.ok)
 		return;
+	In where = in;
+	in.f32_(), in.f32_(), in.f32_(), in.s16_();
+	const bool hostDead = in.u8_() != 0 && in.ok;
+	const int first     = in.u8_();
+	JGeometry::TVec3<f32> nodes[2][kTentacleNodes];
+	for (int k = 0; k < 2; k++)
+		for (int n = 0; n < kTentacleNodes; n++) {
+			nodes[k][n].x = in.s16_();
+			nodes[k][n].y = in.s16_();
+			nodes[k][n].z = in.s16_();
+		}
+	if (in.ok && first < TBossGesso::TENTACLE_NUM && s_newWorld)
+		for (int k = 0; k < 2; k++) {
+			const int t = (first + k) % TBossGesso::TENTACLE_NUM;
+			memcpy(s_hostNodes[t], nodes[k], sizeof nodes[k]);
+			s_hostNodesAt[t] = s_bossTick;
+		}
 	const int local = nerveIndex(gessoNerve, b->getLatestNerve());
 	if (s_followed) {
 		if (b->getHitPoints() < s_setHp) // the beak pulled, here
@@ -554,22 +643,42 @@ void readGesso(In& in)
 		}
 		for (int i = 0; i < TBossGesso::TENTACLE_NUM; i++) {
 			TBGTentacle* t = b->mTentacles[i];
-			if (t && t->getState() == 4 && tentacles[i] != 4 && !s_reported[i]) {
+			if (t && t->getState() == kTentacleTorn && tentacles[i] != kTentacleTorn && !s_reported[i]) {
 				mpg_boss_hit(i, HIT_TENTACLE, 1); // torn off, here
 				s_reported[i] = 1;
 			}
-			if (tentacles[i] == 4)
+			if (tentacles[i] == kTentacleTorn)
 				s_reported[i] = 0;
+			// stomped flat here: flat in the host's too (so in everyone's)
+			if (t && t->getState() == kTentacleStunned && tentacles[i] != kTentacleStunned && !s_reported[kMaxUnits + 1 + i]) {
+				mpg_boss_hit(i, HIT_TENTACLE_STUN, 1);
+				s_reported[kMaxUnits + 1 + i] = 1;
+			}
+			if (tentacles[i] == kTentacleStunned || (t && t->getState() != kTentacleStunned))
+				s_reported[kMaxUnits + 1 + i] = 0;
 		}
 	}
 	if (local != kGessoEyeDamage)
 		s_reported[kMaxUnits] = 0;
+	// down in the host's game while this copy is not (it missed the step):
+	// it goes down here too
+	if (hostDead && local != kGessoDie && !b->checkLiveFlag(LIVE_FLAG_DEAD)) {
+		fprintf(stderr, "[multiplayer] Gooper Blooper is down in the host's game: down here too\n");
+		b->mHitPoints = 0;
+		b->mSpine->reset();
+		b->mSpine->setNext(gessoNerve(kGessoDie));
+		return;
+	}
 	followNerve(b, 0, nerve, gessoNerve, kGessoDie, kGessoDie);
-	b->mHitPoints     = (u8)hp;
+	// a copy never holds its last hit point: the beak pulled here takes it to
+	// 1, not to its defeat, whose fall, camera and Shine come once the host's
+	// goes down (each game plays its own)
+	const int here    = hp == 1 ? 2 : hp;
+	b->mHitPoints     = (u8)here;
 	b->mAttackMode    = mode;
 	b->unk190.color.a = (u8)ink;
-	// torn off and growing back as the host's; holding and pulling stay with
-	// the player who does them, in their own game
+	// torn off, growing back and stomped flat as the host's; holding and
+	// pulling stay with the player who does them, in their own game
 	for (int i = 0; i < TBossGesso::TENTACLE_NUM; i++) {
 		TBGTentacle* t = b->mTentacles[i];
 		if (!t)
@@ -578,9 +687,33 @@ void readGesso(In& in)
 			t->changeStateAndFixNodes(tentacles[i]);
 		else if (!tornOrRegrowing(tentacles[i]) && tornOrRegrowing(t->getState()))
 			t->changeStateAndFixNodes(0);
+		else if (tentacles[i] == kTentacleStunned && stompable(t->getState()))
+			t->changeStateAndFixNodes(kTentacleStunned);
+		followTentacle(b, i, tentacles[i]);
 	}
-	readWhere(in, b);
-	s_setHp = hp;
+	// its fall into the harbour is its own (eased toward the host's, it
+	// would be held where the host's sank, short of where this one aims)
+	if (local == kGessoDie || b->checkLiveFlag(LIVE_FLAG_DEAD)) {
+		if (hostDead)
+			s_gessoDying++; // the host's is gone: this one has a while to follow
+	} else {
+		s_gessoDying = 0;
+		readWhere(where, b);
+	}
+	s_setHp = here;
+}
+
+// Client, every tick: a defeat that never ends here (its fall was cut short)
+// ends a while after the host's is over (the fall itself takes half a minute).
+void finishGesso()
+{
+	TBossGesso* b = static_cast<TBossGesso*>(s_boss);
+	const int fps = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
+	if (b && !b->checkLiveFlag(LIVE_FLAG_DEAD) && s_gessoDying > 20 * fps) {
+		fprintf(stderr, "[multiplayer] Gooper Blooper's fall never ended here: gone\n");
+		b->changeAllTentacleState(0);
+		b->kill();
+	}
 }
 
 void hitGesso(int unit, int kind, int count)
@@ -592,8 +725,11 @@ void hitGesso(int unit, int kind, int count)
 		for (int i = 0; i < count && b->getHitPoints() > 0; i++)
 			b->gotBeakDamage();
 	else if (kind == HIT_TENTACLE && unit >= 0 && unit < TBossGesso::TENTACLE_NUM && b->mTentacles[unit]
-	         && b->mTentacles[unit]->getState() != 4)
-		b->mTentacles[unit]->changeStateAndFixNodes(4);
+	         && b->mTentacles[unit]->getState() != kTentacleTorn)
+		b->mTentacles[unit]->changeStateAndFixNodes(kTentacleTorn);
+	else if (kind == HIT_TENTACLE_STUN && unit >= 0 && unit < TBossGesso::TENTACLE_NUM && b->mTentacles[unit]
+	         && stompable(b->mTentacles[unit]->getState()))
+		b->mTentacles[unit]->changeStateAndFixNodes(kTentacleStunned);
 }
 
 // ------------------------------------------------------------------ Eely-Mouth
@@ -1157,6 +1293,7 @@ void MpBossStageSetup()
 	s_setHp    = 0;
 	memset(s_setValue, 0, sizeof s_setValue);
 	memset(s_reported, 0, sizeof s_reported);
+	s_gessoDying = 0;
 	for (int i = 0; i < kMaxUnits; i++)
 		s_hostNerve[i] = s_localNerve[i] = -1;
 	if (!gpConductor)
@@ -1325,6 +1462,12 @@ void MpBossHostFrame()
 		}
 	}
 	mpg_set_boss(buf, o.n);
+	static bool saidDown;
+	if (s_boss && (s_boss->checkLiveFlag(LIVE_FLAG_DEAD) != 0) != saidDown) {
+		saidDown = s_boss->checkLiveFlag(LIVE_FLAG_DEAD) != 0;
+		if (debug())
+			fprintf(stderr, "[multiplayer] the boss (host) is %s\n", saidDown ? "gone" : "here");
+	}
 	static int debugFrames;
 	if (debug() && s_boss && ++debugFrames % 300 == 0)
 		fprintf(stderr, "[multiplayer] boss (host): kind %d, %d hit points\n", s_kind, s_boss->getHitPoints());
@@ -1338,7 +1481,10 @@ void MpBossClientTick()
 	u8 buf[200];
 	float age     = 0.0f;
 	const int got = (int)mpg_boss(buf, sizeof buf, &age);
-	if (!got || age > 1.0f) {
+	static uint32_t lastSeq;
+	s_newWorld = mpg_world_seq() != lastSeq;
+	lastSeq    = mpg_world_seq();
+	if (!got || age > 1.0f || MpHostPaused()) {
 		s_followed = false;
 		return;
 	}
@@ -1379,6 +1525,8 @@ void MpBossClientTick()
 		}
 	}
 	s_followed = true;
+	if (s_kind == KIND_GESSO)
+		finishGesso();
 	static int debugTicks;
 	if (debug() && s_boss && ++debugTicks % 300 == 0)
 		fprintf(stderr, "[multiplayer] boss (here): kind %d, %d hit points\n", s_kind, s_boss->getHitPoints());
@@ -1440,6 +1588,31 @@ int MpBossTestHit()
 		return 0;
 	}
 	return 0;
+}
+
+int MpBossTestDown()
+{
+	if (s_kind != KIND_GESSO || !s_boss || s_boss->checkLiveFlag(LIVE_FLAG_DEAD))
+		return 0;
+	TBossGesso* b = static_cast<TBossGesso*>(s_boss);
+	fprintf(stderr, "[multiplayer] test: Gooper Blooper's beak pulled at his last hit point\n");
+	b->mHitPoints = 1;
+	b->mSpine->reset();
+	b->gotBeakDamage();
+	return 1;
+}
+
+int MpBossTestTear()
+{
+	if (s_kind != KIND_GESSO || !s_boss)
+		return 0;
+	TBGTentacle* t = static_cast<TBossGesso*>(s_boss)->mTentacles[0];
+	if (!t)
+		return 0;
+	fprintf(stderr, "[multiplayer] test: tearing Gooper Blooper's tentacle 0 (attack mode %d)\n",
+	        static_cast<TBossGesso*>(s_boss)->mAttackMode);
+	t->mDamageCount = t->mParams->mDamageCountMax.get();
+	return 1;
 }
 
 // Test aid (shadowspray@N:K): a spray on this game's Shadow Mario.
