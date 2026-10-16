@@ -1526,6 +1526,7 @@ struct TestPlan {
 	int bossHitAt;                   // bosshit@N: a hit on this game's copy of the boss (mp_boss.cpp)
 	int bossSprayAt, bossSprayFrames; // bossspray@N:K: that hit every tick for K ticks (a Gatekeeper sprayed)
 	int shadowSprayAt, shadowSprayFrames; // shadowspray@N:K: Shadow Mario sprayed every 4 ticks for K ticks
+	int shadowRunAt, shadowRunFast;   // shadowrun@N[:1]: Shadow Mario down, 150 ticks later running away (host); :1 his vanished run cut short
 	int npcSprayAt, npcSprayFrames;   // npcspray@N:K: the nearest NPC sprayed every tick for K ticks
 	int slotSprayAt;                  // slotspray@N: the first item slot machine sprayed (it spins)
 	int melonAt;                      // rollmelon@N: the big watermelon rolled along for 150 frames
@@ -1559,7 +1560,7 @@ void runTests(TMarDirector* dir, bool arrived)
 		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.gateAt = s_test.flAt = s_test.demoAt = -1;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
 		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = s_test.bossHitAt = s_test.setFlagAt = -1;
-		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.npcSprayAt = s_test.carryAt = s_test.slotSprayAt = s_test.melonAt = -1;
+		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.shadowRunAt = s_test.npcSprayAt = s_test.carryAt = s_test.slotSprayAt = s_test.melonAt = -1;
 		s_test.dieLives = -1;
 		if (const char* plan = getenv("SMS_MULTIPLAYER_TEST")) {
 			const char* t = strstr(plan, "take@");
@@ -1627,6 +1628,8 @@ void runTests(TMarDirector* dir, bool arrived)
 				sscanf(bs, "bossspray@%d:%d", &s_test.bossSprayAt, &s_test.bossSprayFrames);
 			if (const char* ss = strstr(plan, "shadowspray@"))
 				sscanf(ss, "shadowspray@%d:%d", &s_test.shadowSprayAt, &s_test.shadowSprayFrames);
+			if (const char* sr = strstr(plan, "shadowrun@"))
+				sscanf(sr, "shadowrun@%d:%d", &s_test.shadowRunAt, &s_test.shadowRunFast);
 			if (const char* ns = strstr(plan, "npcspray@"))
 				sscanf(ns, "npcspray@%d:%d", &s_test.npcSprayAt, &s_test.npcSprayFrames);
 			if (const char* rm = strstr(plan, "rollmelon@"))
@@ -1880,6 +1883,14 @@ void runTests(TMarDirector* dir, bool arrived)
 		const int kind = MpBossTestShadow();
 		if (s_test.frames < s_test.shadowSprayAt + 4)
 			fprintf(stderr, "[multiplayer] test: spraying this game's Shadow Mario (kind %d)\n", kind);
+	}
+	if (s_test.shadowRunAt >= 0
+	    && (s_test.frames == s_test.shadowRunAt || s_test.frames == s_test.shadowRunAt + 150
+	        || (s_test.shadowRunFast && s_test.frames == s_test.shadowRunAt + 160))) {
+		const int step = s_test.frames == s_test.shadowRunAt ? 0 : s_test.frames == s_test.shadowRunAt + 150 ? 1 : 2;
+		static const char* const said[] = {"goes down", "runs away", "is back on his node at once"};
+		if (MpBossTestShadowRun(step))
+			fprintf(stderr, "[multiplayer] test: this game's Shadow Mario %s\n", said[step]);
 	}
 	if (s_test.carryAt >= 0 && (s_test.frames == s_test.carryAt || s_test.frames == s_test.carryAt + s_test.carryFrames))
 		testCarry(s_test.frames == s_test.carryAt);
