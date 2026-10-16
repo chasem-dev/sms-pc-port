@@ -171,7 +171,7 @@ def main():
         procs.append(host)
         time.sleep(3)
         client = None
-        names = ['Luigi', 'Peach', 'Metal']
+        names = ['Luigi', 'Wario', 'Metal']
         offsets = args.offsets.split(';')
         first_bot = 0
         if args.client:

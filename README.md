@@ -200,7 +200,7 @@ How states work, and their limits: [docs/SAVE-STATES.md](docs/SAVE-STATES.md).
 
 ### Multiplayer
 
-Up to four players can play one game together over the network: the host plays as Mario on their own save, and the others join as Luigi, Peach and Metal Mario. Shines, coins, blue and red coins and lives are shared and saved in the host's file, everyone plays the host's level with the host's enemies and sees everyone's water, and only the host takes the group elsewhere.
+Up to four players can play one game together over the network: the host plays as Mario on their own save, and the others join as Luigi, Wario and Metal Mario. Shines, coins, blue and red coins and lives are shared and saved in the host's file, everyone plays the host's level with the host's enemies and sees everyone's water, and only the host takes the group elsewhere.
 SMS Launcher's **Multiplayer** button hosts or joins; without it, `SMS_MULTIPLAYER=host` hosts on UDP port 24002 (`SMS_MULTIPLAYER_PORT`), and `SMS_MULTIPLAYER=join SMS_MULTIPLAYER_ADDRESS=host:port` joins. The host forwards that port on their router. Details: [ext/multiplayer/README.md](ext/multiplayer/README.md).
 
 To change them, edit [`bindings.txt`](bindings.txt) (`CONTROL = KEY KEY ...`, one control per line; a line replaces that control's defaults), or point `SMS_BINDINGS` at another file.

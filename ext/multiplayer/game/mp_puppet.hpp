@@ -7,10 +7,8 @@
 // stage's player group beside Mario, so the scene performs and lights it as
 // it does him; it has no collision and takes nothing.
 //
-// Mario, Luigi and Metal Mario are Mario's model with his texture recoloured
-// (each puppet loads its own copy of the files, so the local Mario keeps his
-// colours); Peach is Peach's own model when the disc has her (mp_peach.cpp),
-// posed from Mario's animation.
+// Every character is Mario's model with his texture recoloured (each puppet
+// loads its own copy of the files, so the local Mario keeps his colours).
 
 #include "../mp_game_api.h"
 #include <Strategic/HitActor.hpp>
@@ -53,8 +51,6 @@ private:
 	bool buildBody();
 	bool buildFludd();
 	bool buildYoshi();
-	bool buildPeach();
-	void posePeach(f32 (*base)[4]);
 
 	int mSlot;
 	int mCharacter;
@@ -69,7 +65,7 @@ private:
 	int mSpawnFrames;   // since this player appeared (it grows in over the first few)
 	int mGoneFrames;    // since it was last seen
 
-	M3UModelMario* mModel;   // Mario-shaped body (for Peach, the skeleton she copies)
+	M3UModelMario* mModel;
 	J3DModelData* mBodyData;
 	J3DModel* mHands[2][2];  // [ma_hnd2, ma_hnd3][right, left]
 	J3DModel* mCap[2];       // ma_cap1 (cap), ma_cap3 (hair, capless)
@@ -77,9 +73,6 @@ private:
 	MActor* mNozzles[6];
 	u8 mNozzleJoint;
 	MActor* mYoshi;
-	J3DModel* mPeach;        // Peach's body, when this puppet is her
-	J3DModel* mPeachParts[3]; // her hair, left hand, right hand
-	struct PeachRig* mRig;   // how her joints follow Mario's (mp_puppet.cpp)
 	u16 mJointChest, mJointHandR, mJointHandL, mJointHead, mJointMHead;
 	J3DDrawBuffer* mOpa;
 	J3DDrawBuffer* mXlu;

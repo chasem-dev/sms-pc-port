@@ -1260,7 +1260,7 @@ void followHostEnemies()
 // ------------------------------------------------------------------- arriving
 
 // A player who joins starts beside the stage's start, not inside the host:
-// a step to the side by slot (Luigi right, Peach left, Metal Mario two steps
+// a step to the side by slot (Luigi right, Wario left, Metal Mario two steps
 // right), where there is floor at about the same height. Where a wall, a
 // ledge or water is in the way, the next of the slot's other places is tried
 // (the other side, a step behind), so no two players start in one spot.
@@ -2877,7 +2877,7 @@ void stageSetup()
 		if (self && mpg_character(slot) == MPG_CHAR_MARIO)
 			continue;
 		const s32 before   = JKRHeap::getCurrentHeap()->getTotalFreeSize();
-		// a puppet takes about 450 KB of the stage's memory (Peach 700 KB);
+		// a puppet takes about 450 KB of the stage's memory;
 		// the port's stages have some 44 MB to spare (its arena is larger than
 		// the console's), so this only guards against a stage that has not
 		if (before < 1024 * 1024) {

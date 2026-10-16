@@ -66,7 +66,7 @@ const size_t kMaxCleanLog = 16384;
 const size_t kCleanBatch  = 120; // 8 bytes each, within a message
 const uint32_t kCleanFresh = 2000;
 
-const char* const kCharacters[MP_MAX_PLAYERS] = {"Mario", "Luigi", "Peach", "Metal Mario"};
+const char* const kCharacters[MP_MAX_PLAYERS] = {"Mario", "Luigi", "Wario", "Metal Mario"};
 const char* const kWorlds[] = {"the Airstrip", "Delfino Plaza", "Bianco Hills", "Ricco Harbor", "Gelato Beach",
                                "Pinna Park", "Sirena Beach", "Pianta Village", "Noki Bay", "Corona Mountain"}; // SMS_getShineStage's order
 const size_t kPoseSize = 4 + 4 + 4 + 12 + 4 + 18 + 4 + 16 + 4 + 8 + 4 + 4 + 1 + 48 + 16; // at most (spraying from two)
