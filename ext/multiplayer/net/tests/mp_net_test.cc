@@ -89,6 +89,7 @@ static int g_next;            // client: the host's messages so far
 static int g_big;             // client: the host's biggest messages so far
 const int kBigMessages = 5;
 static int g_got[MP_MAX_PLAYERS]; // host: each client's messages so far
+const int kPlayers = 4; // the host takes four (MpConfig::maxPlayers): the fifth is refused
 static int g_loose;           // client: the host's unreliable messages so far
 static int64_t g_looseLast = -1; // client: the newest one's number
 
@@ -141,6 +142,7 @@ static int client(int index, bool lingerToBeKilled)
 	CHECK(pump(5, [](MpEvent*) { return mp_link() == MP_LINK_CONNECTED; }));
 	const int slot = mp_local_slot();
 	CHECK(slot >= 1 && slot <= 3);
+	CHECK(mp_max_players() == kPlayers); // the host's, from its ACCEPT
 
 	// everyone (host + 3 clients) shows up
 	CHECK(pump(10, [](MpEvent*) { return mp_players() == 0xF; }));
@@ -155,7 +157,7 @@ static int client(int index, bool lingerToBeKilled)
 		mine.counter++;
 		mp_set_local_state(&mine, sizeof mine);
 		int all = 1;
-		for (int i = 0; i < MP_MAX_PLAYERS; i++) {
+		for (int i = 0; i < kPlayers; i++) {
 			if (i == slot)
 				continue;
 			State st;
@@ -252,6 +254,7 @@ static void probe()
 	r.str(name, sizeof name);
 	r.str(status, sizeof status);
 	CHECK(r.ok);
+	CHECK(max == kPlayers); // the host's own most, not the session's room
 	fprintf(stderr, "[probe] %d/%d players, open %d, build %s, host %s, status \"%s\"\n", players, max, open, build,
 	        name, status);
 	CHECK(max == 4 && !strcmp(build, kBuild) && !strcmp(name, "host") && !strcmp(status, "Delfino Plaza"));
@@ -332,7 +335,9 @@ int main()
 	g_port = 30000 + rand() % 20000;
 	g_onEvent = hostEvent;
 	MpConfig h = config(MP_ROLE_HOST, "host", kBuild, 0.33f);
+	h.maxPlayers = kPlayers;
 	CHECK(mp_start(&h) == 0);
+	CHECK(mp_max_players() == kPlayers);
 	CHECK(mp_link() == MP_LINK_CONNECTED && mp_local_slot() == 0);
 	mp_set_host_status("Delfino Plaza");
 	// a host still choosing its file takes nobody yet

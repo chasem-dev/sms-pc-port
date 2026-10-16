@@ -6,7 +6,7 @@ They are the start of a code-mod framework for the port: a new feature that need
 | Folder | What it is |
 | --- | --- |
 | [`core/`](core/port_ext.cpp) | the registry: the game's hooks call each registered extension in turn |
-| [`multiplayer/`](multiplayer/README.md) | up to four players in one game over the network |
+| [`multiplayer/`](multiplayer/README.md) | up to eight players in one game over the network |
 | [`demo/`](demo/README.md) | plays Mario from a script, as a player holds the controller, for trailers and footage |
 
 ## The hooks

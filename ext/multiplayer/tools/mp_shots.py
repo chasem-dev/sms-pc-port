@@ -133,7 +133,7 @@ def main():
     ap.add_argument('--window', action='store_true',
                     help='capture the window as shown (notices and player list included) instead of the picture, '
                          'through SDL\'s offscreen driver; --shots are then GX frames')
-    ap.add_argument('--offsets', default='130,-60;-130,-60;0,-170', help='bots\' places beside the host, X,Z;...')
+    ap.add_argument('--offsets', default='130,-60;-130,-60;0,-170;260,-120;-260,-120;130,-280;-130,-280', help='bots\' places beside the host, X,Z;...')
     args = ap.parse_args()
     global WINDOW
     WINDOW = args.window
@@ -172,7 +172,7 @@ def main():
         procs.append(host)
         time.sleep(3)
         client = None
-        names = ['Luigi', 'Wario', 'Metal']
+        names = ['Luigi', 'Wario', 'Metal', 'Fire', 'Purple', 'Orange', 'Ice']
         offsets = args.offsets.split(';')
         first_bot = 0
         if args.client:
@@ -218,7 +218,7 @@ def main():
             build_file = os.path.join(args.build, 'multiplayer-build.txt')
             if os.path.exists(build_file):
                 benv['MP_BOT_BUILD'] = open(build_file).read().strip()
-            procs.append(subprocess.Popen([bot, '127.0.0.1:' + port, '--name', names[i % 3], '--offset', offsets[i % 3],
+            procs.append(subprocess.Popen([bot, '127.0.0.1:' + port, '--name', names[i % len(names)], '--offset', offsets[i % len(offsets)],
                                            '--seconds', str(args.seconds), '--coins', '3' if i == first_bot else '0']
                                           + (['--turn'] if args.turn else [])
                                           + (args.bot_args.split(';')[i].split() if i < len(args.bot_args.split(';')) else []),

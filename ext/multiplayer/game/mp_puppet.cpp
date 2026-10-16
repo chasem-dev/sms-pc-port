@@ -88,9 +88,44 @@ u16 pack565(int r, int g, int b)
 	return (u16)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
 }
 
+// Mario's red (cap, shirt), told from his reddish-brown hair as Wario's is,
+// and his blue (overalls).
+bool marioRed(int r, int g, int b) { return r > 80 && r > g * 3 && r > b * 3; }
+bool marioBlue(int r, int g, int b) { return b > 60 && b * 2 > r * 3 && b * 5 > g * 6; }
+int clamp255(int v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
+
+// The Marios past the first four: Mario in colours of his own (his red and
+// blue swapped for others; skin, hair and the rest stay).
+void recolourMario(int character, int& r, int& g, int& b)
+{
+	if (marioRed(r, g, b)) {
+		const int v = r; // the red's shade, kept
+		switch (character) {
+		case MPG_CHAR_FIRE_MARIO: r = clamp255(v + 20), g = clamp255(v + 15), b = clamp255(v + 5); break;
+		case MPG_CHAR_PURPLE_MARIO: r = v * 62 / 100, g = v * 20 / 100, b = v * 82 / 100; break;
+		case MPG_CHAR_ORANGE_MARIO: r = clamp255(v * 105 / 100), g = v * 55 / 100, b = v / 10; break;
+		case MPG_CHAR_ICE_MARIO: r = v * 55 / 100, g = v * 88 / 100, b = clamp255(v * 105 / 100); break;
+		}
+	} else if (marioBlue(r, g, b)) {
+		const int v = b;
+		switch (character) {
+		case MPG_CHAR_FIRE_MARIO: r = clamp255(v * 13 / 10), g = v / 4, b = v / 5; break;
+		case MPG_CHAR_PURPLE_MARIO: r = v * 35 / 100 + 10, g = v * 33 / 100 + 10, b = v * 38 / 100 + 12; break;
+		case MPG_CHAR_ORANGE_MARIO: r = v * 60 / 100, g = v * 38 / 100, b = v * 22 / 100; break;
+		case MPG_CHAR_ICE_MARIO: r = clamp255(v * 80 / 100 + 60), g = clamp255(v * 82 / 100 + 62), b = clamp255(v * 85 / 100 + 70); break;
+		}
+	}
+}
+
 void recolour(int character, int& r, int& g, int& b)
 {
 	switch (character) {
+	case MPG_CHAR_FIRE_MARIO:
+	case MPG_CHAR_PURPLE_MARIO:
+	case MPG_CHAR_ORANGE_MARIO:
+	case MPG_CHAR_ICE_MARIO:
+		recolourMario(character, r, g, b);
+		break;
 	case MPG_CHAR_LUIGI:
 		// Mario's red (cap, shirt) becomes Luigi's green; skin, hair and the
 		// blue overalls stay
@@ -700,14 +735,14 @@ void TMpPuppet::applyPose(JDrama::TGraphics* graphics)
 void MpMeasureSmoothness(int slot, const MpgPose& pose)
 {
 	static const bool debug = getenv("SMS_MULTIPLAYER_DEBUG") != nullptr;
-	if (!debug || slot < 0 || slot >= 4)
+	if (!debug || slot < 0 || slot >= MPG_MAX_PLAYERS)
 		return;
 	struct Track {
 		f32 x, z, avg;
 		bool have;
 		int moving, stalls, jumps, frames;
 	};
-	static Track tracks[4];
+	static Track tracks[MPG_MAX_PLAYERS];
 	Track& k     = tracks[slot];
 	const f32 x  = pose.mtx[0][3], z = pose.mtx[2][3];
 	if (k.have) {

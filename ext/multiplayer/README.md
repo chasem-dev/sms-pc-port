@@ -1,9 +1,9 @@
 # Multiplayer
 
-Up to four players in one game: one hosts, opening their game and their save to the others, who join it by address and port.
+Up to eight players in one game (fewer if the host sets `SMS_MULTIPLAYER_MAX_PLAYERS`): one hosts, opening their game and their save to the others, who join it by address and port.
 Everyone plays the host's level together and makes progress on the host's save.
 
-- The host is Mario. The others are Luigi, Wario and Metal Mario, in the order they join; each sees the others, and themselves, as their character.
+- The host is Mario. The others are Luigi, Wario, Metal Mario, Fire Mario, Purple Mario, Orange Mario and Ice Mario, in the order they join; each sees the others, and themselves, as their character.
 - Shines, blue coins, red coins, coins and lives are shared: what anyone collects counts for everyone, and the host's save keeps it.
 - Coins and items one player takes disappear for everyone, including those that appear during the level (from a box, a defeated enemy or a switch): those are matched by type and place, and one that appears in a game after someone took theirs is gone as it appears, so nobody collects one twice.
 - A switch pressed in any game (a red coin switch, a switch that throws out hidden coins) is pressed in every game, without taking the others' controls or camera.
@@ -36,6 +36,7 @@ Without the launcher, these variables do the same:
 | `SMS_MULTIPLAYER=host` | host, on `SMS_MULTIPLAYER_PORT` (24002 by default) |
 | `SMS_MULTIPLAYER=join` | join `SMS_MULTIPLAYER_ADDRESS` (`host`, `host:port`, `[ipv6]:port`) |
 | `SMS_MULTIPLAYER_NAME=name` | the name the others see (23 characters) |
+| `SMS_MULTIPLAYER_MAX_PLAYERS=n` | host: the most players the game takes, the host included (2 to 8, default 8); more are refused with a message saying so |
 | `SMS_MULTIPLAYER_TIMEOUT=s` | seconds of silence before a player counts as gone (default 10) |
 | `SMS_MULTIPLAYER_STATUS=0` | no player list in the corner (the notices still show) |
 
@@ -73,7 +74,7 @@ A client sends the host its own state; the host sends each client everyone else'
 
 **Smooth movement.** Poses are stamped with the sender's game time and every one that arrives is kept. Each game draws the others a little in the past, about two and a half of their updates behind their newest pose, between the two poses either side of that moment: position and facing (the turn interpolated as a quaternion), animation frames (across a loop's end), blends, FLUDD's and Yoshi's frames. The moment drawn moves on by a steady amount each frame, the other game's time per frame of ours measured over many frames, and leans gently toward where it should be, so others move evenly even when updates arrive in bursts, frames vary in length, or the two games run at different speeds.
 
-**Players' looks.** Each player sends their body's root matrix, its animation, frame and blend, the upper body's (pumping), the face's texture pattern, the hands and shapes shown, the cap, FLUDD's animation and nozzle, and Yoshi's animation and colour. The others' games draw a puppet in the stage's player group, beside Mario, under his light: Mario's own model with his texture recoloured for Luigi (green), Wario (yellow, with Mario's blue overalls) and Metal Mario (silver), each from its own copy of the files. A player who is not Mario sees themselves the same way: the game leaves out Mario's own models and draws theirs.
+**Players' looks.** Each player sends their body's root matrix, its animation, frame and blend, the upper body's (pumping), the face's texture pattern, the hands and shapes shown, the cap, FLUDD's animation and nozzle, and Yoshi's animation and colour. The others' games draw a puppet in the stage's player group, beside Mario, under his light: Mario's own model with his texture recoloured for Luigi (green), Wario (yellow, with Mario's blue overalls), Metal Mario (silver), and the Marios whose red and blue are swapped for others: Fire (white, red overalls), Purple (purple, dark overalls), Orange (orange, brown overalls) and Ice (light blue, white overalls), each from its own copy of the files. A player who is not Mario sees themselves the same way: the game leaves out Mario's own models and draws theirs.
 
 ## Testing
 
@@ -93,6 +94,6 @@ Each game runs under a 2.5 GB memory cap.
 
 ## Limits
 
-- Each other player's model takes about 450 KB of the stage's memory. Every stage measured has some 44 MB to spare in the port (its arena is larger than the console's), so all four always fit.
+- Each other player's model takes about 450 KB of the stage's memory. Every stage measured has some 44 MB to spare in the port (its arena is larger than the console's), so all eight (seven puppets, 3 MB) always fit.
 - An enemy chases the player whose game runs it (the nearest); in the other games it goes where that game sends it, and still hurts the player there when it touches.
 - Bosses, switches and the like are each game's own; the save's flags, the stage, items taken, enemies and water are shared.
