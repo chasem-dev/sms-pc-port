@@ -1,0 +1,116 @@
+Reason: port: Y in the pause menu opens the settings menu (src/settings_menu.cpp), hinted under the save state hint; the menu has the pad while it is open and draws last in the frame, over the HUD, as the save state menu does
+--- a/src/GC2D/PauseMenu2.cpp
++++ b/src/GC2D/PauseMenu2.cpp
+@@ -37,6 +37,7 @@
+ #ifdef TARGET_PC
+ #include "port_savestate.h"
+ #include "port_savestate_menu.h"
++#include "port_settings_menu.h"
+ #include <string.h>
+ 
+ // Port: the save state hint at the pause menu's top right (save states,
+@@ -112,6 +113,38 @@
+ 	gfx->setScissor(gfx->getScissor());
+ }
+ 
++// Port: the settings hint under the save state one (settings menu,
++// src/settings_menu.cpp): the Y button, which the system font draws as the
++// controller in use labels it, and "SETTINGS". Pressing it while
++// paused opens the menu (move below).
++static void PauseSettingsHintDraw(TPauseMenu2* menu, JDrama::TGraphics* gfx)
++{
++	if (menu->mState == TPauseMenu2::MENU_SAVING || menu->mState == TPauseMenu2::MENU_CLOSED
++	    || SaveStateMenuIsOpen() || SettingsMenuIsOpen())
++		return;
++	const u8 alpha = menu->mMenuPane->getAlpha(); // fades with the menu
++	if (!alpha)
++		return;
++	JUTResFont* font = gpSystemFont;
++	const char* const kLabel = "\xA5 SETTINGS";
++	const f32 textSize = 18.0f;
++	const JDrama::TRect& viewport = gfx->getViewport();
++	const f32 right = viewport.getWidth() - 28.0f;
++	const f32 labelLine = 112.0f;
++	J2DOrthoGraph graph(viewport);
++	graph.setPort(); // the menu's screen left its own projection
++	graph.setup2D();
++	// a drop shadow, then the hint
++	for (int pass = 0; pass < 2; pass++) {
++		const f32 offset = pass == 0 ? 2.0f : 0.0f;
++		font->setGX();
++		font->setCharColor(pass == 0 ? JUtility::TColor(0, 0, 0, alpha / 2) : JUtility::TColor(255, 255, 255, alpha));
++		font->drawString_size_scale(right - PauseHintTextWidth(font, kLabel, textSize) + offset, labelLine + offset,
++		                            textSize, textSize, kLabel, strlen(kLabel), false);
++	}
++	gfx->setScissor(gfx->getScissor());
++}
++
+ // A position-only state load closes the menu as Continue does (patch
+ // zzzz-savestate-01).
+ void PauseMenuCloseForStateLoad()
+@@ -142,6 +175,11 @@
+ 		SaveStateMenuSetAlpha(mMenuPane->getAlpha());
+ 		return;
+ 	}
++	// and under the settings menu
++	if (mState == MENU_OPEN && SettingsMenuIsOpen()) {
++		SettingsMenuSetAlpha(mMenuPane->getAlpha());
++		return;
++	}
+ #endif
+ 	switch (mState) {
+ 	case MENU_APPEARING: {
+@@ -164,11 +202,15 @@
+ 	}
+ #ifdef TARGET_PC
+ 	PauseStateHintDraw(this, gfx);
+-	// the save state menu fades with the pause menu (it draws last in the frame)
+-	if (mState == MENU_OPEN)
++	PauseSettingsHintDraw(this, gfx);
++	// the save state and settings menus fade with the pause menu (they draw last in the frame)
++	if (mState == MENU_OPEN) {
+ 		SaveStateMenuSetAlpha(mMenuPane->getAlpha());
+-	else
++		SettingsMenuSetAlpha(mMenuPane->getAlpha());
++	} else {
+ 		SaveStateMenuClose();
++		SettingsMenuClose();
++	}
+ #endif
+ }
+ 
+@@ -536,6 +578,15 @@
+ 		SaveStateMenuMove(mGamePad);
+ 		return;
+ 	}
++	// the settings menu has it while it is open, and Y opens it
++	if (mState == MENU_OPEN && SettingsMenuIsOpen()) {
++		SettingsMenuMove(mGamePad);
++		return;
++	}
++	if (mState == MENU_OPEN && mGamePad->testTrigger(JUTGamePad::Y)) {
++		SettingsMenuOpen();
++		return;
++	}
+ #endif
+ 	switch (mState) {
+ 	case MENU_APPEARING:
+--- a/src/System/Application.cpp
++++ b/src/System/Application.cpp
+@@ -997,6 +997,7 @@
+ #ifdef TARGET_PC
+ #include "port_savestate.h"
+ #include "port_savestate_menu.h"
++#include "port_settings_menu.h"
+ #include <Camera/Camera.hpp>
+ #include <GC2D/GCConsole2.hpp>
+ #include <Player/Mario.hpp>
+@@ -1355,6 +1356,8 @@
+ #ifdef TARGET_PC
+ 			// the save state menu over everything (port_savestate_menu.h)
+ 			SaveStateMenuDraw(JDrama::TRect(0, 0, mode.fbWidth, mode.efbHeight));
++			// and the settings menu (port_settings_menu.h)
++			SettingsMenuDraw(JDrama::TRect(0, 0, mode.fbWidth, mode.efbHeight));
+ #endif
+ 			// TODO: the ROM loads gpMSound twice here (once for the test,
+ 			// once for the call); neither this spelling nor SMSGetMSound()
