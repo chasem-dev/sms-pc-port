@@ -46,6 +46,7 @@
 #include <MoveBG/MapObjBianco.hpp>
 #include <MoveBG/MapObjBlock.hpp>
 #include <MoveBG/MapObjCorona.hpp>
+#include <MoveBG/MapObjDolpic.hpp>
 #include <MoveBG/MapObjEx.hpp>
 #include <MoveBG/MapObjMare.hpp>
 #include <MoveBG/MapObjMonte.hpp>
@@ -341,6 +342,49 @@ int saveRide(TLiveActor* a, u8* out)
 	for (int i = 0; i < 3; i++)
 		o.f(scale[i]);
 	return o.n;
+}
+
+// The Turbo nozzle's doors (the plaza's, the airport's): broken down by a
+// player dashing into them, in their game only (TTurboNozzleDoor::touchPlayer).
+// Broken down in one game, in all: the others' break as theirs would. Open is
+// gone at the airport (both halves) and, in the plaza, its opening animation
+// on; one open as the stage loaded (`scratch` 1: not there in this episode)
+// is no news.
+bool isTurboDoor(TLiveActor* a) { return dynamic_cast<TTurboNozzleDoor*>(a) != nullptr; }
+bool doorOpen(TLiveActor* a)
+{
+	if (a->checkLiveFlag(LIVE_FLAG_DEAD))
+		return true;
+	// the plaza's stands at its opening's first frame: open once it has moved on
+	MActor* m = a->getMActor();
+	if (!m || !m->checkCurAnm("nozzledoor", ANM_TYPE_BCK))
+		return false;
+	J3DFrameCtrl* fc = m->getFrameCtrl(ANM_TYPE_BCK);
+	return fc && fc->getFrame() > 0.5f;
+}
+int saveTurboDoor(TLiveActor*, u8* out)
+{
+	out[0] = 1; // sent only once open (MpMirrorTick)
+	return 1;
+}
+void takeTurboDoor(TLiveActor* a, const u8* in, int size, int, int* scratch)
+{
+	TTurboNozzleDoor* d = static_cast<TTurboNozzleDoor*>(a);
+	(void)scratch;
+	if (size < 1 || !in[0] || doorOpen(a))
+		return;
+	if (gpMarDirector && gpMarDirector->getCurrentMap() == 1) {
+		d->startBck("nozzledoor");
+		if (J3DFrameCtrl* fc = d->getMActor() ? d->getMActor()->getFrameCtrl(ANM_TYPE_BCK) : nullptr)
+			fc->setFrame(1.0f); // on its way (as the next frame's step would have it)
+	} else {
+		d->makeObjDead();
+		if (d->unk144)
+			d->unk144->makeObjDead();
+	}
+	if (getenv("SMS_MULTIPLAYER_DEBUG"))
+		fprintf(stderr, "[multiplayer] the Turbo nozzle door at %.0f %.0f %.0f was broken down in another game: here too\n",
+		        a->mPosition.x, a->mPosition.y, a->mPosition.z);
 }
 
 // The plaza's fruit boats: rowed along their routes, stopped and set off by riders.
@@ -1199,6 +1243,7 @@ const Kind kKinds[] = {
 	{"sand block", isSandBlock, saveSandBlock, takeSandBlock, OWN_RIDER, 3, false, 0, 0},
 	{"fish with a coin", isCarryingSchool, saveSchool, takeSchool, OWN_HOST, 3, false, 0, 0},
 	{"watermelon", isWatermelon, saveWatermelon, takeWatermelon, OWN_USER, 2, false, 0, 0},
+	{"Turbo nozzle door", isTurboDoor, saveTurboDoor, takeTurboDoor, OWN_USER, 3, false, 0, 0},
 };
 const int kKindCount = sizeof kKinds / sizeof kKinds[0];
 
@@ -1425,6 +1470,14 @@ bool ownedHere(Mirrored& m)
 			fprintf(stderr, "[multiplayer] %s %d.%d: its reels stopped here (won %d)\n", m.kind->name, m.manager, m.index,
 			        (int)static_cast<TSlotDrum*>(m.actor)->unk194);
 	}
+	// a Turbo door broken down here: ours to say so (closed, nothing to say)
+	if (m.actor && m.kind->match == isTurboDoor) {
+		const bool open = doorOpen(m.actor) && !m.scratch;
+		if (open && !m.sentSize)
+			m.usedAt = s_clock;
+		if (!open)
+			return false;
+	}
 	// used here lately: ours (two seconds after; riding, while on it)
 	if (m.kind->owner != OWN_HOST && s_clock - m.usedAt < 2 * fps())
 		return true;
@@ -1463,6 +1516,8 @@ void add(TLiveActor* a, int manager, int index)
 			m.index   = index;
 			m.kind    = &kKinds[k];
 			m.usedAt  = m.heardAt = -100000;
+			if (isTurboDoor(a))
+				m.scratch = doorOpen(a) ? 1 : 0; // open as it loaded
 			return;
 		}
 }
@@ -1527,6 +1582,21 @@ void MpMirrorPrepareRides()
 				made++;
 		fprintf(stderr, "[multiplayer] %s: a copy for each of %d other players to ride\n", k ? "mud boats" : "leaf boats", made);
 	}
+}
+
+bool MpMirrorTestTurboDoor()
+{
+	for (int i = 0; i < s_count; i++) {
+		Mirrored& m = s_mirrors[i];
+		if (!m.actor || m.kind->match != isTurboDoor || doorOpen(m.actor))
+			continue;
+		const u8 open = 1;
+		takeTurboDoor(m.actor, &open, 1, 0, &m.scratch); // as a dash into it would
+		fprintf(stderr, "[multiplayer] test: broke down the Turbo nozzle door at %.0f %.0f %.0f\n", m.actor->mPosition.x,
+		        m.actor->mPosition.y, m.actor->mPosition.z);
+		return true;
+	}
+	return false;
 }
 
 bool MpMirrorTestRide(int seconds)

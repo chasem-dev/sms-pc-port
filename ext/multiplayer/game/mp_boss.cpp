@@ -845,6 +845,9 @@ void readManta(In& in, int slot)
 		// out (or another size) in the host's game: here too, where it is there
 		m->initNthGeneration(gen);
 		m->mPosition.set(x, y, z);
+		// out between this frame's movement and its drawing: not drawn until
+		// its view is worked out (next frame), its shadow pass crashed on it
+		m->onLiveFlag(LIVE_FLAG_CLIPPED_OUT);
 		s_hostNerve[slot] = -1;
 	} else if (!alive && here) {
 		m->kill();
@@ -1582,10 +1585,15 @@ void MpBossHostFrame()
 			fprintf(stderr, "[multiplayer] boss (host): Shadow Mario's water %d, stomps %d\n", (int)s_shadow->mWaterCounter,
 			        (int)s_shadow->mTrampleCount);
 		if (s_mantas) {
-			int alive = 0;
+			int alive = 0, hits = -1, gen = -1;
 			for (int i = 0; i < s_mantas->getObjNum(); i++)
-				alive += !s_mantas->getObj(i)->checkLiveFlag(LIVE_FLAG_DEAD);
-			fprintf(stderr, "[multiplayer] boss (host): %d Phantamanta pieces out\n", alive);
+				if (!s_mantas->getObj(i)->checkLiveFlag(LIVE_FLAG_DEAD)) {
+					TBossManta* m = static_cast<TBossManta*>(s_mantas->getObj(i));
+					if (!alive++)
+						hits = m->unk19C, gen = m->mGeneration;
+				}
+			fprintf(stderr, "[multiplayer] boss (host): %d Phantamanta pieces out (the first: size %d, %d hits)\n", alive, gen,
+			        hits);
 		}
 		if (s_boss)
 			fprintf(stderr, "[multiplayer] boss (host): kind %d, %d hit points\n", s_kind, s_boss->getHitPoints());
@@ -1749,6 +1757,18 @@ int MpBossTestShadow()
 }
 
 // Test aid (gotogate@N:D): where this game's first Gatekeeper still up is.
+bool MpBossTestMantaOut()
+{
+	if (s_kind != KIND_MANTA || !s_mantas || !s_mantas->getObjNum() || !gpMarioOriginal)
+		return false;
+	TBossManta* m = static_cast<TBossManta*>(s_mantas->getObj(0));
+	m->initNthGeneration(0);
+	m->mPosition.set(gpMarioOriginal->mPosition.x, gpMarioOriginal->mPosition.y, gpMarioOriginal->mPosition.z + 1500.0f);
+	m->onLiveFlag(LIVE_FLAG_CLIPPED_OUT); // as readManta's (drawn once its view is worked out)
+	fprintf(stderr, "[multiplayer] test: Phantamanta out\n");
+	return true;
+}
+
 bool MpBossTestGatePos(float at[3])
 {
 	for (int i = 0; i < kMaxGates; i++)

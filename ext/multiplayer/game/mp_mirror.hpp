@@ -44,6 +44,8 @@ void MpMirrorUsed(const void* object);
 bool MpMirrorKeepsHits(const void* object);
 // Whether this game's Mario stands on Bowser's hot tub (the host tips it under him).
 bool MpMirrorOnTub();
+// Test aid (turbodoor@N): breaks down this game's first Turbo nozzle door, as a dash into it would.
+bool MpMirrorTestTurboDoor();
 // Test aid (rideboat@N[:S]): puts this game's Mario on the nearest mud or
 // leaf boat and drives it on for S seconds (10; 0: stands on it), as his water would.
 bool MpMirrorTestRide(int seconds);
