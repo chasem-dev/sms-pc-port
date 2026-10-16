@@ -1505,6 +1505,8 @@ struct TestPlan {
 	bool redTook;
 	int toRedAt;             // goes to the red coin switch
 	bool atRed;
+	int gateAt, gateDistance; // gotogate@N:D: stands D units from the first Gatekeeper
+	bool atGate;
 	int nearAt;              // stands before an NPC (presses of B talk to it), up to 1800 frames
 	bool talked;
 	bool tookAgain;
@@ -1554,7 +1556,7 @@ void runTests(TMarDirector* dir, bool arrived)
 {
 	if (!s_test.parsed) {
 		s_test.parsed = true;
-		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.flAt = s_test.demoAt = -1;
+		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.gateAt = s_test.flAt = s_test.demoAt = -1;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
 		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = s_test.bossHitAt = s_test.setFlagAt = -1;
 		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.npcSprayAt = s_test.carryAt = s_test.slotSprayAt = s_test.melonAt = -1;
@@ -1569,6 +1571,8 @@ void runTests(TMarDirector* dir, bool arrived)
 				sscanf(fl, "fludd@%d", &s_test.flAt);
 			if (const char* tr = strstr(plan, "gotoswitch@"))
 				sscanf(tr, "gotoswitch@%d", &s_test.toRedAt);
+			if (const char* gg = strstr(plan, "gotogate@"))
+				sscanf(gg, "gotogate@%d:%d", &s_test.gateAt, &s_test.gateDistance);
 			if (const char* rt = strstr(plan, "pickred@"))
 				sscanf(rt, "pickred@%d:%d", &s_test.redTakeAt, &s_test.redTakeCount);
 			if (const char* rd = strstr(plan, "redswitch@"))
@@ -1702,6 +1706,15 @@ void runTests(TMarDirector* dir, bool arrived)
 				fprintf(stderr, "[multiplayer] test: to the red coin switch\n");
 			}
 		s_test.atRed = true;
+	}
+	if (s_test.gateAt >= 0 && !s_test.atGate && s_test.frames >= s_test.gateAt) {
+		float at[3];
+		if (MpBossTestGatePos(at)) {
+			gpMarioOriginal->mPosition.set(at[0] + s_test.gateDistance, at[1] + 100.0f, at[2]);
+			fprintf(stderr, "[multiplayer] test: %d from the Gatekeeper at %.0f %.0f %.0f\n", s_test.gateDistance,
+			        at[0], at[1], at[2]);
+		}
+		s_test.atGate = true;
 	}
 	if (s_test.redTakeAt >= 0 && !s_test.redTook && s_test.frames >= s_test.redTakeAt && gpItemManager) {
 		int taken = 0;
@@ -1991,6 +2004,7 @@ void rememberDemo(const char* name)
 	d.frame = s_clock;
 }
 int s_stageFrames;    // frames of play in this stage
+const f32 kNearDemo = 3000.0f; // a player this near a cutscene's place watches it from where they are
 char s_demoNames[8][64];
 JGeometry::TVec3<f32> s_demoPos[8];
 int s_demoNext;
@@ -2062,7 +2076,8 @@ void playOthersCutscenes(TMarDirector* dir)
 		s_demoPos[k].set(values[0], values[1], values[2]);
 		// to the player who started it, then their cutscene; one about a
 		// place (a boss, a statue) brings everyone to the player nearest it,
-		// and leaves that player where they are
+		// and leaves that player where they are, and anyone already near it
+		// (round a Gatekeeper's puddle, say)
 		JGeometry::TVec3<f32> at(values[4], values[5], values[6]);
 		f32 face = values[7];
 		bool warp = true;
@@ -2070,7 +2085,8 @@ void playOthersCutscenes(TMarDirector* dir)
 			const JGeometry::TVec3<f32>& focus = s_demoPos[k];
 			f32 best = distance2(m->mPosition, focus);
 			warp     = false;
-			for (int other = 0; other < 4; other++)
+			const bool nearAlready = best < kNearDemo * kNearDemo;
+			for (int other = 0; other < 4 && !nearAlready; other++)
 				if (watchable(other) && distance2(s_puppets[other]->mPosition, focus) < best) {
 					best = distance2(s_puppets[other]->mPosition, focus);
 					at   = s_puppets[other]->mPosition;
@@ -2080,8 +2096,8 @@ void playOthersCutscenes(TMarDirector* dir)
 		}
 		if (warp)
 			m->warpRequest(at, face);
-		fprintf(stderr, "[multiplayer] %s started a cutscene (%s): everyone watches\n", mpg_character_name(slot),
-		        s_demoNames[k]);
+		fprintf(stderr, "[multiplayer] %s started a cutscene (%s): everyone watches%s\n", mpg_character_name(slot),
+		        s_demoNames[k], warp ? "" : " (from here)");
 		s_replayingDemo = true;
 		dir->fireStartDemoCamera(s_demoNames[k], hasPos ? &s_demoPos[k] : nullptr, frames, values[3], option, nullptr, 0,
 		                         nullptr, JDrama::TFlagT<u16>(0));
