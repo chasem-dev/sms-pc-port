@@ -221,8 +221,11 @@ struct Controller {
 	double drawAt[MP_MAX_PLAYERS]  = {};
 	bool drawing[MP_MAX_PLAYERS]   = {};
 	// how much of their game's time passes in a frame of ours, on average
-	// (their updates come in bursts; their game may run faster or slower)
+	// (their updates come in bursts; their game may run faster or slower):
+	// their time and our frames, each summed with older ones fading
 	double theirsPerFrame[MP_MAX_PLAYERS] = {};
+	double theirsSum[MP_MAX_PLAYERS]      = {};
+	double framesSum[MP_MAX_PLAYERS]      = {};
 	uint32_t newestSeen[MP_MAX_PLAYERS]   = {};
 	int framesSinceNew[MP_MAX_PLAYERS]    = {}; // our frames since their newest pose came
 	// the usual gap between their poses, in their game's time
@@ -1193,14 +1196,22 @@ void takePoses()
 				g.drawAt[slot]         = target;
 				g.drawing[slot]        = true;
 				g.theirsPerFrame[slot] = g.frameMs;
+				g.theirsSum[slot]      = g.frameMs * 10.0;
+				g.framesSum[slot]      = 10.0;
 				g.framesSinceNew[slot] = 0;
 			} else {
 				// how fast their game runs against ours: measured only as their
-				// poses come (a stall must not slow it), within a fifth of ours
+				// poses come (a stall must not slow it), within a fifth of ours.
+				// Their time over our frames, summed, not each arrival's own
+				// ratio: poses relayed by the host come unevenly (one skipped,
+				// then one late), and the average of those ratios runs fast
+				// (66 ms in one frame and 33 in two average 41, not 33), which
+				// drew relayed players past their newest pose, held and jumping.
 				const double advanced = (double)(int32_t)(newest - g.newestSeen[slot]);
 				if (advanced > 0.0) {
-					const double perFrame  = advanced / std::max(1, g.framesSinceNew[slot]);
-					const double rate      = g.theirsPerFrame[slot] * 0.9 + perFrame * 0.1;
+					g.theirsSum[slot]      = g.theirsSum[slot] * 0.9 + advanced;
+					g.framesSum[slot]      = g.framesSum[slot] * 0.9 + std::max(1, g.framesSinceNew[slot]);
+					const double rate      = g.theirsSum[slot] / g.framesSum[slot];
 					g.theirsPerFrame[slot] = std::min(g.frameMs * 1.2, std::max(g.frameMs * 0.8, rate));
 					g.framesSinceNew[slot] = 0;
 				}

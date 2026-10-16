@@ -13,6 +13,9 @@
 // --delay S does what the host did S seconds ago, where it was then (a
 // player trailing behind, out of step with the host).
 // --yaw DEG faces DEG degrees away from the host's facing.
+// --circle R walks round a circle of R units about its place, at an even
+// speed in its own game time (a player moving smoothly at the source, to see
+// how smoothly the others draw them).
 // --coins N reports N coins picked up, one a second from three seconds in
 // the host's stage, to check that pickups add up in the host's game.
 #include "../mp_game_api.h"
@@ -41,6 +44,7 @@ int main(int argc, char** argv)
 	bool spray     = false;
 	int follow     = 0;
 	float delay    = 0.0f, yawDeg = 0.0f;
+	float circle   = 0.0f;
 	for (int i = 2; i < argc; i++) {
 		if (!strcmp(argv[i], "--name") && i + 1 < argc)
 			name = argv[++i];
@@ -57,11 +61,13 @@ int main(int argc, char** argv)
 		else if (!strcmp(argv[i], "--spray"))
 			spray = true;
 		else if (!strcmp(argv[i], "--follow") && i + 1 < argc)
-			follow = atoi(argv[++i]) & 3;
+			follow = atoi(argv[++i]) % MPG_MAX_PLAYERS;
 		else if (!strcmp(argv[i], "--delay") && i + 1 < argc)
 			delay = (float)atof(argv[++i]);
 		else if (!strcmp(argv[i], "--yaw") && i + 1 < argc)
 			yawDeg = (float)atof(argv[++i]);
+		else if (!strcmp(argv[i], "--circle") && i + 1 < argc)
+			circle = (float)atof(argv[++i]);
 	}
 	setenv("SMS_MULTIPLAYER", "join", 1);
 	setenv("SMS_MULTIPLAYER_ADDRESS", argv[1], 1);
@@ -138,6 +144,12 @@ int main(int argc, char** argv)
 			mine.mtx[0][3] += host.mtx[0][0] * offX + host.mtx[0][2] * offZ;
 			mine.mtx[1][3] += host.mtx[1][0] * offX + host.mtx[1][2] * offZ;
 			mine.mtx[2][3] += host.mtx[2][0] * offX + host.mtx[2][2] * offZ;
+			if (circle > 0.0f) {
+				// 12 units a frame round the circle, by frames (the poses' own clock)
+				const float angle = frame * 12.0f / circle;
+				mine.mtx[0][3] += circle * cosf(angle);
+				mine.mtx[2][3] += circle * sinf(angle);
+			}
 			// the host's water, from where we stand
 			for (int e = 0; e < 2; e++)
 				for (int c = 0; c < 3; c++)
