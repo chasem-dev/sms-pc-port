@@ -1306,6 +1306,20 @@ int MpBossTestShadow()
 	return KIND_SHADOW;
 }
 
+// Test aid (gotogate@N:D): where this game's first Gatekeeper still up is.
+bool MpBossTestGatePos(float at[3])
+{
+	for (int i = 0; i < kMaxGates; i++)
+		if (TBiancoGateKeeper* g = gateAt(i))
+			if (!g->checkLiveFlag(LIVE_FLAG_DEAD)) {
+				at[0] = g->mPosition.x;
+				at[1] = g->mPosition.y;
+				at[2] = g->mPosition.z;
+				return true;
+			}
+	return false;
+}
+
 // Whether `actor` is one of the bosses shared here (their hits go through
 // the boss's own reports, not as hits on shared objects).
 bool MpBossIsBoss(const void* actor)

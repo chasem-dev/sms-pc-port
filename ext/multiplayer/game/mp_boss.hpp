@@ -16,5 +16,7 @@ int MpBossTestHit();
 bool MpBossIsBoss(const void* actor);
 // Test aid: a spray on this game's Shadow Mario; his kind, 0 if he is not here.
 int MpBossTestShadow();
+// Test aid: where this game's first Gatekeeper still up is; false if none.
+bool MpBossTestGatePos(float at[3]);
 
 #endif
