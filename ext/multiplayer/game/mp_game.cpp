@@ -1848,6 +1848,7 @@ struct TestPlan {
 	int surfAt;                 // surf@N: this player gets on a Blooper (surfing)
 	bool surfed;
 	int boatAt;                 // nearboat@N: this player stands on the first fruit boat
+	int titleQuitAt;            // titlequit@N: this game goes back to the title, as the pause menu's Save & Quit does
 	int rideAt, rideSeconds;    // rideboat@N[:S]: this player rides the nearest mud or leaf boat, driven on S seconds
 	bool rode;
 	bool onBoat;
@@ -1912,7 +1913,7 @@ void runTests(TMarDirector* dir, bool arrived)
 {
 	if (!s_test.parsed) {
 		s_test.parsed = true;
-		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.gateAt = s_test.flAt = s_test.demoAt = s_test.enemyAt = s_test.tearAt = s_test.surfAt = s_test.boatAt = s_test.sandAt = s_test.rideAt = -1;
+		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.gateAt = s_test.flAt = s_test.demoAt = s_test.enemyAt = s_test.tearAt = s_test.surfAt = s_test.boatAt = s_test.sandAt = s_test.rideAt = s_test.titleQuitAt = -1;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
 		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = s_test.bossHitAt = s_test.setFlagAt = -1;
 		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.shadowRunAt = s_test.npcSprayAt = s_test.carryAt = s_test.slotSprayAt = s_test.melonAt = -1;
@@ -1937,6 +1938,8 @@ void runTests(TMarDirector* dir, bool arrived)
 				sscanf(su, "surf@%d", &s_test.surfAt);
 			if (const char* nb = strstr(plan, "nearboat@"))
 				sscanf(nb, "nearboat@%d", &s_test.boatAt);
+			if (const char* tq = strstr(plan, "titlequit@"))
+				sscanf(tq, "titlequit@%d", &s_test.titleQuitAt);
 			if (const char* rb = strstr(plan, "rideboat@"))
 				if (sscanf(rb, "rideboat@%d:%d", &s_test.rideAt, &s_test.rideSeconds) < 2)
 					s_test.rideSeconds = 10;
@@ -2103,6 +2106,15 @@ void runTests(TMarDirector* dir, bool arrived)
 		}
 		if (!(gpMarioOriginal->mStatus & MARIO_STATUS_FLAG_UNK10000))
 			fprintf(stderr, "[multiplayer] test: no Blooper to ride here\n");
+	}
+	if (s_test.titleQuitAt >= 0 && s_test.frames == s_test.titleQuitAt) {
+		// the way the pause menu's Save & Quit leaves (TMarDirector::direct,
+		// STATE_CARD_SAVE): to the title, without moveStage
+		fprintf(stderr, "[multiplayer] test: back to the title\n");
+		dir->unkE4 = 4;
+		dir->unkB4 = TApplication::APP_STATE_DONE;
+		gpApplication.getFader()->setFadeStatus(TSMSFader::FADE_STATUS_FULLY_FADED_OUT);
+		dir->mState = TMarDirector::STATE_UNK12;
 	}
 	if (s_test.rideAt >= 0 && !s_test.rode && s_test.frames >= s_test.rideAt) {
 		s_test.rode = true;
@@ -3582,6 +3594,11 @@ void moveStage()
 		// all the same, so the others load it afresh too
 		// (not a lost life's: that player alone starts over, the others play on)
 		const TGameSequence& cur = gpApplication.mCurrArea;
+		// to the title (it reloads itself now and then): nothing for the
+		// others, who play on where they are (the controller told them the
+		// host is at the title; they set off with it once it leaves for a stage)
+		if (next.getStage() == 15)
+			return;
 		const bool same = next.getStage() == cur.getStage() && next.getScenario() == cur.getScenario();
 		const bool miss = s_missReload;
 		s_missReload    = false;
