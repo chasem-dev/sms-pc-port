@@ -18,6 +18,8 @@ bool MpBossIsBoss(const void* actor);
 int MpBossTestShadow();
 // Test aid: where this game's first Gatekeeper still up is; false if none.
 bool MpBossTestGatePos(float at[3]);
+// Test aid (mantaout@N): Phantamanta comes out near this game's player (its fight begun).
+bool MpBossTestMantaOut();
 // Test aid: Gooper Blooper's first tentacle torn off this game's own way
 // (TBGTentacle::checkDamage: in his first fight, its movie takes the stage
 // on); 1 if he is here.
