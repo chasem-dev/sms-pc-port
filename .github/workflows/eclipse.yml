@@ -87,8 +87,17 @@ jobs:
         shell: pwsh
         run: |
           "SMS_COMPILER_CACHE=$((Get-Command sccache).Source.Replace('\', '/'))" >> $env:GITHUB_ENV
-          "SCCACHE_GHA_ENABLED=on" >> $env:GITHUB_ENV
-          "SCCACHE_IGNORE_SERVER_IO_ERROR=1" >> $env:GITHUB_ENV
+          # A local cache, kept between runs as one archive per job: sccache's
+          # Actions cache backend stores each object file as a cache entry of
+          # its own, which filled the repository's 10 GB and made writes fail.
+          "SCCACHE_DIR=${{ runner.temp }}/sccache" >> $env:GITHUB_ENV
+          "SCCACHE_CACHE_SIZE=500M" >> $env:GITHUB_ENV
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/sccache
+          key: sccache-eclipse-${{ matrix.os }}-${{ matrix.eclipse }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: sccache-eclipse-${{ matrix.os }}-${{ matrix.eclipse }}-
       - name: Test Windows cross compiler cache routing
         if: runner.os == 'Windows'
         run: python tools/tests/test_msys_cross_compile.py
@@ -131,6 +140,14 @@ jobs:
           name: windows-64-eclipse
           path: Eclipse CI with spaces/port/windows-game
           retention-days: 7
+      # Only main saves: a pull request starts from main's cache, so the
+      # repository keeps one archive per job (the Actions cache holds 10 GB).
+      - name: Save compiler cache
+        if: (success() || failure()) && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/sccache
+          key: sccache-eclipse-${{ matrix.os }}-${{ matrix.eclipse }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Show the Windows executable's sections
         if: failure() && runner.os == 'Windows'
         run: |

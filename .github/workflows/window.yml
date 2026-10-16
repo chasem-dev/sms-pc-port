@@ -45,7 +45,7 @@ jobs:
           apt_install() { for n in 1 2 3; do sudo timeout 300 apt-get -o Acquire::Retries=3 install -y --no-install-recommends "$@" && return; echo "apt-get install attempt $n failed"; done; return 1; }
           if [ "$ARCH" = 32 ]; then sudo dpkg --add-architecture i386; fi
           apt_update
-          apt_install cmake g++-multilib python3 patch binutils xvfb xauth openbox x11-utils libsdl2-dev libegl-dev libgl-dev libgl1-mesa-dri libegl-mesa0 gdb
+          apt_install cmake g++-multilib python3 patch binutils xvfb xauth openbox libsdl2-dev libegl-dev libgl-dev libgl1-mesa-dri libegl-mesa0 gdb
           # The port already supports 32-bit SDL using the host's headers and
           # i386 runtime libraries. Avoid incompatible multiarch GLib dev tools.
           if [ "$ARCH" = 32 ]; then
@@ -86,14 +86,19 @@ jobs:
             # This path is used on Windows. Test its SDL calls before the X11
             # window manager starts: X11 changes decorations asynchronously.
             smoke build/window/platform/gx/gx_borderlesstest
-            openbox --sm-disable > build/window/window-manager.log 2>&1 &
+            # Openbox sets _NET_SUPPORTING_WM_CHECK before it starts managing
+            # windows; SDL_ShowWindow waits forever for a window mapped in
+            # that gap. Its --startup command runs once it is managing them.
+            window_wm_ready="$RUNNER_TEMP/window-manager-ready"
+            rm -f "$window_wm_ready"
+            openbox --sm-disable --startup "touch $window_wm_ready" > build/window/window-manager.log 2>&1 &
             window_wm_pid=$!
             trap "kill $window_wm_pid" EXIT
             for attempt in {1..100}; do
-              if xprop -root _NET_SUPPORTING_WM_CHECK | grep -q "window id #"; then break; fi
+              if [ -e "$window_wm_ready" ]; then break; fi
               sleep 0.05
             done
-            xprop -root _NET_SUPPORTING_WM_CHECK | grep -q "window id #"
+            [ -e "$window_wm_ready" ]
             smoke env -u SMS_FULLSCREEN build/window/platform/gx/gx_windowsmoke --window
             smoke env SMS_FULLSCREEN=0 build/window/platform/gx/gx_windowsmoke --window
             smoke env SMS_FULLSCREEN=1 build/window/platform/gx/gx_windowsmoke --fullscreen
