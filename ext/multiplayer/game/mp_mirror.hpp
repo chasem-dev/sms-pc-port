@@ -17,6 +17,10 @@ bool MpPausedHere();
 // on the mirror channel as manager 253, index manager << 8 | index).
 void MpEnemyReport(int slot, int key, const void* data, int size);
 
+// Debug (SMS_MULTIPLAYER_MOVERS=1): `stageFrame` frames into play, the
+// stage's objects that moved by themselves, and how each kind is shared.
+void MpMirrorSurvey(int stageFrame);
+
 // A stage is in play: find its mirrored objects.
 void MpMirrorCollect();
 // A stage is loading: the last stage's objects are gone (none is touched again).
@@ -38,6 +42,8 @@ bool MpMirrorTestTubEdge();
 bool MpMirrorTestClaimNpc();
 // Test aid: rolls the big watermelon along (this game's Mario against it); `frame` counts from 0.
 bool MpMirrorTestRollMelon(int frame);
+// Test aid: drops this game's Mario onto the first sand block.
+bool MpMirrorTestSandBlock();
 // Test aid: stands this game's Mario before the first NPC, facing it; true once a talk is on.
 bool MpMirrorTestNearNpc();
 

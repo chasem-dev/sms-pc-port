@@ -1826,6 +1826,8 @@ struct TestPlan {
 	bool surfed;
 	int boatAt;                 // nearboat@N: this player stands on the first fruit boat
 	bool onBoat;
+	int sandAt;                 // sandblock@N: this player drops onto the first sand block
+	bool onSand;
 	int nearAt;              // stands before an NPC (presses of B talk to it), up to 1800 frames
 	bool talked;
 	bool tookAgain;
@@ -1885,7 +1887,7 @@ void runTests(TMarDirector* dir, bool arrived)
 {
 	if (!s_test.parsed) {
 		s_test.parsed = true;
-		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.gateAt = s_test.flAt = s_test.demoAt = s_test.enemyAt = s_test.tearAt = s_test.surfAt = s_test.boatAt = -1;
+		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.gateAt = s_test.flAt = s_test.demoAt = s_test.enemyAt = s_test.tearAt = s_test.surfAt = s_test.boatAt = s_test.sandAt = -1;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
 		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = s_test.bossHitAt = s_test.setFlagAt = -1;
 		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.shadowRunAt = s_test.npcSprayAt = s_test.carryAt = s_test.slotSprayAt = s_test.melonAt = -1;
@@ -1910,6 +1912,8 @@ void runTests(TMarDirector* dir, bool arrived)
 				sscanf(su, "surf@%d", &s_test.surfAt);
 			if (const char* nb = strstr(plan, "nearboat@"))
 				sscanf(nb, "nearboat@%d", &s_test.boatAt);
+			if (const char* sb = strstr(plan, "sandblock@"))
+				sscanf(sb, "sandblock@%d", &s_test.sandAt);
 			if (const char* rt = strstr(plan, "pickred@"))
 				sscanf(rt, "pickred@%d:%d", &s_test.redTakeAt, &s_test.redTakeCount);
 			if (const char* rd = strstr(plan, "redswitch@"))
@@ -2046,6 +2050,8 @@ void runTests(TMarDirector* dir, bool arrived)
 			}
 		s_test.atRed = true;
 	}
+	if (s_test.sandAt >= 0 && !s_test.onSand && s_test.frames >= s_test.sandAt)
+		s_test.onSand = MpMirrorTestSandBlock();
 	if (s_test.tearAt >= 0 && !s_test.tore && s_test.frames >= s_test.tearAt)
 		s_test.tore = MpBossTestTear() != 0;
 	if (s_test.surfAt >= 0 && !s_test.surfed && s_test.frames >= s_test.surfAt && gpConductor) {
@@ -3236,6 +3242,7 @@ void frame()
 				takeTrips(dir);
 			}
 			runTests(dir, !s_wasPlaying);
+			MpMirrorSurvey(s_stageFrames);
 			noticeCutscenes();
 			playOthersCutscenes(dir);
 			endReplayWithStarter(dir);

@@ -28,18 +28,22 @@
 #include <Enemy/LimitKoopaJr.hpp>
 #include <Enemy/RiccoHook.hpp>
 #include <Enemy/WireTrap.hpp>
+#include <Enemy/SmallEnemy.hpp>
 #include <Enemy/SleepBossHanachan.hpp>
 #include <Animal/AnimalBase.hpp>
 #include <Animal/BirdNerve.hpp>
 #include <Animal/boid.hpp>
 #include <Animal/fishoid.hpp>
 #include <M3DUtil/MActor.hpp>
+#include <Map/Map.hpp>
 #include <Map/MapData.hpp>
 #include <MoveBG/Item.hpp>
 #include <MoveBG/ItemManager.hpp>
 #include <MoveBG/MapObjBall.hpp>
 #include <MoveBG/MapObjBianco.hpp>
+#include <MoveBG/MapObjBlock.hpp>
 #include <MoveBG/MapObjCorona.hpp>
+#include <MoveBG/MapObjEx.hpp>
 #include <MoveBG/MapObjMare.hpp>
 #include <MoveBG/MapObjMonte.hpp>
 #include <MoveBG/MapObjMamma.hpp>
@@ -65,7 +69,7 @@ namespace {
 const int kAlone = 255, kWaves = 254;
 
 int fps(); // ticks a second (below)
-const int kMaxMirrors = 320;
+const int kMaxMirrors = 512; // (a sand course has some 200 blocks)
 
 enum Owner {
 	OWN_HOST,  // the host's (no player steers it)
@@ -966,6 +970,86 @@ void takeMachine(TLiveActor* a, const u8* in, int size, int, int*)
 	m->mStateTimer = timer;
 }
 
+// Things carried round a path by an animation (a secret course's sand bird
+// and the blocks and coins on it, TJointCoin): where both its animations
+// are, the host's. Each game's plays on smoothly at its own rate; it is put
+// on the host's frame when far from it, and nudged toward it when near.
+bool isJointMover(TLiveActor* a) { return dynamic_cast<TJointCoin*>(a) != nullptr; }
+int saveJointMover(TLiveActor* a, u8* out)
+{
+	TJointCoin* j = static_cast<TJointCoin*>(a);
+	Put o(out);
+	o.f(frameOf(j->unk138));
+	o.f(frameOf(j->getMActor()));
+	return o.n;
+}
+void stepToward(MActor* a, f32 frame, int age)
+{
+	J3DFrameCtrl* c = a ? a->getFrameCtrl(ANM_TYPE_BCK) : nullptr;
+	if (!c)
+		return;
+	const f32 end = c->getEnd() > 0 ? (f32)c->getEnd() : 0.0f;
+	f32 want      = frame + c->getRate() * (f32)(age < 30 ? age : 30); // on at this game's rate since
+	if (end > 0.0f)
+		want = fmodf(want, end);
+	f32 d = want - c->getFrame();
+	if (end > 0.0f && d > end * 0.5f) // the short way round its loop
+		d -= end;
+	else if (end > 0.0f && d < -end * 0.5f)
+		d += end;
+	f32 at = d > 10.0f || d < -10.0f ? want : c->getFrame() + d * 0.1f;
+	if (end > 0.0f && at < 0.0f)
+		at += end;
+	else if (end > 0.0f && at >= end)
+		at -= end;
+	c->setFrame(at);
+}
+void takeJointMover(TLiveActor* a, const u8* in, int size, int age, int*)
+{
+	TJointCoin* j = static_cast<TJointCoin*>(a);
+	Get g(in, size);
+	const f32 path = g.f(), body = g.f();
+	if (!g.ok)
+		return;
+	static int said;
+	if (getenv("SMS_MULTIPLAYER_DEBUG") && said++ % 150 == 0)
+		fprintf(stderr, "[multiplayer] path animation: here at frame %.1f, the owner's %.1f (%d ticks ago)\n", frameOf(j->unk138),
+		        path, age);
+	stepToward(j->unk138, path, age);
+	stepToward(j->getMActor(), body, age);
+}
+
+// Sand blocks that crumble under a player (secret courses): one crumbling in
+// any game crumbles in all, as if each game's player had stood on it (its
+// fall and the time it is gone run in each game; it comes back in each when
+// nobody there stands where it was).
+bool isSandBlock(TLiveActor* a) { return dynamic_cast<TSandBlock*>(a) != nullptr; }
+int saveSandBlock(TLiveActor* a, u8* out)
+{
+	TSandBlock* b = static_cast<TSandBlock*>(a);
+	Put o(out);
+	o.b((u8)b->mState);
+	o.i(b->mStateTimer);
+	return o.n;
+}
+void takeSandBlock(TLiveActor* a, const u8* in, int size, int, int*)
+{
+	TSandBlock* b = static_cast<TSandBlock*>(a);
+	Get g(in, size);
+	const int state = g.b();
+	const s32 timer = g.i();
+	if (!g.ok)
+		return;
+	if ((state == TSandBlock::STATE_TOUCHED || state == TSandBlock::STATE_FALLING)
+	    && (b->mState == TMapObjBase::STATE_NORMAL || b->mState == TSandBlock::STATE_RESTORING)) {
+		b->startStateTimer(state == TSandBlock::STATE_TOUCHED && timer > 0 ? timer : 1);
+		b->setState(TSandBlock::STATE_TOUCHED);
+		if (getenv("SMS_MULTIPLAYER_DEBUG"))
+			fprintf(stderr, "[multiplayer] a sand block at %.0f %.0f %.0f crumbles in another game: here too\n", b->mPosition.x,
+			        b->mPosition.y, b->mPosition.z);
+	}
+}
+
 // Blocks that spin round on their own (a secret course's): how far round.
 bool isRollBlock(TLiveActor* a) { return dynamic_cast<TRollBlock*>(a) != nullptr; }
 int saveRollBlock(TLiveActor* a, u8* out)
@@ -1094,6 +1178,8 @@ const Kind kKinds[] = {
 	{"machine", isMachine, saveMachine, takeMachine, OWN_RIDER, 4, false, 6, 0x38},
 	{"rail mover", isRailMover, saveMachine, takeMachine, OWN_RIDER, 2, false, 6, 0x38},
 	{"roll block", isRollBlock, saveRollBlock, takeRollBlock, OWN_HOST, 3, false, 1, 0x1},
+	{"path animation", isJointMover, saveJointMover, takeJointMover, OWN_HOST, 6, false, 0, 0},
+	{"sand block", isSandBlock, saveSandBlock, takeSandBlock, OWN_RIDER, 3, false, 0, 0},
 	{"fish with a coin", isCarryingSchool, saveSchool, takeSchool, OWN_HOST, 3, false, 0, 0},
 	{"watermelon", isWatermelon, saveWatermelon, takeWatermelon, OWN_USER, 2, false, 0, 0},
 };
@@ -1703,6 +1789,31 @@ bool MpMirrorTestNearNpc()
 
 // Test aid: this game's Mario against the big watermelon, rolling it along
 // (as bumping it does) for `frames` ticks.
+bool MpMirrorTestSandBlock()
+{
+	TMario* me = gpMarioOriginal;
+	TLiveActor* best = nullptr;
+	f32 nearest      = 0.0f;
+	for (int k = 0; me && k < s_count; k++)
+		if (s_mirrors[k].actor && s_mirrors[k].kind->match == isSandBlock) {
+			const JGeometry::TVec3<f32>& b = s_mirrors[k].actor->mPosition;
+			const f32 d = (b.x - me->mPosition.x) * (b.x - me->mPosition.x) + (b.z - me->mPosition.z) * (b.z - me->mPosition.z)
+			              + (b.y - me->mPosition.y) * (b.y - me->mPosition.y);
+			if (!best || d < nearest)
+				best = s_mirrors[k].actor, nearest = d;
+		}
+	if (!best)
+		return false;
+	const JGeometry::TVec3<f32>& b = best->mPosition;
+	const TBGCheckData* floor = nullptr;
+	const f32 top = gpMap->checkGround(b.x, b.y + 1000.0f, b.z, &floor);
+	me->warpRequest(JGeometry::TVec3<f32>(b.x, top + 10.0f, b.z), 0.0f);
+	fprintf(stderr, "[multiplayer] test: onto the nearest sand block, at %.0f %.0f %.0f (%.0f away; state %d, scale %.2f, floor %.0f of %s)\n", b.x,
+	        b.y, b.z, sqrtf(nearest), (int)static_cast<TMapObjBase*>(best)->mState, best->mScaling.y, top,
+	        floor && floor->getActor() ? typeid(*floor->getActor()).name() : "the map");
+	return true;
+}
+
 bool MpMirrorTestRollMelon(int frame)
 {
 	for (int k = 0; k < s_count; k++)
@@ -1755,4 +1866,109 @@ bool MpMirrorKeepsHits(const void* object)
 {
 	Mirrored* m = findActor(object);
 	return m && m->kind->keepsHits;
+}
+
+// Debug (SMS_MULTIPLAYER_MOVERS=1): which of the stage's objects move by
+// themselves, and how each kind is shared: every object's model placement
+// a second into play and again ten seconds on, the classes of those that
+// moved, and their mirror kind (or none: each game runs its own).
+void MpMirrorSurvey(int stageFrame)
+{
+	static const bool on = getenv("SMS_MULTIPLAYER_MOVERS") != nullptr;
+	if (!on || !gpConductor)
+		return;
+	const int first = fps(), second = 11 * fps();
+	if (stageFrame != first && stageFrame != second)
+		return;
+	struct Seen {
+		TLiveActor* actor;
+		f32 mtx[12];
+	};
+	static Seen seen[4096];
+	static int count;
+	TLiveActor* all[4096];
+	int n = 0;
+	for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end(); ++it)
+		for (int i = 0; *it && i < (*it)->getObjNum() && n < 4096; i++)
+			if (TLiveActor* a = (*it)->getObj(i))
+				all[n++] = a;
+	for (JGadget::TList<TLiveActor*>::iterator it = gpConductor->unk30.begin(); it != gpConductor->unk30.end() && n < 4096; ++it)
+		if (*it)
+			all[n++] = *it;
+	if (stageFrame == first) {
+		count = 0;
+		for (int i = 0; i < n; i++) {
+			if (!all[i]->getMActor() || !all[i]->getMActor()->getModel())
+				continue;
+			seen[count].actor = all[i];
+			memcpy(seen[count].mtx, all[i]->getMActor()->getModel()->getBaseTRMtx(), sizeof seen[count].mtx);
+			count++;
+		}
+		fprintf(stderr, "[movers] stage %d: %d objects with models\n", (int)gpApplication.mCurrArea.getStage(), count);
+		return;
+	}
+	const char* names[256];
+	int moved[256], total[256];
+	int classes = 0;
+	for (int k = 0; k < count; k++) {
+		TLiveActor* a = seen[k].actor;
+		bool still = false;
+		for (int i = 0; i < n; i++)
+			if (all[i] == a)
+				still = true;
+		if (!still || !a->getMActor() || !a->getMActor()->getModel())
+			continue;
+		const f32* now = &a->getMActor()->getModel()->getBaseTRMtx()[0][0];
+		bool move = false;
+		for (int j = 0; j < 12; j++) {
+			const f32 d = now[j] - seen[k].mtx[j];
+			if ((j % 4 == 3 && (d > 1.0f || d < -1.0f)) || (j % 4 != 3 && (d > 0.01f || d < -0.01f)))
+				move = true;
+		}
+		const char* name = typeid(*a).name();
+		int c = 0;
+		while (c < classes && strcmp(names[c], name))
+			c++;
+		if (c == classes) {
+			if (classes == 256)
+				continue;
+			names[classes] = name;
+			moved[classes] = total[classes] = 0;
+			classes++;
+		}
+		total[c]++;
+		moved[c] += move;
+	}
+	for (int c = 0; c < classes; c++) {
+		if (!moved[c])
+			continue;
+		const char* kind = "not shared (each game runs its own)";
+		for (int k = 0; k < count; k++)
+			if (!strcmp(typeid(*seen[k].actor).name(), names[c])) {
+				if (Mirrored* m = findActor(seen[k].actor))
+					kind = m->kind->smooth ? m->kind->name : "mirrored, eased";
+				else if (dynamic_cast<TSmallEnemy*>(seen[k].actor))
+					kind = "enemy (the host's or nearest player's)";
+				else if (MpBossIsBoss(seen[k].actor))
+					kind = "boss";
+				break;
+			}
+		fprintf(stderr, "[movers] stage %d: %d of %d %s moved: %s\n", (int)gpApplication.mCurrArea.getStage(), moved[c], total[c],
+		        names[c], kind);
+	}
+	// and what stood still and is each game's own (some move only when ridden or hit)
+	char line[1024] = "";
+	for (int c = 0; c < classes; c++) {
+		if (moved[c])
+			continue;
+		for (int k = 0; k < count; k++)
+			if (!strcmp(typeid(*seen[k].actor).name(), names[c])) {
+				TLiveActor* a = seen[k].actor;
+				if (!findActor(a) && !dynamic_cast<TSmallEnemy*>(a) && !MpBossIsBoss(a) && !dynamic_cast<TItem*>(a))
+					snprintf(line + strlen(line), sizeof line - strlen(line), " %s x%d", names[c], total[c]);
+				break;
+			}
+	}
+	fprintf(stderr, "[movers] stage %d: still, each game's own:%s\n", (int)gpApplication.mCurrArea.getStage(), line);
+	fprintf(stderr, "[movers] stage %d: done\n", (int)gpApplication.mCurrArea.getStage());
 }
