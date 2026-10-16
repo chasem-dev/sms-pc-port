@@ -884,6 +884,25 @@ void skipTitle(TMarDirector* dir)
 	s_titleFrames = 0;
 }
 
+// A client's game plays on the multiplayer card the launcher gives it (the
+// host's save is the one played), not the player's own. Back at the title with
+// no host to take it along, its file select shows that card's files, three
+// new ones as a rule: the player is told whose they are, for as long as it is
+// there, rather than taking them for their own saves gone.
+const char kGuestCard[] = "Not in the host's game: these files are on the multiplayer card, not your own. "
+                          "For your own saves, close the game and press Play.";
+
+void guestCardNotice()
+{
+	if (gpApplication.mCurrArea.getStage() != 15 || !mpg_link_over())
+		return;
+	if (strcmp(s_notice, kGuestCard)) {
+		showNotice(kGuestCard);
+		s_statusFrames = 0; // the player list would cover it (why the link ended was its own notice)
+	}
+	s_noticeFrames = kNoticeFrames;
+}
+
 // A client got a Shine: the host leaves with everyone, as when its own Mario
 // gets one (TMarDirector::updateGameMode): the "Shine Get!" banner, the
 // fanfare and the fade, then the save prompt and the plaza. The Shine's flag
@@ -3212,6 +3231,7 @@ void frame()
 	}
 	if (s_role == MPG_ROLE_CLIENT) {
 		skipTitle(dir);
+		guestCardNotice();
 		leadTrip(dir);
 		clientShineExit(dir);
 		if (s_shineHoldFrames > 0)

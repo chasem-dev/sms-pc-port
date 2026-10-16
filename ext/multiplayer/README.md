@@ -40,7 +40,7 @@ Without the launcher, these variables do the same:
 | `SMS_MULTIPLAYER_TIMEOUT=s` | seconds of silence before a player counts as gone (default 10) |
 | `SMS_MULTIPLAYER_STATUS=0` | no player list in the corner (the notices still show) |
 
-A joining player's game keeps its own memory card out of it: the launcher gives it a `multiplayer-guest` card folder, since what it plays is the host's save.
+A joining player's game keeps its own memory card out of it: the launcher gives it a `multiplayer-guest` card folder, since what it plays is the host's save. Back at the title with no host to follow (the host closed, or refused it), its file select shows that card's files, so a notice says they are not the player's own saves and how to get to those.
 Both games must be the same build (the launcher's game version); a different one is refused with a message saying so.
 
 ## How it works

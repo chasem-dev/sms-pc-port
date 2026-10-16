@@ -8,7 +8,7 @@
 // only: the two are compiled with different compilers' settings.
 //
 // The rules the controller keeps:
-// - Slot 0 is the host (Mario); 1, 2 and 3 are Luigi, Wario and Metal Mario.
+// - Slot 0 is the host (Mario); the others' characters are mpg_character's.
 // - One stage at a time: the host's. Each time the host starts playing a
 //   stage it opens a new "stage session"; clients warp into it, taking the
 //   host's flags first so the stage loads as the host's did. Anyone's way
@@ -133,6 +133,9 @@ void mpg_restart_session(void);
 int mpg_request_trip(int area, int episode, int movie);
 int mpg_next_trip(int* slot, int* area, int* episode, int* movie);
 int mpg_slot(void);    // ours; -1 before a client has one
+// Client: the link to the host is over for good (refused, closed, or lost and
+// not coming back); 0 while connecting, connected or reconnecting.
+int mpg_link_over(void);
 int mpg_ping(int slot); // round trip to `slot` (host) or to the host (client), ms; -1 unknown
 // Client: the newest snapshot of the host's world's number (each new one, a new number).
 uint32_t mpg_world_seq(void);
