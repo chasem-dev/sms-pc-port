@@ -92,7 +92,7 @@ int s_itemCount;
 uint8_t s_itemLive[kMaxItems]; // every item, alive last frame
 int s_takenAtSeen;             // the session's taken-at list, looked at so far
 int s_lastCoins = -1;          // the coin count after the last sync (the 100-coin Shine)
-TMpPuppet* s_puppets[4];
+TMpPuppet* s_puppets[MPG_MAX_PLAYERS];
 int s_clock; // frames since the game started
 
 TMpPuppet* s_self; // our own character, when we are not Mario
@@ -1230,7 +1230,7 @@ void decideEnemyOwners()
 				const f32 host = s_spectating || !gpMarioOriginal ? 1e9f : sqrtf(distance2(e->mPosition, gpMarioOriginal->mPosition));
 				int best      = 0;
 				f32 bestD     = host;
-				for (int slot = 1; slot < 4; slot++)
+				for (int slot = 1; slot < MPG_MAX_PLAYERS; slot++)
 					if (watchable(slot)) {
 						const f32 d = sqrtf(distance2(e->mPosition, aimOf(slot)));
 						if (d < bestD)
@@ -1579,14 +1579,18 @@ void spreadStart()
 {
 	TMario* m = gpMarioOriginal;
 	const int slot = mpg_slot();
-	if (!m || !gpMap || slot <= 0 || slot > 3 || m->onYoshi())
+	if (!m || !gpMap || slot <= 0 || slot >= MPG_MAX_PLAYERS || m->onYoshi())
 		return;
 	// to the right and behind, per slot, in order of preference
-	static const f32 kPlaces[4][4][2] = {
+	static const f32 kPlaces[MPG_MAX_PLAYERS][4][2] = {
 		{{0, 0}, {0, 0}, {0, 0}, {0, 0}},
 		{{130, 0}, {130, -130}, {0, -130}, {-130, -260}},
 		{{-130, 0}, {-130, -130}, {130, -260}, {0, -260}},
 		{{260, 0}, {-260, 0}, {260, -130}, {-130, -390}},
+		{{-260, 0}, {260, -260}, {-260, -130}, {130, -390}},
+		{{390, 0}, {-390, 0}, {390, -130}, {-260, -390}},
+		{{-390, 0}, {0, -390}, {-390, -130}, {260, -390}},
+		{{0, -130}, {520, 0}, {-520, 0}, {0, -520}},
 	};
 	const f32 yaw  = m->mFaceAngle.y * (3.14159265f / 32768.0f);
 	// the right of the way Mario faces, and his back
@@ -1634,7 +1638,7 @@ bool placeBeside(TMario* m)
 
 bool watchable(int slot)
 {
-	TMpPuppet* p = slot >= 0 && slot < 4 ? s_puppets[slot] : nullptr;
+	TMpPuppet* p = slot >= 0 && slot < MPG_MAX_PLAYERS ? s_puppets[slot] : nullptr;
 	return p && slot != mpg_slot() && p->active() && !(p->pose().flags & MPG_POSE_SPECTATING);
 }
 
@@ -1747,7 +1751,7 @@ void hostCheckEveryoneOut(TMarDirector* dir)
 {
 	if (s_restarting || !s_spectating)
 		return;
-	for (int slot = 0; slot < 4; slot++) {
+	for (int slot = 0; slot < MPG_MAX_PLAYERS; slot++) {
 		if (slot == mpg_slot() || !mpg_player_present(slot))
 			continue;
 		MpgPose pose;
@@ -1988,7 +1992,7 @@ void runTests(TMarDirector* dir, bool arrived)
 		s_test.tookHere = false;
 	}
 	s_test.frames++;
-	for (int slot = 0; slot < 4; slot++) {
+	for (int slot = 0; slot < MPG_MAX_PLAYERS; slot++) {
 		MpgPose pose;
 		float age;
 		if (slot != mpg_slot() && mpg_pose(slot, &pose, &age) && (pose.flags & MPG_POSE_VISIBLE)) {
@@ -2513,7 +2517,7 @@ void playOthersCutscenes(TMarDirector* dir)
 			f32 best = distance2(m->mPosition, focus);
 			warp     = false;
 			const bool nearAlready = best < kNearDemo * kNearDemo;
-			for (int other = 0; other < 4 && !nearAlready; other++)
+			for (int other = 0; other < MPG_MAX_PLAYERS && !nearAlready; other++)
 				if (watchable(other) && distance2(s_puppets[other]->mPosition, focus) < best) {
 					best = distance2(s_puppets[other]->mPosition, focus);
 					at   = s_puppets[other]->mPosition;
@@ -2567,11 +2571,11 @@ void endReplayWithStarter(TMarDirector* dir)
 
 // The others hear that a cutscene is on (the pose's flag), so a friend
 // standing still is not a mystery.
-bool s_inDemo[4];
+bool s_inDemo[MPG_MAX_PLAYERS];
 
 void noticeCutscenes()
 {
-	for (int slot = 0; slot < 4; slot++) {
+	for (int slot = 0; slot < MPG_MAX_PLAYERS; slot++) {
 		MpgPose pose;
 		float age;
 		const bool demo = slot != mpg_slot() && mpg_player_present(slot) && mpg_pose(slot, &pose, &age)
@@ -2598,7 +2602,7 @@ void noticeCutscenes()
 const f32 kNearOnScreen = 2500.0f;
 
 bool s_nearestOn; // host, in a stage, with another player in it
-int s_swapCount[4]; // debug: object moves led by each other player lately
+int s_swapCount[MPG_MAX_PLAYERS]; // debug: object moves led by each other player lately
 struct MoveSwap {
 	void* object;
 	JGeometry::TVec3<f32>* was;
@@ -2617,7 +2621,7 @@ struct Aim {
 	uint32_t lastTime;
 	bool have;
 };
-Aim s_aims[4];
+Aim s_aims[MPG_MAX_PLAYERS];
 
 // Debug: how far the aim (and the drawn puppet, which the host chased before)
 // is from where the player turns out to have been at that moment, once their
@@ -2626,10 +2630,10 @@ struct AimCheck {
 	uint32_t when; // their game's time the aim was for
 	JGeometry::TVec3<f32> aim, drawn;
 };
-AimCheck s_aimChecks[4][64];
-int s_aimCheckNext[4];
-double s_aimErr[4], s_drawnErr[4];
-int s_aimErrCount[4];
+AimCheck s_aimChecks[MPG_MAX_PLAYERS][64];
+int s_aimCheckNext[MPG_MAX_PLAYERS];
+double s_aimErr[MPG_MAX_PLAYERS], s_drawnErr[MPG_MAX_PLAYERS];
+int s_aimErrCount[MPG_MAX_PLAYERS];
 
 void checkAims(int slot, const JGeometry::TVec3<f32>& from, uint32_t fromTime, const JGeometry::TVec3<f32>& to,
                uint32_t toTime)
@@ -2658,7 +2662,7 @@ void checkAims(int slot, const JGeometry::TVec3<f32>& from, uint32_t fromTime, c
 
 void updateAims()
 {
-	for (int slot = 0; slot < 4; slot++) {
+	for (int slot = 0; slot < MPG_MAX_PLAYERS; slot++) {
 		Aim& a = s_aims[slot];
 		MpgPose pose;
 		float age = 0.0f;
@@ -2723,7 +2727,7 @@ void objectMove(void* object, int after)
 		return;
 	int best    = -1;
 	f32 nearest = distance2(a->mPosition, *gpMarioPos);
-	for (int slot = 0; slot < 4; slot++)
+	for (int slot = 0; slot < MPG_MAX_PLAYERS; slot++)
 		if (watchable(slot)) {
 			const f32 d = distance2(a->mPosition, aimOf(slot));
 			if (d < nearest)
@@ -2748,7 +2752,7 @@ void updateNearest()
 	const int fps = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
 	if (s_clock % (10 * fps) == 0) {
 		if (getenv("SMS_MULTIPLAYER_DEBUG"))
-			for (int slot = 0; slot < 4; slot++)
+			for (int slot = 0; slot < MPG_MAX_PLAYERS; slot++)
 				if (s_swapCount[slot])
 					fprintf(stderr, "[multiplayer] nearest: %d object moves led by %s lately\n", s_swapCount[slot],
 					        mpg_character_name(slot));
@@ -2758,7 +2762,7 @@ void updateNearest()
 	if (s_role != MPG_ROLE_HOST || !inStage() || s_swapDepth)
 		return;
 	updateAims();
-	for (int slot = 0; slot < 4; slot++)
+	for (int slot = 0; slot < MPG_MAX_PLAYERS; slot++)
 		if (watchable(slot))
 			s_nearestOn = true;
 }
@@ -2974,7 +2978,7 @@ void landHits()
 			waterHit.mPosition.set(pos[0], pos[1], pos[2]);
 			waterHit.mParticleIndex = 0;
 			from = &waterHit;
-		} else if (slot >= 0 && slot < 4 && s_puppets[slot] && s_puppets[slot]->active()) {
+		} else if (slot >= 0 && slot < MPG_MAX_PLAYERS && s_puppets[slot] && s_puppets[slot]->active()) {
 			from = s_puppets[slot];
 		}
 		if (!from)
@@ -3011,8 +3015,8 @@ union HolderStore {
 	char bytes[sizeof(TMpHolder)];
 	double align;
 };
-HolderStore s_holderStore[4]; // made once, kept: not on a stage's heap
-TMpHolder* s_holders[4];
+HolderStore s_holderStore[MPG_MAX_PLAYERS]; // made once, kept: not on a stage's heap
+TMpHolder* s_holders[MPG_MAX_PLAYERS];
 TTakeActor* s_myHeld; // what this game's Mario held last tick
 
 TMpHolder* holderFor(int slot)
@@ -3037,7 +3041,7 @@ void placeHolder(int slot)
 // Each tick: what other players carry follows them; one who left drops it.
 void tickHolders()
 {
-	for (int slot = 0; slot < 4; slot++) {
+	for (int slot = 0; slot < MPG_MAX_PLAYERS; slot++) {
 		TMpHolder* h = s_holders[slot];
 		if (!h || !h->mHeldObject)
 			continue;
@@ -3119,7 +3123,7 @@ void landCarries()
 	float pos[3], vel[3];
 	while (mpg_next_carry(&slot, &manager, &index, &action, pos, vel, &yaw)) {
 		TLiveActor* obj = dynamic_cast<TLiveActor*>(sharedAt(manager, index));
-		if (!obj || slot < 0 || slot > 3 || slot == mpg_slot())
+		if (!obj || slot < 0 || slot >= MPG_MAX_PLAYERS || slot == mpg_slot())
 			continue;
 		TMpHolder* h = holderFor(slot);
 		placeHolder(slot);
@@ -3191,7 +3195,7 @@ void frame()
 		collectShared();
 		MpMirrorCollect();
 		s_myHeld = nullptr;
-		for (int slot = 0; slot < 4; slot++)
+		for (int slot = 0; slot < MPG_MAX_PLAYERS; slot++)
 			if (s_holders[slot])
 				s_holders[slot]->mHeldObject = nullptr; // last stage's objects are gone
 		collectSwitches();
@@ -3286,7 +3290,7 @@ void stageSetup()
 	s_gatesFound  = false;
 	memset(s_gates, 0, sizeof s_gates);
 	s_myHeld      = nullptr;
-	for (int slot = 0; slot < 4; slot++)
+	for (int slot = 0; slot < MPG_MAX_PLAYERS; slot++)
 		if (s_holders[slot])
 			s_holders[slot]->mHeldObject = nullptr;
 	MpMirrorForget();
@@ -3301,7 +3305,7 @@ void stageSetup()
 		return;
 	const int me = mpg_slot();
 	s_self       = nullptr;
-	for (int slot = 0; slot < 4; slot++) {
+	for (int slot = 0; slot < MPG_MAX_PLAYERS; slot++) {
 		// our own character too, unless we are Mario (the game draws him)
 		const bool self = slot == me;
 		if (self && mpg_character(slot) == MPG_CHAR_MARIO)
@@ -3645,7 +3649,7 @@ struct Register {
 // e.g. ext/demo): 1 and xyz filled in when they are here and in play.
 extern "C" int mp_player_position(int slot, float* xyz)
 {
-	if (!enabled() || !inStage() || slot < 0 || slot > 3)
+	if (!enabled() || !inStage() || slot < 0 || slot >= MPG_MAX_PLAYERS)
 		return 0;
 	if (slot == mpg_slot()) {
 		xyz[0] = gpMarioOriginal->mPosition.x;
@@ -3666,7 +3670,7 @@ extern "C" int mp_player_position(int slot, float* xyz)
 void MpEnemyReport(int slot, int key, const void* data, int size)
 {
 	const int m = key >> 8, i = key & 0xFF;
-	if (s_role != MPG_ROLE_HOST || size < 17 || slot <= 0 || slot > 3 || m >= s_managerCount || i >= kMaxEnemies)
+	if (s_role != MPG_ROLE_HOST || size < 17 || slot <= 0 || slot >= MPG_MAX_PLAYERS || m >= s_managerCount || i >= kMaxEnemies)
 		return;
 	const u8* d = static_cast<const u8*>(data);
 	if (d[16]) {

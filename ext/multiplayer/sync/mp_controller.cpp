@@ -68,7 +68,9 @@ const size_t kMaxCleanLog = 16384;
 const size_t kCleanBatch  = 120; // 8 bytes each, within a message
 const uint32_t kCleanFresh = 2000;
 
-const char* const kCharacters[MP_MAX_PLAYERS] = {"Mario", "Luigi", "Wario", "Metal Mario"};
+static_assert(MPG_MAX_PLAYERS == MP_MAX_PLAYERS, "the game's players are the session's slots");
+const char* const kCharacters[MP_MAX_PLAYERS] = {"Mario",       "Luigi",        "Wario",        "Metal Mario",
+                                                 "Fire Mario",  "Purple Mario", "Orange Mario", "Ice Mario"};
 const char* const kWorlds[] = {"the Airstrip", "Delfino Plaza", "Bianco Hills", "Ricco Harbor", "Gelato Beach",
                                "Pinna Park", "Sirena Beach", "Pianta Village", "Noki Bay", "Corona Mountain"}; // SMS_getShineStage's order
 const size_t kPoseSize = 4 + 4 + 4 + 12 + 4 + 18 + 4 + 16 + 4 + 8 + 4 + 4 + 1 + 48 + 16; // at most (spraying from two)
@@ -711,7 +713,7 @@ void hostMessage(const MpEvent& ev)
 	case K_TRIP: {
 		const uint32_t s = r.u32();
 		const int area = r.u8(), episode = r.u8(), movie = r.u8();
-		if (r.ok && s == g.session && g.session && g.trips.size() < 4)
+		if (r.ok && s == g.session && g.session && g.trips.size() < MP_MAX_PLAYERS)
 			g.trips.push_back({ev.slot, area, episode, movie == 0xFF ? -1 : movie});
 		break;
 	}
@@ -764,7 +766,7 @@ void hostMessage(const MpEvent& ev)
 		Controller::Demo d;
 		d.slot = ev.slot;
 		d.data.assign(r.p + r.pos, r.p + r.len);
-		if (g.demos.size() < 4)
+		if (g.demos.size() < MP_MAX_PLAYERS)
 			g.demos.push_back(d);
 		std::vector<uint8_t> buf(5 + d.data.size());
 		Writer w(buf.data(), buf.size());
@@ -1982,7 +1984,7 @@ extern "C" void mpg_status(char* out, int size)
 	const unsigned players = mp_players();
 	const int me           = mp_local_slot();
 	char line[128];
-	snprintf(line, sizeof line, "MULTIPLAYER  %d/%d", __builtin_popcount(players), MP_MAX_PLAYERS);
+	snprintf(line, sizeof line, "MULTIPLAYER  %d/%d", __builtin_popcount(players), mp_max_players());
 	s += line;
 	if (g.role == MPG_ROLE_HOST && !roomCode().empty())
 		s += "  ROOM " + roomCode();
@@ -2048,7 +2050,7 @@ extern "C" void mpg_set_enemies(const MpgEnemy* list, int count)
 		const MpgEnemy& e = k < abouts ? *about[(g.enemyNext + k) % about.size()]
 		                               : *gone[(g.goneNext + k - abouts) % gone.size()];
 		w.u8(e.manager);
-		w.u8((uint8_t)((e.alive ? 1 : 0) | (e.owner & 3) << 4)); // up, and whose game runs it
+		w.u8((uint8_t)((e.alive ? 1 : 0) | (e.owner & 7) << 4)); // up, and whose game runs it
 		w.u16(e.index);
 		w.f32(e.pos[0]);
 		w.f32(e.pos[1]);
@@ -2088,7 +2090,7 @@ extern "C" int mpg_enemies(MpgEnemy* out, int max, float* age)
 		e.manager   = r.u8();
 		const uint8_t how = r.u8();
 		e.alive     = how & 1;
-		e.owner     = (how >> 4) & 3;
+		e.owner     = (how >> 4) & 7;
 		e.index     = r.u16();
 		e.pos[0]    = r.f32();
 		e.pos[1]    = r.f32();

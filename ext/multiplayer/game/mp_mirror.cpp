@@ -837,7 +837,7 @@ void weighTub(TBathtub* t)
 {
 	if (t->unk29A || t->mHeldObject)
 		return;
-	for (int slot = 0; slot < 4; slot++) {
+	for (int slot = 0; slot < MPG_MAX_PLAYERS; slot++) {
 		MpgPose pose;
 		float age;
 		if (slot == mpg_slot() || !mpg_player_present(slot) || !mpg_pose(slot, &pose, &age) || age > 0.5f
@@ -1205,11 +1205,11 @@ struct Lag {
 	double min, use;
 	bool known;
 };
-Lag s_lag[4];
+Lag s_lag[MPG_MAX_PLAYERS];
 
 void noteLag(int slot, u32 at)
 {
-	Lag& l         = s_lag[slot & 3];
+	Lag& l         = s_lag[(unsigned)slot % MPG_MAX_PLAYERS];
 	const double d = s_ms - (double)at;
 	if (!l.known || d < l.min - 1000.0 || d > l.min + 1000.0) {
 		l.min = l.use = d; // the first, or a clock that jumped (a new stage, a reload)
@@ -1224,7 +1224,7 @@ void noteLag(int slot, u32 at)
 
 void tickLags()
 {
-	for (int i = 0; i < 4; i++) {
+	for (int i = 0; i < MPG_MAX_PLAYERS; i++) {
 		Lag& l = s_lag[i];
 		if (!l.known)
 			continue;

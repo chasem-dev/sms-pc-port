@@ -34,11 +34,21 @@ enum {
 	MPG_ROLE_CLIENT,
 };
 
+// Players a game can have at most (the host picks how many it takes, 2 to
+// this; MP_MAX_PLAYERS in net/mp_net.h is the same).
+#define MPG_MAX_PLAYERS 8
+
+// Each player's character, by slot: the first four, then Marios in colours of
+// their own.
 enum {
 	MPG_CHAR_MARIO = 0,
 	MPG_CHAR_LUIGI,
 	MPG_CHAR_WARIO,
 	MPG_CHAR_METAL_MARIO,
+	MPG_CHAR_FIRE_MARIO,   // white cap and shirt, red overalls
+	MPG_CHAR_PURPLE_MARIO, // purple, dark overalls
+	MPG_CHAR_ORANGE_MARIO, // orange, brown overalls
+	MPG_CHAR_ICE_MARIO,    // light blue, white overalls
 };
 
 // What a player looks like this frame, enough to draw them elsewhere.

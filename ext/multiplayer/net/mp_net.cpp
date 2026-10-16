@@ -132,6 +132,7 @@ struct Incoming {
 
 struct Peer {
 	bool active = false;
+	int stateNext = 0; // host: whose state goes first in the next packet to this player
 	Address addr;
 	uint32_t token = 0;
 	uint32_t nonce = 0;
@@ -178,6 +179,7 @@ struct Session {
 	uint64_t connectCookie = 0; // client: the host's challenge, echoed in CONNECT
 	uint8_t cookieKey[16]  = {}; // host: the secret behind its cookies
 	Peer peers[MP_MAX_PLAYERS]; // host: by slot (0 unused); client: [0] is the host
+	int hostMaxPlayers = 0;     // client: the most players the host takes (from its ACCEPT)
 	PlayerSlot players[MP_MAX_PLAYERS];
 	uint32_t localStateSeq = 0;
 	std::deque<MpEvent> events;
@@ -255,6 +257,14 @@ int peerIndexForSlot(Session& s, int slot)
 // returns how many. Stops at the first that does not fit, so they go in order.
 // How long a message waits for its acknowledgement before going again: a bit
 // more than the round trip (so a slow link does not send everything twice).
+// The most players the host takes (itself included): its setting, or all
+// there are room for.
+int maxPlayers(const Session& s)
+{
+	const int m = s.cfg.maxPlayers;
+	return m >= 2 && m <= MP_MAX_PLAYERS ? m : MP_MAX_PLAYERS;
+}
+
 uint32_t resendMs(const Peer& p)
 {
 	if (p.srtt <= 0.0f)
@@ -325,22 +335,32 @@ void sendData(Session& s, Peer& p, int toSlot, uint32_t now, bool force, bool le
 	Writer w(buf, sizeof buf);
 	dataHeader(w, p, now);
 
-	// player states: the client sends its own; the host sends everyone else's
+	// player states: the client sends its own; the host sends everyone else's,
+	// as many as fit beside the world snapshot (eight players spraying do not),
+	// starting from where the last packet to this player stopped
 	size_t countAt = w.len;
 	int count      = 0;
 	w.u8(0);
-	for (int i = 0; i < MP_MAX_PLAYERS && !lean; i++) {
+	const size_t worldRoom = s.cfg.role == MP_ROLE_HOST && !lean ? 6 + s.world.size() : 6;
+	int next = p.stateNext;
+	for (int k = 0; k < MP_MAX_PLAYERS && !lean; k++) {
+		const int i          = (p.stateNext + k) % MP_MAX_PLAYERS;
 		const PlayerSlot& pl = s.players[i];
 		if (!pl.present || !pl.stateSize || i == toSlot)
 			continue;
 		if (s.cfg.role == MP_ROLE_CLIENT && i != s.localSlot)
 			continue;
+		if (w.len + 6 + pl.stateSize + worldRoom + 2 > kPacketMax)
+			break; // the rest first next time
 		w.u8((uint8_t)i);
 		w.u32(pl.stateSeq);
 		w.u8((uint8_t)pl.stateSize);
 		w.bytes(pl.state, pl.stateSize);
 		count++;
+		next = i + 1;
 	}
+	if (!lean)
+		p.stateNext = next % MP_MAX_PLAYERS;
 	buf[countAt] = count;
 
 	// the host's world snapshot
@@ -603,8 +623,8 @@ void hostPacket(Session& s, const uint8_t* buf, int n, const Address& from, uint
 		header(w, PK_INFO);
 		w.u32(nonce);
 		w.u8((uint8_t)count);
-		w.u8(MP_MAX_PLAYERS);
-		w.u8(version == kProtocol && count < MP_MAX_PLAYERS && s.accepting);
+		w.u8((uint8_t)maxPlayers(s));
+		w.u8(version == kProtocol && count < maxPlayers(s) && s.accepting);
 		w.str(s.cfg.build, 63);
 		w.str(s.cfg.name, MP_NAME_LEN - 1);
 		w.str(s.status.c_str(), 63);
@@ -627,6 +647,7 @@ void hostPacket(Session& s, const uint8_t* buf, int n, const Address& from, uint
 				w.u32(nonce);
 				w.u8((uint8_t)i);
 				w.u32(p.token);
+				w.u8((uint8_t)maxPlayers(s));
 				s.sock.send(out, w.len, from);
 				return;
 			}
@@ -657,7 +678,7 @@ void hostPacket(Session& s, const uint8_t* buf, int n, const Address& from, uint
 		const int rejoinSlot       = r.u8();
 		const uint32_t rejoinToken = r.u32();
 		int slot                   = -1;
-		if (!why && r.ok && rejoinSlot > 0 && rejoinSlot < MP_MAX_PLAYERS && rejoinToken) {
+		if (!why && r.ok && rejoinSlot > 0 && rejoinSlot < maxPlayers(s) && rejoinToken) {
 			Peer& old = s.peers[rejoinSlot];
 			if (old.active && old.token == rejoinToken) {
 				dropPeer(s, rejoinSlot, "reconnected");
@@ -672,12 +693,14 @@ void hostPacket(Session& s, const uint8_t* buf, int n, const Address& from, uint
 				if (s.peers[i].active && s.peers[i].addr == from)
 					dropPeer(s, i, "reconnected");
 		}
-		for (int i = 1; i < MP_MAX_PLAYERS && slot < 0; i++)
+		for (int i = 1; i < maxPlayers(s) && slot < 0; i++)
 			if (!s.peers[i].active)
 				slot = i;
+		static char full[64];
 		if (!why && slot < 0) {
 			reason = REJECT_FULL;
-			why    = "The game is full (4 players).";
+			snprintf(full, sizeof full, "The game is full (%d players).", maxPlayers(s));
+			why = full;
 		}
 		if (why) {
 			header(w, PK_REJECT);
@@ -705,6 +728,7 @@ void hostPacket(Session& s, const uint8_t* buf, int n, const Address& from, uint
 		w.u32(nonce);
 		w.u8((uint8_t)slot);
 		w.u32(p.token);
+		w.u8((uint8_t)maxPlayers(s)); // how many the host takes (for the players' list)
 		s.sock.send(out, w.len, from);
 
 		// the newcomer hears of everyone; everyone hears of the newcomer
@@ -756,8 +780,10 @@ void clientPacket(Session& s, const uint8_t* buf, int n, const Address& from, ui
 		uint32_t nonce = r.u32();
 		uint8_t slot   = r.u8();
 		uint32_t token = r.u32();
+		const int most = r.u8();
 		if (!r.ok || nonce != s.connectNonce || slot == 0 || slot >= MP_MAX_PLAYERS)
 			return;
+		s.hostMaxPlayers = most >= 2 && most <= MP_MAX_PLAYERS ? most : MP_MAX_PLAYERS;
 		Peer& h     = s.peers[0];
 		h           = Peer();
 		h.active    = true;
@@ -967,6 +993,16 @@ extern "C" int mp_config_from_env(MpConfig* cfg, const char* build)
 	const char* name = getenv("SMS_MULTIPLAYER_NAME");
 	snprintf(cfg->name, sizeof cfg->name, "%s",
 	         name && *name ? name : cfg->role == MP_ROLE_HOST ? "Host" : "Player");
+	if (const char* max = getenv("SMS_MULTIPLAYER_MAX_PLAYERS")) {
+		char* end = nullptr;
+		const long n = strtol(max, &end, 10);
+		if (!*max || *end || n < 2 || n > MP_MAX_PLAYERS) {
+			snprintf(cfg->address, sizeof cfg->address, "The most players a game takes is 2 to %d, not \"%s\".",
+			         MP_MAX_PLAYERS, max);
+			return -1;
+		}
+		cfg->maxPlayers = (int)n;
+	}
 	if (const char* drop = getenv("SMS_MULTIPLAYER_DROP"))
 		cfg->dropRate = (float)atof(drop);
 	if (const char* delay = getenv("SMS_MULTIPLAYER_DELAY")) // "ms" or "ms:jitter"
@@ -1104,6 +1140,13 @@ extern "C" void mp_player_name(int slot, char* out, size_t size)
 		    return 0;
 	    },
 	    0);
+}
+
+extern "C" int mp_max_players(void)
+{
+	return withSession([](Session& s) { return s.cfg.role == MP_ROLE_HOST ? maxPlayers(s)
+	                                           : s.hostMaxPlayers ? s.hostMaxPlayers : MP_MAX_PLAYERS; },
+	                   MP_MAX_PLAYERS);
 }
 
 extern "C" int mp_ping(int slot)

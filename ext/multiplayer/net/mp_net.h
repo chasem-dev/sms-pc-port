@@ -23,7 +23,7 @@
 extern "C" {
 #endif
 
-#define MP_MAX_PLAYERS 4
+#define MP_MAX_PLAYERS 8 // slots a session has; the host takes MpConfig::maxPlayers of them
 #define MP_DEFAULT_PORT 24002
 #define MP_NAME_LEN 24
 // The largest payload of one reliable message (a packet stays below the
@@ -81,11 +81,15 @@ typedef struct MpConfig {
 	// host: listen on this computer only (the launcher passes the other
 	// players' packets on)
 	int loopback;
+	// host: the most players it takes, itself included (2 to MP_MAX_PLAYERS;
+	// 0: MP_MAX_PLAYERS)
+	int maxPlayers;
 } MpConfig;
 
 // Reads SMS_MULTIPLAYER (host|join), SMS_MULTIPLAYER_ADDRESS (host[:port]),
-// SMS_MULTIPLAYER_PORT, SMS_MULTIPLAYER_NAME and SMS_MULTIPLAYER_LOCAL (1:
-// listen on this computer only) into *cfg. Returns 0 when
+// SMS_MULTIPLAYER_PORT, SMS_MULTIPLAYER_NAME, SMS_MULTIPLAYER_LOCAL (1:
+// listen on this computer only) and SMS_MULTIPLAYER_MAX_PLAYERS (host: 2 to
+// MP_MAX_PLAYERS) into *cfg. Returns 0 when
 // multiplayer is not asked for, -1 when it is but the settings are wrong
 // (cfg->address then holds why).
 int mp_config_from_env(MpConfig* cfg, const char* build);
@@ -103,6 +107,9 @@ int mp_local_slot(void); // -1 until a client has a slot
 // The players now in the session (bit n: slot n), the local one included.
 unsigned mp_players(void);
 void mp_player_name(int slot, char* out, size_t size);
+// Host: the most players the session takes (MpConfig::maxPlayers, itself
+// included); a client: MP_MAX_PLAYERS (the host decides).
+int mp_max_players(void);
 // Round-trip time to the host (clients) or to `slot` (host), in ms; -1 unknown.
 int mp_ping(int slot);
 
