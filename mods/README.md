@@ -42,6 +42,8 @@ They look best with a larger internal resolution, for example `SMS_GX_SCALE=2`.
 
 Switches: `SMS_TEXTURE_PACKS=dir;dir` uses those folders instead of `mods/textures/`, `SMS_TEXTURE_PACKS=0` turns packs off, and `SMS_TEXTURE_PACK_LOG=1` logs the pack name of every texture the game loads and whether it was replaced (for checking a pack or making one).
 
+`SMS_MARIO_LOOK=dir` is the launcher's Customize Mario: Mario's textures repainted in the player's colours, as a pack named after the textures it replaces. It's read before every other pack, so its images win (no other pack's mip levels are mixed in), and it still applies with `SMS_TEXTURE_PACKS=0`.
+
 To make a pack, run with `SMS_TEXTURE_DUMP=dir`: every texture the game loads is written there once as a PNG under its pack name.
 Edit or upscale the images, keep the names, and put them under `mods/textures/`.
 Replacements take more video memory than the original textures; their cost depends on resolution and GPU compression support.

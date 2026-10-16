@@ -15,7 +15,11 @@
 // Packs are found under the directories in SMS_TEXTURE_PACKS (separated by ':'
 // or ';'), else under mods/textures/ in the working directory (or two levels
 // up, when started from build/<os>-<arch>/). SMS_TEXTURE_PACKS=0 disables
-// them. Resource textures prepare on a worker, then upload before gameplay.
+// them. SMS_MARIO_LOOK=dir is one more pack, read before all of those and even
+// with packs off: the launcher's repainted Mario (Customize Mario), named after
+// the textures it replaces, so its images win over any pack's and no other
+// pack's mip levels are mixed into them. Resource textures prepare on a
+// worker, then upload before gameplay.
 // Late textures show their original until a bounded frame-end upload finishes.
 #include "gx_internal.h"
 #include "gl_funcs.h"
@@ -133,6 +137,7 @@ struct PackFile {
     std::string path;               // level 0
     std::vector<std::string> mips;  // explicit levels 1.. (_mip<n>), may have gaps
     bool arbitrary = false;
+    bool look = false;  // from SMS_MARIO_LOOK: later packs add nothing to it
 };
 static std::unordered_map<std::string, PackFile>& s_index =
     *new std::unordered_map<std::string, PackFile>;  // key: the texture name (read by the worker; never destroyed)
@@ -144,7 +149,7 @@ static bool endsWith(const std::string& s, const char* suf) {
     return s.size() >= n && s.compare(s.size() - n, n, suf) == 0;
 }
 
-static void indexFile(const std::filesystem::path& p) {
+static void indexFile(const std::filesystem::path& p, bool look) {
     std::string ext = p.extension().string();
     for (char& c : ext) c = char(tolower(c));
     if (ext != ".png" && ext != ".dds") return;
@@ -163,6 +168,8 @@ static void indexFile(const std::filesystem::path& p) {
         stem.resize(m);
     }
     PackFile& f = s_index[stem];
+    if (f.look && !look) return;
+    f.look = look;
     if (level == 0) {
         if (f.path.empty()) f.path = p.string();
         f.arbitrary = f.arbitrary || arb;
@@ -180,9 +187,12 @@ static int preloadMode();
 static void scan() {
     s_state = 0;
     std::vector<std::string> dirs;
+    const char* look = getenv("SMS_MARIO_LOOK");
+    if (look && *look) dirs.push_back(look);
     const char* e = getenv("SMS_TEXTURE_PACKS");
-    if (e && strcmp(e, "0") == 0) return;
-    if (e && *e) {
+    if (e && strcmp(e, "0") == 0) {
+        // Packs off: only Mario's look, if there is one.
+    } else if (e && *e) {
         std::string all = e, cur;
         for (char c : all + ";") {
             if (c == ';' || (c == ':' && !(cur.size() == 1 && isalpha(uint8_t(cur[0]))))) {
@@ -193,10 +203,12 @@ static void scan() {
             }
         }
     } else {
-        dirs = {"mods/textures", "../../mods/textures"};
+        dirs.insert(dirs.end(), {"mods/textures", "../../mods/textures"});
     }
     namespace fs = std::filesystem;
-    for (const std::string& d : dirs) {
+    for (size_t i = 0; i < dirs.size(); i++) {
+        const std::string& d = dirs[i];
+        bool isLook = i == 0 && look && *look;
         std::error_code ec;
         if (!fs::is_directory(d, ec)) continue;
         size_t before = s_index.size();
@@ -210,7 +222,7 @@ static void scan() {
                 it.disable_recursion_pending();
                 continue;
             }
-            if (it->is_regular_file(ec)) indexFile(it->path());
+            if (it->is_regular_file(ec)) indexFile(it->path(), isLook);
         }
         logmsg("texture pack: %zu textures under %s", s_index.size() - before, d.c_str());
     }
