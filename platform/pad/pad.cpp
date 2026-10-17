@@ -16,6 +16,7 @@
 #include <string.h>
 #include <strings.h>
 #include <ctype.h>
+#include <math.h>
 #include <dlfcn.h>
 #include <algorithm>
 #include <vector>
@@ -24,6 +25,7 @@
 namespace sdl {
 enum {
 	QUIT = 0x100, WINDOWEVENT = 0x200, KEYDOWN = 0x300, KEYUP = 0x301, MOUSEMOTION = 0x400,
+	MOUSEBUTTONDOWN = 0x401, MOUSEBUTTONUP = 0x402, MOUSEWHEEL = 0x403,
 	CAXIS = 0x650, CBUTTONDOWN = 0x651, CBUTTONUP = 0x652
 };
 enum { WINDOWEVENT_FOCUS_GAINED = 12, WINDOWEVENT_FOCUS_LOST = 13 };
@@ -36,6 +38,18 @@ struct MouseMotionEvent {
 	u32 type, timestamp, windowID, which, state;
 	s32 x, y, xrel, yrel;
 };
+struct MouseButtonEvent {
+	u32 type, timestamp, windowID, which;
+	u8 button, state, clicks, p1;
+	s32 x, y;
+};
+struct MouseWheelEvent {
+	u32 type, timestamp, windowID, which;
+	s32 x, y;
+	u32 direction;
+};
+const u32 TOUCH_MOUSEID = 0xFFFFFFFFu; // a mouse event SDL made from a touch
+const u32 MOUSEWHEEL_FLIPPED = 1;
 struct KeyboardEvent {
 	u32 type, timestamp, windowID;
 	u8 state, repeat, pad2, pad3;
@@ -72,10 +86,24 @@ __attribute__((weak)) int GXPC_GameInputBlocked(void);
 //   SMS_CAMERA_SPEED=percent   scales manual camera rotation (100 = retail)
 //   SMS_FREE_CAMERA=1          the camera stays where it is put (no auto swing-back)
 //   SMS_MOUSE_SENSITIVITY=%    mouse look speed, when the GX layer captures the mouse
+//   SMS_MOUSE_ORBIT=0          the mouse's up/down acts as the C-stick's again
+//                              (nearer and lower, or further and higher) instead
+//                              of tilting the camera around Mario
+// and the mouse wheel zooms the camera in and out (decomp-patches/zzz-camera-02).
 extern "C" {
 int port_free_camera      = 0;
 f32 port_camera_speed_x   = 1.0f;
 f32 port_camera_speed_y   = 1.0f;
+// Mouse orbit (zzz-camera-02): whether the mouse's up/down tilts the camera,
+// and the tilt so far in s16 angle units (the camera keeps it in range).
+int port_mouse_orbit         = 1;
+f32 port_camera_mouse_pitch  = 0.0f;
+// The camera's distance from Mario as a share of the game's own, which the
+// mouse wheel sets: it eases toward the wheel's choice.
+f32 port_camera_zoom         = 1.0f;
+// Frames left in which the camera follows the mouse as closely as it follows
+// the C-stick (the game follows a camera left alone more slowly).
+int port_camera_mouse_busy   = 0;
 }
 
 // SMS_RUMBLE_STRENGTH above 100: how much more often the game runs the motor,
@@ -116,6 +144,8 @@ struct KeyName {
 	int code;
 };
 // SDL scancodes are USB HID usage IDs.
+// Mouse buttons follow them, as keys: kMouseBase plus SDL's button number.
+const int kMouseBase = 512, kKeyCodes = kMouseBase + 8;
 const KeyName kKeys[] = {
 	{ "A", 4 }, { "B", 5 }, { "C", 6 }, { "D", 7 }, { "E", 8 }, { "F", 9 }, { "G", 10 }, { "H", 11 },
 	{ "I", 12 }, { "J", 13 }, { "K", 14 }, { "L", 15 }, { "M", 16 }, { "N", 17 }, { "O", 18 }, { "P", 19 },
@@ -132,6 +162,9 @@ const KeyName kKeys[] = {
 	{ "KP_1", 89 }, { "KP_2", 90 }, { "KP_3", 91 }, { "KP_4", 92 }, { "KP_5", 93 }, { "KP_6", 94 },
 	{ "KP_7", 95 }, { "KP_8", 96 }, { "KP_9", 97 }, { "KP_0", 98 },
 	{ "LCTRL", 224 }, { "LSHIFT", 225 }, { "LALT", 226 }, { "RCTRL", 228 }, { "RSHIFT", 229 }, { "RALT", 230 },
+	{ "MOUSE_LEFT", kMouseBase + 1 }, { "MOUSE_MIDDLE", kMouseBase + 2 }, { "MOUSE_RIGHT", kMouseBase + 3 },
+	{ "MOUSE_BACK", kMouseBase + 4 }, { "MOUSE_FORWARD", kMouseBase + 5 },
+	{ "MOUSE_X1", kMouseBase + 4 }, { "MOUSE_X2", kMouseBase + 5 },
 };
 
 // Default bindings (documented in README.md).
@@ -172,7 +205,7 @@ int combo_second(int bind) { return (bind >> kComboShift) - 1; }
 const int kMaxKeys = 8;
 int g_bind[C_COUNT][kMaxKeys];
 int g_nbind[C_COUNT];
-bool g_key[512];
+bool g_key[kKeyCodes];
 // Game controller state (first controller wins).
 s16 g_axis[6];
 bool g_cbtn[21];
@@ -205,6 +238,17 @@ bool g_invert_cx, g_invert_cy;
 // mouse look (see above): its speed, and the motion not yet given to the camera
 float g_mouseSens = 1.0f;
 int g_mouseDX, g_mouseDY;
+// mouse wheel zoom: the share of the game's distance chosen, its limits, and
+// how much one notch changes it
+float g_zoomGoal = 1.0f;
+const float kZoomMin = 0.5f, kZoomMax = 2.5f, kZoomStep = 1.12f;
+// The wheel turned: up (positive) brings the camera in, down moves it out.
+void zoom_notches(int notches)
+{
+	for (int i = 0; i < (notches < 0 ? -notches : notches); i++)
+		g_zoomGoal = notches < 0 ? g_zoomGoal * kZoomStep : g_zoomGoal / kZoomStep;
+	g_zoomGoal = g_zoomGoal < kZoomMin ? kZoomMin : g_zoomGoal > kZoomMax ? kZoomMax : g_zoomGoal;
+}
 // Input is ignored while another window has focus: SDL still reports
 // controllers then (SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS), so a controller used
 // in another app would also play the game. Losing focus releases everything
@@ -337,8 +381,8 @@ void parse_bindings(const char* text, const char* source)
 			}
 			anyKey   = true;
 			int code = key_code(k), code2 = second ? key_code(second) : -1;
-			if (code < 0 || code >= 512 || (second && (code2 < 0 || code2 >= 512)))
-				port_log("[pad] %s:%d: unknown key '%s'\n", source, line, code < 0 || code >= 512 ? k : second);
+			if (code < 0 || code >= kKeyCodes || (second && (code2 < 0 || code2 >= kKeyCodes)))
+				port_log("[pad] %s:%d: unknown key '%s'\n", source, line, code < 0 || code >= kKeyCodes ? k : second);
 			else if (nkeys < kMaxKeys)
 				keys[nkeys++] = second ? combo(code, code2) : code;
 		}
@@ -403,6 +447,24 @@ void on_event(const union SDL_Event* ev)
 		}
 		break;
 	}
+	// Mouse buttons are keys (MOUSE_LEFT ...). The click that gives mouse look
+	// its capture back never gets here (gx_platform.cpp), nor do touches.
+	case sdl::MOUSEBUTTONDOWN:
+	case sdl::MOUSEBUTTONUP: {
+		const sdl::MouseButtonEvent* m = (const sdl::MouseButtonEvent*)ev;
+		if (m->which != sdl::TOUCH_MOUSEID && m->button >= 1 && kMouseBase + m->button < kKeyCodes)
+			g_key[kMouseBase + m->button] = type == sdl::MOUSEBUTTONDOWN;
+		break;
+	}
+	// Scrolling down moves the camera out, up brings it in.
+	case sdl::MOUSEWHEEL: {
+		const sdl::MouseWheelEvent* w = (const sdl::MouseWheelEvent*)ev;
+		const int notches = w->direction == sdl::MOUSEWHEEL_FLIPPED ? -w->y : w->y;
+		if (w->which == sdl::TOUCH_MOUSEID || !notches || (GXPC_GameInputBlocked && GXPC_GameInputBlocked()))
+			break;
+		zoom_notches(notches);
+		break;
+	}
 	case sdl::CAXIS: {
 		const sdl::ControllerAxisEvent* a = (const sdl::ControllerAxisEvent*)ev;
 		if (a->axis < 6)
@@ -424,7 +486,7 @@ int trigger(int source) { return g_axis[source == PAD_SRC_LT ? 4 : 5] > 0 ? g_ax
 
 // Keys and controller buttons the game does not see, because the other half
 // of a port action's two-button binding is held (combo_masks).
-bool g_keyMasked[512], g_padMasked[PAD_SRC_COUNT];
+bool g_keyMasked[kKeyCodes], g_padMasked[PAD_SRC_COUNT];
 
 bool pad_down(int s) { return s == PAD_SRC_LT || s == PAD_SRC_RT ? trigger(s) >= 250 : g_cbtn[s]; }
 // Pressed at all: a trigger part of the way counts.
@@ -435,7 +497,7 @@ bool pad_touched(int s) { return s == PAD_SRC_LT || s == PAD_SRC_RT ? trigger(s)
 // L1 + R1 (LB + RB) does not also press Z.
 void combo_masks()
 {
-	bool key[512] = {}, pad[PAD_SRC_COUNT] = {};
+	bool key[kKeyCodes] = {}, pad[PAD_SRC_COUNT] = {};
 	for (int c = 0; c < C_COUNT; c++) {
 		if (!is_port_action(c))
 			continue;
@@ -454,7 +516,7 @@ void combo_masks()
 			}
 		}
 	}
-	for (int k = 0; k < 512; k++)
+	for (int k = 0; k < kKeyCodes; k++)
 		g_keyMasked[k] = key[k] || (g_keyMasked[k] && g_key[k]);
 	for (int s = 0; s < PAD_SRC_COUNT; s++)
 		g_padMasked[s] = pad[s] || (g_padMasked[s] && pad_touched(s));
@@ -509,6 +571,8 @@ void init()
 	port_free_camera    = env_on("SMS_FREE_CAMERA");
 	port_camera_speed_x = port_camera_speed_y = env_percent("SMS_CAMERA_SPEED", 0.1f, 4.0f);
 	g_mouseSens         = env_percent("SMS_MOUSE_SENSITIVITY", 0.05f, 10.0f);
+	if (const char* e = getenv("SMS_MOUSE_ORBIT"))
+		port_mouse_orbit = !*e || env_on("SMS_MOUSE_ORBIT");
 	g_backgroundInput   = env_on("SMS_BACKGROUND_INPUT") || env_on("SMS_AUTOPRESS");
 	if (g_backgroundInput)
 		port_log("[pad] input stays on while the window is in the background\n");
@@ -618,7 +682,7 @@ void autopress_init()
 
 void send_key(int scancode, bool down)
 {
-	if (g_push) {
+	if (g_push && scancode < kMouseBase) {
 		union {
 			sdl::KeyboardEvent k;
 			u8 raw[56];
@@ -641,10 +705,58 @@ void send_binding(int bind, bool down)
 		send_key(combo_second(bind), down);
 }
 
+// --- Test input: SMS_AUTOMOUSE=dx:dy[:wheel]@field[+fields],... -------------
+// e.g. SMS_AUTOMOUSE=0:-12@900+20,0:0:-3@1200 moves the mouse 12 pixels up a
+// field for 20 fields from field 900 (as mouse look would read it, captured or
+// not), then scrolls the wheel 3 notches down (out) at 1200.
+struct AutoMouse {
+	int dx, dy, wheel;
+	u32 at, until;
+};
+std::vector<AutoMouse> g_autoMouse;
+
+void automouse_init()
+{
+	const char* e = getenv("SMS_AUTOMOUSE");
+	if (!e || !*e)
+		return;
+	char buf[1024];
+	strncpy(buf, e, sizeof buf - 1);
+	buf[sizeof buf - 1] = 0;
+	for (char* tok = strtok(buf, ","); tok; tok = strtok(NULL, ",")) {
+		AutoMouse m = {};
+		u32 fields  = 1;
+		if (sscanf(tok, "%d:%d:%d@%u+%u", &m.dx, &m.dy, &m.wheel, &m.at, &fields) < 4
+		    && sscanf(tok, "%d:%d@%u+%u", &m.dx, &m.dy, &m.at, &fields) < 3) {
+			port_log("[pad] SMS_AUTOMOUSE: cannot read '%s'\n", tok);
+			continue;
+		}
+		m.until = m.at + (fields ? fields : 1);
+		g_autoMouse.push_back(m);
+	}
+	port_log("[pad] SMS_AUTOMOUSE: %u scripted mouse moves\n", (unsigned)g_autoMouse.size());
+}
+
+void automouse_field(u32 field)
+{
+	for (size_t i = 0; i < g_autoMouse.size(); i++) {
+		const AutoMouse& m = g_autoMouse[i];
+		if (field < m.at || field >= m.until)
+			continue;
+		g_mouseDX += m.dx;
+		g_mouseDY += m.dy;
+		if (m.wheel && field == m.at) {
+			zoom_notches(m.wheel);
+			port_log("[pad] automouse wheel %+d at field %u: zoom %.2f\n", m.wheel, field, g_zoomGoal);
+		}
+	}
+}
+
 } // namespace
 
 extern "C" void port_pad_autopress_field(u32 field)
 {
+	automouse_field(field);
 	for (size_t i = 0; i < g_auto.size(); i++) {
 		AutoPress& a = g_auto[i];
 		if (a.done)
@@ -735,6 +847,7 @@ extern "C" u32 PADRead(PADStatus* status)
 	if (!autoInited) {
 		autoInited = true;
 		autopress_init();
+		automouse_init();
 	}
 	if (sms_gx_pump_events)
 		sms_gx_pump_events();
@@ -743,6 +856,8 @@ extern "C" u32 PADRead(PADStatus* status)
 		status[i].err = i == 0 ? PAD_ERR_NONE : PAD_ERR_NO_CONTROLLER;
 	}
 	combo_masks();
+	if (port_camera_mouse_busy > 0)
+		port_camera_mouse_busy--;
 	const bool blocked = GXPC_GameInputBlocked && GXPC_GameInputBlocked();
 	// Port actions on their press, not while a menu has the input.
 	static bool wasSave, wasLoad;
@@ -838,12 +953,20 @@ extern "C" u32 PADRead(PADStatus* status)
 
 // Mouse look: the motion since the last call, in C-stick units (1.0 is full
 // deflection for one frame), with the camera's inversion applied. Returns 0
-// when the mouse has not moved.
+// when the mouse has not moved. The normal camera calls it once a frame, which
+// also moves the wheel's zoom along.
 extern "C" int port_camera_take_mouse(f32* dx, f32* dy)
 {
 	*dx = *dy = 0.0f;
+	if (port_camera_zoom != g_zoomGoal) {
+		port_camera_zoom += (g_zoomGoal - port_camera_zoom) * 0.25f;
+		if (fabsf(g_zoomGoal - port_camera_zoom) < 0.002f)
+			port_camera_zoom = g_zoomGoal;
+		port_camera_mouse_busy = 8;
+	}
 	if (!g_mouseDX && !g_mouseDY)
 		return 0;
+	port_camera_mouse_busy = 8;
 	const float k = 0.02f * g_mouseSens;
 	// moving the mouse right turns the view right, as the C-stick pushed left does
 	*dx = -(float)g_mouseDX * k;

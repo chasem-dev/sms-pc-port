@@ -814,6 +814,7 @@ static const struct {
 	{ "free_camera", "SMS_FREE_CAMERA" },             // no automatic swing back
 	{ "mouse_camera", "SMS_MOUSE_CAMERA" },           // mouse look
 	{ "mouse_sensitivity", "SMS_MOUSE_SENSITIVITY" }, // percent
+	{ "mouse_orbit", "SMS_MOUSE_ORBIT" },             // mouse up/down tilts the camera around Mario
 	{ "background_input", "SMS_BACKGROUND_INPUT" },   // keep input while another window has focus
 	{ "rumble", "SMS_RUMBLE" },                       // controller rumble, on by default
 	{ "rumble_strength", "SMS_RUMBLE_STRENGTH" },     // percent
