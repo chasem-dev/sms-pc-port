@@ -16,6 +16,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
+#include <string>
+#include <thread>
 #include <vector>
 #if !defined(_WIN32) && !defined(__APPLE__)
 #include <sys/stat.h>
@@ -71,13 +77,36 @@ uint32_t s_frame = 0;
 SDL_Window* s_window = nullptr;
 SDL_GLContext s_glctx = nullptr;
 void (*s_eventCb)(const SDL_Event*) = nullptr;
-std::vector<SDL_GameController*> s_pads;
+// The controllers open, with what the button prompts need kept from opening:
+// asking SDL takes its joystick lock, which a rumble send holds.
+struct Pad {
+    SDL_GameController* c;
+    SDL_JoystickID id;
+    int type;
+    std::string name;
+};
+std::vector<Pad> s_pads;
 // sms_gx_rumble: the controller it goes to (the one last pressed or pushed,
-// else the first opened; -1 for none), the one rumbling now, and the last
-// strength sent with when.
-SDL_JoystickID s_rumblePad = -1, s_rumbling = -1;
-Uint16 s_rumbleSent = 0;
-Uint32 s_rumbleSentAt = 0;
+// else the first opened; -1 for none).
+SDL_JoystickID s_rumblePad = -1;
+// The motor as the game sets it, handed to the rumble thread (rumbleThread).
+// Never destroyed, as that thread is still running at exit.
+struct RumbleState {
+    std::mutex lock;  // held only briefly: the game never waits for a send
+    std::condition_variable wake;
+    Uint16 level = 0;            // strength asked for now, 0 for off
+    Uint16 full = 0;             // strength while on
+    SDL_JoystickID pad = -1;     // s_rumblePad
+    double onSince = 0;          // when the motor last went on
+    double onTime = 0;           // seconds on that the thread has not counted yet
+    bool called = false;         // set since the thread's last send
+    bool resting = true;         // nothing sent is rumbling
+    bool kick = false;           // went on while resting: send at once
+    bool started = false;
+};
+RumbleState& s_rumble = *new RumbleState;
+std::atomic<bool> s_rumbleQuit{false};
+std::mutex& s_padLock = *new std::mutex;  // held while a controller is rumbled or closed
 #endif
 std::vector<uint8_t> s_icon;  // GXPC_SetWindowIcon, RGBA8
 int s_iconW = 0, s_iconH = 0;
@@ -827,41 +856,45 @@ static void noteInputDevice(const SDL_Event& ev) {
     }
     if (which < 0) return;
     s_rumblePad = which;
-    SDL_GameController* c = SDL_GameControllerFromInstanceID(which);
-    if (!c) return;
-    const char* name = SDL_GameControllerName(c);
-    GXPC_NoteInputDevice(1, int(SDL_GameControllerGetType(c)), name ? name : "");
+    for (const Pad& p : s_pads)
+        if (p.id == which) GXPC_NoteInputDevice(1, p.type, p.name.c_str());
 }
 #endif
 
 void sms_gx_pump_events(void) {
 #ifdef SMS_GX_HAVE_SDL2
     if (s_mode != MODE_WINDOW) return;
+    // Controllers are read over SDL's joystick lock, which the rumble thread
+    // holds through a send: during one, only the events already queued are
+    // handled, and the rest wait for the next frame instead of the game.
+    {
+        std::unique_lock<std::mutex> pads(s_padLock, std::try_to_lock);
+        if (pads.owns_lock()) SDL_PumpEvents();
+    }
     SDL_Event ev;
-    while (SDL_PollEvent(&ev)) {
+    while (SDL_PeepEvents(&ev, 1, SDL_GETEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT) > 0) {
         if (!menuVisible()) noteInputDevice(ev);
         switch (ev.type) {
         case SDL_CONTROLLERDEVICEADDED:
             if (SDL_IsGameController(ev.cdevice.which)) {
                 if (SDL_GameController* c = SDL_GameControllerOpen(ev.cdevice.which)) {
-                    s_pads.push_back(c);
-                    if (s_rumblePad < 0) s_rumblePad = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(c));
+                    const char* name = SDL_GameControllerName(c);
+                    s_pads.push_back({c, SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(c)),
+                                      int(SDL_GameControllerGetType(c)), name ? name : ""});
+                    if (s_rumblePad < 0) s_rumblePad = s_pads.back().id;
                 }
             }
             break;
         case SDL_CONTROLLERDEVICEREMOVED:
             for (size_t i = 0; i < s_pads.size(); i++)
-                if (SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(s_pads[i])) == ev.cdevice.which) {
-                    SDL_GameControllerClose(s_pads[i]);
+                if (s_pads[i].id == ev.cdevice.which) {
+                    std::lock_guard<std::mutex> l(s_padLock);  // not while the rumble thread uses it
+                    SDL_GameControllerClose(s_pads[i].c);
                     s_pads.erase(s_pads.begin() + long(i));
                     break;
                 }
-            if (s_rumbling == ev.cdevice.which) {
-                s_rumbling = -1;
-                s_rumbleSent = 0;
-            }
             if (s_rumblePad == ev.cdevice.which)
-                s_rumblePad = s_pads.empty() ? -1 : SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(s_pads[0]));
+                s_rumblePad = s_pads.empty() ? -1 : s_pads[0].id;
             break;
         default:
             break;
@@ -952,29 +985,140 @@ void sms_gx_pump_events(void) {
 #endif
 }
 
-// Rumble on the controller in use (both motors at one strength). A call that
-// changes nothing sends nothing, as the game sets its motor every frame; a
-// rumble still on is sent again each second, each send lasting two, so a motor
-// left on by a stalled game stops by itself.
+#ifdef SMS_GX_HAVE_SDL2
+namespace {
+// Rumble is sent from a thread of its own. A send can take milliseconds (on
+// Linux each change uploads a force-feedback effect, and a controller passed
+// through uinput by Steam Input or InputPlumber waits for that program to take
+// it), and the game rumbles weakly by running its motor on some frames only
+// (RumbleMgr), changing it as often as every frame: sent from the game thread,
+// rumble slowed the game for as long as it lasted. The thread sends the share
+// of time the motor was on as the strength instead, a few sends per rumble;
+// sends go over SDL's joystick lock, which the game's event polling also
+// takes, so their number matters as well as the thread they are made on.
+const double kRumbleTick = 0.010;    // how often the thread looks
+const int kRumbleWindow = 6;         // ticks averaged into the strength
+const double kRumbleRest = 0.050;    // off this long stops the controller
+const double kRumbleResend = 1.0;    // a rumble still on is sent again; each send lasts two
+
+void rumbleSend(SDL_JoystickID pad, Uint16 strength) {
+    std::lock_guard<std::mutex> l(s_padLock);
+    if (strength && s_rumbleQuit) return;
+    if (SDL_GameController* c = pad >= 0 ? SDL_GameControllerFromInstanceID(pad) : nullptr)
+        SDL_GameControllerRumble(c, strength, strength, strength ? 2000 : 0);
+}
+
+void rumbleThread() {
+    double on[kRumbleWindow] = {}, span[kRumbleWindow] = {};  // the last ticks since the rumble began
+    int ticks = 0;
+    Uint16 sent = 0;
+    SDL_JoystickID sentPad = -1;
+    double last = nowSeconds(), lastOn = 0, sentAt = 0;
+    std::unique_lock<std::mutex> l(s_rumble.lock);
+    while (!s_rumbleQuit) {
+        s_rumble.wake.wait_for(l, std::chrono::duration<double>(kRumbleTick),
+                               [] { return s_rumble.kick || s_rumbleQuit; });
+        if (s_rumbleQuit) break;
+        const double now = nowSeconds();
+        double onTime = s_rumble.onTime;
+        if (s_rumble.level) {
+            onTime += now - s_rumble.onSince;
+            s_rumble.onSince = now;
+        }
+        s_rumble.onTime = 0;
+        const bool kick = s_rumble.kick, called = s_rumble.called;
+        s_rumble.kick = false;
+        const Uint16 full = s_rumble.full;
+        const SDL_JoystickID pad = s_rumble.pad;
+        l.unlock();
+
+        if (sent && pad != sentPad) {  // the player picked up another controller
+            rumbleSend(sentPad, 0);
+            sent = 0;
+        }
+        Uint16 want = sent;
+        if (onTime > 0) lastOn = now;
+        if (kick || !sent) {
+            // A rumble starts at full strength, so a knock is felt at once;
+            // the average takes over from the next tick.
+            ticks = 0;
+            if (kick || onTime > 0) want = full;
+        } else {
+            on[ticks % kRumbleWindow] = onTime;
+            span[ticks % kRumbleWindow] = now - last;
+            ticks++;
+            if (now - lastOn >= kRumbleRest) {
+                want = 0;
+            } else if (onTime > 0) {  // between the motor's frames the strength holds
+                double sumOn = 0, sumSpan = 0;
+                for (int i = 0; i < kRumbleWindow && i < ticks; i++) {
+                    sumOn += on[i];
+                    sumSpan += span[i];
+                }
+                const double share = sumSpan > 0 ? SDL_min(sumOn / sumSpan, 1.0) : 1.0;
+                const Uint16 avg = Uint16(full * share + 0.5);
+                if (abs(int(avg) - int(sent)) >= SDL_max(full / 5, 1)) want = avg ? avg : 1;
+            }
+        }
+        last = now;
+        const bool send = want != sent || (want && called && now - sentAt >= kRumbleResend);
+        if (send) {
+            rumbleSend(pad, want);
+            sent = want;
+            sentPad = pad;
+            sentAt = now;
+        }
+        l.lock();
+        if (send) s_rumble.called = false;
+        s_rumble.resting = !sent;
+    }
+}
+}  // namespace
+#endif
+
+// Rumble on the controller in use (both motors at one strength). Only hands the
+// state to the rumble thread, so it costs the game nothing; that thread sends
+// a rumble still on again each second, each send lasting two, while the game
+// keeps setting its motor, so a motor left on by a stalled game stops by itself.
 int sms_gx_rumble(unsigned short strength) {
 #ifdef SMS_GX_HAVE_SDL2
-    SDL_GameController* c = s_rumblePad >= 0 ? SDL_GameControllerFromInstanceID(s_rumblePad) : nullptr;
-    if (s_rumbling >= 0 && s_rumbling != s_rumblePad) {  // the player picked up another controller
-        if (SDL_GameController* old = SDL_GameControllerFromInstanceID(s_rumbling))
-            SDL_GameControllerRumble(old, 0, 0, 0);
-        s_rumbling = -1;
-        s_rumbleSent = 0;
+    std::lock_guard<std::mutex> l(s_rumble.lock);
+    if (!s_rumble.started) {
+        if (!strength || s_rumblePad < 0) return s_rumblePad >= 0;
+        s_rumble.started = true;
+        std::thread(rumbleThread).detach();
     }
-    if (!c) return 0;
-    const Uint32 now = SDL_GetTicks();
-    if (strength == s_rumbleSent && (!strength || now - s_rumbleSentAt < 1000)) return 1;
-    s_rumbleSent = strength;
-    s_rumbleSentAt = now;
-    s_rumbling = strength ? s_rumblePad : -1;
-    return SDL_GameControllerRumble(c, strength, strength, strength ? 2000 : 0) == 0;
+    const double now = nowSeconds();
+    if (strength && !s_rumble.level) {
+        s_rumble.onSince = now;
+        if (s_rumble.resting && !s_rumble.kick) {
+            s_rumble.kick = true;
+            s_rumble.wake.notify_one();
+        }
+    } else if (!strength && s_rumble.level) {
+        s_rumble.onTime += now - s_rumble.onSince;
+    }
+    s_rumble.level = strength;
+    if (strength) s_rumble.full = strength;
+    s_rumble.pad = s_rumblePad;
+    s_rumble.called = true;
+    return s_rumblePad >= 0;
 #else
     (void)strength;
     return 0;
+#endif
+}
+
+void sms_gx_rumble_shutdown(void) {
+#ifdef SMS_GX_HAVE_SDL2
+    {
+        std::lock_guard<std::mutex> l(s_rumble.lock);
+        if (!s_rumble.started) return;
+        s_rumbleQuit = true;
+        s_rumble.wake.notify_one();
+    }
+    std::lock_guard<std::mutex> l(s_padLock);
+    for (const Pad& p : s_pads) SDL_GameControllerRumble(p.c, 0, 0, 0);
 #endif
 }
 
