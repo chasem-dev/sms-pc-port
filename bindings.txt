@@ -9,6 +9,8 @@
 # Keys: letters, digits, ENTER ESC SPACE TAB BACKSPACE UP DOWN LEFT RIGHT
 #       LSHIFT RSHIFT LCTRL RCTRL LALT RALT KP_0..KP_9 KP_ENTER F1..F12
 #       COMMA PERIOD SLASH SEMICOLON ... or #<SDL scancode>
+# Mouse buttons count as keys: MOUSE_LEFT MOUSE_RIGHT MOUSE_MIDDLE
+#       MOUSE_BACK MOUSE_FORWARD (the side buttons), e.g. "A = SPACE MOUSE_LEFT"
 # Controller buttons (named for an Xbox pad; SDL maps others to the same
 # places): PAD_A PAD_B PAD_X PAD_Y PAD_LB PAD_RB PAD_LT PAD_RT PAD_START
 #       PAD_BACK PAD_GUIDE PAD_LSTICK PAD_RSTICK PAD_DPUP PAD_DPDOWN
