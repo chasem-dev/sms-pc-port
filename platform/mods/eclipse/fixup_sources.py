@@ -440,6 +440,14 @@ SHI_FIXES = BOOL_RET_FIXES + SHI_WORD_FIXES + SHI_GAME_TYPES + [
     # integer the size of a pointer keeps the mods' integer messages.
     ("include/Dolphin/OS.h", r"\btypedef u32 OSMessage;", "typedef __UINTPTR_TYPE__ OSMessage;",
      "OSMessage is pointer-sized"),
+    # The port's OSMessageQueue counts in longs (dolphin/os/OSMessage.h), 8 bytes
+    # on LP64 hosts, so its usedCount sat on the first slot of the streamer's
+    # message array after the 56-byte queue SunshineHeaderInterface declared.
+    # Each command sent to slot 0 (the first after boot, then every 16th) came
+    # out one higher (PLAY as PAUSE, STOP as SKIP) and was followed by a stale
+    # one: stages lost their music, the Tutorial always.
+    ("include/Dolphin/OS.h", r"\bs32 (mMessageCount|mFirstIndex|mUsedCount);", r"long \1;",
+     "OSMessageQueue counts in longs"),
     # MWCC's u32/s32 are (unsigned) long, 64 bits on LP64 hosts: the port
     # spells them int there (src/port_include/dolphin/types.h), and so must
     # the mods, or every u32 field and u32-typed call disagrees with the game.

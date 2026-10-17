@@ -1,14 +1,17 @@
 --- a/bse/include/BetterSMS/music.hxx
 +++ b/bse/include/BetterSMS/music.hxx
-@@ -125,6 +125,10 @@
+@@ -124,6 +124,11 @@
+ 
              bool isPlaying() const;
              bool isPaused() const;
-+            // The port: the stop and clear of leaving a stage are still to run
-+            // (stopMusicOnExitStage); the next stage can be ready before they
-+            // are, while the old song fades out.
-+            bool isLeavingStage() const { return mRequestedClear; }
++            // The port: run the stop and clear of leaving a stage
++            // (stopMusicOnExitStage) now, as a console has by the time the
++            // next stage starts its music; here that stage can be ready while
++            // the old song still fades out.
++            void finishLeavingStage();
  
              bool isLooping() const;
+             void setLooping(bool loop);
 --- a/bse/src/area.cpp
 +++ b/bse/src/area.cpp
 @@ -9,6 +9,9 @@
@@ -122,7 +125,9 @@
  }
 --- a/bse/src/music.cpp
 +++ b/bse/src/music.cpp
-@@ -241,9 +241,50 @@
+@@ -239,11 +239,66 @@
+ }
+ 
  void AudioStreamer::setVolumeFadeTo(u8 to, f32 seconds) {
 +    // The port: a song being stopped fades out to silence before the stop
 +    // (and the next song) runs. Eclipse's Shadow Mario episodes set the
@@ -136,44 +141,58 @@
      _mFadeTime     = seconds;
  }
  
- bool AudioStreamer::queueAudio(const AudioPacket &packet) {
-+    // The port: leaving a stage stops the song with a 0.8 s fade and clears the
-+    // queue once the fade ends. A console spends seconds reading the next stage
-+    // from the disc, so the clear has run before that stage queues its song.
-+    // Here the stage is ready long before, and the late clear dropped the new
-+    // song too (silent secret course intros, silent stages without an intro,
-+    // and nothing for Pizza Time's skipStream to play). Finish the old song now.
-+    if (mRequestedClear) {
-+        if (_mIsPlaying || _mIsPaused || mRequestedStop)
-+            stopLowStream();
-+        _mIsPlaying         = false;
-+        _mIsPaused          = false;
-+        mRequestedStop      = false;
-+        mRequestedPause     = false;
-+        mRequestedNext      = false;
-+        mRequestedPlay      = false;
-+        _mDelayedTime       = 0.0f;
-+        _mFadeTime          = 0.0f;
-+        _mTargetVolume      = 0;
-+        _mVolLeft           = 0;
-+        _mVolRight          = 0;
-+        _mPreservedVolLeft  = 0;
-+        _mPreservedVolRight = 0;
++// The port: leaving a stage stops the song with a 0.8 s fade and clears the
++// queue once the fade ends. A console spends seconds reading the next stage
++// from the disc, so the clear has run before that stage queues its song.
++// Here the stage is ready long before, and the late clear dropped the new
++// song too (silent secret course intros, silent stages without an intro,
++// and nothing for Pizza Time's skipStream to play). Finish the old song now.
++// The stream is cancelled here, not through DVDCancelStreamAsync: its
++// callback, run after the stream alarm, could close the next song's file
++// once that had started.
++void AudioStreamer::finishLeavingStage() {
++    if (!mRequestedClear)
++        return;
 +
-+        TAtomicGuard guard;
-+
-+        _mAudioIndex = 0;
-+        for (size_t i = 0; i < AudioQueueSize; ++i) {
-+            _mAudioQueue[i] = AudioPacket();
-+        }
-+        mStreamPos      = 0;
-+        mRequestedClear = false;
++    if (_mIsPlaying || _mIsPaused || mRequestedStop) {
++        OSReport("[AUDIO_STREAM] Stopping stream...\n");
++        AISetStreamVolLeft(0);
++        AISetStreamVolRight(0);
++        AISetStreamPlayState(false);
++        DVDCancelStream(&mStopBlock);
++        cbForCancelStreamOnStopAsync_(0, &mStopBlock);
 +    }
++    _mIsPlaying         = false;
++    _mIsPaused          = false;
++    mRequestedStop      = false;
++    mRequestedPause     = false;
++    mRequestedNext      = false;
++    mRequestedPlay      = false;
++    _mDelayedTime       = 0.0f;
++    _mFadeTime          = 0.0f;
++    _mTargetVolume      = 0;
++    _mVolLeft           = 0;
++    _mVolRight          = 0;
++    _mPreservedVolLeft  = 0;
++    _mPreservedVolRight = 0;
++
++    TAtomicGuard guard;
++
++    _mAudioIndex = 0;
++    for (size_t i = 0; i < AudioQueueSize; ++i) {
++        _mAudioQueue[i] = AudioPacket();
++    }
++    mStreamPos      = 0;
++    mRequestedClear = false;
++}
++
+ bool AudioStreamer::queueAudio(const AudioPacket &packet) {
++    finishLeavingStage();
 +
      for (u32 i = 0; i < AudioQueueSize; ++i) {
          AudioPacket &slot = _mAudioQueue[(i + _mAudioIndex) % AudioQueueSize];
          if (slot.getID() == 0xFFFFFFFF) {
-@@ -340,8 +381,9 @@
+@@ -340,8 +395,9 @@
  }
  
  void AudioStreamer::clear() {
@@ -185,7 +204,7 @@
  }
  
  SMS_NO_INLINE bool AudioStreamer::play_() {
-@@ -487,12 +529,12 @@
+@@ -487,12 +543,12 @@
  
  static JAISound *GetJAISoundForMusic(u32 id) {
      JAISound **unk = (JAISound **)search__19JALListS_5(id & 0x3FF); 
@@ -200,22 +219,19 @@
  }
  
  static f32 GetJAISoundSeInterVolume(JAISound *sound, u8 channel) {
-@@ -959,8 +993,14 @@
-     if (!config->mMusicEnabled.get())
-         return;
+@@ -946,6 +1002,12 @@
+     Stage::TStageParams *config = Stage::getStageConfiguration();
+     AudioStreamer *streamer     = AudioStreamer::getInstance();
  
-     if (config->mIsExStage.get()) {
--        if (MSBgm::getHandle(0) || streamer->isPlaying()) {
-+        // The port: a secret course leaves its music to the entrance demo
-+        // (initExMusic) when a song is already playing. A console reads the
-+        // course from the disc while the last stage's song fades out, so that
-+        // song has stopped by now; here it can still be fading, and courses
-+        // with sequenced music (Daisy Cruiser's) stayed silent until Mario
-+        // died and the stage started again.
-+        if (MSBgm::getHandle(0) || (streamer->isPlaying() && !streamer->isLeavingStage())) {
-             return;
-         }
-     }
++    // The port: the last stage's song has stopped and its queue is clear, as
++    // on a console. While the clear was still to run, a stage with the same
++    // song (the castle's floors, a stage restarted after Mario lost a life)
++    // found it current, played it again below, and lost it to the clear.
++    streamer->finishLeavingStage();
++
+     _mIsBootOut = false;
+ 
+     if (config->mMusicSetCustom.get()) {
 --- a/bse/src/p_settings.hxx
 +++ b/bse/src/p_settings.hxx
 @@ -1246,8 +1246,8 @@
