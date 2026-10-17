@@ -84,6 +84,7 @@ Options can be kept in [`settings.txt`](settings.txt) (`resolution = 2`, `textur
 | Option | Effect |
 | --- | --- |
 | `SMS_SKIP_MOVIES=1` | skip cutscenes; keep portal animations playing |
+| `SMS_SKIP_INTRO=1` | start at the title: no Nintendo and Dolby logos or opening movie (A skips each of them anyway) |
 | `SMS_LANGUAGE=fr` | play in French, German (`de`), Spanish (`es`), Italian (`it`) or Polish (`pl`) instead of English (`en`, the default), with that [language pack](#languages) installed |
 | `SMS_HEAT_HAZE=0` | turn off the heat-wave shimmer that distorts the picture in sunny areas |
 | `SMS_PAUSE_TRACKER=0` | hide the pause menu's [Shine and blue coin tracker](#pause-menu-tracker) |
@@ -186,7 +187,9 @@ The game log says how it opened the adapter (`[pad] GameCube adapter opened (...
 | Save states list (in the pause menu) | the same: F5, or L1 + R1 |
 | Tracker's previous / next area (in the pause menu) | L / R (Q / E) |
 | Load the newest save state | F6 |
-| Quit | Esc |
+| Quit (asks first: Y, or Enter on Quit, quits; Esc, N or B stays) | Esc |
+
+Esc asks before quitting, so a stray press does not lose unsaved progress: Cancel is picked to begin with, Left/Right (or the d-pad) moves between Quit and Cancel, and the mouse works too; the game keeps running behind the prompt but reads no input. Closing the window still quits straight away.
 
 The warp menu lists every stage on the disc (Eclipse's too) and, under each, its episodes and secret courses with their names and scene files; picking one warps there straight away, as a pipe or the pause menu's Exit Area would, without the Shines that would unlock it.
 It warps while a stage is playing (not during a cutscene, dialogue or the pause menu); the game keeps running behind it but reads no input.
@@ -211,6 +214,8 @@ To change them, edit [`bindings.txt`](bindings.txt) (`CONTROL = KEY KEY ...`, on
 
 Controller buttons can be remapped the same way, by name: `PAD_A`, `PAD_B`, `PAD_X`, `PAD_Y`, `PAD_LB`, `PAD_RB`, `PAD_LT`, `PAD_RT`, `PAD_START`, `PAD_BACK`, `PAD_DPUP` … (the full list is in `bindings.txt`). A line's keys and buttons each replace only their own kind, so `A = PAD_Y` moves A to the controller's Y button and keeps Space and X; `Z = PAD_RT` puts Z on the right trigger. L and R stay analog when bound to a trigger.
 
+Mouse buttons can be bound like keys: `MOUSE_LEFT`, `MOUSE_RIGHT`, `MOUSE_MIDDLE`, `MOUSE_BACK` and `MOUSE_FORWARD` (the side buttons), e.g. `A = SPACE MOUSE_LEFT`. With mouse look, the click that takes the mouse back after F10 does not press anything.
+
 Two keys or two buttons joined with `+` must be held together: the default `SAVE_STATE = F5 PAD_LB+PAD_RB` saves with F5, or with L1 and R1 (LB and RB) held at once. While one of such a pair is held, the game does not see the other, so holding L1 and then pressing R1 does not also press Z.
 
 `L_SOFT` and `R_SOFT` are a light L or R press: the trigger goes part of the way, without the click, as when a GameCube trigger is pressed gently (for example, spraying FLUDD on the move with R). They have no default keys; bind them like any other control (`R_SOFT = LALT PAD_RB`). `SMS_SOFT_TRIGGER=n` (`soft_trigger`) sets how far, 5 to 95 percent (default 40).
@@ -218,7 +223,7 @@ Two keys or two buttons joined with `+` must be held together: the default `SAVE
 `SMS_CAMERA_INVERT_X=1` and `SMS_CAMERA_INVERT_Y=1` invert the C-stick's camera control left/right and up/down, for keys and controllers alike (recorded `.dtm` movies are played as recorded). `SMS_CAMERA_INVERT_Y` also flips the control stick's up and down when Mario aims FLUDD in place (R held all the way down while standing), so aiming follows the camera's setting. `SMS_CLOSE_CAMERA_CSTICK=1` lets the C-stick turn the close-up camera Y switches to, and so aim FLUDD in it, the way it turns the normal camera (Invert camera X and Y apply); the control stick keeps working there too.
 The launcher sets them from **Settings → Gameplay → Invert camera X / Y** (X on, Y off by default), effective on the next game launch.
 
-`SMS_FREE_CAMERA=1` keeps the camera where you point it: it no longer swings back behind Mario by itself as he runs (L still recentres it). `SMS_CAMERA_SPEED=n` scales how fast the C-stick turns the camera, in percent (100 is the game's own; 10 to 400). `SMS_MOUSE_CAMERA=1` turns the camera with the mouse: the window captures the mouse while it has focus, F10 releases it and a click takes it back; `SMS_MOUSE_SENSITIVITY=n` sets its speed in percent. The invert settings apply to the mouse too.
+`SMS_FREE_CAMERA=1` keeps the camera where you point it: it no longer swings back behind Mario by itself as he runs (L still recentres it). `SMS_CAMERA_SPEED=n` scales how fast the C-stick turns the camera, in percent (100 is the game's own; 10 to 400). `SMS_MOUSE_CAMERA=1` turns the camera with the mouse: the window captures the mouse while it has focus, F10 releases it and a click takes it back; `SMS_MOUSE_SENSITIVITY=n` sets its speed in percent. The invert settings apply to the mouse too. The mouse orbits the camera around Mario: left and right turn it, up and down tilt it over or under him at the same distance (`SMS_MOUSE_ORBIT=0` makes up and down act as the C-stick's instead, moving it nearer and lower or further and higher), and L recentres it. The mouse wheel sets the camera's distance: scroll down to move it out, up to bring it in.
 
 The game ignores the keyboard and controllers while another window has focus, so a controller used in another app (or in the launcher) does not also move Mario. Anything held is released when the window loses focus; a button still held when you come back counts once you press it again. `SMS_BACKGROUND_INPUT=1` (`background_input`) keeps input on in the background.
 

@@ -252,6 +252,7 @@ The everyday options are in the [README](../README.md#options); this is the full
 | `SMS_AUDIO=0` | no sound output; the game's audio (JAudio's thread and sequencer, the software DSP) still runs, paced as with no output device ([64-BIT.md](64-BIT.md), item 19) |
 | `SMS_NO_AUDIO=1` | run with an empty JAudio configuration and an idle AI DMA; THP movies stall (their video waits for audio), so combine with `SMS_SKIP_MOVIES=1` |
 | `SMS_SKIP_MOVIES=1` | skip cutscenes; keep the plaza portals' looping movies |
+| `SMS_SKIP_INTRO=1` | start at the title: no Nintendo and Dolby logos, no opening movie (`zz-movie-skip-02`) |
 | `SMS_WARP=stage,scenario[,shines]` | debugging: loading a file goes to that area instead (`1,0,1` is Delfino Plaza right after the airstrip), optionally with that Shine count |
 | `SMS_WARP_LIST=1` | print the warp menu's list (`area,episode` as `SMS_WARP` takes them, the stage, the episode and its scene) when the menu first opens |
 | `SMS_WARP_MOVIE=n` | debugging: loading a file plays streaming movie `n` (0–19, `TMovieDirector::getStreamMovieName`) |
@@ -343,6 +344,7 @@ Measured headless on the 32-bit Linux build (Mesa llvmpipe software GL), 2026-09
   The map screen (`TGuide`, patch `widescreen-05`) fills the wide frame, as the 16:9 map of later releases does, instead of a 4:3 sheet over the live game.
   As `guide_1.blo` loads, the paper, the top and bottom bands and the grid rows run on to the screen edges, the vertical grid lines past the 4:3 frame are copies of the layout's first full-height line, and the drawings beside the island (palm trees, sunflowers, fish, compass, title, sun, Totals, ship and the two texts) move out by half the extra width on their side; the island, its places and the panels stay put, and the cursor reaches the new edges.
   It draws through `GXPC_SetWide2D`: 2D at the 4:3 scale, centred, and past the 4:3 edges, with none of it stretched.
+  The stage-entry title card (`TConsoleStr`, `scenario_demo_1.blo`, patch `widescreen-07`) draws the same way: its panes that touch the 4:3 edges (the black bars that close over the intro camera and the two halves that slide open onto the stage) run on past them, so the halves cover the whole frame and slide off its edges, and the stage and episode names stay where they are.
 - **30, 60 and 120 frames per second** (`SMS_FRAME_RATE`, patches `framerate-*`): 60 is the port default, 30 is native, and 120 is optional.
   `port_active_frame_rate` is the gameplay rate while `TMarDirector` runs, and 30 for logos, menus and movies.
   `SMSGetVSyncTimesPerSec` reports that rate, so animations and fades keep their real-time duration.

@@ -78,6 +78,9 @@ frame_rate = 60
 # present_filter = bilinear
 
 # skip_movies = off
+# Start at the title: no Nintendo and Dolby logos or opening movie (A skips
+# each of them anyway).
+# skip_intro = off
 # The heat-wave shimmer that distorts the picture in sunny areas.
 # heat_haze = on
 # The pause menu's tracker: an area's Shine Sprites and blue coins, got out of
@@ -118,12 +121,16 @@ frame_rate = 60
 # Camera: invert either axis (C-stick, camera keys and mouse), a free camera
 # that stays where you point it (L recentres it), rotation speed in percent,
 # and mouse look (F10 releases the mouse) with its sensitivity in percent.
+# With mouse look, moving the mouse up and down tilts the camera around Mario
+# (mouse_orbit = off makes it act as the C-stick's up and down instead), and
+# the mouse wheel zooms: down moves the camera out, up brings it in.
 # camera_invert_x = off
 # camera_invert_y = off
 # free_camera = off
 # camera_speed = 100
 # mouse_camera = off
 # mouse_sensitivity = 100
+# mouse_orbit = on
 
 # Keep reading the keyboard and controllers while another window has focus
 # (normally the game ignores them until it has focus again).

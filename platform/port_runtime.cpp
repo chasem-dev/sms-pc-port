@@ -65,6 +65,10 @@ int port_disc_explicit = 0;
 // SMS_SKIP_MOVIES=1 skips cutscenes; looping world textures still play (0016).
 extern "C" int port_skip_movies;
 int port_skip_movies = 0;
+// SMS_SKIP_INTRO=1 starts at the title: no Nintendo and Dolby logos, no
+// opening movie (zz-movie-skip-02).
+extern "C" int port_skip_intro;
+int port_skip_intro = 0;
 // SMS_HEAT_HAZE=0 turns off the heat-wave shimmer (patch zzz-heat-haze-01).
 extern "C" int port_heat_haze;
 int port_heat_haze = 1;
@@ -789,6 +793,7 @@ static const struct {
 	{ "present_filter", "SMS_PRESENT_FILTER" }, // bilinear, sharp, nearest, fsr or nis
 	{ "fsr_mode", "SMS_FSR_MODE" }, // with fsr or nis: native, quality, balanced, performance or ultraperformance
 	{ "skip_movies", "SMS_SKIP_MOVIES" },
+	{ "skip_intro", "SMS_SKIP_INTRO" }, // straight to the title: no logos or opening movie
 	{ "heat_haze", "SMS_HEAT_HAZE" }, // the heat-wave shimmer, on by default
 	{ "pause_tracker", "SMS_PAUSE_TRACKER" }, // the pause menu's Shine and blue coin tracker, on by default
 	{ "button_prompts", "SMS_BUTTON_PROMPTS" }, // gamecube, auto, xbox, playstation, steamdeck or keyboard
@@ -814,6 +819,7 @@ static const struct {
 	{ "free_camera", "SMS_FREE_CAMERA" },             // no automatic swing back
 	{ "mouse_camera", "SMS_MOUSE_CAMERA" },           // mouse look
 	{ "mouse_sensitivity", "SMS_MOUSE_SENSITIVITY" }, // percent
+	{ "mouse_orbit", "SMS_MOUSE_ORBIT" },             // mouse up/down tilts the camera around Mario
 	{ "background_input", "SMS_BACKGROUND_INPUT" },   // keep input while another window has focus
 	{ "rumble", "SMS_RUMBLE" },                       // controller rumble, on by default
 	{ "rumble_strength", "SMS_RUMBLE_STRENGTH" },     // percent
@@ -891,6 +897,8 @@ extern "C" void port_init(int argc, char** argv)
 	pick_glx_vendor();
 	if (const char* m = getenv("SMS_SKIP_MOVIES"))
 		port_skip_movies = *m && strcmp(m, "0") != 0;
+	if (const char* i = getenv("SMS_SKIP_INTRO"))
+		port_skip_intro = *i && strcmp(i, "0") != 0;
 	if (const char* h = getenv("SMS_HEAT_HAZE"))
 		port_heat_haze = !*h || strcmp(h, "0") != 0;
 	if (!port_heat_haze)
