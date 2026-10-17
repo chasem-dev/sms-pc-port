@@ -65,6 +65,7 @@ __attribute__((weak)) void sms_gx_rumble_shutdown(void);
 __attribute__((weak)) int GXPC_IsHeadless(void);
 __attribute__((weak)) int GXPC_MouseCaptured(void);
 __attribute__((weak)) int GXPC_GameInputBlocked(void);
+__attribute__((weak)) int GXPC_RequestQuit(void);
 }
 
 // PC camera options, read by the camera code (decomp-patches/zzz-pc-camera.patch):
@@ -387,11 +388,15 @@ void on_event(const union SDL_Event* ev)
 		const sdl::KeyboardEvent* k = (const sdl::KeyboardEvent*)ev;
 		if (k->scancode >= 0 && k->scancode < 512)
 			g_key[k->scancode] = type == sdl::KEYDOWN;
-		if (type == sdl::KEYDOWN)
+		// The quit key asks first, in the window (the quit prompt); a held
+		// key's repeats do not ask again.
+		if (type == sdl::KEYDOWN && !k->repeat)
 			for (int i = 0; i < g_nbind[C_QUIT]; i++)
 				if (g_bind[C_QUIT][i] == k->scancode) {
 					port_log("[pad] quit key pressed\n");
-					exit(0);
+					if (!(GXPC_RequestQuit && GXPC_RequestQuit()))
+						exit(0);
+					break;
 				}
 		break;
 	}
