@@ -78,6 +78,9 @@ frame_rate = 60
 # present_filter = bilinear
 
 # skip_movies = off
+# Start at the title: no Nintendo and Dolby logos or opening movie (A skips
+# each of them anyway).
+# skip_intro = off
 # The heat-wave shimmer that distorts the picture in sunny areas.
 # heat_haze = on
 # The pause menu's tracker: an area's Shine Sprites and blue coins, got out of

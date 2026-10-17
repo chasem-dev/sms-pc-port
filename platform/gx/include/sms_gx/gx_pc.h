@@ -53,6 +53,9 @@ void GXPC_SetWindowIcon(const uint8_t* rgba, int w, int h);
 int GXPC_MouseCaptured(void);
 /* 1 while the cheat menu (F9) is open: the PAD layer reports an idle controller. */
 int GXPC_GameInputBlocked(void);
+/* The quit key: opens the "are you sure" prompt, whose Quit button exits.
+ * 0 without a window (headless), where the caller exits straight away. */
+int GXPC_RequestQuit(void);
 /* Widescreen: the displayed width over the GameCube's 4:3 (1 = off). Set
  * before the context exists; the EFB, the display and the window widen, and
  * draws map the game's 640-wide coordinates into it (see gx_render.cpp). The

@@ -84,6 +84,7 @@ Options can be kept in [`settings.txt`](settings.txt) (`resolution = 2`, `textur
 | Option | Effect |
 | --- | --- |
 | `SMS_SKIP_MOVIES=1` | skip cutscenes; keep portal animations playing |
+| `SMS_SKIP_INTRO=1` | start at the title: no Nintendo and Dolby logos or opening movie (A skips each of them anyway) |
 | `SMS_LANGUAGE=fr` | play in French, German (`de`), Spanish (`es`), Italian (`it`) or Polish (`pl`) instead of English (`en`, the default), with that [language pack](#languages) installed |
 | `SMS_HEAT_HAZE=0` | turn off the heat-wave shimmer that distorts the picture in sunny areas |
 | `SMS_PAUSE_TRACKER=0` | hide the pause menu's [Shine and blue coin tracker](#pause-menu-tracker) |
@@ -186,7 +187,9 @@ The game log says how it opened the adapter (`[pad] GameCube adapter opened (...
 | Save states list (in the pause menu) | the same: F5, or L1 + R1 |
 | Tracker's previous / next area (in the pause menu) | L / R (Q / E) |
 | Load the newest save state | F6 |
-| Quit | Esc |
+| Quit (asks first: Y, or Enter on Quit, quits; Esc, N or B stays) | Esc |
+
+Esc asks before quitting, so a stray press does not lose unsaved progress: Cancel is picked to begin with, Left/Right (or the d-pad) moves between Quit and Cancel, and the mouse works too; the game keeps running behind the prompt but reads no input. Closing the window still quits straight away.
 
 The warp menu lists every stage on the disc (Eclipse's too) and, under each, its episodes and secret courses with their names and scene files; picking one warps there straight away, as a pipe or the pause menu's Exit Area would, without the Shines that would unlock it.
 It warps while a stage is playing (not during a cutscene, dialogue or the pause menu); the game keeps running behind it but reads no input.
