@@ -73,16 +73,20 @@ void GXPC_HudPaneBegin(float x1, float x2);
 void GXPC_HudPaneEnd(void);
 float GXPC_GetWidescreen(void);
 
-/* Input hook for the PAD layer.  sms_gx_pump_events runs SDL_PollEvent (it is
+/* Input hook for the PAD layer.  sms_gx_pump_events handles SDL's events (it is
  * also called after every present), opens game controllers as they appear and
  * hands every event to the registered callback.  Closing the window exits the
  * process.  The callback receives SDL2's `const SDL_Event*`. */
 union SDL_Event;
 void sms_gx_set_event_callback(void (*cb)(const union SDL_Event* ev));
 void sms_gx_pump_events(void);
-/* Rumble on the game controller last used (0 stops it, 65535 is full); calls
- * that change nothing are cheap.  Returns 0 without a controller. */
+/* Rumble on the game controller last used (0 stops it, 65535 is full).  Only
+ * hands the motor's state to a thread that sends it, so every call is cheap;
+ * a motor run on some frames only rumbles at that share of the strength.
+ * Returns 0 without a controller. */
 int sms_gx_rumble(unsigned short strength);
+/* At exit: stops that thread and every controller's rumble. */
+void sms_gx_rumble_shutdown(void);
 
 /* Call once with an OpenGL 3.3 core context current (SDL, EGL, ...), before the
  * game calls GXInit.  efbScale multiplies the 640x528 EFB (1 = native; FSR 1's

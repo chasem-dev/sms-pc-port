@@ -61,6 +61,7 @@ extern "C" {
 __attribute__((weak)) void sms_gx_set_event_callback(void (*cb)(const union SDL_Event* ev));
 __attribute__((weak)) void sms_gx_pump_events(void);
 __attribute__((weak)) int sms_gx_rumble(unsigned short strength);
+__attribute__((weak)) void sms_gx_rumble_shutdown(void);
 __attribute__((weak)) int GXPC_IsHeadless(void);
 __attribute__((weak)) int GXPC_MouseCaptured(void);
 __attribute__((weak)) int GXPC_GameInputBlocked(void);
@@ -213,8 +214,9 @@ int g_mouseDX, g_mouseDY;
 bool g_focused = true, g_backgroundInput;
 
 // Rumble. The GameCube's motor is only on or off: the game rumbles weakly by
-// running it on some frames only (RumbleMgr), and the controller plays it the
-// same way. SMS_RUMBLE=0 turns it off; SMS_RUMBLE_STRENGTH=percent scales it
+// running it on some frames only (RumbleMgr). The GameCube adapter plays it
+// the same way; other controllers rumble at the share of frames it is on
+// (sms_gx_rumble). SMS_RUMBLE=0 turns it off; SMS_RUMBLE_STRENGTH=percent scales it
 // (SDL controllers only: the GameCube adapter's motors are on or off too).
 // Above 100 the motor is at full strength and the game runs it on more frames
 // (port_rumble_boost, decomp-patches/port-10), on every controller.
@@ -232,6 +234,8 @@ void update_rumble()
 
 void stop_rumble_at_exit()
 {
+	if (sms_gx_rumble_shutdown)
+		sms_gx_rumble_shutdown();
 	if (!g_motor)
 		return;
 	g_motor = false;
