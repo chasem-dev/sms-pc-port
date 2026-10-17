@@ -186,7 +186,9 @@ The game log says how it opened the adapter (`[pad] GameCube adapter opened (...
 | Save states list (in the pause menu) | the same: F5, or L1 + R1 |
 | Tracker's previous / next area (in the pause menu) | L / R (Q / E) |
 | Load the newest save state | F6 |
-| Quit | Esc |
+| Quit (asks first: Y, or Enter on Quit, quits; Esc, N or B stays) | Esc |
+
+Esc asks before quitting, so a stray press does not lose unsaved progress: Cancel is picked to begin with, Left/Right (or the d-pad) moves between Quit and Cancel, and the mouse works too; the game keeps running behind the prompt but reads no input. Closing the window still quits straight away.
 
 The warp menu lists every stage on the disc (Eclipse's too) and, under each, its episodes and secret courses with their names and scene files; picking one warps there straight away, as a pipe or the pause menu's Exit Area would, without the Shines that would unlock it.
 It warps while a stage is playing (not during a cutscene, dialogue or the pause menu); the game keeps running behind it but reads no input.

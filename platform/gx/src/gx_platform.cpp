@@ -7,6 +7,7 @@
 #include "gx_internal.h"
 #include "gx_cheat_menu.h"
 #include "gx_warp_menu.h"
+#include "gx_quit_prompt.h"
 #include "gx_savestate_overlay.h"
 #include "gx_glthread.h"
 #include "gx_window_layout.h"
@@ -255,11 +256,11 @@ void setFullscreen(bool on) {
     SDL_ShowCursor(on ? SDL_DISABLE : SDL_ENABLE);
 }
 
-// An open menu (cheats or warps) has a free cursor; closing it gives mouse
-// look back the capture it had.
+// An open menu (cheats, warps or the quit prompt) has a free cursor; closing
+// it gives mouse look back the capture it had.
 bool s_menuOpen = false, s_capturedBeforeMenu = false;
 
-bool menuVisible() { return cheatMenuVisible() || warpMenuVisible(); }
+bool menuVisible() { return cheatMenuVisible() || warpMenuVisible() || quitPromptVisible(); }
 // Fullscreen (borderless or exclusive) hides the cursor. When F10 releases
 // mouse look the cursor must come back, or the release looks like it did
 // nothing; capturing it again hides it as before.
@@ -731,6 +732,18 @@ int GXPC_MouseCaptured(void) {
 #endif
 }
 int GXPC_GameInputBlocked(void) { return menuVisible(); }
+int GXPC_RequestQuit(void) {
+#ifdef SMS_GX_HAVE_SDL2
+    if (s_mode != MODE_WINDOW || !s_window) return 0;
+    if (cheatMenuVisible()) cheatMenuToggle();
+    if (warpMenuVisible()) warpMenuToggle();
+    quitPromptOpen();
+    syncMenuInput();
+    return 1;
+#else
+    return 0;
+#endif
+}
 int GXPC_IsHeadless(void) { return s_mode != MODE_WINDOW; }
 uint32_t GXPC_FrameCount(void) { return s_frame; }
 
@@ -802,6 +815,7 @@ void GXPC_Present(const void* xfb) {
             GXPC_OverlayDraw(w, h);
             cheatMenuRender(w, h);
             warpMenuRender(w, h);
+            quitPromptRender(w, h);
             savestateOverlayRender(w, h);
             captureWindow(s_frame, w, h);
             t1 = nowSeconds();
@@ -899,6 +913,16 @@ void sms_gx_pump_events(void) {
         default:
             break;
         }
+        // The quit prompt, while open, has every key and button; Quit ends the game
+        if (quitPromptHandleEvent(ev)) {
+            syncMenuInput();
+            if (quitPromptConfirmed()) {
+                logmsg("quit confirmed, exiting");
+                GXPC_Shutdown();
+                exit(0);
+            }
+            continue;
+        }
         // backtick toggles the debug overlay and is kept from the pad layer
         if ((ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) && ev.key.keysym.scancode == SDL_SCANCODE_GRAVE) {
             if (ev.type == SDL_KEYDOWN && !ev.key.repeat) GXPC_OverlayToggle();
@@ -974,6 +998,7 @@ void sms_gx_pump_events(void) {
             continue;
         }
         if (s_eventCb) s_eventCb(&ev);
+        syncMenuInput();  // the pad layer's quit key opens the quit prompt (GXPC_RequestQuit)
         if (ev.type == SDL_QUIT ||
             (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_CLOSE)) {
             logmsg("window closed, exiting");
