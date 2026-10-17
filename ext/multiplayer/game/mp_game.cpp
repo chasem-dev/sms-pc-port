@@ -43,6 +43,7 @@
 #include <GC2D/ExPane.hpp>
 #include <JSystem/JUtility/JUTTexture.hpp>
 #include <JSystem/J2D/J2DPicture.hpp>
+#include <Camera/Camera.hpp>
 #include <MoveBG/MapObjCorona.hpp>
 #include <MoveBG/Item.hpp>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
@@ -84,6 +85,7 @@ const int kNoticeFrames = 150; // about five seconds at 30 frames a second
 
 int s_role = -1; // MPG_ROLE_*, -1 before the first frame
 bool s_playing, s_wasPlaying;
+bool s_arrivedNow; // this frame is the first of play in a stage just loaded
 int32_t s_flags[kMaxFlags];
 uint32_t s_flagIds[kMaxFlags];
 int s_flagCount;
@@ -679,6 +681,16 @@ void sendPose()
 bool leading(int area); // below
 void leadTrip(TMarDirector* dir);
 bool hasEpisodeSelect(int area);
+// A secret course (an area with an archive of its own: the others are
+// unused): one episode, so a way in that names none needs no waiting for.
+bool isSecretCourse(int area)
+{
+	static const u8 areas[] = {21, 22, 23, 24, 29, 30, 31, 32, 33, 40, 41, 42, 44, 46, 47, 48, 50, 51, 52};
+	for (size_t i = 0; i < sizeof areas; i++)
+		if (areas[i] == area)
+			return true;
+	return false;
+}
 
 const char* worldName(int area)
 {
@@ -703,8 +715,14 @@ void takeTravel(TMarDirector* dir)
 	int movie;
 	if (!mpg_travel(&flags, &movie))
 		return;
-	for (int i = 0; i < kSessionFlags; i++)
+	for (int i = 0; i < kSessionFlags; i++) {
+		// the secret courses' movie of Shadow Mario taking FLUDD, seen here
+		// (0x3000D, cleared only in the plaza): not seen again for a trip
+		// that left before the host's own was played (its flags say unseen)
+		if (i == 0xD && TFlagManager::getInstance()->getBool(0x3000D))
+			continue;
 		TFlagManager::getInstance()->setBool((flags >> i) & 1, 0x30000 + i);
+	}
 	if (movie >= 0 && dir) {
 		gpApplication.setMovie((u32)movie);
 		dir->onUnk4CFlag(TMarDirector::DIRECTOR_FLAG_MOVIE_PENDING);
@@ -731,7 +749,7 @@ void followHost(TMarDirector* dir)
 	// select): this game goes to its own, where it watches the host choose
 	// (selectFrame); another way in that the game decides (the plaza) is
 	// waited for here, and taken once the host is there
-	if (episode == 0xFF && mpg_target_traveling() && !hasEpisodeSelect(area)) {
+	if (episode == 0xFF && mpg_target_traveling() && !hasEpisodeSelect(area) && !isSecretCourse(area)) {
 		static int told;
 		if (told++ % (5 * fps) == 0) {
 			char text[128];
@@ -943,6 +961,57 @@ void hostShineExit(TMarDirector* dir)
 	s_hostShineFrames = (int)(6.5f * (port_active_frame_rate > 0 ? port_active_frame_rate : 30));
 }
 
+// A blue coin asks the player who got it to save (TMarDirector::
+// fireGetBlueCoin: the card save prompt, kind 1). Only the host's card holds
+// the save everyone plays, so a client's own prompt is skipped (as the coin is
+// taken, itemTaken, or after the tick, afterMovement: before the game's next
+// state change opens it) and the host's game asks
+// instead, once its player is on the ground and nothing else is on (a Shine's
+// exit, a talk, a cutscene: the game holds the prompt back for those too).
+int s_blueSaveFrom = -1; // host: the player whose blue coin is to be saved
+
+// The same for a nozzle's box opened for good (kinds 3 and 4: the nozzle's
+// help balloon, which the game shows once its prompt is over, shows at once)
+// and Yoshi hatched (5).
+void clientSkipBlueSave(TMarDirector* dir)
+{
+	if (!dir || !dir->checkFlag(TMarDirector::DIRECTOR_FLAG_CARD_SAVE_PENDING))
+		return;
+	const int kind = dir->unk261;
+	if (kind != 1 && kind != 3 && kind != 4 && kind != 5)
+		return; // a Shine's (6: clientShineExit) or a game over's
+	dir->offFlag(TMarDirector::DIRECTOR_FLAG_CARD_SAVE_PENDING);
+	if ((kind == 3 || kind == 4) && dir->getConsole())
+		dir->getConsole()->startAppearBalloon(kind == 3 ? 0x4B : 0x4C, true);
+	showNotice(kind == 1 ? "Blue coin! The host is asked to save it" : "The host is asked to save");
+	fprintf(stderr, "[multiplayer] a save prompt here (kind %d): the host saves\n", kind);
+}
+
+void hostBlueSave(TMarDirector* dir)
+{
+	const int from = mpg_take_blue_save();
+	if (from > 0) {
+		s_blueSaveFrom = from - 1;
+		fprintf(stderr, "[multiplayer] %s got a blue coin (or a nozzle, or Yoshi): the host is asked to save\n",
+		        mpg_character_name(from - 1));
+	}
+	TMario* m = gpMarioOriginal;
+	if (s_blueSaveFrom < 0 || !m || !playing() || s_hostShineFrames > 0 || s_shineGetFrames > 0
+	    || m->mStatus == MARIO_STATUS_WIN_DEMO || dir->isTalkOrDemoModeNow()
+	    || dir->checkFlag(TMarDirector::DIRECTOR_FLAG_SHINE_TAKEN | TMarDirector::DIRECTOR_FLAG_CARD_SAVE_PENDING
+	                      | TMarDirector::DIRECTOR_FLAG_STAGE_TRANSITION_PENDING))
+		return;
+	if (!s_spectating && !m->isTouchGround4cm())
+		return; // not in the middle of a jump
+	dir->onFlag(TMarDirector::DIRECTOR_FLAG_CARD_SAVE_PENDING);
+	dir->unk261 = 1;
+	fprintf(stderr, "[multiplayer] the host's save prompt, for %s\n", mpg_character_name(s_blueSaveFrom));
+	char text[96];
+	snprintf(text, sizeof text, "Saving what %s got", mpg_character_name(s_blueSaveFrom));
+	showNotice(text);
+	s_blueSaveFrom = -1;
+}
+
 // ------------------------------------------------------------------- Shine Get
 
 // A Shine got by anyone is got by everyone together: when a player touches
@@ -1040,12 +1109,12 @@ JGeometry::TVec3<f32> shineGetSpot(int collector, const float pos[3], int yaw)
 	const f32 bx = -sinf(a), bz = -cosf(a); // behind them
 	const TBGCheckData* floor = nullptr;
 	const f32 theirs = gpMap->checkGround(at.x, at.y + 80.0f, at.z, &floor);
-	const f32 base   = floor ? theirs : at.y;
+	const f32 base   = floor && !floor->isIllegalData() ? theirs : at.y; // checkGround's "none" is its illegal floor
 	for (int i = 0; i < 5; i++) {
 		JGeometry::TVec3<f32> p(at.x + rx * tries[i][0] + bx * tries[i][1], base, at.z + rz * tries[i][0] + bz * tries[i][1]);
 		const TBGCheckData* f = nullptr;
 		const f32 ground = gpMap->checkGround(p.x, base + 100.0f, p.z, &f);
-		if (!f || ground < base - 80.0f || ground > base + 80.0f || f->isWaterSurface())
+		if (!f || f->isIllegalData() || ground < base - 80.0f || ground > base + 80.0f || f->isWaterSurface())
 			continue;
 		p.y = ground;
 		return p;
@@ -1621,10 +1690,12 @@ void spreadStart()
 		                         m->mPosition.z + rz * side + bz * back);
 		const TBGCheckData* floor = nullptr;
 		const f32 ground = gpMap->checkGround(at.x, at.y + 80.0f, at.z, &floor);
-		if (!floor || ground < m->mPosition.y - 60.0f || ground > m->mPosition.y + 60.0f)
+		if (!floor || floor->isIllegalData() || ground < m->mPosition.y - 60.0f || ground > m->mPosition.y + 60.0f)
 			continue;
 		at.y = ground;
 		m->warpRequest(at, m->mFaceAngle.y * (360.0f / 65536.0f));
+		if (getenv("SMS_MULTIPLAYER_DEBUG"))
+			fprintf(stderr, "[multiplayer] arrived: put beside the start\n");
 		return;
 	}
 	// nowhere beside it: start where the stage says
@@ -1644,7 +1715,7 @@ bool placeBeside(TMario* m)
 		                         m->mPosition.z + rz * kSpots[i][0] + bz * kSpots[i][1]);
 		const TBGCheckData* floor = nullptr;
 		const f32 ground = gpMap->checkGround(at.x, at.y + 80.0f, at.z, &floor);
-		if (!floor || ground < m->mPosition.y - 60.0f || ground > m->mPosition.y + 60.0f)
+		if (!floor || floor->isIllegalData() || ground < m->mPosition.y - 60.0f || ground > m->mPosition.y + 60.0f)
 			continue;
 		at.y = ground;
 		m->warpRequest(at, m->mFaceAngle.y * (360.0f / 65536.0f));
@@ -1764,35 +1835,77 @@ void reviveWithOneUp()
 	showNotice("A 1-up! Back in the game");
 }
 
-// Host: everyone out of lives? Then the stage starts again for all, with
-// lives as a continue gives them.
-void hostCheckEveryoneOut(TMarDirector* dir)
+// Host: everyone out of lives, every player watching the others? Then
+// everyone leaves the world for Delfino Plaza (in the plaza, it starts
+// again), with lives as a continue gives them. A player watches from the end
+// of their game over, and says so through the stage's reload too (their pose
+// while loading carries it, frame()), so the trip starts as the last of them
+// is out, not once the reloads and the stage's opening have played out
+// (which took a long while, with everyone back in the stage watching nobody).
+u32 s_outIn[MPG_MAX_PLAYERS];      // host: the session in which each player was last seen watching
+int s_poseSeenAt[MPG_MAX_PLAYERS]; // host: when each player's pose of this session was last seen (s_clock)
+bool s_allOutTrip;                 // host: everyone out: this game's own game over takes everyone (missNextArea)
+bool s_allOutLives;                // host: lives to set as a continue gives, once arrived
+
+// Whether every other player is watching (the host's own part is the caller's).
+bool othersAllOut()
 {
-	if (s_restarting || !s_spectating)
-		return;
+	const int fps = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
+	const u32 now = mpg_session();
 	for (int slot = 0; slot < MPG_MAX_PLAYERS; slot++) {
 		if (slot == mpg_slot() || !mpg_player_present(slot))
 			continue;
 		MpgPose pose;
 		float age;
-		if (!mpg_pose(slot, &pose, &age) || !(pose.flags & MPG_POSE_SPECTATING))
-			return;
+		if (mpg_pose(slot, &pose, &age) && pose.session == now) {
+			s_poseSeenAt[slot] = s_clock;
+			if (pose.flags & MPG_POSE_SPECTATING) {
+				s_outIn[slot] = now;
+				continue;
+			}
+			if (age < 2.0f) {
+				s_outIn[slot] = 0; // playing (back with a 1-up, say)
+				return false;
+			}
+		}
+		if (s_outIn[slot] == now)
+			continue; // watching, last heard
+		if (s_clock - s_poseSeenAt[slot] > 10 * fps)
+			continue; // not in this stage for a while (at the title, say): not holding the others back
+		return false;
 	}
+	return true;
+}
+
+void allOutNotice()
+{
+	s_allOutLives = true; // set as the group arrives (set now, a 1-up would bring the watching back here first)
+	if (gpApplication.mCurrArea.getStage() == 1) {
+		showNotice("Everyone is out of lives: back to the start");
+		fprintf(stderr, "[multiplayer] everyone is out of lives: the plaza starts again\n");
+	} else {
+		showNotice("Everyone is out of lives: game over");
+		fprintf(stderr, "[multiplayer] everyone is out of lives: out of the world to Delfino Plaza\n");
+	}
+}
+
+void hostCheckEveryoneOut(TMarDirector* dir)
+{
+	if (s_restarting || !dir || !s_spectating || dir->mState != TMarDirector::STATE_UNK4)
+		return; // paused, the map, a save prompt: once back
+	if (!othersAllOut())
+		return;
 	s_restarting = true;
-	TFlagManager::getInstance()->setFlag(0x20001, 3); // as a continue gives
+	allOutNotice();
 	const TGameSequence& cur = gpApplication.mCurrArea;
 	if (cur.getStage() == 1) {
 		// the plaza: nowhere to leave to; it starts again
-		showNotice("Everyone is out of lives: back to the start");
-		fprintf(stderr, "[multiplayer] everyone is out of lives: the plaza starts again\n");
 		mpg_restart_session();
 		gpApplication.mNextArea.set(cur.getStage(), cur.getScenario(), 0);
 	} else {
 		// a real game over: out of the world, as the pause menu's Exit Area
 		// leaves it (TMarDirector::changeState: the plaza, by the world's
 		// way in), everyone with it
-		showNotice("Everyone is out of lives: game over");
-		fprintf(stderr, "[multiplayer] everyone is out of lives: out of the world to Delfino Plaza\n");
 		gpApplication.mNextArea.set(1, 0xFF, 0);
 		dir->unkE4 = 2;
 	}
@@ -1808,6 +1921,12 @@ int takeGameOver()
 	s_spectating      = true;
 	s_spectateSession = mpg_session();
 	s_watching        = -1;
+	// the host, the last one out: its reload is everyone's way out instead
+	if (s_role == MPG_ROLE_HOST && !s_restarting && othersAllOut()) {
+		s_restarting = true;
+		s_allOutTrip = true;
+		allOutNotice();
+	}
 	return 1;
 }
 
@@ -1844,6 +1963,12 @@ struct TestPlan {
 	int enemyAt, enemyDistance; // nearenemy@N:D: stands D units from the enemy up farthest from the host
 	bool atEnemy;
 	int tearAt;                 // tear@N: Gooper Blooper's tentacle torn off, the game's own way
+	int blueAt;                 // bluecoin@N: a blue coin of the stage taken, as touching it does
+	bool blued;
+	int voidAt;                 // void@N: out of the world (far under the stage), falling
+	bool voided;
+	int cornerAt;               // tubmiddle@N: onto the middle of Bowser's tub, then where Mario stands, now and then
+	bool cornered;
 	bool tore;
 	int surfAt;                 // surf@N: this player gets on a Blooper (surfing)
 	bool surfed;
@@ -1915,7 +2040,7 @@ void runTests(TMarDirector* dir, bool arrived)
 {
 	if (!s_test.parsed) {
 		s_test.parsed = true;
-		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.gateAt = s_test.flAt = s_test.demoAt = s_test.enemyAt = s_test.tearAt = s_test.surfAt = s_test.boatAt = s_test.sandAt = s_test.rideAt = s_test.titleQuitAt = s_test.doorAt = s_test.mantaAt = -1;
+		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.gateAt = s_test.flAt = s_test.demoAt = s_test.enemyAt = s_test.tearAt = s_test.blueAt = s_test.cornerAt = s_test.voidAt = s_test.surfAt = s_test.boatAt = s_test.sandAt = s_test.rideAt = s_test.titleQuitAt = s_test.doorAt = s_test.mantaAt = -1;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
 		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = s_test.bossHitAt = s_test.setFlagAt = -1;
 		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.shadowRunAt = s_test.npcSprayAt = s_test.carryAt = s_test.slotSprayAt = s_test.melonAt = -1;
@@ -1936,6 +2061,12 @@ void runTests(TMarDirector* dir, bool arrived)
 				sscanf(ne, "nearenemy@%d:%d", &s_test.enemyAt, &s_test.enemyDistance);
 			if (const char* te = strstr(plan, "tear@"))
 				sscanf(te, "tear@%d", &s_test.tearAt);
+			if (const char* bc = strstr(plan, "bluecoin@"))
+				sscanf(bc, "bluecoin@%d", &s_test.blueAt);
+			if (const char* vo = strstr(plan, "void@"))
+				sscanf(vo, "void@%d", &s_test.voidAt);
+			if (const char* co = strstr(plan, "tubmiddle@"))
+				sscanf(co, "tubmiddle@%d", &s_test.cornerAt);
 			if (const char* su = strstr(plan, "surf@"))
 				sscanf(su, "surf@%d", &s_test.surfAt);
 			if (const char* nb = strstr(plan, "nearboat@"))
@@ -2091,6 +2222,39 @@ void runTests(TMarDirector* dir, bool arrived)
 		s_test.onSand = MpMirrorTestSandBlock();
 	if (s_test.tearAt >= 0 && !s_test.tore && s_test.frames >= s_test.tearAt)
 		s_test.tore = MpBossTestTear() != 0;
+	if (s_test.voidAt >= 0 && !s_test.voided && s_test.frames >= s_test.voidAt && gpMarioOriginal) {
+		s_test.voided = true;
+		gpMarioOriginal->mPosition.y -= 30000.0f;
+		fprintf(stderr, "[multiplayer] test: out of the world at %.0f %.0f %.0f\n", gpMarioOriginal->mPosition.x,
+		        gpMarioOriginal->mPosition.y, gpMarioOriginal->mPosition.z);
+	}
+	if (s_test.cornerAt >= 0 && !s_test.cornered && s_test.frames >= s_test.cornerAt && gpMarioOriginal) {
+		float at[3];
+		if (MpBossTestTubMiddle(at)) {
+			s_test.cornered = true;
+			gpMarioOriginal->mPosition.set(at[0], at[1] + 300.0f, at[2]);
+			fprintf(stderr, "[multiplayer] test: onto the tub's middle (%.0f %.0f %.0f)\n", at[0], at[1], at[2]);
+		}
+	}
+	if (s_test.cornered && s_test.frames % 30 == 0 && gpMarioOriginal) {
+		TMario* m = gpMarioOriginal;
+		const TBGCheckData* g = m->mGroundPlane;
+		fprintf(stderr, "[multiplayer] test: standing at %.0f %.0f %.0f on %s (floor %.0f)\n", m->mPosition.x, m->mPosition.y,
+		        m->mPosition.z, !g || g->isIllegalData() ? "nothing" : g->getActor() ? typeid(*g->getActor()).name() : "the map",
+		        m->mFloorPosition.y);
+	}
+	if (s_test.blueAt >= 0 && !s_test.blued && s_test.frames >= s_test.blueAt && gpItemManager && gpMarioOriginal) {
+		s_test.blued = true;
+		for (int i = 0; i < gpItemManager->getObjNum(); i++) {
+			TLiveActor* a = gpItemManager->getObj(i);
+			if (a && a->getActorType() == 0x20000010 && !a->checkLiveFlag(LIVE_FLAG_DEAD)) {
+				fprintf(stderr, "[multiplayer] test: taking blue coin %d at %.0f %.0f %.0f\n", i, a->mPosition.x, a->mPosition.y,
+				        a->mPosition.z);
+				static_cast<TItem*>(a)->taken(gpMarioOriginal);
+				break;
+			}
+		}
+	}
 	if (s_test.surfAt >= 0 && !s_test.surfed && s_test.frames >= s_test.surfAt && gpConductor) {
 		// a Blooper to ride (a map object of the three kinds TMario::receiveMessage knows)
 		s_test.surfed = true;
@@ -2487,6 +2651,36 @@ char s_demoNames[8][64];
 JGeometry::TVec3<f32> s_demoPos[8];
 int s_demoNext;
 
+// A camera that only shows something coming out: an item (a blue coin from a
+// graffiti sprayed away, THideObjPictureTwin; coins), a Shine appearing
+// (TShine::appearWithDemo, for any event's), or what a switch did. The
+// others watch it from where they are, not taken across the stage to it:
+// the Shine is got for everyone by whoever touches it (the Shine Get lines
+// everyone up then), a coin by whoever takes it.
+bool atPlace(const JGeometry::TVec3<f32>& a, const float* pos)
+{
+	const f32 dx = a.x - pos[0], dy = a.y - pos[1], dz = a.z - pos[2];
+	return (const float*)&a.x == pos || dx * dx + dy * dy + dz * dz < 50.0f * 50.0f;
+}
+
+bool watchedFromHere(const char* name, const float* pos)
+{
+	static const char* const names[] = {"オブジェスイッチ用カメラ"}; // a switch's (TMapObjSwitch: coins thrown out)
+	for (size_t i = 0; i < sizeof names / sizeof *names; i++)
+		if (!strcmp(name, names[i]))
+			return true;
+	if (!pos)
+		return false;
+	for (int i = 0; gpItemManager && i < gpItemManager->getObjNum(); i++)
+		if (TLiveActor* a = gpItemManager->getObj(i))
+			if (atPlace(a->mPosition, pos))
+				return true;
+	for (int i = 0; TShine* sh = shineAt(i); i++)
+		if (atPlace(sh->mPosition, pos))
+			return true;
+	return false;
+}
+
 void demoCamera(const char* name, const float* pos, int frames, float angle, int option, int hasCallback, void* actor,
                 unsigned flags)
 {
@@ -2527,7 +2721,7 @@ void demoCamera(const char* name, const float* pos, int frames, float angle, int
 	const s32 f = frames;
 	memcpy(buf + n, &f, 4);
 	n += 4;
-	buf[n++] = (uint8_t)(option != 0);
+	buf[n++] = (uint8_t)((option != 0) | (watchedFromHere(name, pos) ? 2 : 0)); // 2: everyone watches from where they are
 	mpg_demo(buf, n);
 }
 
@@ -2554,7 +2748,8 @@ void playOthersCutscenes(TMarDirector* dir)
 		memcpy(values, buf + 2 + len, sizeof values);
 		s32 frames;
 		memcpy(&frames, buf + 2 + len + sizeof values, 4);
-		const bool option = buf[2 + len + sizeof values + 4] != 0;
+		const bool option   = (buf[2 + len + sizeof values + 4] & 1) != 0;
+		const bool fromHere = (buf[2 + len + sizeof values + 4] & 2) != 0;
 		s_demoPos[k].set(values[0], values[1], values[2]);
 		// to the player who started it, then their cutscene; one about a
 		// place (a boss, a statue) brings everyone to the player nearest it,
@@ -2562,8 +2757,8 @@ void playOthersCutscenes(TMarDirector* dir)
 		// (round a Gatekeeper's puddle, say)
 		JGeometry::TVec3<f32> at(values[4], values[5], values[6]);
 		f32 face = values[7];
-		bool warp = true;
-		if (hasPos) {
+		bool warp = !fromHere;
+		if (hasPos && !fromHere) {
 			const JGeometry::TVec3<f32>& focus = s_demoPos[k];
 			f32 best = distance2(m->mPosition, focus);
 			warp     = false;
@@ -2575,6 +2770,14 @@ void playOthersCutscenes(TMarDirector* dir)
 					face = m->mFaceAngle.y * (360.0f / 65536.0f);
 					warp = true;
 				}
+		}
+		if (warp && gpMap) {
+			// not to where there is no floor (they were in the air over
+			// nothing this game knows): watched from here instead
+			const TBGCheckData* floor = nullptr;
+			gpMap->checkGround(at.x, at.y + 80.0f, at.z, &floor);
+			if (!floor || floor->isIllegalData())
+				warp = false;
 		}
 		if (warp)
 			m->warpRequest(at, face);
@@ -2775,6 +2978,12 @@ void objectMove(void* object, int after)
 		return;
 	TLiveActor* a = dynamic_cast<TLiveActor*>(static_cast<JDrama::TViewObj*>(object));
 	if (!a)
+		return;
+	// Bowser's hot tub sets up its floor and its corners' collision only
+	// around Mario (TBathtub::setupCollisions_), and the corner he is at
+	// moves its pieces as it breaks: around another player, the host's own
+	// corner and floor had none, and the host fell through them
+	if (MpBossBuildsAroundMario(a))
 		return;
 	int best    = -1;
 	f32 nearest = distance2(a->mPosition, *gpMarioPos);
@@ -3236,11 +3445,20 @@ void frame()
 	g.world   = SMS_getShineStage((u8)area);
 	g.paused  = dir && dir->mState == TMarDirector::STATE_PAUSE_MENU;
 	g.frameMs = 1000.0f / (port_active_frame_rate > 0 ? port_active_frame_rate : 30);
+	g.loads   = (unsigned)s_stageNumber;
 	mpg_frame(&g);
 
 	s_wasPlaying = s_playing;
 	s_playing    = g.playing != 0;
-	if (s_playing && !s_wasPlaying) {
+	// arriving: playing a stage just loaded. Playing again after a pause, a
+	// save prompt (a blue coin's) or the map is not: nothing of the stage's is
+	// gathered again, and nobody is moved (a joining player was put beside
+	// where they stood each time, as on arriving)
+	static unsigned arrivedStage;
+	s_arrivedNow = s_playing && arrivedStage != s_stageNumber;
+	if (s_playing)
+		arrivedStage = s_stageNumber;
+	if (s_arrivedNow) {
 		snapshotItems();
 		collectManagers();
 		collectShared();
@@ -3252,6 +3470,16 @@ void frame()
 		collectSwitches();
 		s_stageFrames = 0;
 		s_restarting = false;
+		for (int slot = 0; slot < MPG_MAX_PLAYERS; slot++)
+			s_poseSeenAt[slot] = s_clock; // each has a while to be seen here (hostCheckEveryoneOut)
+		if (getenv("SMS_MULTIPLAYER_DEBUG"))
+			fprintf(stderr, "[multiplayer] arrived in area %d (the secret courses' FLUDD movie seen: %d, last movie %d)\n",
+			        area, (int)TFlagManager::getInstance()->getBool(0x3000D), (int)gpApplication.mMovie);
+		if (s_allOutLives && s_role == MPG_ROLE_HOST) {
+			s_allOutLives = false;
+			TFlagManager::getInstance()->setFlag(0x20001, 3); // as a continue gives
+			fprintf(stderr, "[multiplayer] everyone back in with 3 lives\n");
+		}
 		if (s_spectating && mpg_session() != s_spectateSession) {
 			s_spectating = false; // a new start: alive again
 			showNotice("Back in the game");
@@ -3295,9 +3523,10 @@ void frame()
 			else
 			{
 				hostShineExit(dir);
+				hostBlueSave(dir);
 				takeTrips(dir);
 			}
-			runTests(dir, !s_wasPlaying);
+			runTests(dir, s_arrivedNow);
 			MpMirrorSurvey(s_stageFrames);
 			noticeCutscenes();
 			playOthersCutscenes(dir);
@@ -3305,14 +3534,27 @@ void frame()
 			s_stageFrames++;
 			if (s_spectating) {
 				spectateFrame(dir);
-				if (s_role == MPG_ROLE_HOST)
-					hostCheckEveryoneOut(dir);
-				reviveWithOneUp();
+				if (!s_restarting)
+					reviveWithOneUp();
 			}
 		}
+		if (s_role == MPG_ROLE_HOST)
+			hostCheckEveryoneOut(dir);
+		static int lastState = -1;
+		if (getenv("SMS_MULTIPLAYER_DEBUG") && dir->mState != lastState
+		    && (dir->mState == TMarDirector::STATE_CARD_SAVE || lastState == TMarDirector::STATE_CARD_SAVE))
+			fprintf(stderr, "[multiplayer] save prompt %s (frame %u)\n", dir->mState == TMarDirector::STATE_CARD_SAVE ? "open" : "closed",
+			        s_clock);
+		lastState = dir->mState;
 	} else {
 		MpgPose none;
 		memset(&none, 0, sizeof none);
+		if (s_spectating) {
+			// out of lives and reloading the stage: still watching (the host
+			// counts who is, hostCheckEveryoneOut)
+			none.session = s_spectateSession;
+			none.flags   = MPG_POSE_SPECTATING;
+		}
 		mpg_set_pose(&none);
 	}
 	selectFrame();
@@ -3453,6 +3695,45 @@ void dumpActors()
 			        a->mRotation.z, a->getName() ? a->getName() : "-");
 }
 
+// Out of the world: falling with no floor at all beneath (fallen through
+// one: a moving piece's collision gone from under a player, a place set
+// from another game's) for a second and a half. The game catches a fall
+// only onto its death floors, so the player would fall for good; instead
+// they lose a life as into a pit (TMario's death-floor fall, as
+// MarioMove.cpp has it), and come back as after any lost life.
+int s_voidTicks;
+
+void catchFallOut()
+{
+	TMario* m         = gpMarioOriginal;
+	TMarDirector* dir = director();
+	const int fps     = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
+	if (!m || !dir || !gpMap || s_spectating || !playing() || dir->isDemoModeNow() || m->checkFlag(MARIO_FLAG_GAME_OVER)
+	    || m->checkFlag(MARIO_FLAG_IS_PERFORMING) || m->checkFlag(MARIO_FLAG_IN_WATER) || m->isTouchGround4cm()
+	    || m->mVel.y > -5.0f) {
+		s_voidTicks = 0;
+		return;
+	}
+	const TBGCheckData* floor = nullptr;
+	gpMap->checkGround(m->mPosition.x, m->mPosition.y + 80.0f, m->mPosition.z, &floor);
+	if (!floor || !floor->isIllegalData()) {
+		s_voidTicks = 0;
+		return;
+	}
+	if (++s_voidTicks < fps * 3 / 2)
+		return;
+	s_voidTicks = 0;
+	fprintf(stderr, "[multiplayer] fell out of the world at %.0f %.0f %.0f: a lost life\n", m->mPosition.x, m->mPosition.y,
+	        m->mPosition.z);
+	m->onFlag(MARIO_FLAG_GAME_OVER);
+	m->mHealth = 0;
+	if (m->mYoshi)
+		m->mYoshi->kill();
+	m->changePlayerStatus(MARIO_STATUS_FALL_DEAD, 0, true);
+	gpCamera->unk64 |= CPolarSubCamera::CAMERA_FLAG_HELL_DEAD_DEMO;
+	dir->onUnk4EFlag(8);
+}
+
 void afterMovement()
 {
 	g_moves++;
@@ -3465,8 +3746,10 @@ void afterMovement()
 	landCarries();
 	tickHolders();
 	MpMirrorTick();
+	catchFallOut();
 	holdOthersShine();
 	if (s_role == MPG_ROLE_CLIENT) {
+		clientSkipBlueSave(director());
 		followHostEnemies();
 		reportOwnEnemies();
 		MpBossClientTick();
@@ -3553,9 +3836,14 @@ void leadTrip(TMarDirector* dir)
 }
 
 // Whether this game is leading the others to where it is going (or is).
+// Also a way out just taken and not yet asked of the host (leadTrip asks next
+// frame): the game leaves at once (TMarDirector::moveStage in the same tick
+// as setNextStage), and was sent back to the host's stage instead, its
+// opening played again, and then taken where it went by the host's trip
+// (into a secret course: Bianco Hills' opening, then the FLUDD movie).
 bool leading(int area)
 {
-	return s_leadFrames > 0 && area == s_leadArea;
+	return (s_leadFrames > 0 || s_leadCode >= 0) && area == s_leadArea;
 }
 
 // Host: the clients' ways out (mpg_request_trip), taken as the host's own:
@@ -3619,9 +3907,15 @@ void moveStage()
 		mpg_host_going(next.getStage(), next.getScenario(), flags, movie);
 		return;
 	}
+	const bool miss = s_missReload;
+	s_missReload    = false;
 	if (s_role != MPG_ROLE_CLIENT || !mpg_target(&area, &episode))
 		return;
-	takeTravel(director()); // if it came after this game set off
+	// if it came after this game set off; not for this player's own lost
+	// life in the host's stage (a trip's record left over from coming here
+	// would play its movie again: the secret courses' FLUDD movie)
+	if (!miss || area != gpApplication.mCurrArea.getStage())
+		takeTravel(director());
 	// after its own Shine it goes to the plaza, as the host will once saved
 	TMarDirector* dir = director();
 	if (dir && dir->checkFlag(TMarDirector::DIRECTOR_FLAG_SHINE_TAKEN))
@@ -3642,9 +3936,23 @@ void missNextArea()
 {
 	if (!enabled())
 		return;
+	const TGameSequence& cur = gpApplication.mCurrArea;
+	if (s_allOutTrip) {
+		// the host's last life, and everyone else's gone already: everyone
+		// leaves (moveStage takes them along), to the plaza or the plaza again
+		s_allOutTrip = false;
+		s_missReload = false;
+		s_spectating = false;
+		if (cur.getStage() == 1) {
+			mpg_restart_session();
+			gpApplication.mNextArea.set(cur.getStage(), cur.getScenario(), 0);
+		} else {
+			gpApplication.mNextArea.set(1, 0xFF, 0);
+		}
+		return;
+	}
 	s_missReload = true; // the same stage again for this player only (moveStage)
 	// back into the same stage, not out to the plaza: the others are still here
-	const TGameSequence& cur = gpApplication.mCurrArea;
 	gpApplication.mNextArea.set(cur.getStage(), cur.getScenario(), 0);
 }
 
@@ -3665,6 +3973,8 @@ void itemTaken(void* item, void*)
 {
 	if (!enabled() || !inStage())
 		return;
+	if (s_role == MPG_ROLE_CLIENT)
+		clientSkipBlueSave(director()); // a blue coin's prompt, asked for as it was taken (TCoinBlue::taken)
 	TItemManager* mgr = items();
 	if (!mgr)
 		return;

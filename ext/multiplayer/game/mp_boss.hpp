@@ -12,6 +12,12 @@ void MpBossHostFrame();
 void MpBossClientTick();
 // Test aid: a hit by this game's player on its copy; the boss's kind, 0 if none.
 int MpBossTestHit();
+// Whether `object` (a TLiveActor) sets up its collision around Mario alone (Bowser's hot tub
+// and its corners: TBathtub::setupCollisions_), so must move by this game's
+// own player, not another player near it (mp_game.cpp's objectMove).
+bool MpBossBuildsAroundMario(const void* object);
+// Test aid (tubmiddle@N): where the middle of Bowser's tub is; false if it is not here.
+bool MpBossTestTubMiddle(float at[3]);
 // Whether `actor` (a TLiveActor) is a boss shared here.
 bool MpBossIsBoss(const void* actor);
 // Test aid: a spray on this game's Shadow Mario; his kind, 0 if he is not here.

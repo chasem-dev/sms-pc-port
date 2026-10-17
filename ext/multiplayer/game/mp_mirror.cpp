@@ -874,7 +874,12 @@ void takeTub(TLiveActor* a, const u8* in, int size, int, int*)
 		return;
 	// eased toward the host's (the shorter way round), then on as it spins
 	f32 dot = q[0] * t->mQuat.x + q[1] * t->mQuat.y + q[2] * t->mQuat.z + q[3] * t->mQuat.w;
-	const f32 sign = dot < 0.0f ? -1.0f : 1.0f, k = 0.3f;
+	// a little at a time: at the rim (some 4500 from the middle) a degree
+	// moves the floor some 80 units, past what a player standing there
+	// keeps their feet on (the game finds a floor up to 78 above them)
+	const f32 apartRad = 2.0f * acosf(fminf(1.0f, fabsf(dot)));
+	const f32 maxStep  = 0.25f * 0.0174533f;
+	const f32 sign = dot < 0.0f ? -1.0f : 1.0f, k = apartRad * 0.3f > maxStep ? maxStep / apartRad : 0.3f;
 	t->mQuat.x += (sign * q[0] - t->mQuat.x) * k;
 	t->mQuat.y += (sign * q[1] - t->mQuat.y) * k;
 	t->mQuat.z += (sign * q[2] - t->mQuat.z) * k;

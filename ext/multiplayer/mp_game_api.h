@@ -112,6 +112,8 @@ typedef struct MpgGame {
 	int world;        // SMS_getShineStage(area), for the host's status line
 	int paused;
 	float frameMs;    // how long this frame is in game time (1000 / the frame rate)
+	unsigned loads;   // stages loaded so far (the same one again included): playing again
+	                  // after a pause, a save prompt or the map is not arriving
 } MpgGame;
 
 // Reads SMS_MULTIPLAYER*; starts hosting or joining. MPG_ROLE_*.
@@ -160,6 +162,9 @@ int mpg_target(int* area, int* episode);
 int mpg_in_target(void);
 // Host: a client got a Shine; leave as if we had (once per Shine).
 int mpg_take_shine_exit(void);
+// Host: a client got a blue coin: its slot + 1 (the host is asked to save,
+// as the game asks the player who gets one), else 0. Once per report.
+int mpg_take_blue_save(void);
 
 // An item that appeared during the stage (from a box, a defeated enemy, a red
 // coin switch), taken by anyone this session: its type (the low byte of its
