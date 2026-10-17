@@ -67,12 +67,15 @@ __attribute__((weak)) int GXPC_GameInputBlocked(void);
 }
 
 // PC camera options, read by the camera code (decomp-patches/zzz-pc-camera.patch):
-//   SMS_CAMERA_INVERT_X / _Y   flip the C-stick (and mouse) on that axis
+//   SMS_CAMERA_INVERT_X / _Y   flip the C-stick (and mouse) on that axis; _Y
+//                              also flips FLUDD's aim while spraying in place
+//                              (decomp-patches/zzz-camera-02-fludd-aim-invert-y.patch)
 //   SMS_CAMERA_SPEED=percent   scales manual camera rotation (100 = retail)
 //   SMS_FREE_CAMERA=1          the camera stays where it is put (no auto swing-back)
 //   SMS_MOUSE_SENSITIVITY=%    mouse look speed, when the GX layer captures the mouse
 extern "C" {
 int port_free_camera      = 0;
+int port_camera_invert_y  = 0;
 f32 port_camera_speed_x   = 1.0f;
 f32 port_camera_speed_y   = 1.0f;
 }
@@ -723,10 +726,14 @@ extern "C" __attribute__((weak)) int port_trace_pad_read(struct PADStatus* statu
 
 extern "C" u32 PADRead(PADStatus* status)
 {
-	// A .dtm movie (platform/trace, SMS_MOVIE) replaces live input.
-	if (port_trace_pad_read && port_trace_pad_read(status))
+	// A .dtm movie (platform/trace, SMS_MOVIE) replaces live input, and is
+	// played as recorded: the game code's own inversion is off too.
+	if (port_trace_pad_read && port_trace_pad_read(status)) {
+		port_camera_invert_y = 0;
 		return PAD_CHAN0_BIT;
+	}
 	init();
+	port_camera_invert_y = g_invert_cy;
 	static bool autoInited;
 	if (!autoInited) {
 		autoInited = true;
