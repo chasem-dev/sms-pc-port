@@ -80,6 +80,7 @@ struct Controller {
 	int role = MPG_ROLE_OFF;
 	MpgGame game{};
 	bool wasPlaying = false;
+	unsigned arrivedLoads = 0; // the stage load last arrived in (MpgGame::loads)
 
 	// host
 	bool atTitle        = false; // back at the title (Save & Quit, the reset): the others were told
@@ -95,6 +96,7 @@ struct Controller {
 	std::deque<Trip> trips; // host: the clients' ways out, which take everyone
 	FlagReportReader reportReaders[MP_MAX_PLAYERS];
 	bool shineExit       = false;
+	int blueSave         = 0; // host: a client got a blue coin (its slot + 1): the host is asked to save
 	int32_t sessionRed   = 0;   // red coins this session, kept over a reload
 	bool restoreRed      = false;
 	// coins and red coins two players took at once, the later one's to give
@@ -888,6 +890,9 @@ void clientMessage(const MpEvent& ev)
 		} else {
 			g.travelKnown = false; // its travel comes when it goes
 		}
+		// this game is there already (it led the way): that trip is made
+		if (g.game.playing && g.game.area == area && (episode == 0xFF || g.game.episode == episode))
+			g.travelKnown = false;
 		if (g.hasTarget && !g.targetSession && g.targetArea == area && g.targetEpisode == episode)
 			break;
 		// the host is setting off: go now, so everyone fades out together
@@ -1337,8 +1342,12 @@ extern "C" void mpg_frame(const MpgGame* game)
 	flushCleans();
 	flushHits();
 	flushMirrors();
-	const bool arrived = game->playing && !g.wasPlaying;
-	g.wasPlaying       = game->playing != 0;
+	// arrived: playing a stage just loaded (back from a pause, a save
+	// prompt or the map is not arriving: nothing is put back or sent again)
+	const bool arrived = game->playing && game->loads != g.arrivedLoads;
+	if (game->playing)
+		g.arrivedLoads = game->loads;
+	g.wasPlaying = game->playing != 0;
 
 	if (g.role == MPG_ROLE_HOST) {
 		// back at the title (Save & Quit and the reset leave without
@@ -1418,6 +1427,7 @@ extern "C" void mpg_frame(const MpgGame* game)
 	if (arrived) {
 		if (g.hasTarget && !g.targetSession) {
 			g.localSession = 0; // the host is on its way too: K_STAGE says which session
+			g.travelKnown  = false; // here already: how the host went is for coming, not for later
 		} else if (g.hasTarget && game->area == g.targetArea && game->episode == g.targetEpisode) {
 			// the host sends the whole list again for K_READY: kept, it would
 			// fill up with a copy each time this player loads the stage again
@@ -1472,6 +1482,19 @@ extern "C" void mpg_flags_sync(int32_t* values)
 				if (!before[i] && game[i]) {
 					g.shineExit = true;
 					notice(std::string(kCharacters[slot]) + " got a Shine!");
+				}
+			// what the game asks to save for (a blue coin, a nozzle's box
+			// opened for good, Yoshi hatched: TMarDirector::fireGetBlueCoin,
+			// fireGetNozzle, fireRideYoshi): the client's own prompt is
+			// skipped (its card is not the save everyone plays); the host
+			// is asked instead
+			struct Range { uint32_t first, n; };
+			static const Range asks[] = {{FLAG_BLUE_FIRST, FLAG_BLUE_N}, {0x10366, 18}, {0x1038F, 1}};
+			for (const Range& range : asks)
+				for (uint32_t i = 0; i < range.n; i++) {
+					const int k = sharedFlagIndex(range.first + i);
+					if (k >= 0 && (size_t)k < game.size() && !before[k] && game[k])
+						g.blueSave = slot + 1;
 				}
 		}
 		static const int coins = sharedFlagIndex(FLAG_COINS);
@@ -1641,6 +1664,14 @@ extern "C" void mpg_travel_done(void)
 {
 	std::lock_guard<std::mutex> hold(g_lock);
 	g.travelKnown = false;
+}
+
+extern "C" int mpg_take_blue_save(void)
+{
+	std::lock_guard<std::mutex> hold(g_lock);
+	const int from = g.blueSave;
+	g.blueSave     = 0;
+	return from;
 }
 
 extern "C" int mpg_take_shine_exit(void)

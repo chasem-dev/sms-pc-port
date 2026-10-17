@@ -101,6 +101,10 @@ int main(int argc, char** argv)
 			// the host moved on: a frame "loading", then in their new stage
 			g.playing = mpg_in_target() || !wasPlaying;
 		}
+		static unsigned loads;
+		if (g.playing && !wasPlaying)
+			loads++;
+		g.loads    = loads;
 		wasPlaying = g.playing != 0;
 		mpg_frame(&g);
 		if (g.playing) {
