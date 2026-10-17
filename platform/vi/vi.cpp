@@ -48,6 +48,7 @@ bool g_black = true;
 // a field). Movie-driven runs are then repeatable: the AI DMA is paced by the
 // retraces too (port_audio_on_retrace), with or without SMS_AUDIO=0.
 bool g_det;
+double g_det_pace; // port_vi_set_pace
 u32 g_det_polls;
 u32 g_det_time_calls;
 const s64 kTicksPerField = 40500000LL * 1001 / 60000; // 675675
@@ -223,6 +224,10 @@ extern "C" int port_vi_idle_advance(void)
 
 extern "C" int port_vi_deterministic(void) { return g_det; }
 
+// Deterministic mode: at most `fields` retraces per second of wall time from
+// now on (0: as fast as the host goes).
+extern "C" void port_vi_set_pace(double fields) { g_det_pace = fields > 0 ? fields : 0; }
+
 // Virtual OSTime in deterministic mode, relative to the boot time base.
 extern "C" s64 port_vi_virtual_ticks(void)
 {
@@ -305,6 +310,22 @@ extern "C" s32 port_vi_frame_wait(s32 due, u16 frames)
 	static double ready, work; // when the last wait ended; seconds per frame, presenting aside
 	if (g_det) {
 		VIWaitForRetrace();
+		// port_vi_set_pace: no faster than that in wall time, so games
+		// captured side by side (multiplayer footage) keep together
+		static double next;
+		const double pace = g_det_pace;
+		if (pace > 0) {
+			const double now = seconds_now();
+			next = next > 0 && now - next < 0.5 ? next + frames / pace : now;
+			if (next > now) {
+				struct timespec t;
+				clock_gettime(CLOCK_MONOTONIC, &t);
+				const double at = t.tv_sec + t.tv_nsec * 1e-9 + (next - now);
+				t.tv_sec        = (time_t)at;
+				t.tv_nsec       = (long)((at - (double)t.tv_sec) * 1e9);
+				port_sleep_until(&t);
+			}
+		}
 		return (s32)VIGetRetraceCount() + frames;
 	}
 	const double entry = seconds_now();

@@ -297,6 +297,8 @@ enum OverlaySlot {
     OVERLAY_WARP_MENU,
     OVERLAY_STATE_MENU,
     OVERLAY_STATE_TOAST,
+    OVERLAY_EXT_NOTICE,  // extensions' text (gx_ext_overlay.cpp)
+    OVERLAY_EXT_STATUS,
     OVERLAY_SLOTS
 };
 void drawOverlayPanel(OverlaySlot slot, const uint8_t* rgba, int w, int h, int x, int y, int scale, int winW, int winH);
