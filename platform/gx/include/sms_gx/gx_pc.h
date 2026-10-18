@@ -8,6 +8,7 @@
 #ifndef SMS_GX_GX_PC_H
 #define SMS_GX_GX_PC_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -204,6 +205,28 @@ int GXPC_ReadXFB(const void* xfb, uint8_t* rgba, int* w, int* h);
 // "" or NULL hides it. Any thread; only a window shows it, not SMS_SHOTS.
 enum { GXPC_EXT_OVERLAY_NOTICE, GXPC_EXT_OVERLAY_STATUS, GXPC_EXT_OVERLAY_PANELS };
 void GXPC_ExtOverlaySet(int panel, const char* text);
+
+// Names over other players (multiplayer, gx_ext_overlay.cpp): each label's
+// bottom centre at (x, y) across the game's picture (0..1 from its top left),
+// `alpha` 0..1. Replaces the last list; count 0 hides them all. Any thread;
+// only a window shows them, not SMS_SHOTS. Text is ASCII.
+#define GXPC_MAX_LABELS 8
+typedef struct GXPCLabel {
+    char text[24];
+    float x, y, alpha;
+} GXPCLabel;
+void GXPC_ExtOverlayLabels(const GXPCLabel* labels, int count);
+
+// A picture shown in place of the texture whose data the game keeps at `data`
+// (gx_texture.cpp): RGBA8, w x h, row 0 at the top, drawn with mipmaps at the
+// texture's place, size and filtering. `bytes` of the data are hashed now and
+// when it changes: different data there later (that memory reused) drops the
+// picture. NULL `rgba` drops it now. For textures a game keeps a copy of its
+// own, such as multiplayer's players, each in their own colours. Any thread:
+// the picture is copied, and uploaded the next time the texture is drawn.
+void GXPC_SetTextureOverride(const void* data, size_t bytes, const uint8_t* rgba, int w, int h);
+// Drops every such picture (a stage's memory is let go).
+void GXPC_ClearTextureOverrides(void);
 
 /* Statistics for the current frame (reset by GXCopyDisp). */
 typedef struct GXPCStats {

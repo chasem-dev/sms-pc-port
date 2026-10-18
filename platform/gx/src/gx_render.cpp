@@ -2865,6 +2865,9 @@ uint32_t peekZ(int x, int y) {
 }
 }  // namespace gx
 
+static gx::PresentRect s_presentRect{0, 0, 0, 0};
+gx::PresentRect gx::lastPresentRect() { return s_presentRect; }
+
 extern "C" {
 
 int GXPC_PresentXFB(const void* xfb, int winW, int winH) {
@@ -2887,6 +2890,7 @@ int GXPC_PresentXFB(const void* xfb, int winW, int winH) {
         vw = int(float(vh) * aspect + 0.5f);
     }
     int ox = (winW - vw) / 2, oy = (winH - vh) / 2;
+    s_presentRect = {ox, oy, vw, vh};
     glDisable(GL_SCISSOR_TEST);
     glBindFramebuffer(GL_FRAMEBUFFER, g_presentFbo);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);

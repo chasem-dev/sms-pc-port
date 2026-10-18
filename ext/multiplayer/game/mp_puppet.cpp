@@ -1,6 +1,7 @@
 // Other players drawn in this game (mp_puppet.hpp).
 #include "mp_puppet.hpp"
 #include "mp_mirror.hpp"
+#include "../mp_recolour.h"
 
 #include <JSystem/J3D/J3DGraphAnimator/J3DMaterialAnm.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
@@ -12,6 +13,7 @@
 #include <JSystem/J3D/J3DGraphLoader/J3DModelLoader.hpp>
 #include <JSystem/JKernel/JKRFileLoader.hpp>
 #include <JSystem/JKernel/JKRHeap.hpp>
+#include <JSystem/JUtility/JUTNameTab.hpp>
 #include <M3DUtil/M3UJoint.hpp>
 #include <M3DUtil/M3UModelMario.hpp>
 #include <M3DUtil/MActor.hpp>
@@ -29,6 +31,7 @@
 #include <Player/WaterGun.hpp>
 #include <Player/Yoshi.hpp>
 #include <System/MarDirector.hpp>
+#include <dolphin/gx.h>
 #include <dolphin/mtx.h>
 #include <math.h>
 #include <stdio.h>
@@ -89,77 +92,7 @@ u16 pack565(int r, int g, int b)
 	return (u16)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
 }
 
-// Mario's red (cap, shirt), told from his reddish-brown hair as Wario's is,
-// and his blue (overalls).
-bool marioRed(int r, int g, int b) { return r > 80 && r > g * 3 && r > b * 3; }
-bool marioBlue(int r, int g, int b) { return b > 60 && b * 2 > r * 3 && b * 5 > g * 6; }
-int clamp255(int v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
-
-// The Marios past the first four: Mario in colours of his own (his red and
-// blue swapped for others; skin, hair and the rest stay).
-void recolourMario(int character, int& r, int& g, int& b)
-{
-	if (marioRed(r, g, b)) {
-		const int v = r; // the red's shade, kept
-		switch (character) {
-		case MPG_CHAR_FIRE_MARIO: r = clamp255(v + 20), g = clamp255(v + 15), b = clamp255(v + 5); break;
-		case MPG_CHAR_PURPLE_MARIO: r = v * 62 / 100, g = v * 20 / 100, b = v * 82 / 100; break;
-		case MPG_CHAR_ORANGE_MARIO: r = clamp255(v * 105 / 100), g = v * 55 / 100, b = v / 10; break;
-		case MPG_CHAR_ICE_MARIO: r = v * 55 / 100, g = v * 88 / 100, b = clamp255(v * 105 / 100); break;
-		}
-	} else if (marioBlue(r, g, b)) {
-		const int v = b;
-		switch (character) {
-		case MPG_CHAR_FIRE_MARIO: r = clamp255(v * 13 / 10), g = v / 4, b = v / 5; break;
-		case MPG_CHAR_PURPLE_MARIO: r = v * 35 / 100 + 10, g = v * 33 / 100 + 10, b = v * 38 / 100 + 12; break;
-		case MPG_CHAR_ORANGE_MARIO: r = v * 60 / 100, g = v * 38 / 100, b = v * 22 / 100; break;
-		case MPG_CHAR_ICE_MARIO: r = clamp255(v * 80 / 100 + 60), g = clamp255(v * 82 / 100 + 62), b = clamp255(v * 85 / 100 + 70); break;
-		}
-	}
-}
-
-void recolour(int character, int& r, int& g, int& b)
-{
-	switch (character) {
-	case MPG_CHAR_FIRE_MARIO:
-	case MPG_CHAR_PURPLE_MARIO:
-	case MPG_CHAR_ORANGE_MARIO:
-	case MPG_CHAR_ICE_MARIO:
-		recolourMario(character, r, g, b);
-		break;
-	case MPG_CHAR_LUIGI:
-		// Mario's red (cap, shirt) becomes Luigi's green; skin, hair and the
-		// blue overalls stay
-		if (r > 80 && r > g * 2 && r > b * 2) {
-			int nr = g / 3, ng = r * 4 / 5, nb = b / 2;
-			r = nr;
-			g = ng;
-			b = nb;
-		}
-		break;
-	case MPG_CHAR_METAL_MARIO: {
-		// everything a bright, slightly blue silver
-		int l = (r * 77 + g * 150 + b * 29) >> 8;
-		r     = 70 + l * 7 / 10;
-		g     = 74 + l * 7 / 10;
-		b     = 84 + l * 7 / 10;
-		break;
-	}
-	case MPG_CHAR_WARIO:
-		// Mario's red (cap, shirt) becomes Wario's yellow; skin and the blue
-		// overalls stay, and so does his reddish-brown hair (a stricter test
-		// than Luigi's)
-		if (r > 80 && r > g * 3 && r > b * 3) {
-			int v = r * 9 / 10 + 25;
-			r     = v;
-			g     = v * 4 / 5;
-			b     = v / 8;
-		}
-		break;
-	default:
-		break;
-	}
-}
+using mp_recolour::recolour;
 
 void recolourTexture(ResTIMG* timg, int character)
 {
@@ -395,7 +328,11 @@ TMpPuppet::TMpPuppet(int slot, bool self)
     , mOpa(nullptr)
     , mXlu(nullptr)
     , mSwapped(false)
+    , mDressedVersion(0xFFFFFFFFu)
+    , mDrawn(false)
 {
+	memset(mView, 0, sizeof mView);
+	memset(mProjection, 0, sizeof mProjection);
 	memset(&mPose, 0, sizeof mPose);
 	memset(mHands, 0, sizeof mHands);
 	memset(mCap, 0, sizeof mCap);
@@ -597,6 +534,56 @@ bool TMpPuppet::init()
 	fprintf(stderr, "[multiplayer] %s: body %d, FLUDD %d, Yoshi %d bytes\n", mpg_character_name(mSlot),
 	        (int)(free0 - free1), (int)(free1 - free2), (int)(free2 - free3));
 	return true;
+}
+
+// Each texture of theirs this game has a picture for, in their colours: the
+// body's (its cap and hands draw the body's texture data too).
+void TMpPuppet::dress()
+{
+	mDressedVersion        = mpg_looks_version();
+	J3DTexture* textures   = mBodyData ? mBodyData->getTexture() : nullptr;
+	JUTNameTab* names      = mBodyData ? mBodyData->getTextureName() : nullptr;
+	if (!textures || !names)
+		return;
+	int dressed = 0;
+	for (u16 i = 0; i < textures->getNum(); i++) {
+		ResTIMG* timg    = textures->getResTIMG(i);
+		const char* name = names->getName(i);
+		if (!timg || !name)
+			continue;
+		const void* data = (const u8*)timg + timg->imageDataOffset;
+		const u32 bytes  = GXGetTexBufferSize(timg->width, timg->height, timg->format, GX_FALSE, 0);
+		dressed += mpg_dress(mSlot, mCharacter, name, data, bytes);
+	}
+	static const bool debug = getenv("SMS_MULTIPLAYER_DEBUG") != nullptr;
+	if (debug)
+		fprintf(stderr, "[multiplayer] %s dressed: %d of %d textures\n", mpg_character_name(mSlot), dressed, (int)textures->getNum());
+}
+
+bool TMpPuppet::nameSpot(const f32* viewer, f32* x, f32* y, f32* alpha) const
+{
+	// near enough: the full name inside kNear, fading out to nothing at kFar
+	const f32 kNear = 900.0f, kFar = 1300.0f;
+	if (!mActive || !mDrawn || mProjection[0] != 0.0f) // perspective only
+		return false;
+	const f32 dx = mPosition.x - viewer[0], dy = mPosition.y - viewer[1], dz = mPosition.z - viewer[2];
+	const f32 d = sqrtf(dx * dx + dy * dy + dz * dz);
+	if (d >= kFar)
+		return false;
+	*alpha = d <= kNear ? 1.0f : (kFar - d) / (kFar - kNear);
+	// above the cap
+	const f32 at[3] = {mHead[0], mHead[1] + 85.0f, mHead[2]};
+	f32 v[3];
+	for (int r = 0; r < 3; r++)
+		v[r] = mView[r][0] * at[0] + mView[r][1] * at[1] + mView[r][2] * at[2] + mView[r][3];
+	if (v[2] > -1.0f) // behind the camera
+		return false;
+	const f32 w = -v[2];
+	const f32 nx = (mProjection[1] * v[0] + mProjection[2] * v[2]) / w;
+	const f32 ny = (mProjection[3] * v[1] + mProjection[4] * v[2]) / w;
+	*x = (nx + 1.0f) * 0.5f;
+	*y = (1.0f - ny) * 0.5f;
+	return *x > -0.1f && *x < 1.1f && *y > -0.1f && *y < 1.1f;
 }
 
 void TMpPuppet::showHands(int hand)
@@ -802,6 +789,11 @@ void TMpPuppet::perform(u32 cue, JDrama::TGraphics* graphics)
 		}
 		if (!mActive && mGoneFrames < 1000)
 			mGoneFrames++;
+		if (!mActive)
+			mDrawn = false;
+		// in their colours once they are here (not for empty slots)
+		if (mActive && mDressedVersion != mpg_looks_version())
+			dress();
 		if (mActive) {
 			// gone a second or more, or in a new stage: they appear again
 			if (mGoneFrames > 30 || pose.session != mLastSession)
@@ -824,6 +816,7 @@ void TMpPuppet::perform(u32 cue, JDrama::TGraphics* graphics)
 
 	if (cue & CUE_CALC_VIEW) {
 		MTXCopy(graphics->mViewMtx, j3dSys.mViewMtx);
+		MTXCopy(graphics->mViewMtx, mView);
 		mModel->getModel()->viewCalc();
 		for (int h = 0; h < 2; h++)
 			for (int s = 0; s < 2; s++)
@@ -893,6 +886,9 @@ void TMpPuppet::perform(u32 cue, JDrama::TGraphics* graphics)
 	// drawn under Mario's light, after him (the group draws him first, and
 	// his light is set again before the next pass)
 	if ((cue & CUE_UNK40000000) && mActive) {
+		// the scene's projection, for the name over the head
+		GXGetProjectionv(mProjection);
+		mDrawn = true;
 		if (gpLightManager && gpLightManager->mMarioLight)
 			gpLightManager->mMarioLight->setLight(graphics, gpMarioOriginal ? gpMarioOriginal->mLightID : 0);
 		j3dSys.setUnk4C(3);

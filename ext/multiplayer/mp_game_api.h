@@ -273,6 +273,22 @@ uint32_t mpg_session(void); // the session this game is playing in (0: none)
 // and the list of players for the status panel.
 int mpg_take_notice(char* out, int size);
 void mpg_status(char* out, int size);
+// The name a player joined with ("" for none).
+void mpg_player_name(int slot, char* out, int size);
+
+// Players' colours (Customize Mario's): each player's own, which they send the
+// host and the host passes on. mpg_look gives `slot`'s ("hat=2fa846;...", 1),
+// or "" (0) for Mario's own; mpg_looks_version changes whenever one does.
+uint32_t mpg_looks_version(void);
+int mpg_look(int slot, char* out, int size);
+// A player's picture for one of their model's textures, by the texture's name
+// in the model ("H_ma_new_main_s3tc"): their colours (else their character's)
+// painted over Mario's (sync/mp_look.cpp, from the launcher's SMS_MARIO_PAINT),
+// set to show in place of the texture whose data is at `data` (`bytes` long).
+// 1 if this game has a picture for that texture, 0 to leave it as it is.
+int mpg_dress(int slot, int character, const char* textureName, const void* data, size_t bytes);
+// Forgets every picture mpg_dress set (a new stage's puppets are made).
+void mpg_undress_all(void);
 
 #ifdef __cplusplus
 }

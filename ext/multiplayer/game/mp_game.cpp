@@ -75,6 +75,7 @@
 
 // The window's text panels (platform/gx; absent in a build without a window).
 extern "C" void GXPC_ExtOverlaySet(int panel, const char* text) __attribute__((weak));
+extern "C" void GXPC_ExtOverlayLabels(const GXPCLabel* labels, int count) __attribute__((weak));
 enum { OVERLAY_NOTICE = 0, OVERLAY_STATUS = 1 };
 
 namespace {
@@ -2569,8 +2570,43 @@ void runTests(TMarDirector* dir, bool arrived)
 
 // ------------------------------------------------------------------- text
 
+// The names over the other players near ours (SMS_MULTIPLAYER_NAMES=0: none),
+// placed where the last frame drew them.
+void updateNames()
+{
+	if (!GXPC_ExtOverlayLabels)
+		return;
+	static const bool namesOn = !getenv("SMS_MULTIPLAYER_NAMES") || strcmp(getenv("SMS_MULTIPLAYER_NAMES"), "0");
+	GXPCLabel labels[GXPC_MAX_LABELS];
+	int count = 0;
+	if (namesOn && playing() && gpMarioOriginal) {
+		const f32 viewer[3] = {gpMarioOriginal->mPosition.x, gpMarioOriginal->mPosition.y, gpMarioOriginal->mPosition.z};
+		const int me        = mpg_slot();
+		for (int slot = 0; slot < MPG_MAX_PLAYERS && count < GXPC_MAX_LABELS; slot++) {
+			TMpPuppet* p = s_puppets[slot];
+			if (!p || slot == me)
+				continue;
+			GXPCLabel& l = labels[count];
+			if (!p->nameSpot(viewer, &l.x, &l.y, &l.alpha))
+				continue;
+			char name[64];
+			mpg_player_name(slot, name, sizeof name);
+			if (!name[0])
+				snprintf(name, sizeof name, "%s", mpg_character_name(slot));
+			// the overlay's font has ASCII only
+			size_t n = 0;
+			for (const char* c = name; *c && n < sizeof l.text - 1; c++)
+				l.text[n++] = (unsigned char)*c >= 0x20 && (unsigned char)*c < 0x7F ? *c : '?';
+			l.text[n] = 0;
+			count++;
+		}
+	}
+	GXPC_ExtOverlayLabels(labels, count);
+}
+
 void updateText()
 {
+	updateNames();
 	char line[256];
 	while (mpg_take_notice(line, sizeof line))
 		showNotice(line);
@@ -3596,6 +3632,7 @@ void stageSetup()
 	MpMirrorPrepareRides();
 	TIdxGroupObj* group = gpStrategy->unk10[6]; // "プレーヤーグループ": Mario's
 	memset(s_puppets, 0, sizeof s_puppets);
+	mpg_undress_all(); // the last stage's puppets' pictures, by their data's place in its memory
 	if (!group)
 		return;
 	const int me = mpg_slot();

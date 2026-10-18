@@ -7,7 +7,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <algorithm>
+#include <atomic>
+#include <mutex>
 #include <unordered_map>
+#include <vector>
 
 namespace gx {
 
@@ -574,6 +577,59 @@ static GLuint promptTexture(int glyph, int map, uint32_t w, uint32_t h) {
     return t;
 }
 
+// GXPC_SetTextureOverride: pictures shown in place of a texture, by where the
+// game keeps its data. The data's hash says whether that memory still holds
+// the texture the picture was meant for (a stage's memory is reused).
+struct TexOverride {
+    std::vector<uint8_t> pixels;  // waiting to be uploaded
+    int w = 0, h = 0;
+    size_t bytes = 0;
+    uint64_t hash = 0;     // of the data, when the picture was set
+    uint64_t seen = 0;     // the cache entry's data hash last checked against it
+    GLuint tex = 0;
+    int scale = 0;         // log2 of the picture's width over the texture's
+    bool dropped = false;  // the data changed: shown no more
+};
+std::mutex& s_overrideMu = *new std::mutex;
+std::unordered_map<const void*, TexOverride>& s_overrides = *new std::unordered_map<const void*, TexOverride>;
+std::vector<GLuint>& s_overrideDead = *new std::vector<GLuint>;  // to delete on the GL thread
+std::atomic<int> s_overrideCount{0};
+
+static GLuint overrideTexture(const uint8_t* ptr, int map, uint32_t w, uint64_t dataHash, int* scale) {
+    if (!s_overrideCount.load(std::memory_order_relaxed)) return 0;
+    std::lock_guard<std::mutex> hold(s_overrideMu);
+    if (!s_overrideDead.empty()) {
+        glDeleteTextures(GLsizei(s_overrideDead.size()), s_overrideDead.data());
+        s_overrideDead.clear();
+    }
+    auto it = s_overrides.find(ptr);
+    if (it == s_overrides.end()) return 0;
+    TexOverride& o = it->second;
+    if (o.seen != dataHash) {
+        o.seen = dataHash;
+        o.dropped = hashBytes(ptr, o.bytes) != o.hash;
+    }
+    if (o.dropped) return 0;
+    if (!o.pixels.empty()) {
+        if (!o.tex) glGenTextures(1, &o.tex);
+        glcActiveUnit(map);
+        glBindTexture(GL_TEXTURE_2D, o.tex);
+        glcNoteBound(map, o.tex);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, o.w, o.h, 0, GL_RGBA, GL_UNSIGNED_BYTE, o.pixels.data());
+        glGenerateMipmap(GL_TEXTURE_2D);
+        int levels = 1;
+        while ((o.w >> levels) > 0 || (o.h >> levels) > 0) levels++;
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, levels - 1);
+        o.scale = 0;
+        while (int(w) << (o.scale + 1) <= o.w) o.scale++;
+        std::vector<uint8_t>().swap(o.pixels);
+    }
+    *scale = o.scale;
+    return o.tex;
+}
+
 unsigned bindTextureMap(int map, float* outW, float* outH) {
     drainDeletedCopies();
     uint32_t mode0 = g.bp[bpTexReg(BP_TX_MODE0, map)];
@@ -705,6 +761,14 @@ unsigned bindTextureMap(int map, float* outW, float* outH) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, GLint(levels - 1));
     }
+    {  // a picture set for this texture's data (GXPC_SetTextureOverride)
+        int scale = 0;
+        if (GLuint t = overrideTexture(ptr, map, w, e.dataHash, &scale)) {
+            glcBindTexture(map, t);
+            glcBindSampler(map, samplerFor(mode0, mode1, levels, scale));
+            return t;
+        }
+    }
     if (upload) e.prompt = promptGlyph(ptr, fmt, w, h);
     if (e.prompt >= 0) {  // a button picture, drawn as the button prompt in use
         if (GLuint t = promptTexture(e.prompt, map, w, h)) {
@@ -726,3 +790,33 @@ unsigned bindTextureMap(int map, float* outW, float* outH) {
 }
 
 }  // namespace gx
+
+extern "C" void GXPC_SetTextureOverride(const void* data, size_t bytes, const uint8_t* rgba, int w, int h) {
+    if (!data) return;
+    std::lock_guard<std::mutex> hold(gx::s_overrideMu);
+    auto it = gx::s_overrides.find(data);
+    if (!rgba || w <= 0 || h <= 0) {
+        if (it == gx::s_overrides.end()) return;
+        if (it->second.tex) gx::s_overrideDead.push_back(it->second.tex);
+        gx::s_overrides.erase(it);
+        gx::s_overrideCount = int(gx::s_overrides.size());
+        return;
+    }
+    gx::TexOverride& o = gx::s_overrides[data];
+    o.pixels.assign(rgba, rgba + size_t(w) * h * 4);
+    o.w = w;
+    o.h = h;
+    o.bytes = bytes;
+    o.hash = gx::hashBytes(data, bytes);
+    o.seen = 0;
+    o.dropped = false;
+    gx::s_overrideCount = int(gx::s_overrides.size());
+}
+
+extern "C" void GXPC_ClearTextureOverrides(void) {
+    std::lock_guard<std::mutex> hold(gx::s_overrideMu);
+    for (auto& entry : gx::s_overrides)
+        if (entry.second.tex) gx::s_overrideDead.push_back(entry.second.tex);
+    gx::s_overrides.clear();
+    gx::s_overrideCount = 0;
+}

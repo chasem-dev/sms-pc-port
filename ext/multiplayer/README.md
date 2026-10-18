@@ -4,6 +4,8 @@ Up to eight players in one game (fewer if the host sets `SMS_MULTIPLAYER_MAX_PLA
 Everyone plays the host's level together and makes progress on the host's save.
 
 - The host is Mario. The others are Luigi, Wario, Metal Mario, Fire Mario, Purple Mario, Orange Mario and Ice Mario, in the order they join; each sees the others, and themselves, as their character.
+- A player who customized Mario in the launcher (Customize Mario) wears their own colours instead of their character's, in every game: each game sends its player's colours to the host, which passes everyone's on to everyone, players who join later included. Each game paints the others itself, in HD when it has the HD textures, from Mario's pictures the launcher prepares (`SMS_MARIO_PAINT`); without them, everyone keeps their character's colours.
+- A player's name shows over their head while you are near them, fading out as they get farther away.
 - Shines, blue coins, red coins, coins and lives are shared: what anyone collects counts for everyone, and the host's save keeps it.
 - Coins and items one player takes disappear for everyone, including those that appear during the level (from a box, a defeated enemy or a switch): those are matched by type and place, and one that appears in a game after someone took theirs is gone as it appears, so nobody collects one twice.
 - A switch pressed in any game (a red coin switch, a switch that throws out hidden coins) is pressed in every game, without taking the others' controls or camera.
@@ -40,6 +42,9 @@ Without the launcher, these variables do the same:
 | `SMS_MULTIPLAYER_MAX_PLAYERS=n` | host: the most players the game takes, the host included (2 to 8, default 8); more are refused with a message saying so |
 | `SMS_MULTIPLAYER_TIMEOUT=s` | seconds of silence before a player counts as gone (default 10) |
 | `SMS_MULTIPLAYER_STATUS=0` | no player list in the corner (the notices still show) |
+| `SMS_MULTIPLAYER_NAMES=0` | no names over the other players |
+| `SMS_MULTIPLAYER_LOOK=hat=2fa846;shirt=2fa846` | this player's colours, by Customize Mario's region names (the launcher sets it) |
+| `SMS_MARIO_PAINT=dir` | Mario's pictures and their colour regions, for painting the others in their colours (the launcher's `bakePaint` makes it): `paint.txt` and a `.paint` file per texture, described in [`sync/mp_look.cpp`](sync/mp_look.cpp) |
 
 A joining player's game keeps its own memory card out of it: the launcher gives it a `multiplayer-guest` card folder, since what it plays is the host's save. Back at the title with no host to follow (the host closed, or refused it), its file select shows that card's files, so a notice says they are not the player's own saves and how to get to those.
 Both games must be the same build (the launcher's game version); a different one is refused with a message saying so.
@@ -51,7 +56,7 @@ The extension has three parts, kept apart so the networking can be tested, and r
 | Folder | What it does |
 | --- | --- |
 | [`net/`](net/mp_net.h) | the network: one UDP socket, players' slots, a reliable ordered channel, the host relaying each player's state to the others. A thread of its own keeps everyone connected through loading screens. Knows nothing of the game. |
-| [`sync/`](sync/mp_controller.cpp) | the rules ([`mp_game_api.h`](mp_game_api.h)): stage sessions, the shared flags' merge ([`mp_flags.h`](sync/mp_flags.h)), items taken, players' looks as packets. Knows the game only as numbers. |
+| [`sync/`](sync/mp_controller.cpp) | the rules ([`mp_game_api.h`](mp_game_api.h)): stage sessions, the shared flags' merge ([`mp_flags.h`](sync/mp_flags.h)), items taken, players' looks as packets, and painting each player in their own colours ([`mp_look.cpp`](sync/mp_look.cpp)). Knows the game only as numbers. |
 | [`game/`](game/mp_game.cpp) | the game's side, built as game code: reads and writes `TFlagManager`, removes items, warps, and draws the other players ([`mp_puppet.cpp`](game/mp_puppet.cpp)). |
 
 **Packets.** Every packet starts `SMMP`, the protocol version and a type: `PROBE`/`INFO` (the launcher's check), `CONNECT`/`CHALLENGE`/`ACCEPT`/`REJECT` (joining), `DATA` about 30 times a second both ways (the newest player states, and every reliable message the other side has not acknowledged, resent every 150 ms until it is), and `BYE`. Reliable messages that do not fit beside the states and the world snapshot go in packets of their own, so a big one (the whole save, for a player joining a well-played file) never waits.

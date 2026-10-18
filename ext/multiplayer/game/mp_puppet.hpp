@@ -9,6 +9,9 @@
 //
 // Every character is Mario's model with his texture recoloured (each puppet
 // loads its own copy of the files, so the local Mario keeps his colours).
+// With the launcher's paint data, each player wears their own colours
+// (Customize Mario's, else their character's) in place of those textures
+// (mpg_dress), painted again whenever anyone's change.
 
 #include "../mp_game_api.h"
 #include <Strategic/HitActor.hpp>
@@ -43,6 +46,11 @@ public:
 	const MpgPose& pose() const { return mPose; }
 	// Where it is (for the name over its head), valid while active().
 	const f32* headPos() const { return mHead; }
+	// Where the name over its head goes on the screen as the last frame drew
+	// it (0..1 across the picture from its top left), and how strongly it
+	// shows (0..1, fading out with distance from `viewer`); false when it is
+	// too far away or out of view.
+	bool nameSpot(const f32* viewer, f32* x, f32* y, f32* alpha) const;
 
 private:
 	void applyPose(JDrama::TGraphics* graphics);
@@ -52,6 +60,7 @@ private:
 	bool buildFludd();
 	bool buildYoshi();
 	bool buildSurf();
+	void dress();
 
 	int mSlot;
 	int mCharacter;
@@ -82,6 +91,10 @@ private:
 	J3DDrawBuffer* mXlu;
 	J3DDrawBuffer* mSaved[2];
 	bool mSwapped;
+	u32 mDressedVersion;     // mpg_looks_version when last dressed
+	f32 mView[3][4];         // the camera as last drawn, for the name
+	f32 mProjection[7];      // GXGetProjectionv's, as it was drawn
+	bool mDrawn;             // drawn at least once since it appeared
 };
 
 // Debug: how smoothly a player moves as drawn here (their own game's player too,

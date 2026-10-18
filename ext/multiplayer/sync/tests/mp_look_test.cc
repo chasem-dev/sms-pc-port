@@ -1,0 +1,90 @@
+// Host test for painting players in their own colours (sync/mp_look.cpp):
+// a paint folder of one 2x1 texture, painted for a player with colours and
+// for one without (their character's).
+#include "../../mp_game_api.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <string>
+#include <vector>
+
+static std::string g_look;
+static std::vector<unsigned char> g_shown;
+static const void* g_shownFor;
+extern "C" int mpg_look(int, char* out, int size)
+{
+	snprintf(out, (size_t)size, "%s", g_look.c_str());
+	return !g_look.empty();
+}
+extern "C" void GXPC_SetTextureOverride(const void* data, size_t, const unsigned char* rgba, int w, int h)
+{
+	g_shownFor = data;
+	g_shown.assign(rgba, rgba + (size_t)w * h * 4);
+}
+extern "C" void GXPC_ClearTextureOverrides(void) {}
+
+static int failures;
+#define CHECK(cond)                                                                    \
+	do {                                                                               \
+		if (!(cond)) {                                                                 \
+			fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, #cond);   \
+			failures++;                                                                \
+		}                                                                              \
+	} while (0)
+
+static void put32(FILE* f, unsigned v)
+{
+	unsigned char b[4] = {(unsigned char)v, (unsigned char)(v >> 8), (unsigned char)(v >> 16), (unsigned char)(v >> 24)};
+	fwrite(b, 1, 4, f);
+}
+
+int main()
+{
+	char dir[] = "/tmp/mp_look_test_XXXXXX";
+	if (!mkdtemp(dir))
+		return 1;
+	FILE* f = fopen((std::string(dir) + "/paint.txt").c_str(), "w");
+	fprintf(f, "sms-paint 1\nregion 0 hat d6161c 46\nregion 1 shirt d6161c 46\ntexture H_ma_new_main_s3tc 0.paint\n");
+	fclose(f);
+	// texel 0: the cap's red, at the cap's typical lightness (117 of 255 = 46%); texel 1: left as it is
+	f = fopen((std::string(dir) + "/0.paint").c_str(), "wb");
+	fwrite("SMSPAINT", 1, 8, f);
+	put32(f, 1), put32(f, 2), put32(f, 1);
+	const unsigned char rgba[8]  = {214, 22, 28, 255, 30, 60, 200, 255};
+	const unsigned char maps[8]  = {0, 255, 255, 255, 0, 0, 117, 90}; // mask, second, mix, lightness (2 texels each)
+	fwrite(rgba, 1, 8, f);
+	fwrite(maps, 1, 8, f);
+	fclose(f);
+	setenv("SMS_MARIO_PAINT", dir, 1);
+	static unsigned char data[32];
+
+	CHECK(!mpg_dress(1, MPG_CHAR_LUIGI, "H_ma_other_texture", data, sizeof data));
+
+	g_look = "hat=2fa846;bogus=123456;shirt=nothex";
+	CHECK(mpg_dress(1, MPG_CHAR_LUIGI, "H_ma_new_main_s3tc", data, sizeof data));
+	CHECK(g_shownFor == data && g_shown.size() == 8);
+	// the chosen green at the cap's typical lightness; the other texel and alpha untouched
+	CHECK(abs(g_shown[0] - 0x2f) <= 3 && abs(g_shown[1] - 0xa8) <= 3 && abs(g_shown[2] - 0x46) <= 3);
+	CHECK(g_shown[3] == 255);
+	CHECK(!memcmp(&g_shown[4], &rgba[4], 4));
+
+	// no colours of their own: Luigi's (Mario's red to green), the blue left as it is
+	g_look.clear();
+	CHECK(mpg_dress(1, MPG_CHAR_LUIGI, "H_ma_new_main_s3tc", data, sizeof data));
+	CHECK(g_shown[1] > g_shown[0] && g_shown[1] > g_shown[2]);
+	CHECK(!memcmp(&g_shown[4], &rgba[4], 4));
+	// and Mario's own: the picture as it is
+	CHECK(mpg_dress(0, MPG_CHAR_MARIO, "H_ma_new_main_s3tc", data, sizeof data));
+	CHECK(!memcmp(g_shown.data(), rgba, 8));
+
+	remove((std::string(dir) + "/paint.txt").c_str());
+	remove((std::string(dir) + "/0.paint").c_str());
+	rmdir(dir);
+	if (failures)
+		fprintf(stderr, "%d checks failed\n", failures);
+	else
+		printf("mp_look_test: all checks passed\n");
+	return failures ? 1 : 0;
+}

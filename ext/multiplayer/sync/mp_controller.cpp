@@ -50,7 +50,11 @@ enum Kind : uint8_t {
 	K_TRIP,         // client -> host: session, area, episode, movie (0xFF: none): the client set off there (a pipe,
 	                // a story event): the host takes everyone
 	K_SELECT,       // host -> client: area, the episode its episode select points at, whether it chose it
+	K_LOOK,         // either way: slot, a player's colours (Customize Mario's, "hat=2fa846;shirt=..."; empty:
+	                // Mario's own): a client's own to the host, which passes everyone's on to everyone
 };
+// The longest look kept (every region chosen takes 14 bytes).
+const size_t kMaxLook = 400;
 // The host's boss rides at the end of the world snapshot, after the enemies.
 const size_t kMaxBoss = 200;
 // Items that appear during a stage (from a box, a defeated enemy, a red coin
@@ -78,6 +82,11 @@ const size_t kEnemySize = 18;
 
 struct Controller {
 	int role = MPG_ROLE_OFF;
+	// each player's colours (K_LOOK), ours from the launcher (SMS_MULTIPLAYER_LOOK);
+	// looksVersion counts their changes, for puppets to paint again
+	std::string looks[MP_MAX_PLAYERS];
+	std::string myLook;
+	uint32_t looksVersion = 0;
 	MpgGame game{};
 	bool wasPlaying = false;
 	unsigned arrivedLoads = 0; // the stage load last arrived in (MpgGame::loads)
@@ -712,10 +721,57 @@ void readMirrors(Reader& r, int from)
 		sendMirrors(-1, from, s, got);
 }
 
+// A look as received or given: only what a look can hold (region names, hex
+// colours, '=' and ';'), cut to kMaxLook.
+std::string cleanLook(const char* s, size_t n)
+{
+	std::string out;
+	for (size_t i = 0; i < n && s[i] && out.size() < kMaxLook; i++)
+		if (isalnum((unsigned char)s[i]) || s[i] == '=' || s[i] == ';')
+			out += s[i];
+	return out;
+}
+
+void setLook(int slot, const std::string& look)
+{
+	if (slot < 0 || slot >= MP_MAX_PLAYERS || g.looks[slot] == look)
+		return;
+	g.looks[slot] = look;
+	g.looksVersion++;
+	if (g_debug)
+		fprintf(stderr, "[multiplayer] player %d's colours: %s\n", slot + 1, look.empty() ? "Mario's own" : look.c_str());
+}
+
+std::vector<uint8_t> lookMessage(int slot, const std::string& look)
+{
+	std::vector<uint8_t> buf(3 + look.size());
+	Writer w(buf.data(), buf.size());
+	w.u8((uint8_t)slot);
+	w.u16((uint16_t)look.size());
+	w.bytes(look.data(), look.size());
+	return buf;
+}
+
+std::string readLook(Reader& r)
+{
+	const size_t n          = r.u16();
+	const uint8_t* bytes    = r.skip(n);
+	return bytes ? cleanLook((const char*)bytes, n) : std::string();
+}
+
 void hostMessage(const MpEvent& ev)
 {
 	Reader r(ev.data, ev.size);
 	switch (ev.kind) {
+	case K_LOOK: {
+		r.u8(); // a client speaks for itself only
+		const std::string look = readLook(r);
+		if (!r.ok)
+			break;
+		setLook(ev.slot, look);
+		send(-1, K_LOOK, lookMessage(ev.slot, look));
+		break;
+	}
 	case K_TRIP: {
 		const uint32_t s = r.u32();
 		const int area = r.u8(), episode = r.u8(), movie = r.u8();
@@ -916,6 +972,13 @@ void clientMessage(const MpEvent& ev)
 		g.selectChosen  = chosen;
 		break;
 	}
+	case K_LOOK: {
+		const int slot         = r.u8();
+		const std::string look = readLook(r);
+		if (r.ok && slot != mp_local_slot())
+			setLook(slot, look);
+		break;
+	}
 	case K_FLAGS:
 		if (g.updateReader.add(ev.data, ev.size))
 			g.clientFlags.hostUpdate(g.updateReader.u);
@@ -990,6 +1053,9 @@ void events()
 				notice("Joined the game as player " + std::to_string(ev.slot + 1) + " (" + kCharacters[ev.slot] + ")");
 			g.hadSlot        = true;
 			g.reconnectAt    = 0;
+			// our colours, for the host to pass on
+			setLook(ev.slot, g.myLook);
+			send(0, K_LOOK, lookMessage(ev.slot, g.myLook));
 			g.reconnectTries = 0;
 			break;
 		case MP_EV_FAILED: {
@@ -1010,7 +1076,12 @@ void events()
 		}
 		case MP_EV_PLAYER_JOINED:
 			notice(std::string(ev.name[0] ? ev.name : "A player") + " joined as " + kCharacters[ev.slot]);
+			setLook(ev.slot, ""); // theirs comes next
 			if (g.role == MPG_ROLE_HOST) {
+				// everyone's colours for the newcomer (theirs come to the others as they arrive)
+				for (int i = 0; i < MP_MAX_PLAYERS; i++)
+					if (i != ev.slot && !g.looks[i].empty())
+						send(ev.slot, K_LOOK, lookMessage(i, g.looks[i]));
 				g.hostFlags.forget(ev.slot);
 				g.reportReaders[ev.slot] = FlagReportReader();
 				// the newcomer's flags first, then where to go: not while the
@@ -1025,6 +1096,7 @@ void events()
 			break;
 		case MP_EV_PLAYER_LEFT:
 			g.waitingStage &= ~(1u << ev.slot);
+			setLook(ev.slot, "");
 			notice(std::string(kCharacters[ev.slot]) + " left the game");
 			if (g.role == MPG_ROLE_HOST)
 				g.hostFlags.forget(ev.slot);
@@ -1280,6 +1352,10 @@ extern "C" int mpg_start(void)
 	}
 	g.role = cfg.role == MP_ROLE_HOST ? MPG_ROLE_HOST : MPG_ROLE_CLIENT;
 	g.cfg  = cfg;
+	if (const char* look = getenv("SMS_MULTIPLAYER_LOOK"))
+		g.myLook = cleanLook(look, strlen(look));
+	if (g.role == MPG_ROLE_HOST)
+		setLook(0, g.myLook);
 	if (mp_start(&cfg) != 0) {
 		char msg[256];
 		mp_link_message(msg, sizeof msg);
@@ -2028,6 +2104,28 @@ extern "C" int mpg_pose(int slot, MpgPose* pose, float* age)
 		return 0;
 	const uint32_t here = mpg_session();
 	return here && pose->session == here;
+}
+
+extern "C" uint32_t mpg_looks_version(void) { return g.looksVersion; }
+
+extern "C" int mpg_look(int slot, char* out, int size)
+{
+	if (size <= 0)
+		return 0;
+	out[0] = 0;
+	if (g.role == MPG_ROLE_OFF || slot < 0 || slot >= MP_MAX_PLAYERS)
+		return 0;
+	snprintf(out, (size_t)size, "%s", g.looks[slot].c_str());
+	return out[0] != 0;
+}
+
+extern "C" void mpg_player_name(int slot, char* out, int size)
+{
+	if (size <= 0)
+		return;
+	out[0] = 0;
+	if (g.role != MPG_ROLE_OFF)
+		mp_player_name(slot, out, (size_t)size);
 }
 
 extern "C" int mpg_take_notice(char* out, int size)

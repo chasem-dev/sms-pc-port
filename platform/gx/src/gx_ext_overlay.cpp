@@ -1,12 +1,15 @@
 // Extensions' text in the window (gx_ext_overlay.h), drawn with the debug
 // overlay's renderer: the notice ("Connecting to 1.2.3.4...") centred near the
 // top, and the status panel (who is playing) at the right. Each is one or
-// more lines, wrapped to the window; an empty text hides it. The font has
-// ASCII only.
+// more lines, wrapped to the window; an empty text hides it. And labels on
+// the game's picture: the names over other players. The font has ASCII only.
 #include "gx_ext_overlay.h"
 #include "gx_internal.h"
 
 #include "sms_gx/gx_pc.h"
+
+#include <math.h>
+#include <string.h>
 
 #include <algorithm>
 #include <mutex>
@@ -30,6 +33,18 @@ struct Panel {
 
 std::mutex s_lock;
 Panel s_panels[GXPC_EXT_OVERLAY_PANELS];
+
+// The names over players: the list as last set (any thread), and each slot's
+// bitmap as drawn (GL thread), made again when its text, size or fade changes.
+GXPCLabel s_labels[GXPC_MAX_LABELS];
+int s_labelCount = 0;
+struct LabelBitmap {
+    std::string text;
+    int glyph = 0, fade = -1, w = 0, h = 0;
+    std::vector<uint8_t> pixels;
+};
+LabelBitmap s_labelBitmaps[GXPC_MAX_LABELS];
+const int kLabelFades = 16;  // fade steps (a bitmap each)
 
 // The text's lines, each wrapped at spaces to at most `maxWidth` font pixels.
 std::vector<std::string> lines(const std::string& text, int maxWidth) {
@@ -93,7 +108,60 @@ void renderPanel(int index, gx::OverlaySlot slot, int winW, int winH) {
     gx::drawOverlayPanel(slot, changed ? p.pixels.data() : nullptr, p.w, p.h, x, y, 1, winW, winH);
 }
 
+// A name: white on a dark rounded pill, its bottom centre at the label's
+// place, fading out by the label's alpha.
+void renderLabels(int winW, int winH) {
+    GXPCLabel labels[GXPC_MAX_LABELS];
+    int count;
+    {
+        std::lock_guard<std::mutex> hold(s_lock);
+        count = s_labelCount;
+        memcpy(labels, s_labels, sizeof labels);
+    }
+    const gx::PresentRect r = gx::lastPresentRect();
+    if (r.w <= 0 || r.h <= 0) return;
+    const int glyph = std::max(2, (r.h + 270) / 540);  // font pixels: 2 up to 1080 lines, then more
+    for (int i = 0; i < count; i++) {
+        const GXPCLabel& l = labels[i];
+        const int fade = std::max(0, std::min(kLabelFades, int(l.alpha * kLabelFades + 0.5f)));
+        if (!fade || !l.text[0]) continue;
+        LabelBitmap& b = s_labelBitmaps[i];
+        std::string text(l.text, strnlen(l.text, sizeof l.text));
+        const bool changed = text != b.text || glyph != b.glyph || fade != b.fade;
+        if (changed) {
+            b.text = text;
+            b.glyph = glyph;
+            b.fade = fade;
+            const int padX = 4 * glyph, padY = 3 * glyph;
+            b.w = gx::overlayTextWidth(text.c_str()) * glyph + 2 * padX;
+            b.h = kCapH * glyph + 2 * padY;
+            b.pixels.assign(size_t(b.w) * b.h * 4, 0);
+            const uint8_t bg[4] = {12, 20, 28, uint8_t(170 * fade / kLabelFades)};
+            const uint8_t fg[4] = {255, 255, 255, uint8_t(255 * fade / kLabelFades)};
+            // rounded ends: the corners' texels left clear
+            const int round = std::min(b.h / 2, 3 * glyph);
+            for (int y = 0; y < b.h; y++) {
+                const int dy = y < round ? round - y : y >= b.h - round ? y - (b.h - round - 1) : 0;
+                const int inset = dy ? round - int(sqrtf(float(round * round - dy * dy)) + 0.5f) : 0;
+                gx::overlayFillRect(b.pixels, b.w, b.h, inset, y, b.w - inset, y + 1, bg);
+            }
+            gx::overlayText(b.pixels, b.w, b.h, padX, padY, text.c_str(), fg, glyph);
+        }
+        const int x = r.x + int(l.x * float(r.w)) - b.w / 2;
+        const int y = r.y + int(l.y * float(r.h)) - b.h;
+        if (x + b.w < 0 || y + b.h < 0 || x > winW || y > winH) continue;
+        gx::drawOverlayPanel(gx::OverlaySlot(gx::OVERLAY_EXT_LABEL + i), changed ? b.pixels.data() : nullptr, b.w, b.h, x, y,
+                             1, winW, winH);
+    }
+}
+
 }  // namespace
+
+extern "C" void GXPC_ExtOverlayLabels(const GXPCLabel* labels, int count) {
+    std::lock_guard<std::mutex> hold(s_lock);
+    s_labelCount = labels ? std::max(0, std::min(count, GXPC_MAX_LABELS)) : 0;
+    if (s_labelCount) memcpy(s_labels, labels, sizeof(GXPCLabel) * size_t(s_labelCount));
+}
 
 extern "C" void GXPC_ExtOverlaySet(int panel, const char* text) {
     if (panel < 0 || panel >= GXPC_EXT_OVERLAY_PANELS) return;
@@ -105,6 +173,7 @@ namespace gx {
 
 void extOverlayRender(int winW, int winH) {
     if (winW <= 0 || winH <= 0) return;
+    renderLabels(winW, winH);
     renderPanel(GXPC_EXT_OVERLAY_NOTICE, OVERLAY_EXT_NOTICE, winW, winH);
     renderPanel(GXPC_EXT_OVERLAY_STATUS, OVERLAY_EXT_STATUS, winW, winH);
 }
