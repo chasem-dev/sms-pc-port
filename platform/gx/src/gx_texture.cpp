@@ -490,9 +490,13 @@ static float anisotropy() {
 }
 
 // hires: log2 of a texture pack replacement's size over the GX size (-1 for
-// none). Its LOD range moves up by that much, so the same screen size samples
-// the same level of detail; a replacement of a texture without mipmaps gets
-// generated ones down to the original size, so it does not shimmer.
+// none). Its maximum LOD moves up by that much, so far away it is minified no
+// further than the original; its minimum stays, so up close it samples the
+// levels sharper than the original's (as Dolphin does). Moving that up too
+// held a mipmapped original's replacement to the original's resolution once
+// its levels were complete (Delfino Plaza's tiles blurred a second in). A
+// replacement of a texture without mipmaps gets generated ones down to the
+// original size, so it does not shimmer.
 // arbitraryMips: the texture's levels are an effect, not reductions (see
 // mipLevelDiff), so the distance at which each level shows is part of the
 // picture. Such a texture samples the GameCube's level of detail: the LOD
@@ -522,10 +526,7 @@ static GLuint samplerFor(uint32_t mode0, uint32_t mode1, uint32_t levels, int hi
     } else {
         minf = mip == 1 ? (lin ? GL_LINEAR_MIPMAP_NEAREST : GL_NEAREST_MIPMAP_NEAREST)
                         : (lin ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_LINEAR);
-        if (hires > 0) {
-            minLod += float(hires);
-            maxLod += float(hires);
-        }
+        if (hires > 0) maxLod += float(hires);  // minLod stays: up close, the pack's sharper levels
     }
     const bool effectMips = arbitraryMips && levels > 1 && mip != 0;
     float bias = float(int8_t((mode0 >> 9) & 0xFF)) / 32.0f;

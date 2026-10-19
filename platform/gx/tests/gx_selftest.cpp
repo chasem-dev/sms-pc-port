@@ -20,12 +20,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <filesystem>
+#include <fstream>
+#include <string>
 #include <vector>
 
 namespace gx {
 void decodeTexture(const uint8_t* src, uint32_t fmt, uint32_t w, uint32_t h, const uint8_t* tlut, uint32_t tlutFmt,
                    uint8_t* out);
 bool shaderHasEarlyFragmentTests();
+std::string hiresName(const uint8_t* data, uint32_t fmt, uint32_t w, uint32_t h, bool mipmapped, const uint8_t* tlut,
+                      uint32_t tlutBytes, bool onlyIfPresent);
 }
 
 // The OS layer normally provides these.
@@ -151,6 +156,38 @@ static void texSetup() {
     GXSetTexCoordGen(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY);
 }
 
+// A mipmapped 8x8 RGBA8 texture (levels 8x8 and 4x4) and, in a texture pack
+// folder, its 32x32 replacement: an uncompressed DDS with every level, each
+// a flat colour (kLodColors), so a pixel shows which level was sampled.
+static u8 s_lodTex[(8 * 8 + 4 * 4) * 4] __attribute__((aligned(32)));
+static const u8 kLodColors[6][3] = {{255, 0, 0}, {0, 255, 0}, {0, 0, 255}, {255, 255, 0}, {255, 0, 255}, {0, 255, 255}};
+static std::filesystem::path s_lodPack;
+
+static void writeLodPack() {
+    for (size_t i = 0; i < sizeof(s_lodTex); i++) s_lodTex[i] = u8(i * 7 + 3);
+    s_lodPack = std::filesystem::temp_directory_path() / ("gx-selftest-pack-" + std::to_string(rand()));
+    std::filesystem::create_directories(s_lodPack);
+    std::vector<u8> d(128, 0);
+    auto le32 = [&](size_t p, uint32_t v) { for (int i = 0; i < 4; i++) d[p + i] = u8(v >> (8 * i)); };
+    memcpy(d.data(), "DDS ", 4);
+    le32(4, 124); le32(8, 0x2100F); le32(12, 32); le32(16, 32); le32(20, 32 * 4); le32(28, 6);
+    le32(76, 32); le32(80, 0x41); le32(88, 32);
+    le32(92, 0xFF); le32(96, 0xFF00); le32(100, 0xFF0000); le32(104, 0xFF000000u);
+    for (int l = 0, s = 32; l < 6; l++, s /= 2)
+        for (int i = 0; i < s * s; i++) d.insert(d.end(), {kLodColors[l][0], kLodColors[l][1], kLodColors[l][2], 255});
+    std::string name = gx::hiresName(s_lodTex, GX_TF_RGBA8, 8, 8, true, nullptr, 0, false);
+    std::ofstream(s_lodPack / (name + ".dds"), std::ios::binary).write(reinterpret_cast<const char*>(d.data()), d.size());
+#ifdef _WIN32
+    _putenv_s("SMS_TEXTURE_PACKS", s_lodPack.string().c_str());
+    _putenv_s("SMS_TEXTURE_PACK_SYNC", "1");
+    _putenv_s("SMS_TEXTURE_PACK_CACHE", "0");
+#else
+    setenv("SMS_TEXTURE_PACKS", s_lodPack.string().c_str(), 1);
+    setenv("SMS_TEXTURE_PACK_SYNC", "1", 1);
+    setenv("SMS_TEXTURE_PACK_CACHE", "0", 1);
+#endif
+}
+
 int main(int argc, char** argv) {
     // Assertions need the current EFB, rather than the game's pipelined peeks.
 #ifdef _WIN32
@@ -159,11 +196,13 @@ int main(int argc, char** argv) {
     setenv("SMS_GX_SYNC_READS", "1", 1);
 #endif
     // default to offscreen; `gx_selftest --window` shows the result instead
+    writeLodPack();
     GXPC_SetHeadless(1);
     GXPC_ParseArgs(&argc, argv);
     GXPC_SetAutoPresent(0);
     if (!GXPC_InitAuto(1)) {
         fprintf(stderr, "no OpenGL 3.3 context available; skipping\n");
+        std::filesystem::remove_all(s_lodPack);
         return 77;
     }
     // emulated main memory: command streams carry 32-bit offsets into it
@@ -616,6 +655,35 @@ int main(int argc, char** argv) {
         GXSetColorUpdate(GX_TRUE);
     }
 
+    // A texture pack's replacement of a mipmapped texture samples its own
+    // sharper levels up close: the original's LOD range starts at its level
+    // 0, which is the replacement's level 2 (scale 2), but only bounds how far
+    // it is minified, not how much detail the replacement adds. Delfino
+    // Plaza's tiles turned blurry once their levels were completed.
+    {
+        GXTexObj to;
+        GXInitTexObj(&to, s_lodTex, 8, 8, GX_TF_RGBA8, GX_REPEAT, GX_REPEAT, GX_TRUE);
+        GXInitTexObjLOD(&to, GX_NEAR_MIP_NEAR, GX_NEAR, 0, 1, 0, GX_FALSE, GX_FALSE, GX_ANISO_1);
+        GXLoadTexObj(&to, GX_TEXMAP0);
+        colorSetup();
+        texSetup();
+        GXSetNumTevStages(1);
+        GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR0A0);
+        GXSetTevOp(GX_TEVSTAGE0, GX_REPLACE);
+        const u8* c = kLodColors[0];
+        texQuad(20, 300, 148, 428, 255, 255, 255, 255);  // 4 pixels a texel: level 0
+        expectPixel("HD replacement magnified samples level 0", 84, 364, c[0], c[1], c[2]);
+        c = kLodColors[1];
+        texQuad(200, 300, 216, 316, 255, 255, 255, 255);  // half size: level 1
+        expectPixel("HD replacement samples level 1 at half size", 208, 308, c[0], c[1], c[2]);
+        c = kLodColors[2];
+        texQuad(260, 300, 268, 308, 255, 255, 255, 255);  // the original's size: its level 0
+        expectPixel("HD replacement at the original's size", 264, 304, c[0], c[1], c[2]);
+        c = kLodColors[3];
+        texQuad(300, 300, 302, 302, 255, 255, 255, 255);  // smaller: no further than the original's last level
+        expectPixel("HD replacement stops at the original's last level", 301, 301, c[0], c[1], c[2]);
+    }
+
     // The performance overlay must reuse its texture between text updates,
     // update matching storage in place, and leave game rendering intact.
     {
@@ -691,5 +759,6 @@ int main(int argc, char** argv) {
     }
     printf("%d passed, %d failed\n", s_pass, s_fail);
     GXPC_Shutdown();
+    std::filesystem::remove_all(s_lodPack);
     return s_fail ? 1 : 0;
 }
