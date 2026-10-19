@@ -2208,6 +2208,15 @@ static GLuint efbReadFbo(int x0 = 0, int y0 = 0, int x1 = INT32_MAX, int y1 = IN
     if (!s_msaa) return s_efbFbo;
     const int W = scaled(s_efbW), H = scaled(EFB_H);
     glDisable(GL_SCISSOR_TEST);
+#ifdef __APPLE__
+    // macOS resolves the whole EFB: a part of a multisampled image is far
+    // slower to resolve there than all of it (MoltenVK expands the rest of
+    // the destination into a multisampled copy and resolves that back), so
+    // with Vulkan at 3x and 4x MSAA the copies' regions cost 2.4 ms a frame
+    x0 = y0 = 0;
+    x1 = W;
+    y1 = H;
+#endif
     x0 = std::max(0, x0 - 2);
     y0 = std::max(0, y0 - 2);
     x1 = std::min(W, x1 > W - 2 ? W : x1 + 2);
