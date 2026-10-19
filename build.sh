@@ -4,6 +4,7 @@
 # Builds the port for this computer into build/<os>-<arch>/:
 #   Linux    build/linux-32/sms       (SMS_ARCH=64: build/linux-64/sms)
 #   macOS    build/macos-64/sms       (x86_64, runs under Rosetta on Apple Silicon)
+#            build/macos-arm64/sms    (SMS_ARCH=arm64: native Apple Silicon)
 #   Windows  build/windows-64/sms.exe (MSYS2 MINGW64 shell, or build.cmd)
 # With a disc image (the argument, SMS_DISC_IMAGE, or the one image in rom/)
 # it also builds a copy that has the game's files inside and needs no image:
@@ -56,7 +57,9 @@ setup_linux() {
 # SDL2.framework (Homebrew's sdl2 is arm64-only on Apple Silicon).
 setup_macos() {
   need git cmake make patch python3 clang++ curl
-  if [[ "$(uname -m)" == arm64 ]] && ! /usr/bin/arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
+  local osx_arch=x86_64
+  [[ "$sms_arch" != arm64 ]] || osx_arch=arm64
+  if [[ "$osx_arch" == x86_64 && "$(uname -m)" == arm64 ]] && ! /usr/bin/arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
     sms_die "Rosetta 2 is required on Apple Silicon (the game is an x86_64 program): softwareupdate --install-rosetta"
   fi
 
@@ -120,13 +123,14 @@ setup_macos() {
   fi
 
   # A CMake tree configured for another architecture cannot be reused.
-  if [[ -f "$bdir/CMakeCache.txt" ]] && ! grep -q 'CMAKE_OSX_ARCHITECTURES:STRING=x86_64' "$bdir/CMakeCache.txt"; then
-    echo "Removing $bdir (it was not configured for x86_64)"
+  if [[ -f "$bdir/CMakeCache.txt" ]] && ! grep -q "CMAKE_OSX_ARCHITECTURES:STRING=$osx_arch\$" "$bdir/CMakeCache.txt"; then
+    echo "Removing $bdir (it was not configured for $osx_arch)"
     rm -rf "$bdir"
   fi
-  cmake_args+=(-DCMAKE_OSX_ARCHITECTURES=x86_64
+  cmake_args+=(-DCMAKE_OSX_ARCHITECTURES=$osx_arch
                -DCMAKE_C_COMPILER="$cc"
                -DCMAKE_CXX_COMPILER="$cxx"
+               -DCMAKE_RANLIB=/usr/bin/ranlib
                -DSMS_SDL2_FRAMEWORK="$sdl2_fw")
 }
 
@@ -158,7 +162,7 @@ fi
 # Windows runs it as a shell script whose forks can fail (e.g. Windows 7).
 [[ "$(git -C decomp rev-parse HEAD 2>/dev/null)" == "$(git rev-parse :decomp)" ]] || git submodule update --init decomp
 cmake -S . -B "$bdir" ${cmake_args[@]+"${cmake_args[@]}"} \
-  -DSMS_ARCH="$sms_arch" -DSMS_GX_BUILD_TESTS="${SMS_GX_BUILD_TESTS:-OFF}" -DSMS_BUNDLE_DISC="$disc"
+  -DSMS_ARCH="${sms_arch/arm64/64}" -DSMS_GX_BUILD_TESTS="${SMS_GX_BUILD_TESTS:-OFF}" -DSMS_BUNDLE_DISC="$disc"
 cmake --build "$bdir" --target sms --parallel "$(sms_jobs)"
 if [[ "$sms_os" == macos ]]; then
   # The executable finds SDL2.framework beside itself (@executable_path).
@@ -171,7 +175,7 @@ fi
 
 exe="$bdir/sms$sms_exe_suffix"
 echo
-echo "Built $exe ($sms_os, $sms_arch-bit)"
+if [[ "$sms_arch" == arm64 ]]; then echo "Built $exe ($sms_os, native arm64)"; else echo "Built $exe ($sms_os, $sms_arch-bit)"; fi
 if [[ -n "$disc" && "${SMS_STANDALONE:-1}" == 0 ]]; then
   echo "Play: ./run.sh \"$disc\""
 elif [[ -n "$disc" ]]; then

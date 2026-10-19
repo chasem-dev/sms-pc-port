@@ -12,7 +12,7 @@ Every system uses the same scripts from the repository root:
 | --- | --- | --- | --- | --- |
 | [Linux](#linux), 32-bit (default) | any | `build/linux-32/` | `sms` | `sms-standalone` |
 | [Linux](#linux), 64-bit (`SMS_ARCH=64`) | any | `build/linux-64/` | `sms` | `sms-standalone` |
-| [macOS](#macos) | any (Terminal) | `build/macos-64/` | `sms` | [`SMS.app`](#macos-app) |
+| [macOS](#macos) | any (Terminal) | `build/macos-64/` (Apple Silicon, `SMS_ARCH=arm64`: `build/macos-arm64/`) | `sms` | [`SMS.app`](#macos-app) |
 | [Windows](#windows-msys2-mingw64) | MSYS2 MINGW64, or PowerShell with `build.cmd` / `run.cmd` | `build/windows-64/` | `sms.exe` | `sms-standalone.exe` |
 
 - **The game comes from your disc image**: Super Mario Sunshine, North America (GMSE01), Rev 0, as `.iso`, `.gcm` or Dolphin `.ciso`.
@@ -68,9 +68,9 @@ Then build and run:
 
 ## macOS
 
-macOS builds an **x86_64** program, which runs natively on Intel Macs and under **Rosetta 2** on Apple Silicon.
-Native arm64 cannot `mmap` below 4 GiB (PAGEZERO), and the port needs game memory and stacks there for pointer-in-`u32` slots.
-No Intel Homebrew is required: the script uses Homebrew's LLVM `clang` targeting x86_64 (`-arch x86_64`), normal Homebrew tools, and a universal `SDL2.framework`.
+macOS builds an **x86_64** program by default, which runs natively on Intel Macs and under **Rosetta 2** on Apple Silicon.
+On Apple Silicon, `SMS_ARCH=arm64` builds a **native arm64** program instead, into `build/macos-arm64/` (see [Native Apple Silicon](#native-apple-silicon)).
+No Intel Homebrew is required: the script uses Homebrew's LLVM `clang` (`-arch x86_64` or `-arch arm64`), normal Homebrew tools, and a universal `SDL2.framework`.
 
 ### One-time setup
 
@@ -83,13 +83,13 @@ brew install cmake python3 llvm
 | Requirement | Why |
 | --- | --- |
 | Xcode Command Line Tools | macOS SDK and system headers, `make`, `patch` |
-| Rosetta 2 (Apple Silicon) | runs the x86_64 program |
+| Rosetta 2 (Apple Silicon) | runs the x86_64 program (not needed for `SMS_ARCH=arm64`) |
 | Homebrew (`/opt/homebrew` on Apple Silicon is fine) | `cmake`, `python3`, `llvm` |
 | `llvm` | the compiler (`clang` / `clang++` from `$(brew --prefix llvm)/bin`, the one the macOS build is tested with) and `llvm-objcopy`, which renames the game's `operator new/delete` in Mach-O archives |
 | Universal `SDL2.framework` | window, input and audio; `./build.sh` downloads it into `build/deps/` (Homebrew's `sdl2` bottle is arm64-only on Apple Silicon). It is copied beside `build/macos-64/sms` and into `SMS.app`; the program finds it only there (`@executable_path`, `@executable_path/../Frameworks`) |
 
 Clang has no `-fexec-charset=CP932`, so configuring mirrors the game sources as CP932 (`tools/darwin_cp932_mirror.py`) so the disc's Shift-JIS names still match.
-The linker uses `-Wl,-pagezero_size,0x1000` so low-memory `mmap` works on x86_64.
+The x86_64 linker uses `-Wl,-pagezero_size,0x1000` so low-memory `mmap` works there.
 
 ### Build and run
 
@@ -100,11 +100,23 @@ The linker uses `-Wl,-pagezero_size,0x1000` so low-memory `mmap` works on x86_64
 
 With the image in `rom/`, `./build.sh` also builds `build/macos-64/SMS.app` (see [macOS app](#macos-app)), and `./run.sh` runs it in the terminal so its log shows.
 
+### Native Apple Silicon
+
+```sh
+SMS_ARCH=arm64 ./build.sh
+SMS_ARCH=arm64 ./run.sh
+```
+
+This builds and runs `build/macos-arm64/sms` (and `build/macos-arm64/SMS.app` with an image), a native arm64 program that needs no Rosetta.
+`./run.sh` takes it without `SMS_ARCH` when it is the only macOS build.
+Native arm64 reserves the whole low 4 GiB (PAGEZERO), so the game's memory cannot sit below 4 GiB as on the other 64-bit builds; instead a pass plugin built at configure time (`tools/gameptr`) rebases the game's 32-bit addresses above it.
+It needs nothing beyond the setup above (`llvm` provides the headers the plugin builds against).
+It draws the same frames as the x86_64 build, and runs about a quarter faster on an M4; [MACOS-ARM64.md](docs/MACOS-ARM64.md) has how it works and what was compared.
+
 ### Known gaps
 
 | Gap | Why it matters |
 | --- | --- |
-| Native arm64 | not supported: PAGEZERO blocks low `mmap` |
 | Lockstep `platform/trace` | Linux ELF only; macOS links empty stubs (as Windows does) |
 | Headless (EGL) | not wired on macOS; the SDL2 window is the only mode |
 
@@ -136,7 +148,7 @@ After unzipping, run once:
 xattr -dr com.apple.quarantine /path/to/SMS.app
 ```
 
-On Apple Silicon, macOS offers to install Rosetta 2 on first launch if it is missing.
+On Apple Silicon, macOS offers to install Rosetta 2 on first launch if it is missing (the x86_64 app; `build/macos-arm64/SMS.app` is native).
 Saves go to `~/.local/share/sms-port/card-a`, the same place as the terminal build.
 Keep the app private: it contains the whole game and the icon art from your disc, so sharing it is sharing the game.
 

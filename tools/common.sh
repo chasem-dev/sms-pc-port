@@ -3,7 +3,7 @@
 # where the disc image is.
 #
 #   build/<os>-<arch>/   one CMake tree per host and word size
-#                        (linux-32, linux-64, macos-64, windows-64)
+#                        (linux-32, linux-64, macos-64, macos-arm64, windows-64)
 #   build/deps/          downloaded dependencies (SDL2.framework on macOS)
 #   rom/                 the user's GMSE01 disc image (never committed)
 
@@ -24,9 +24,11 @@ sms_detect_os() {
       sms_arches=(32 64)
       ;;
     Darwin)
-      # x86_64 under Rosetta; native arm64 cannot map memory below 4 GiB.
+      # 64: x86_64 (Rosetta on Apple Silicon). arm64: native Apple Silicon,
+      # its game memory in a 4 GiB window above PAGEZERO (docs/MACOS-ARM64.md).
       sms_os=macos
       sms_arches=(64)
+      [[ "$(uname -m)" == arm64 ]] && sms_arches+=(arm64)
       ;;
     MINGW* | MSYS*)
       if [[ "${MSYSTEM:-}" != MINGW64 && "${MSYSTEM:-}" != MINGW32 ]]; then
@@ -47,7 +49,7 @@ sms_detect_os() {
 
 sms_dir_for() { echo "build/$sms_os-$1"; }
 
-# Sets sms_arch and sms_build_dir. SMS_ARCH=32|64 chooses; otherwise the
+# Sets sms_arch and sms_build_dir. SMS_ARCH=32|64 (macOS: 64|arm64) chooses; otherwise the
 # host's default, except that run.sh takes the other word size when only
 # that one has been built.
 sms_select_arch() {
@@ -62,6 +64,7 @@ sms_select_arch() {
     done
     case "$sms_os-$SMS_ARCH" in
       macos-32) sms_die "macOS cannot run 32-bit programs; the macOS build is 64-bit only (unset SMS_ARCH)." ;;
+      macos-arm64) sms_die "SMS_ARCH=arm64 is the native Apple Silicon build; this Mac is Intel (unset SMS_ARCH)." ;;
       windows-*) sms_die "SMS_ARCH=$SMS_ARCH needs the matching MSYS2 MINGW$SMS_ARCH shell." ;;
       *) sms_die "SMS_ARCH must be one of: ${sms_arches[*]}" ;;
     esac

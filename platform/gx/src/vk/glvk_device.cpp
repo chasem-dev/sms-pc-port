@@ -321,6 +321,20 @@ VkPresentModeKHR pickPresentMode(int vsync) {
     return VK_PRESENT_MODE_FIFO_KHR;
 }
 
+// How many presents may wait to be shown before frames are dropped (vsync
+// off, MoltenVK; see droppingFrame). Measured on an M4 at 120 Hz with 3
+// images: the x86_64 build (MoltenVK under Rosetta) waits for a drawable in
+// nextDrawable, on the CPU, past 5; the native arm64 build's GPU waits for it
+// past 1 (where about half of all frames are still shown, some 350 a second).
+uint32_t unshownLimit(uint32_t images) {
+#if defined(__aarch64__)
+    (void)images;
+    return 1;
+#else
+    return images + 2;
+#endif
+}
+
 bool createSwapchain() {
     VkSurfaceCapabilitiesKHR caps;
     if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(D.phys, s_sc.surface, &caps) != VK_SUCCESS) return false;
@@ -390,7 +404,7 @@ bool createSwapchain() {
     uint32_t n = 0;
     vkGetSwapchainImagesKHR(D.dev, sc, &n, nullptr);
     s_sc.images.resize(n);
-    s_sc.unshownMax = n + 2;
+    s_sc.unshownMax = unshownLimit(n);
     vkGetSwapchainImagesKHR(D.dev, sc, &n, s_sc.images.data());
     VkSemaphoreCreateInfo si{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
     s_sc.renderDone.resize(n);
@@ -1270,11 +1284,10 @@ void setSwapInterval(int vsync) {
 // next one waits for it in nextDrawable: the game would run at the
 // compositor's pace. So a frame is not presented (as a GL driver's compositor
 // drops frames it has no time for) while too many presents are not reported
-// shown yet. Drawables come back a little before their frames are reported
-// (on an M4 at 120 Hz, waits start past 5 unshown with 3 images), so the limit
-// starts at the images + 2, drops by one (to 2 at least) whenever a present
-// still waited and comes back after 120 that did not. A frame is presented at
-// least every 50 ms, in case the compositor stops reporting (a hidden window).
+// shown yet (unshownLimit). Where the wait is on the CPU (x86_64 under
+// Rosetta), the limit drops by one (to 2 at least) whenever a present still
+// waited and comes back after 120 that did not. A frame is presented at least
+// every 50 ms, in case the compositor stops reporting (a hidden window).
 bool droppingFrame() {
     VkPastPresentationTimingGOOGLE shown[16];
     for (;;) {
@@ -1370,9 +1383,9 @@ bool presentFrame() {
     submitSegment(s_sc.acquire[f], VK_PIPELINE_STAGE_TRANSFER_BIT, done);
     if (s_sc.immediate && D.displayTiming) {
         if (now() - t0 > 0.002 && s_sc.unshown >= 2) {  // waited for a drawable (taken as the blit is encoded)
-            s_sc.unshownMax = std::max(2u, s_sc.unshownMax - 1);
+            s_sc.unshownMax = std::max(std::min(2u, unshownLimit(uint32_t(s_sc.images.size()))), s_sc.unshownMax - 1);
             s_sc.clean = 0;
-        } else if (++s_sc.clean >= 120 && s_sc.unshownMax < s_sc.images.size() + 2) {
+        } else if (++s_sc.clean >= 120 && s_sc.unshownMax < unshownLimit(uint32_t(s_sc.images.size()))) {
             s_sc.unshownMax++;
             s_sc.clean = 0;
         }

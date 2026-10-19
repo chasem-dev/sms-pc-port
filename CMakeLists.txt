@@ -132,14 +132,44 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   list(APPEND SMS_GAME_FLAGS -fms-extensions)
 endif()
 
-# macOS: native arm64 reserves the low 4 GiB as PAGEZERO, so port_low_alloc
-# cannot satisfy pointer-in-u32. Build x86_64 (Rosetta) with a 4 KiB pagezero.
+# macOS: x86_64 (Rosetta on Apple Silicon) with a 4 KiB PAGEZERO, so game
+# memory sits below 4 GiB as on the other builds; or native arm64, where the
+# kernel reserves the low 4 GiB, and game addresses are rebased above it
+# instead (PORT_GAME_LO/HI): tools/gameptr's pass plugin rebases every integer
+# the code turns into a pointer (docs/MACOS-ARM64.md).
+set(SMS_MAC_ARM64 OFF)
 if(APPLE)
-  if(NOT CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64")
+  if(CMAKE_OSX_ARCHITECTURES STREQUAL "arm64")
+    set(SMS_MAC_ARM64 ON)
+  elseif(NOT CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64")
     message(FATAL_ERROR
-      "macOS builds must use CMAKE_OSX_ARCHITECTURES=x86_64 (Rosetta). "
-      "Native arm64 cannot mmap below 4 GiB. Use ./build.sh.")
+      "macOS builds use CMAKE_OSX_ARCHITECTURES=x86_64 (Rosetta) or arm64 (native). Use ./build.sh.")
   endif()
+endif()
+if(SMS_MAC_ARM64)
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR "The arm64 macOS build needs Clang (its pass plugin)")
+  endif()
+  get_filename_component(_llvm_bin "${CMAKE_CXX_COMPILER}" DIRECTORY)
+  find_program(SMS_LLVM_CONFIG llvm-config PATHS "${_llvm_bin}" NO_DEFAULT_PATH)
+  if(NOT SMS_LLVM_CONFIG)
+    message(FATAL_ERROR "llvm-config not found beside ${CMAKE_CXX_COMPILER} (Homebrew llvm has it)")
+  endif()
+  execute_process(COMMAND ${SMS_LLVM_CONFIG} --cxxflags OUTPUT_VARIABLE _llvm_cxxflags OUTPUT_STRIP_TRAILING_WHITESPACE)
+  separate_arguments(_llvm_cxxflags UNIX_COMMAND "${_llvm_cxxflags}")
+  set(SMS_GAMEPTR_SRC ${CMAKE_CURRENT_SOURCE_DIR}/tools/gameptr/GamePtrPass.cpp)
+  set(SMS_GAMEPTR_PLUGIN ${CMAKE_BINARY_DIR}/gameptr/libSmsGamePtr.dylib)
+  file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/gameptr)
+  execute_process(
+    COMMAND ${CMAKE_CXX_COMPILER} -shared -fPIC -O2 ${_llvm_cxxflags} -undefined dynamic_lookup
+            -o ${SMS_GAMEPTR_PLUGIN} ${SMS_GAMEPTR_SRC}
+    RESULT_VARIABLE _gameptr_rc)
+  if(NOT _gameptr_rc EQUAL 0)
+    message(FATAL_ERROR "building tools/gameptr's pass plugin failed")
+  endif()
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${SMS_GAMEPTR_SRC})
+  list(APPEND SMS_GAME_FLAGS -fpass-plugin=${SMS_GAMEPTR_PLUGIN} -DPORT_GAMEPTR_PLUGIN=1)
+  message(STATUS "SMS port: native arm64, game addresses rebased above PAGEZERO (tools/gameptr)")
 endif()
 
 set(SMS_GAME_INCLUDE_DIRS ${SMS_DECOMP_INCLUDE_DIRS})
@@ -182,6 +212,10 @@ endif()
 set_source_files_properties(${SMS_DECOMP_CXX_SOURCES} PROPERTIES LANGUAGE CXX)
 set_source_files_properties(${SMS_DECOMP_CXX_SOURCES} ${SMS_DECOMP_C_SOURCES} PROPERTIES
   OBJECT_DEPENDS ${SMS_PATCH_HEADER_STAMP})
+if(SMS_MAC_ARM64)
+  # rebuilt when the pass plugin changes
+  set_property(SOURCE ${SMS_DECOMP_CXX_SOURCES} ${SMS_DECOMP_C_SOURCES} APPEND PROPERTY OBJECT_DEPENDS ${SMS_GAMEPTR_PLUGIN})
+endif()
 if(EXISTS "${SMS_GAME_PCH_DIR}/SMS.pch")
   set(_sms_pch ${SMS_GAME_PCH_DIR}/SMS.pch)
 else()
@@ -388,7 +422,15 @@ if(SMS_ARCH STREQUAL "64" OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(sms PRIVATE -no-pie)
   endif()
 endif()
-if(APPLE)
+if(SMS_MAC_ARM64)
+  # No fused multiply-adds (clang's default on arm64), as x86 computes
+  target_compile_options(sms PRIVATE -fpass-plugin=${SMS_GAMEPTR_PLUGIN} -DPORT_GAMEPTR_PLUGIN=1 -ffp-contract=off)
+  set_property(SOURCE ${SMS_PORT_SRC}/port_main.cpp ${SMS_PLATFORM_SOURCES} APPEND PROPERTY OBJECT_DEPENDS ${SMS_GAMEPTR_PLUGIN})
+  # The executable loads at 0x100000000 (port_main.cpp turns address
+  # randomisation off): pad its header so no code lies in its first 64 KiB,
+  # whose truncated addresses would be below PORT_GAME_MIN.
+  target_link_options(sms PRIVATE "LINKER:-headerpad,0x10000")
+elseif(APPLE)
   # Shrink PAGEZERO so MAP_32BIT / low stacks work (x86_64 / Rosetta only).
   target_link_options(sms PRIVATE "LINKER:-pagezero_size,0x1000")
   # At the same address every run, as on Linux and Windows, so save states
@@ -411,6 +453,12 @@ add_custom_command(TARGET sms POST_BUILD
     --map ${CMAKE_BINARY_DIR}/sms.map --exe $<TARGET_FILE:sms>
     --archive libsms_game.a --archive libsms_eclipse.a
   COMMENT "Recording the game's data for save states")
+if(SMS_MAC_ARM64)
+  # That rewrote the executable after the linker signed it, and arm64 macOS
+  # kills a process whose signature does not match: sign it again (ad hoc).
+  add_custom_command(TARGET sms POST_BUILD COMMAND codesign -f -s - $<TARGET_FILE:sms>
+    COMMENT "Signing sms (ad hoc)")
+endif()
 find_package(Threads REQUIRED)
 if(WIN32 AND SMS_ARCH STREQUAL "64")
   add_executable(sms_windows_stack_test EXCLUDE_FROM_ALL

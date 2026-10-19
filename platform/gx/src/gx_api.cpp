@@ -323,7 +323,7 @@ u32 GXGetOverflowCount(void) { return 0; }
 u32 GXResetOverflowCount(void) { return 0; }
 volatile void* GXRedirectWriteGatherPipe(void* ptr) {
     setPipeRedirect(static_cast<uint8_t*>(ptr));
-    return reinterpret_cast<volatile void*>(static_cast<uintptr_t>(0xCC008000u));
+    return reinterpret_cast<volatile void*>(static_cast<uintptr_t>(PORT_GAME_HI + 0xCC008000u));
 }
 void GXRestoreWriteGatherPipe(void) { setPipeRedirect(nullptr); }
 

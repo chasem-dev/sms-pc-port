@@ -279,7 +279,7 @@ The rules in [DEVELOPMENT.md](DEVELOPMENT.md#where-a-fix-goes) decide this.
 4. **File select and the airstrip:** J3D loaders (block structs, animation loaders), `PacketUtil`, collision.
 5. **Delfino Plaza playable:** script VM (`EventWatcher`, `NpcEvent`, `spcinterp`, `liveinterp`), pollution, NPCs; frames match the 32-bit references.
 6. **Every stage and movie:** run the full stage list and the movie sweep in 64-bit.
-7. **Windows 64-bit** (MSYS2 `mingw-w64-x86_64`), then macOS/ARM64 once the GL layer runs there.
+7. **Windows 64-bit** (MSYS2 `mingw-w64-x86_64`), then macOS/ARM64 once the GL layer runs there (done: [MACOS-ARM64.md](MACOS-ARM64.md), with the game's addresses rebased above PAGEZERO instead of kept below 4 GiB).
 8. **Make 64-bit a supported build:** docs and build scripts; 32-bit stays available.
 
 ## Open questions

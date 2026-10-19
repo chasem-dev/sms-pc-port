@@ -1,5 +1,6 @@
 // Register file, command-stream parser and vertex loader.
 #include "gx_internal.h"
+#include <dolphin/types.h>  // PORT_GAME_HI
 #include <time.h>
 #ifdef __APPLE__
 #include <mach/mach_time.h>
@@ -101,8 +102,9 @@ uint64_t hashBytes(const void* data, size_t n, uint64_t seed) {
 }
 
 // Default window: MEM1 mapped at the GameCube's own cached base, which is what
-// the unmodified OSCachedToPhysical macro (addr - 0x80000000) assumes.
-static uint8_t* s_memBase = reinterpret_cast<uint8_t*>(static_cast<uintptr_t>(0x80000000u));
+// the unmodified OSCachedToPhysical macro (addr - 0x80000000) assumes (on
+// native arm64 macOS, PORT_GAME_HI above it, as the game sees it).
+static uint8_t* s_memBase = reinterpret_cast<uint8_t*>(static_cast<uintptr_t>(PORT_GAME_HI + 0x80000000u));
 static uint32_t s_memSize = 0x01800000;
 
 void* physToPtr(uint32_t phys) {

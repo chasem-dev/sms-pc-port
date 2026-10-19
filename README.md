@@ -28,6 +28,7 @@ Fuzzy similarity measures approximate code similarity; the other two tracks show
 | Linux (x86) | 32-bit (default) | plays | `build/linux-32/sms` |
 | Linux (x86-64) | 64-bit (`SMS_ARCH=64`) | plays; still being tested stage by stage ([docs/64-BIT.md](docs/64-BIT.md)) | `build/linux-64/sms` |
 | macOS (Intel, or Apple Silicon under Rosetta 2) | 64-bit | plays | `build/macos-64/sms` |
+| macOS, native Apple Silicon (`SMS_ARCH=arm64`) | arm64 | plays | `build/macos-arm64/sms` |
 | Windows (MSYS2 MINGW64) | 64-bit | boots under Wine; native runtime checks | `build/windows-64/sms.exe` |
 
 The game code keeps pointers in 4-byte fields, so it was written for a 32-bit machine.
@@ -70,7 +71,7 @@ The same two scripts work on every system:
 | `./build.sh [IMAGE]` | builds `build/<os>-<arch>/sms`; with an image (argument, `SMS_DISC_IMAGE`, or the one in `rom/`) also the standalone copy |
 | `./run.sh [IMAGE] [--headless]` | runs that build: with the image you pass, else the standalone copy, else the image in `rom/` |
 | `./clean.sh [--all] [--dry-run]` | deletes the build output (every `build/<os>-<arch>/`); never deletes your disc image, and keeps the downloaded SDL2; `--all` deletes all of `build/` |
-| `SMS_ARCH=64 ./build.sh` | chooses the word size (Linux: `32` default or `64`; macOS: `64` only; Windows: `64` default (`32` legacy with MINGW32)) |
+| `SMS_ARCH=64 ./build.sh` | chooses the word size (Linux: `32` default or `64`; macOS: `64` default or, on Apple Silicon, `arm64` (native, [MACOS-ARM64.md](docs/MACOS-ARM64.md)); Windows: `64` default (`32` legacy with MINGW32)) |
 | `JOBS=2 ./build.sh` | limits parallel compiler jobs (default: all cores) |
 | `SMS_STANDALONE=0 ./build.sh` | skips the standalone copy even when an image is found |
 

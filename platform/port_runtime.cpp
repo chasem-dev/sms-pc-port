@@ -507,7 +507,7 @@ static void* map_exact(void* want, size_t size)
 // Map `size` bytes below 4 GiB (below 2 GiB where possible), or NULL.
 static void* low_map(size_t size, int prot)
 {
-#ifdef MAP_32BIT
+#if defined(MAP_32BIT) && !PORT_GAME_LO
 	// Linux: below 2 GiB. macOS: below 4 GiB.
 	void* p = mmap(NULL, size, prot, MAP_PRIVATE | MAP_ANONYMOUS | MAP_32BIT, -1, 0);
 	if (p != MAP_FAILED) {
@@ -519,7 +519,9 @@ static void* low_map(size_t size, int prot)
 	// Walk hint addresses from 256 MiB up to 2 GiB. Darwin places a hinted
 	// mapping in the first free range at or above the hint, so take any
 	// placement that still ends below 2 GiB.
-	for (uintptr_t at = 0x10000000u; at + size <= 0x80000000u; at += 0x100000u) {
+	// (Native arm64 macOS: the same game addresses, at PORT_GAME_LO.)
+	const uintptr_t lo = PORT_GAME_LO + 0x10000000u, hi = PORT_GAME_LO + 0x80000000u;
+	for (uintptr_t at = lo; at + size <= hi; at += 0x100000u) {
 		void* q = mmap((void*)at, size, prot, MAP_PRIVATE | MAP_ANONYMOUS
 #ifdef MAP_FIXED_NOREPLACE
 			| MAP_FIXED_NOREPLACE
@@ -527,7 +529,7 @@ static void* low_map(size_t size, int prot)
 			, -1, 0);
 		if (q == MAP_FAILED)
 			continue;
-		if ((uintptr_t)q >= at && (uintptr_t)q + size <= 0x80000000u)
+		if ((uintptr_t)q >= at && (uintptr_t)q + size <= hi)
 			return q;
 		munmap(q, size);
 	}
@@ -544,7 +546,7 @@ static void map_mem1()
 	if (const char* e = getenv("SMS_MEM_MB"))
 		mb = (u32)atoi(e);
 	port_mem1_size = mb << 20;
-	void* want = (void*)(uintptr_t)0x80000000u;
+	void* want = (void*)(uintptr_t)(PORT_GAME_HI + 0x80000000u);
 #ifdef _WIN32
 	void* p = VirtualAlloc(want, port_mem1_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 	if (p != want) {
@@ -556,7 +558,7 @@ static void map_mem1()
 #else
 	void* p = map_exact(want, port_mem1_size);
 	if (p != want) {
-		port_log("[port] cannot map MEM1 at 0x80000000; falling back to a heap block\n");
+		port_log("[port] cannot map MEM1 at %p; falling back to a heap block\n", want);
 		p = mmap(NULL, port_mem1_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 		if (p == MAP_FAILED) {
 			port_log("[port] out of memory for MEM1\n");
@@ -575,6 +577,10 @@ static void map_mem1()
 extern "C" void port_ptr32_trap(const void* p)
 {
 	port_log("[port] PTR32: address %p does not fit a 32-bit slot\n", p);
+#ifndef _WIN32
+	void* frames[32];
+	backtrace_symbols_fd(frames, backtrace(frames, 32), 2);
+#endif
 	abort();
 }
 

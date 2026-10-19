@@ -67,29 +67,62 @@ typedef int BOOL;
 #endif
 #endif
 
+/* Native arm64 macOS reserves the low 4 GiB (PAGEZERO) and puts its shared
+ * library cache at 0x180000000-0x300000000, so there a game address x lives
+ * at PORT_GAME_LO + x below 0x80000000 (the executable, stacks,
+ * port_low_alloc) and at PORT_GAME_HI + x from 0x80000000 (MEM1). A pointer
+ * truncated to a u32 is the game address, and tools/gameptr's pass plugin
+ * rebases every integer the game and platform code turn into a pointer
+ * (docs/MACOS-ARM64.md; it defines PORT_GAMEPTR_PLUGIN); code built
+ * without it (platform/gx) uses port_game_ptr. Both bases are 0 on every
+ * other host. */
+#if defined(__APPLE__) && defined(__aarch64__)
+#define PORT_GAME_LO 0x100000000ull
+#define PORT_GAME_HI 0x700000000ull
+#else
+#define PORT_GAME_LO 0ull
+#define PORT_GAME_HI 0ull
+#endif
+/* Values below PORT_GAME_MIN are small integers passed as pointers (null,
+ * OSMessage codes), never game addresses: they are not rebased. */
+#define PORT_GAME_MIN 0x10000u
+#define PORT_GAME_REBASE(a) ((unsigned long long)(a) | ((a) & 0x80000000u ? PORT_GAME_HI : PORT_GAME_LO))
+#define port_game_ptr(a) ((u32)(a) >= PORT_GAME_MIN ? (void*)PORT_GAME_REBASE((u32)(a)) : (void*)(unsigned long long)(u32)(a))
+
 /* PTR32(T): a pointer field of a struct laid over file data (see the decomp's
  * types.h). With 4-byte pointers it is T*. With 8-byte pointers it stays a
  * 4-byte slot holding the address, which works because everything the game
- * can point at lives below 4 GiB (MEM1, static data, low thread stacks); a
- * higher address is a port bug, reported by port_ptr32_trap. */
+ * can point at has a 32-bit game address (below 4 GiB, or rebased as above:
+ * MEM1, static data, low thread stacks); any other address is a port bug,
+ * reported by port_ptr32_trap. */
 #if defined(__SIZEOF_POINTER__) && __SIZEOF_POINTER__ == 8
 #ifdef __cplusplus
 extern "C" void port_ptr32_trap(const void* p);
 template <typename T> struct port_ptr32 {
 	u32 raw;
+#ifdef PORT_GAMEPTR_PLUGIN
+	/* a plain cast, which the plugin rebases: so (uintptr_t)(void*)field
+	 * folds back to the offset a relocation adds, as on every other host */
 	operator T*() const { return (T*)(unsigned long long)raw; }
-	T* operator->() const { return (T*)(unsigned long long)raw; }
+#else
+	operator T*() const { return (T*)port_game_ptr(raw); }
+#endif
+	T* operator->() const { return (T*)*this; }
 	port_ptr32& operator=(T* p)
 	{
 		unsigned long long a = (unsigned long long)p;
-		if (a >> 32)
+		/* below 4 GiB: a game address (where the optimiser folded the
+		 * plugin's cast away) or a small integer */
+		if ((a >> 32) && PORT_GAME_REBASE((u32)a) != a)
 			port_ptr32_trap(p);
 		raw = (u32)a;
 		return *this;
 	}
-	/* pointer arithmetic, as on T* (in-place relocation adds a base) */
-	template <typename I> port_ptr32& operator+=(I n) { return *this = (T*)*this + n; }
-	template <typename I> port_ptr32& operator-=(I n) { return *this = (T*)*this - n; }
+	/* pointer arithmetic, as on T* (in-place relocation adds a base), on the
+	 * 32-bit address: the slot may still hold a file offset, which must not
+	 * pick up PORT_GAME_LO before the base is added */
+	template <typename I> port_ptr32& operator+=(I n) { return *this = (T*)port_game_ptr(raw + (u32)(n * sizeof(T))); }
+	template <typename I> port_ptr32& operator-=(I n) { return *this = (T*)port_game_ptr(raw - (u32)(n * sizeof(T))); }
 };
 #define PTR32(T) port_ptr32<T>
 #else
