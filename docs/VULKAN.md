@@ -13,7 +13,7 @@ Vulkan 1.1 or newer with dynamic rendering, push descriptors and timeline semaph
 Extended dynamic state and `VK_EXT_depth_clip_control` are used when present.
 The Vulkan loader is opened at run time (volk), so the game still starts on a system without one.
 
-The backend is built in by default on Linux only for now (macOS has been tried, below; Windows not yet): `SMS_GX_VULKAN=ON ./build.sh` (CMake `-DSMS_GX_VULKAN=ON`) builds it elsewhere, `SMS_GX_VULKAN=OFF` leaves it out.
+The backend is built in by default on Linux and macOS (MoltenVK, below); Windows has not been tried yet: `SMS_GX_VULKAN=ON ./build.sh` (CMake `-DSMS_GX_VULKAN=ON`) builds it there, `SMS_GX_VULKAN=OFF` leaves it out anywhere.
 Its dependencies (Vulkan-Headers, volk, VMA, glslang) are downloaded at configure time and checked against their SHA-256, or taken from the tarballs in `-DSMS_GX_VULKAN_DEPS=dir`; when one cannot be had, configure warns and the game is built without the backend, as before it existed.
 Without the backend, `renderer = vulkan` logs that and draws with OpenGL.
 
@@ -91,7 +91,7 @@ Tried on an Apple M4 (macOS 15.7, MoltenVK 1.4.2, x86_64 game under Rosetta), ag
 - The native arm64 build ([MACOS-ARM64.md](MACOS-ARM64.md)): 1.76 ms (570 fps) against its OpenGL's 1.85 ms at 1x.
 - With vsync off, Metal hands out a swapchain's drawables only as the compositor lets them go, and MoltenVK waits for one (`nextDrawable`) as it encodes the blit into it, which held the game to the compositor's pace (6.2 ms a frame, whatever was drawn; natively, the GPU waits instead). glvk asks MoltenVK which presents were shown (`VK_GOOGLE_display_timing`) and does not present a frame while too many are not (up to 5 unshown with 3 images for the x86_64 build, fewer when a present still waits; 1 for the native arm64 build; the Vulkan stats count the frames not presented), as Apple's OpenGL drops frames the compositor has no time for; about 155 frames a second still reach the 120 Hz screen. With vsync on nothing changes.
 
-- `SMS_GX_VULKAN=ON ./build.sh` on macOS builds the backend in and fetches MoltenVK 1.4.2 (a universal `libMoltenVK.dylib`, checked against its SHA-256) into `build/deps/`, copies it beside `sms`, and puts it in `SMS.app/Contents/Frameworks`. Without `SMS_GX_VULKAN=ON`, the Mac build is as before.
+- `./build.sh` on macOS builds the backend in and fetches MoltenVK 1.4.2 (a universal `libMoltenVK.dylib`, checked against its SHA-256) into `build/deps/`, copies it beside `sms`, and puts it in `SMS.app/Contents/Frameworks`. `SMS_GX_VULKAN=OFF ./build.sh` builds without both.
 - glvk loads that dylib directly (no Vulkan loader needed): `libMoltenVK.dylib` or `libvulkan.1.dylib` beside the executable or in `../Frameworks`, else `SMS_VK_LIBRARY`, else the loader. SDL is pointed at the same library before it makes the window.
 - MoltenVK has no graphics pipeline libraries: pipelines are made whole there (the first time a state is drawn, as before the libraries).
 - What Metal lacks, and what glvk does instead (each of these can be tried on a desktop GPU with `SMS_VK_PORTABILITY_TEST=1`, which gave the same pictures as the normal path in the runs above):
@@ -100,7 +100,7 @@ Tried on an Apple M4 (macOS 15.7, MoltenVK 1.4.2, x86_64 game under Rosetta), ag
   - no 24-bit depth on Apple GPUs: 32-bit float depth, converted to GL's 24-bit values for peeks;
   - no logic ops: drawn as plain blending.
 - To check on a Mac:
-  1. `SMS_GX_VULKAN=ON ./build.sh` (Rosetta runs the x86_64 game and MoltenVK's x86_64 slice).
+  1. `./build.sh` (Rosetta runs the x86_64 game and MoltenVK's x86_64 slice), or `SMS_ARCH=arm64 ./build.sh` for the native build.
   2. `SMS_GX_BACKEND=vulkan SMS_VK_VALIDATION=1 ./run.sh` — the log should name MoltenVK (`Vulkan: using .../libMoltenVK.dylib`, then `Vulkan 1.x on Apple M...`, `portability subset`). The validation layer comes with the Vulkan SDK; without it the variable only logs that.
   3. Play the title and Delfino Plaza; compare with OpenGL in a window, since macOS has no headless OpenGL: `python3 tools/vulkan/compare.py title plaza --window` and `python3 tools/vulkan/bench.py`.
   4. Things to look at: the sun's lens flare (depth peeks with float depth), Delfino's goop counters, anything the game draws as wide lines, and the frame rate against OpenGL 4.1.

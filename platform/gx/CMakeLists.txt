@@ -125,11 +125,12 @@ endif()
 # The optional Vulkan backend (src/vk, SMS_GX_BACKEND=vulkan): the GL subset
 # the renderer draws with, on Vulkan. The Vulkan loader is opened at run time
 # (volk), so the game still starts where there is none and falls back to GL.
-# On by default on Linux, where it is tested; -DSMS_GX_VULKAN=ON elsewhere.
+# On by default on Linux and macOS (MoltenVK), where it is tested;
+# -DSMS_GX_VULKAN=ON on Windows.
 # Its dependencies are downloaded at configure time (or taken from the
 # tarballs in SMS_GX_VULKAN_DEPS); if one cannot be had, the game is built
 # without the backend, as before it existed, and configure only warns.
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
     set(_sms_vulkan_default ON)
 else()
     set(_sms_vulkan_default OFF)

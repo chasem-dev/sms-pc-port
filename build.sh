@@ -14,7 +14,7 @@
 # Eclipse in, into build/<os>-<arch>-eclipse/ (docs/ECLIPSE.md). See BUILD.md.
 # SMS_GX_BUILD_TESTS=ON also configures platform/gx's self-tests (for CI).
 # SMS_GX_VULKAN=ON|OFF builds the optional Vulkan backend in or leaves it out
-# (default: on Linux only; docs/VULKAN.md).
+# (default: on Linux and macOS; docs/VULKAN.md).
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -94,13 +94,14 @@ setup_macos() {
     hdiutil detach "$mnt" -quiet || true
   fi
 
-  # MoltenVK, the Vulkan backend's library on macOS (renderer = vulkan), with
-  # SMS_GX_VULKAN=ON: beside the executable and in SMS.app's Frameworks. A
-  # universal dylib; build/deps/ keeps it. Without it the game uses OpenGL.
+  # MoltenVK, the Vulkan backend's library on macOS (renderer = vulkan),
+  # unless SMS_GX_VULKAN=OFF: beside the executable and in SMS.app's
+  # Frameworks. A universal dylib; build/deps/ keeps it. Without it the game
+  # uses OpenGL.
   local mvk_ver=1.4.2
   local mvk_sha=f95765a6229cb7b915990a2890ce12ebe36a730b021545d3d52ae69ce4c4024e
   mvk_dylib=""
-  if [[ "${SMS_GX_VULKAN:-}" == ON ]]; then
+  if [[ "${SMS_GX_VULKAN:-ON}" != OFF ]]; then
     mvk_dylib="$PWD/build/deps/MoltenVK-$mvk_ver/libMoltenVK.dylib"
     if [[ ! -f "$mvk_dylib" ]]; then
       echo "Fetching MoltenVK $mvk_ver into build/deps/ ..."
@@ -143,7 +144,7 @@ setup_windows() {
 }
 
 "setup_$sms_os"
-# SMS_GX_VULKAN=ON|OFF overrides the Vulkan backend's default (on Linux only);
+# SMS_GX_VULKAN=ON|OFF overrides the Vulkan backend's default (on Linux and macOS);
 # without it, renderer = vulkan falls back to OpenGL
 [[ -z "${SMS_GX_VULKAN:-}" ]] || cmake_args+=(-DSMS_GX_VULKAN="$SMS_GX_VULKAN")
 

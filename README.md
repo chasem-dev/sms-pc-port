@@ -261,7 +261,7 @@ docs/                 developer documentation and reference screenshots
 - [BUILD.md](BUILD.md): prerequisites for each system, the standalone build and macOS app, manual CMake builds, troubleshooting.
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): where a fix goes (decomp, patch or platform), how the build works, the platform layer, the decomp patches, every environment variable, developer tools, performance.
 - [docs/64-BIT.md](docs/64-BIT.md): how the 64-bit build works and what is left.
-- [docs/VULKAN.md](docs/VULKAN.md): the optional Vulkan backend, how it is compared with OpenGL and benchmarked, and the MoltenVK groundwork.
+- [docs/VULKAN.md](docs/VULKAN.md): the optional Vulkan backend (built in on Linux and macOS), how it is compared with OpenGL and benchmarked, and MoltenVK on macOS.
 - `platform/*/README.md`: each platform module in detail.
 - [ext/README.md](ext/README.md): extensions, and how to write one; [ext/multiplayer/README.md](ext/multiplayer/README.md): multiplayer.
 
