@@ -95,6 +95,14 @@ frame_rate = 60
 # The pause menu's tracker: an area's Shine Sprites and blue coins, got out of
 # all there are; L and R step through the areas you have been to.
 # pause_tracker = on
+# The radar at the HUD's top right: the stage close around Mario, north up,
+# with an arrow for the way he faces and the stage's Shines and blue coins.
+# Its maps are in assets/maps (tools/radar/gen_maps.py makes them from the
+# disc). radar_zoom is how far it reaches from Mario, in the game's units
+# (100 a metre); radar_size is its size in percent.
+# radar = off
+# radar_zoom = 2500
+# radar_size = 100
 # The buttons shown in the game's text and on the FLUDD gauge: gamecube (the
 # game's own), xbox, playstation, steamdeck, keyboard, or auto (keyboard and
 # mouse, or the controller in use). Other than gamecube, they need the images

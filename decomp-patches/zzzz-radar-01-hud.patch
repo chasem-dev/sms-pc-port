@@ -1,0 +1,22 @@
+Reason: port: the radar (src/radar.cpp, SMS_RADAR=1): the HUD draws it last, at its top right
+--- a/src/GC2D/GCConsole2.cpp
++++ b/src/GC2D/GCConsole2.cpp
+@@ -586,6 +586,7 @@
+ extern "C" void GXPC_SetHud(int on);
+ extern "C" void GXPC_HudPaneBegin(float x1, float x2);
+ extern "C" void GXPC_HudPaneEnd(void);
++#include "port_radar.h"
+ #endif
+ 
+ TGCConsole2::TGCConsole2(const char* name)
+@@ -4869,6 +4870,10 @@
+ 		console->drawWater(graph);
+ 	}
+ #ifdef TARGET_PC
++	// the radar at the HUD's top right, over everything else of the HUD
++	// (src/radar.cpp)
++	if (port_radar)
++		RadarDraw(graphics->getViewport());
+ 	GXPC_SetHud(0);
+ #endif
+ }

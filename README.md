@@ -89,6 +89,7 @@ Options can be kept in [`settings.txt`](settings.txt) (`resolution = 2`, `textur
 | `SMS_LANGUAGE=fr` | play in French, German (`de`), Spanish (`es`), Italian (`it`) or Polish (`pl`) instead of English (`en`, the default), with that [language pack](#languages) installed |
 | `SMS_HEAT_HAZE=0` | turn off the heat-wave shimmer that distorts the picture in sunny areas |
 | `SMS_PAUSE_TRACKER=0` | hide the pause menu's [Shine and blue coin tracker](#pause-menu-tracker) |
+| `SMS_RADAR=1` | show the [radar](#radar): the stage around Mario with its Shines and blue coins; `SMS_RADAR_ZOOM` (game units, default 2500) and `SMS_RADAR_SIZE` (percent) |
 | `SMS_BUTTON_PROMPTS=style` | the buttons shown in the game's text and on the FLUDD gauge: `gamecube` (the game's own, the default), `xbox`, `playstation`, `steamdeck`, `keyboard`, or `auto` (keyboard and mouse or the controller in use) |
 | `SMS_BUTTON_PROMPT_PAD=style` | with `auto`, how every controller's prompts look: `xbox`, `playstation`, `steamdeck` or `gamecube` (default: match the controller) |
 | `SMS_BUTTON_PROMPT_DIR=dir` | the prompt images, `<style>.png` (eight 64x64 icons in a row: A B X Y Z L R C-stick); SMS Launcher draws them from your bindings |
@@ -205,6 +206,13 @@ The pause menu shows, at its bottom left, the Shine Sprites and blue coins of an
 It opens on the area you are in; L and R step through the others you have been to (Delfino Airstrip, Delfino Plaza, the seven areas and Corona Mountain), named in the file select's lettering.
 The counts are the game's: an area's eight episodes and its 100-coin and two other Shines, the Airstrip's two, and the Plaza's other 41; 30 blue coins in each area, 20 in the Plaza (the Airstrip's one included) and 10 on Corona Mountain.
 `pause_tracker = off` in `settings.txt` (`SMS_PAUSE_TRACKER=0`) hides it. Eclipse builds have Eclipse's own tracker instead.
+
+### Radar
+
+`radar = on` in `settings.txt` (`SMS_RADAR=1`) shows a round map at the HUD's top right while a stage plays: the stage close around Mario (25 m to its edge), north up, scrolling as he moves, with an arrow at its centre that turns the way he faces.
+The stage's Shines and blue coins are on it as the HUD's own icons, at their places whether or not they have appeared yet; a Shine you already have is the pale blue of the game's empty Shine, and a blue coin you have is gone.
+It hides in cutscenes, conversations and the pause menu. `radar_zoom` sets how far it reaches (in the game's units, 100 a metre) and `radar_size` its size in percent; with `widescreen_hud = edges` it moves to the right edge with the HUD.
+The maps are pictures of every stage from straight above, made from the disc by `tools/radar/gen_maps.py` (in `assets/maps`, one per stage, matched to the stage by its collision); a stage without one, a mod's, has no radar.
 
 ### Save states
 

@@ -295,6 +295,9 @@ target_sources(sms_game PRIVATE ${SMS_PORT_SRC}/savestate_menu.cpp)
 # The pause menu's Shine and blue coin tracker, drawn the same way
 # (port_pause_tracker.h).
 target_sources(sms_game PRIVATE ${SMS_PORT_SRC}/pause_tracker.cpp)
+# The radar, drawn by the HUD the same way (port_radar.h); its stage maps are
+# loaded by sms_gx (gx_radar_maps.cpp).
+target_sources(sms_game PRIVATE ${SMS_PORT_SRC}/radar.cpp)
 # port_include must stay ahead of the game headers: its dolphin/types.h
 # overrides the decomp's (LP64 integer widths, weak AT_ADDRESS globals).
 if(DEFINED SMS_CP932_ROOT)

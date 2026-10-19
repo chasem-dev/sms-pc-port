@@ -77,6 +77,9 @@ int port_heat_haze = 1;
 // SMS_PAUSE_TRACKER=0 hides the pause menu's progress tracker (src/pause_tracker.cpp).
 extern "C" int port_pause_tracker;
 int port_pause_tracker = 1;
+// SMS_RADAR=1 shows the radar at the HUD's top right (src/radar.cpp); off by default.
+extern "C" int port_radar;
+int port_radar = 0;
 // SMS_WIDESCREEN: the displayed width over the GameCube's 4:3 (1 when off);
 // the game camera (widescreen-01 patch) and sms_gx widen by it.
 extern "C" float port_widescreen;
@@ -839,6 +842,9 @@ static const struct {
 	{ "skip_intro", "SMS_SKIP_INTRO" }, // straight to the title: no logos or opening movie
 	{ "heat_haze", "SMS_HEAT_HAZE" }, // the heat-wave shimmer, on by default
 	{ "pause_tracker", "SMS_PAUSE_TRACKER" }, // the pause menu's Shine and blue coin tracker, on by default
+	{ "radar", "SMS_RADAR" },           // the radar: the stage around Mario with its Shines and blue coins, off by default
+	{ "radar_zoom", "SMS_RADAR_ZOOM" }, // world units from the radar's centre to its edge (2500, 25 m)
+	{ "radar_size", "SMS_RADAR_SIZE" }, // the radar's size, percent
 	{ "button_prompts", "SMS_BUTTON_PROMPTS" }, // gamecube, auto, xbox, playstation, steamdeck or keyboard
 	{ "button_prompt_pad", "SMS_BUTTON_PROMPT_PAD" }, // with auto: gamecube, xbox, playstation, steamdeck, or match the controller
 	{ "button_prompt_dir", "SMS_BUTTON_PROMPT_DIR" }, // the folder of prompt images (<style>.png)
@@ -951,6 +957,8 @@ extern "C" void port_init(int argc, char** argv)
 #ifdef SMS_ECLIPSE
 	port_pause_tracker = 0; // BSE draws Eclipse's own tracker in the pause menu
 #endif
+	if (const char* r = getenv("SMS_RADAR"))
+		port_radar = *r && strcmp(r, "0") != 0 && strcmp(r, "off") != 0;
 	port_widescreen = parse_widescreen(getenv("SMS_WIDESCREEN"));
 	if (GXPC_SetWidescreen)
 		GXPC_SetWidescreen(port_widescreen);

@@ -1,0 +1,31 @@
+#ifndef PORT_RADAR_H
+#define PORT_RADAR_H
+
+// The radar (src/radar.cpp): a round map at the HUD's top right of the stage
+// around Mario, north up, with an arrow for Mario and the stage's Shines and
+// blue coins. The HUD draws it (patch zzzz-radar-01); the maps are pictures
+// of each stage made from the disc (tools/radar/gen_maps.py, assets/maps),
+// which sms_gx loads (platform/gx/src/gx_radar_maps.cpp).
+
+namespace JDrama {
+struct TRect;
+}
+
+// SMS_RADAR (radar = on in settings.txt, platform): 1 shows the radar; off
+// by default. SMS_RADAR_ZOOM: world units from its centre to its edge
+// (default 2500, 25 m). SMS_RADAR_SIZE: its size, percent (default 100).
+extern "C" int port_radar;
+
+// With the HUD, after its own pieces; viewport is the HUD's.
+void RadarDraw(const JDrama::TRect& viewport);
+
+// sms_gx's side (gx_radar_maps.cpp)
+struct PortRadarMap {
+	const unsigned char* rgba; // row-major RGBA, w x h
+	int w, h;
+	float x0, z0;  // world x and z of the picture's top left corner
+	float density; // pixels per world unit
+};
+extern "C" int port_radar_map(unsigned long long colKey, PortRadarMap* out);
+
+#endif
