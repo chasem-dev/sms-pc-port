@@ -11,7 +11,8 @@
 // loads its own copy of the files, so the local Mario keeps his colours).
 // With the launcher's paint data, each player wears their own colours
 // (Customize Mario's, else their character's) in place of those textures
-// (mpg_dress), painted again whenever anyone's change.
+// (mpg_dress), painted again whenever anyone's change; FLUDD too, from its own
+// copy of FLUDD's files.
 
 #include "../mp_game_api.h"
 #include <Strategic/HitActor.hpp>
@@ -80,6 +81,7 @@ private:
 	J3DModel* mHands[2][2];  // [ma_hnd2, ma_hnd3][right, left]
 	J3DModel* mCap[2];       // ma_cap1 (cap), ma_cap3 (hair, capless)
 	MActor* mFludd;
+	J3DModelData* mFluddData; // this puppet's own copy of FLUDD's, or null when it shares Mario's
 	MActor* mNozzles[6];
 	u8 mNozzleJoint;
 	MActor* mYoshi;

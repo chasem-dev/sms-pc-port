@@ -13,6 +13,9 @@
 // character (mp_recolour.h) over the same picture, so everyone is drawn at the
 // picture's size, and nobody wears this player's own colours (which their
 // Mario takes from the launcher's SMS_MARIO_LOOK pack, by the texture's hash).
+// FLUDD's texture (H_watergun_*) is painted the same way, from its own
+// regions; a player without FLUDD colours has FLUDD's own, whatever their
+// character.
 #include "../mp_game_api.h"
 #include "../mp_recolour.h"
 
@@ -35,7 +38,7 @@ extern "C" void GXPC_ClearTextureOverrides(void) __attribute__((weak));
 
 namespace {
 
-const int kRegions = 32; // at most (the launcher has 14)
+const int kRegions = 32; // at most (the launcher has 18: Mario's 14, FLUDD's 4)
 
 struct Region {
 	std::string id;
@@ -237,6 +240,12 @@ bool chosenColours(const Paint& p, const std::string& look, bool chosen[kRegions
 	return any;
 }
 
+// FLUDD's texture: characters recolour Mario's clothes, not FLUDD.
+bool isFludd(const char* textureName)
+{
+	return !strncmp(textureName, "H_watergun", 10);
+}
+
 std::shared_ptr<std::vector<uint8_t>> paint(const Paint& p, const Picture& pic, const std::string& look, int character)
 {
 	const size_t texels = (size_t)pic.w * pic.h;
@@ -303,6 +312,8 @@ extern "C" int mpg_dress(int slot, int character, const char* textureName, const
 		return 0;
 	char look[512];
 	mpg_look(slot, look, sizeof look);
+	if (isFludd(textureName))
+		character = MPG_CHAR_MARIO;
 	bool chosen[kRegions];
 	int colours[kRegions][3];
 	// the same picture for everyone in the same colours

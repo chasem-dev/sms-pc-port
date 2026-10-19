@@ -1,6 +1,7 @@
 // Host test for painting players in their own colours (sync/mp_look.cpp):
-// a paint folder of one 2x1 texture, painted for a player with colours and
-// for one without (their character's).
+// a paint folder of one 2x1 texture of Mario's and one of FLUDD's, painted
+// for a player with colours and for one without (their character's, but
+// FLUDD's own).
 #include "../../mp_game_api.h"
 
 #include <stdio.h>
@@ -46,7 +47,8 @@ int main()
 	if (!mkdtemp(dir))
 		return 1;
 	FILE* f = fopen((std::string(dir) + "/paint.txt").c_str(), "w");
-	fprintf(f, "sms-paint 1\nregion 0 hat d6161c 46\nregion 1 shirt d6161c 46\ntexture H_ma_new_main_s3tc 0.paint\n");
+	fprintf(f, "sms-paint 1\nregion 0 hat d6161c 46\nregion 1 shirt d6161c 46\nregion 2 fluddBody ffe239 90\n"
+	           "texture H_ma_new_main_s3tc 0.paint\ntexture H_watergun_main_s3tc 1.paint\n");
 	fclose(f);
 	// texel 0: the cap's red, at the cap's typical lightness (117 of 255 = 46%); texel 1: left as it is
 	f = fopen((std::string(dir) + "/0.paint").c_str(), "wb");
@@ -56,6 +58,15 @@ int main()
 	const unsigned char maps[8]  = {0, 255, 255, 255, 0, 0, 117, 90}; // mask, second, mix, lightness (2 texels each)
 	fwrite(rgba, 1, 8, f);
 	fwrite(maps, 1, 8, f);
+	fclose(f);
+	// FLUDD's: texel 0 its yellow body (lightness 229 of 255 = 90%), texel 1 Mario's red, left as it is
+	f = fopen((std::string(dir) + "/1.paint").c_str(), "wb");
+	fwrite("SMSPAINT", 1, 8, f);
+	put32(f, 1), put32(f, 2), put32(f, 1);
+	const unsigned char fluddRgba[8] = {255, 226, 57, 255, 214, 22, 28, 255};
+	const unsigned char fluddMaps[8] = {2, 255, 255, 255, 0, 0, 229, 117};
+	fwrite(fluddRgba, 1, 8, f);
+	fwrite(fluddMaps, 1, 8, f);
 	fclose(f);
 	setenv("SMS_MARIO_PAINT", dir, 1);
 	static unsigned char data[32];
@@ -79,6 +90,20 @@ int main()
 	CHECK(mpg_dress(0, MPG_CHAR_MARIO, "H_ma_new_main_s3tc", data, sizeof data));
 	CHECK(!memcmp(g_shown.data(), rgba, 8));
 
+	// FLUDD: a player's FLUDD colour paints its body
+	g_look = "hat=2fa846;fluddBody=2a52c8";
+	CHECK(mpg_dress(1, MPG_CHAR_LUIGI, "H_watergun_main_s3tc", data, sizeof data));
+	CHECK(g_shown.size() == 8 && g_shown[2] > g_shown[0] && g_shown[2] > g_shown[1]);
+	CHECK(!memcmp(&g_shown[4], &fluddRgba[4], 4));
+	// without FLUDD colours, FLUDD's own, even for Luigi (his green is for Mario's clothes)
+	g_look = "hat=2fa846";
+	CHECK(mpg_dress(1, MPG_CHAR_LUIGI, "H_watergun_main_s3tc", data, sizeof data));
+	CHECK(!memcmp(g_shown.data(), fluddRgba, 8));
+	g_look.clear();
+	CHECK(mpg_dress(1, MPG_CHAR_LUIGI, "H_watergun_main_s3tc", data, sizeof data));
+	CHECK(!memcmp(g_shown.data(), fluddRgba, 8));
+
+	remove((std::string(dir) + "/1.paint").c_str());
 	remove((std::string(dir) + "/paint.txt").c_str());
 	remove((std::string(dir) + "/0.paint").c_str());
 	rmdir(dir);

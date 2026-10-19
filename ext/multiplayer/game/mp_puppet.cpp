@@ -321,6 +321,7 @@ TMpPuppet::TMpPuppet(int slot, bool self)
     , mModel(nullptr)
     , mBodyData(nullptr)
     , mFludd(nullptr)
+    , mFluddData(nullptr)
     , mNozzleJoint(0)
     , mYoshi(nullptr)
     , mSurf(nullptr)
@@ -457,22 +458,36 @@ bool TMpPuppet::buildBody()
 
 bool TMpPuppet::buildFludd()
 {
-	// FLUDD as Mario wears it: his loaded animations and model data, our own
-	// models (their pose is ours). Nothing here changes the shared data.
+	// FLUDD as Mario wears it: his loaded animations, our own models (their
+	// pose is ours). Each puppet loads its own copy of FLUDD's files, as of
+	// Mario's, so it can wear its player's FLUDD colours (dress) without
+	// painting anyone else's; its nozzles wear its pack's texture, as
+	// TWaterGun::init gives Mario's his. Without room for the copies, it
+	// draws the shared model data (and keeps FLUDD's usual colours).
 	TWaterGun* gun = gpMarioOriginal ? gpMarioOriginal->mWaterGun : nullptr;
 	if (!gun || !gun->mFluddModel)
 		return false;
+	const u32 flags = J3DMLF_MaterialPEFull | (4 << J3DMLF_TevStageNumShift);
+	mFluddData      = loadCopy("/mario/watergun2/body/wg_mdl1.bmd", flags);
+	ResTIMG* packTexture = mFluddData && mFluddData->getTexture() && mFluddData->getTexture()->getNum() > 1
+	                         ? mFluddData->getTexture()->getResTIMG(1)
+	                         : nullptr;
 	mFludd = new MActor(gun->mFluddModel->mAnmData);
-	mFludd->setModel(new J3DModel(gun->mFluddModel->getModel()->getModelData(), 0, 1), 0);
+	mFludd->setModel(new J3DModel(packTexture ? mFluddData : gun->mFluddModel->getModel()->getModelData(), 0, 1), 0);
 	mNozzleJoint = gun->unk1CD8;
 	for (int i = 0; i < 6; i++) {
 		TNozzleBase* nozzle = gun->mNozzleList[i];
 		MActor* actor       = nozzle ? nozzle->getMActor() : nullptr;
 		if (!actor)
 			continue;
+		J3DModelData* data = packTexture ? loadCopy(nozzleBmdData.getBmdPath(i), flags) : nullptr;
+		if (data)
+			SMS_ChangeTextureAll(data, "H_watergun_main_dummy", *packTexture);
 		mNozzles[i] = new MActor(actor->mAnmData);
-		mNozzles[i]->setModel(new J3DModel(actor->getModel()->getModelData(), 0, 1), 0);
+		mNozzles[i]->setModel(new J3DModel(data ? data : actor->getModel()->getModelData(), 0, 1), 0);
 	}
+	if (!packTexture)
+		mFluddData = nullptr;
 	return true;
 }
 
@@ -537,27 +552,31 @@ bool TMpPuppet::init()
 }
 
 // Each texture of theirs this game has a picture for, in their colours: the
-// body's (its cap and hands draw the body's texture data too).
+// body's (its cap and hands draw the body's texture data too) and FLUDD's
+// (its nozzles draw its pack's).
 void TMpPuppet::dress()
 {
-	mDressedVersion        = mpg_looks_version();
-	J3DTexture* textures   = mBodyData ? mBodyData->getTexture() : nullptr;
-	JUTNameTab* names      = mBodyData ? mBodyData->getTextureName() : nullptr;
-	if (!textures || !names)
-		return;
-	int dressed = 0;
-	for (u16 i = 0; i < textures->getNum(); i++) {
-		ResTIMG* timg    = textures->getResTIMG(i);
-		const char* name = names->getName(i);
-		if (!timg || !name)
+	mDressedVersion = mpg_looks_version();
+	int dressed = 0, total = 0;
+	J3DModelData* const models[2] = {mBodyData, mFluddData};
+	for (J3DModelData* model : models) {
+		J3DTexture* textures = model ? model->getTexture() : nullptr;
+		JUTNameTab* names    = model ? model->getTextureName() : nullptr;
+		if (!textures || !names)
 			continue;
-		const void* data = (const u8*)timg + timg->imageDataOffset;
-		const u32 bytes  = GXGetTexBufferSize(timg->width, timg->height, timg->format, GX_FALSE, 0);
-		dressed += mpg_dress(mSlot, mCharacter, name, data, bytes);
+		for (u16 i = 0; i < textures->getNum(); i++, total++) {
+			ResTIMG* timg    = textures->getResTIMG(i);
+			const char* name = names->getName(i);
+			if (!timg || !name)
+				continue;
+			const void* data = (const u8*)timg + timg->imageDataOffset;
+			const u32 bytes  = GXGetTexBufferSize(timg->width, timg->height, timg->format, GX_FALSE, 0);
+			dressed += mpg_dress(mSlot, mCharacter, name, data, bytes);
+		}
 	}
 	static const bool debug = getenv("SMS_MULTIPLAYER_DEBUG") != nullptr;
 	if (debug)
-		fprintf(stderr, "[multiplayer] %s dressed: %d of %d textures\n", mpg_character_name(mSlot), dressed, (int)textures->getNum());
+		fprintf(stderr, "[multiplayer] %s dressed: %d of %d textures\n", mpg_character_name(mSlot), dressed, total);
 }
 
 bool TMpPuppet::nameSpot(const f32* viewer, f32* x, f32* y, f32* alpha) const
