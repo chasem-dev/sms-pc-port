@@ -134,9 +134,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, macos-15-intel]
+        include:
+          # The Apple Silicon runner builds both games: x86_64 (Rosetta) and
+          # the native arm64 one (a launcher whose smoke script predates it
+          # builds only x86_64).
+          - os: macos-15
+            arches: '64,arm64'
+          - os: macos-15-intel
+            arches: '64'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
@@ -181,6 +188,8 @@ jobs:
           fi
       - name: Verify Finder tool detection and compile Sunshine without a ROM
         run: node scripts/smoke-mac-tools.js
+        env:
+          SMS_SMOKE_ARCHES: ${{ matrix.arches }}
       # Only main saves: a pull request starts from main's cache, so the
       # repository keeps one archive per job (the Actions cache holds 10 GB).
       - name: Save compiler cache

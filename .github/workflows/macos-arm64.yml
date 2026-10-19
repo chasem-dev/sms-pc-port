@@ -2,8 +2,7 @@ name: macOS arm64
 # The native Apple Silicon build (SMS_ARCH=arm64, docs/MACOS-ARM64.md) with
 # Homebrew's LLVM, as BUILD.md describes: tools/gameptr's pass plugin and its
 # test, then the game with the Vulkan backend and MoltenVK. No disc image is
-# used. No compiler cache: it keys objects by the compiler's arguments, which
-# do not change when the pass plugin does.
+# used.
 on:
   push:
     branches: [main]

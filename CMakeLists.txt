@@ -168,7 +168,12 @@ if(SMS_MAC_ARM64)
     message(FATAL_ERROR "building tools/gameptr's pass plugin failed")
   endif()
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${SMS_GAMEPTR_SRC})
-  list(APPEND SMS_GAME_FLAGS -fpass-plugin=${SMS_GAMEPTR_PLUGIN} -DPORT_GAMEPTR_PLUGIN=1)
+  # The plugin's hash in every compile's arguments: a compiler cache keys
+  # objects by them, and must not reuse one built with another plugin.
+  file(SHA256 ${SMS_GAMEPTR_SRC} _gameptr_hash)
+  string(SUBSTRING "${_gameptr_hash}" 0 16 _gameptr_hash)
+  set(SMS_GAMEPTR_FLAGS -fpass-plugin=${SMS_GAMEPTR_PLUGIN} -DPORT_GAMEPTR_PLUGIN=1 -DPORT_GAMEPTR_HASH=${_gameptr_hash})
+  list(APPEND SMS_GAME_FLAGS ${SMS_GAMEPTR_FLAGS})
   message(STATUS "SMS port: native arm64, game addresses rebased above PAGEZERO (tools/gameptr)")
 endif()
 
@@ -424,7 +429,7 @@ if(SMS_ARCH STREQUAL "64" OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 if(SMS_MAC_ARM64)
   # No fused multiply-adds (clang's default on arm64), as x86 computes
-  target_compile_options(sms PRIVATE -fpass-plugin=${SMS_GAMEPTR_PLUGIN} -DPORT_GAMEPTR_PLUGIN=1 -ffp-contract=off)
+  target_compile_options(sms PRIVATE ${SMS_GAMEPTR_FLAGS} -ffp-contract=off)
   set_property(SOURCE ${SMS_PORT_SRC}/port_main.cpp ${SMS_PLATFORM_SOURCES} APPEND PROPERTY OBJECT_DEPENDS ${SMS_GAMEPTR_PLUGIN})
   # The executable loads at 0x100000000 (port_main.cpp turns address
   # randomisation off): pad its header so no code lies in its first 64 KiB,

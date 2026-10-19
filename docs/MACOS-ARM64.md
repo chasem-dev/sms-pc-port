@@ -51,8 +51,14 @@ Frame rate (`tools/vulkan/bench.py --exe`, the plaza tour in a 1280x960 window, 
 | x86_64 (Rosetta) | 2.30 ms (435 fps) | 2.21 ms (453 fps) |
 | arm64 | 1.85 ms (542 fps) | 1.76 ms (570 fps) |
 
+## Building it, and checking it in CI
+
+- The plugin needs a Clang built with plugin support and `llvm-config` with LLVM's headers beside it: Homebrew's `llvm`, or the arm64 toolset of SMS Launcher (LLVM's clang and `llvm-config` in its `env/llvm/bin`, which the launcher puts first for an arm64 build). Apple's clang cannot load it.
+- `tools/gameptr/test.sh` builds the plugin and checks what it rebases and converts.
+- `.github/workflows/macos-arm64.yml` runs that test and builds `SMS_ARCH=arm64` with Homebrew's LLVM on an Apple Silicon runner; `launcher-build.yml` builds it with the launcher's toolset (`SMS_SMOKE_ARCHES=64,arm64` on the Apple Silicon runner).
+- Every compile's arguments carry the plugin's hash (`PORT_GAMEPTR_HASH`), so a compiler cache does not reuse objects built with another plugin.
+
 ## Not covered yet
 
-- Eclipse (`SMS_ECLIPSE=1`) has not been built for arm64.
-- The launcher (SMS Launcher) offers only the x86_64 build.
+- Eclipse (`SMS_ECLIPSE=1`) has not been built for arm64; the launcher keeps it on x86_64.
 - The small difference above, and anything a scripted run does not reach.
