@@ -99,6 +99,9 @@ extern "C" {
 int port_free_camera      = 0;
 int port_camera_invert_y  = 0;
 int port_close_camera_cstick = 0;
+// Presses of MAP so far; the radar (src/radar.cpp) opens or closes its full
+// map on each.
+int port_radar_map_presses = 0;
 f32 port_camera_speed_x   = 1.0f;
 f32 port_camera_speed_y   = 1.0f;
 // Mouse orbit (zzz-camera-02): whether the mouse's up/down tilts the camera,
@@ -126,20 +129,22 @@ enum Control {
 	C_DUP, C_DDOWN, C_DLEFT, C_DRIGHT,
 	C_UP, C_DOWN, C_LEFT, C_RIGHT,
 	C_CUP, C_CDOWN, C_CLEFT, C_CRIGHT,
-	C_HALF, C_QUIT, C_LSOFT, C_RSOFT, C_SAVESTATE, C_LOADSTATE, C_COUNT
+	C_HALF, C_QUIT, C_LSOFT, C_RSOFT, C_SAVESTATE, C_LOADSTATE, C_MAP, C_COUNT
 };
 const char* const kControlNames[C_COUNT] = {
 	"A", "B", "X", "Y", "Z", "L", "R", "START",
 	"DPAD_UP", "DPAD_DOWN", "DPAD_LEFT", "DPAD_RIGHT",
 	"STICK_UP", "STICK_DOWN", "STICK_LEFT", "STICK_RIGHT",
 	"CSTICK_UP", "CSTICK_DOWN", "CSTICK_LEFT", "CSTICK_RIGHT",
-	"HALF_TILT", "QUIT", "L_SOFT", "R_SOFT", "SAVE_STATE", "LOAD_STATE",
+	"HALF_TILT", "QUIT", "L_SOFT", "R_SOFT", "SAVE_STATE", "LOAD_STATE", "MAP",
 };
 // SAVE_STATE / LOAD_STATE are the port's, not the GameCube's: a press saves a
 // save state, or loads the newest (port_savestate.h). Their bindings are often
 // two buttons held together (PAD_LB+PAD_RB), and holding one of the pair keeps
 // the other from the game (combo_masks below).
-bool is_port_action(int c) { return c == C_SAVESTATE || c == C_LOADSTATE; }
+// MAP is the port's too: a press opens or closes the radar's full map
+// (src/radar.cpp), counted in port_radar_map_presses.
+bool is_port_action(int c) { return c == C_SAVESTATE || c == C_LOADSTATE || c == C_MAP; }
 // L_SOFT / R_SOFT press L or R part of the way, analog only (no digital click):
 // a light press, as on a GameCube trigger before it clicks. How far, 0..255,
 // from SMS_SOFT_TRIGGER (percent, default 40). Unbound unless bindings.txt
@@ -199,7 +204,8 @@ const char* const kDefaultBindings =
     "HALF_TILT = LCTRL\n"
     "QUIT = ESCAPE\n"
     "SAVE_STATE = F5\n"
-    "LOAD_STATE = F6\n";
+    "LOAD_STATE = F6\n"
+    "MAP = M\n";
 
 // A binding is one key or controller button, or two held together, written
 // FIRST+SECOND (PAD_LB+PAD_RB, LCTRL+S): the second's code plus one sits above
@@ -237,6 +243,7 @@ const struct { int control, source; } kDefaultPad[] = {
 	{ C_A, 0 }, { C_B, 1 }, { C_X, 2 }, { C_Y, 3 }, { C_Z, 10 }, { C_L, PAD_SRC_LT }, { C_R, PAD_SRC_RT },
 	{ C_START, 6 }, { C_DUP, 11 }, { C_DDOWN, 12 }, { C_DLEFT, 13 }, { C_DRIGHT, 14 },
 	{ C_SAVESTATE, combo(9, 10) }, // L1 + R1 (LB + RB)
+	{ C_MAP, 4 },                  // Back (View, Select, Share)
 };
 bool g_inited;
 // SMS_CAMERA_INVERT_X / SMS_CAMERA_INVERT_Y=1 flip the C-stick, which only
@@ -904,6 +911,11 @@ extern "C" u32 PADRead(PADStatus* status)
 		port_savestate_hotkey(PORT_SAVESTATE_HOTKEY_LOAD_NEWEST);
 	wasSave = save;
 	wasLoad = load;
+	static bool wasMap;
+	const bool mapKey = held(C_MAP);
+	if (mapKey && !wasMap && !blocked)
+		port_radar_map_presses++;
+	wasMap = mapKey;
 	if (blocked)
 		return PAD_CHAN0_BIT;
 	PADStatus& s = status[0];

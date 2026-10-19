@@ -7,9 +7,12 @@
 //     <col key> <file> <x0> <z0> <pixels per unit> <width> <height> <scenes>
 // The game hashes the stage's loaded collision (/scene/map/map.col) and asks
 // for that map; the picture is decoded on a thread of its own, so a stage
-// never waits for it, and only the last one asked for is kept.
+// never waits for it, and only the last one asked for is kept, with an
+// overview of it (the whole picture at most 1536 pixels on a side, each
+// pixel the average of those under it) for the full map.
 #include "gx_internal.h"
 
+#include <algorithm>
 #include <mutex>
 #include <stdint.h>
 #include <stdio.h>
@@ -31,6 +34,8 @@ struct PortRadarMap {
     int w, h;
     float x0, z0;   // world x and z of the picture's top left corner
     float density;  // pixels per world unit
+    const uint8_t* overview;  // the whole picture smaller, for the full map: row-major RGBA
+    int ow, oh;
 };
 
 namespace {
@@ -51,6 +56,9 @@ unsigned long long s_have;  // the map in s_pixels (or that failed)
 const Entry* s_haveEntry;   // null if it failed
 std::vector<uint8_t> s_pixels;
 int s_w, s_h;
+std::vector<uint8_t> s_overview;  // at most kOverview on its longest side
+int s_ow, s_oh;
+const int kOverview = 1536;
 bool s_loading;
 
 bool readable(const std::string& path) {
@@ -115,6 +123,28 @@ void load(const Entry* e) {
     s_h = h;
     s_haveEntry = e;
     stbi_image_free(px);
+    // the overview: each of its pixels the average of the picture's under it
+    const int side = w > h ? w : h;
+    s_ow = side > kOverview ? int(int64_t(w) * kOverview / side) : w;
+    s_oh = side > kOverview ? int(int64_t(h) * kOverview / side) : h;
+    s_ow = s_ow < 1 ? 1 : s_ow;
+    s_oh = s_oh < 1 ? 1 : s_oh;
+    s_overview.assign(size_t(s_ow) * s_oh * 4, 0);
+    for (int oy = 0; oy < s_oh; oy++) {
+        const int y0 = int(int64_t(oy) * h / s_oh), y1 = std::max(y0 + 1, int(int64_t(oy + 1) * h / s_oh));
+        for (int ox = 0; ox < s_ow; ox++) {
+            const int x0 = int(int64_t(ox) * w / s_ow), x1 = std::max(x0 + 1, int(int64_t(ox + 1) * w / s_ow));
+            uint32_t sum[4] = {0, 0, 0, 0};
+            for (int y = y0; y < y1; y++) {
+                const uint8_t* p = &s_pixels[(size_t(y) * w + x0) * 4];
+                for (int x = x0; x < x1; x++, p += 4)
+                    for (int k = 0; k < 4; k++) sum[k] += p[k];
+            }
+            const uint32_t n = uint32_t((y1 - y0) * (x1 - x0));
+            uint8_t* o = &s_overview[(size_t(oy) * s_ow + ox) * 4];
+            for (int k = 0; k < 4; k++) o[k] = uint8_t((sum[k] + n / 2) / n);
+        }
+    }
 }
 
 }  // namespace
@@ -134,6 +164,9 @@ extern "C" int port_radar_map(unsigned long long colKey, PortRadarMap* out) {
         out->x0 = s_haveEntry->x0;
         out->z0 = s_haveEntry->z0;
         out->density = s_haveEntry->density;
+        out->overview = s_overview.data();
+        out->ow = s_ow;
+        out->oh = s_oh;
         return 1;
     }
     s_want = colKey;
@@ -143,6 +176,8 @@ extern "C" int port_radar_map(unsigned long long colKey, PortRadarMap* out) {
         s_haveEntry = nullptr;
         s_pixels.clear();
         s_pixels.shrink_to_fit();
+        s_overview.clear();
+        s_overview.shrink_to_fit();
         std::thread(load, e).detach();
     }
     return 0;

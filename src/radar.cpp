@@ -18,17 +18,32 @@
 // The HUD draws it last (patch zzzz-radar-01) while a stage plays (not in
 // cutscenes, conversations or the pause menu), fading in and out, and with
 // SMS_WIDESCREEN_HUD=edges it moves to the right edge with the HUD's pieces.
+//
+// D-pad up steps the radar's zoom through kZoomSteps, with the menus' cursor
+// sound and its reach shown under it for a moment. MAP (M, or a controller's
+// Back; platform/pad) opens the full map: the whole stage's picture over the
+// dimmed game, as wide as the frame, with the area's name and the same
+// sprites, to the game's own map screen sounds (the wipe in and out of TGuide).
+// The game goes on under it, so Mario can be steered with it open.
 #include <Enemy/Conductor.hpp>
+#include <GC2D/MessageUtil.hpp>
 #include <JSystem/J2D/J2DOrthoGraph.hpp>
 #include <JSystem/JDrama/JDRRect.hpp>
 #include <JSystem/JKernel/JKRFileLoader.hpp>
+#include <JSystem/JUtility/JUTResFont.hpp>
 #include <JSystem/JUtility/JUTTexture.hpp>
+#include <MSound/MSound.hpp>
+#include <MSound/MSoundSE.hpp>
 #include <MoveBG/MapObjBase.hpp>
 #include <Player/MarioAccess.hpp>
 #include <Strategic/LiveActor.hpp>
 #include <Strategic/LiveManager.hpp>
 #include <System/FlagManager.hpp>
+#include <System/Application.hpp>
 #include <System/MarDirector.hpp>
+#include <System/MarioGamePad.hpp>
+#include <System/StageUtil.hpp>
+#include <dolphin/pad.h>
 #include <dolphin/gx.h>
 #include <dolphin/os.h>
 #include <math.h>
@@ -42,6 +57,10 @@
 extern "C" void* port_low_alloc(unsigned long size);
 extern "C" void GXPC_HudPaneBegin(float x1, float x2);
 extern "C" void GXPC_HudPaneEnd(void);
+extern "C" void GXPC_SetWide2D(int on);
+extern "C" float GXPC_GetWidescreen(void);
+// MAP's presses (platform/pad/pad.cpp)
+extern "C" int port_radar_map_presses;
 
 namespace {
 
@@ -64,8 +83,30 @@ const f32 kArrowLen = 0.27f; // tip to back, before its outline
 
 const u32 kBlueCoinType = 0x20000010, kShineType = 0x20000013; // MapObjInit's coin_blue, shine
 
-f32 sZoom   = 2500.0f; // world units from the centre to the map's edge
-f32 sRadius = kRadius;
+// D-pad up's zoom steps, percent of SMS_RADAR_ZOOM's reach (more is closer)
+const int kZoomSteps[] = { 100, 50, 25, 200 };
+const int kZoomCount   = sizeof kZoomSteps / sizeof kZoomSteps[0];
+
+f32 sZoomBase = 2500.0f; // SMS_RADAR_ZOOM: world units from the centre to the map's edge at 100%
+f32 sZoom     = 2500.0f; // the same, at the zoom step chosen
+int sZoomStep;
+int sZoomShown; // frames left to show the zoom under the radar
+f32 sRadius   = kRadius;
+
+// the full map: open, how far faded in, and the overview in GX textures
+bool sFullOpen;
+f32 sFullAlpha;
+int sPresses;
+const int kTile = 1024; // a GX texture's most
+struct Tile {
+	int x, y, w, h, pw, ph; // its place in the overview, its size, padded to 4
+	size_t offset;          // in sOverviewTex
+};
+Tile sTiles[4];
+int sTileCount;
+u8* sOverviewTex; // GX RGBA8 tiles, below 4 GiB
+size_t sOverviewBytes;
+unsigned long long sOverviewKey;
 
 // the stage: its collision, the key naming its map, and the map
 const void* sCol;
@@ -191,6 +232,8 @@ bool stage()
 		memcpy(sColProbe, probe, sizeof probe);
 		sKey      = colKey(col, JKRFileLoader::getResSize((void*)col, nullptr));
 		sMapState = sKey ? 0 : -1;
+		sFullOpen = false;
+		sFullAlpha = 0.0f;
 		sLastX    = 1e30f;
 		sHaveArt  = loadArt(sShineArt, "shine_icon") && loadArt(sBlueCoinArt, "bluecoin_icon");
 	}
@@ -426,6 +469,189 @@ int scan(Marker* shines, int maxShines, Marker* coins, int maxCoins, int* nCoins
 	return ns;
 }
 
+
+// A w x h rectangle in a colour, its top left at (x, y).
+void rect(f32 x, f32 y, f32 w, f32 h, u32 colour, f32 alpha)
+{
+	const u8 a = (u8)((colour & 0xFF) * alpha);
+	setupColour();
+	GXBegin(GX_QUADS, GX_VTXFMT0, 4);
+	GXPosition3f32(x, y, 0.0f);
+	GXColor4u8(colour >> 24, colour >> 16, colour >> 8, a);
+	GXPosition3f32(x + w, y, 0.0f);
+	GXColor4u8(colour >> 24, colour >> 16, colour >> 8, a);
+	GXPosition3f32(x + w, y + h, 0.0f);
+	GXColor4u8(colour >> 24, colour >> 16, colour >> 8, a);
+	GXPosition3f32(x, y + h, 0.0f);
+	GXColor4u8(colour >> 24, colour >> 16, colour >> 8, a);
+	GXEnd();
+}
+
+// Text in the system font, h tall, centred on x with its top at y, over a
+// soft shadow.
+void text(const char* s, f32 x, f32 y, f32 h, f32 alpha)
+{
+	JUTFont* font = gpSystemFont;
+	if (!font || !s)
+		return;
+	f32 w = 0.0f;
+	for (const char* p = s; *p; p++)
+		w += font->getWidth((u8)*p) * (h / font->getWidth());
+	font->setGX();
+	font->setCharColor(JUtility::TColor(0, 0, 0, (u8)(160 * alpha)));
+	font->drawString_size_scale(x - w / 2 + 1.5f, y + h * 0.82f + 1.5f, h, h, s, strlen(s), false);
+	font->setCharColor(JUtility::TColor(255, 255, 255, (u8)(255 * alpha)));
+	font->drawString_size_scale(x - w / 2, y + h * 0.82f, h, h, s, strlen(s), false);
+}
+
+// The overview into GX RGBA8 tiles (at most kTile square), once a stage.
+bool overviewTiles()
+{
+	if (sOverviewKey == sKey && sTileCount)
+		return true;
+	if (!sMap.overview || sMap.ow <= 0 || sMap.oh <= 0 || sMap.ow > 2 * kTile || sMap.oh > 2 * kTile)
+		return false;
+	sTileCount   = 0;
+	size_t bytes = 0;
+	for (int y = 0; y < sMap.oh; y += kTile) {
+		for (int x = 0; x < sMap.ow; x += kTile) {
+			Tile& t = sTiles[sTileCount++];
+			t.x = x;
+			t.y = y;
+			t.w = sMap.ow - x < kTile ? sMap.ow - x : kTile;
+			t.h = sMap.oh - y < kTile ? sMap.oh - y : kTile;
+			t.pw = (t.w + 3) & ~3;
+			t.ph = (t.h + 3) & ~3;
+			t.offset = bytes;
+			bytes += (size_t)t.pw * t.ph * 4;
+		}
+	}
+	if (bytes > sOverviewBytes) { // the largest a stage needs is kept for the next
+		sOverviewTex   = (u8*)port_low_alloc(bytes);
+		sOverviewBytes = sOverviewTex ? bytes : 0;
+	}
+	if (!sOverviewTex)
+		return false;
+	for (int i = 0; i < sTileCount; i++) {
+		const Tile& t = sTiles[i];
+		u8* out       = sOverviewTex + t.offset;
+		size_t o      = 0;
+		for (int by = 0; by < t.ph; by += 4) {
+			for (int bx = 0; bx < t.pw; bx += 4) {
+				const u8* px[16];
+				for (int k = 0; k < 16; k++) { // past the edge: the edge's pixel
+					int x = t.x + bx + (k & 3), y = t.y + by + (k >> 2);
+					x = x < t.x + t.w ? x : t.x + t.w - 1;
+					y = y < t.y + t.h ? y : t.y + t.h - 1;
+					px[k] = sMap.overview + ((size_t)y * sMap.ow + x) * 4;
+				}
+				for (int k = 0; k < 16; k++) { // AR, then GB
+					out[o++] = 255;
+					out[o++] = px[k][0];
+				}
+				for (int k = 0; k < 16; k++) {
+					out[o++] = px[k][1];
+					out[o++] = px[k][2];
+				}
+			}
+		}
+	}
+	DCFlushRange(sOverviewTex, (u32)bytes);
+	sOverviewKey = sKey;
+	return true;
+}
+
+// The full map over the dimmed frame: viewport is the HUD's.
+void drawFullMap(const JDrama::TRect& viewport, f32 mx, f32 mz)
+{
+	const f32 a = sFullAlpha, ease = a * a * (3.0f - 2.0f * a);
+	const f32 vw = (f32)(viewport.x2 - viewport.x1), vh = (f32)(viewport.y2 - viewport.y1);
+	J2DOrthoGraph graph(viewport);
+	graph.setPort();
+	graph.setup2D();
+
+	// at the 2D's scale, and with widescreen past the 4:3 edges: the dimming
+	// over all the frame, then the map as large as the frame takes, under the
+	// area's name
+	const f32 wide = GXPC_GetWidescreen() > 1.0f ? GXPC_GetWidescreen() : 1.0f;
+	GXPC_SetWide2D(1);
+	rect(vw / 2 - vw * wide / 2 - 4.0f, -4.0f, vw * wide + 8.0f, vh + 8.0f, 0x05080DFF, 0.62f * ease);
+	const f32 roomW = vw * wide - 64.0f, roomH = vh - 92.0f;
+	const f32 fit   = roomW / sMap.ow < roomH / sMap.oh ? roomW / sMap.ow : roomH / sMap.oh;
+	const f32 grow  = 0.94f + 0.06f * ease;
+	const f32 w = sMap.ow * fit * grow, h = sMap.oh * fit * grow;
+	const f32 cx = vw / 2, cy = vh / 2 + 14.0f;
+	const f32 left = cx - w / 2, top = cy - h / 2;
+
+	rect(left - 6.0f, top - 6.0f + 3.0f, w + 12.0f, h + 12.0f, 0x000000FF, 0.35f * ease); // shadow
+	rect(left - 5.0f, top - 5.0f, w + 10.0f, h + 10.0f, 0x1F2433FF, ease);              // dark edge
+	rect(left - 3.5f, top - 3.5f, w + 7.0f, h + 7.0f, 0xF2F2F5FF, ease);                // the border
+	for (int i = 0; i < sTileCount; i++) {
+		const Tile& t = sTiles[i];
+		GXTexObj obj;
+		GXInitTexObj(&obj, sOverviewTex + t.offset, (u16)t.pw, (u16)t.ph, GX_TF_RGBA8, GX_CLAMP, GX_CLAMP, GX_FALSE);
+		GXInitTexObjLOD(&obj, GX_LINEAR, GX_LINEAR, 0.0f, 0.0f, 0.0f, GX_FALSE, GX_FALSE, GX_ANISO_1);
+		GXLoadTexObj(&obj, GX_TEXMAP0);
+		// the tile's padding stays off the screen: its quad shows only t.w x t.h
+		const f32 tx = left + t.x * w / sMap.ow, ty = top + t.y * h / sMap.oh;
+		const f32 tw = t.w * w / sMap.ow, th = t.h * h / sMap.oh;
+		const f32 u = (f32)t.w / t.pw, v = (f32)t.h / t.ph;
+		const u8 al = (u8)(255 * ease);
+		setupTextured();
+		GXBegin(GX_QUADS, GX_VTXFMT0, 4);
+		GXPosition3f32(tx, ty, 0.0f);
+		GXColor4u8(255, 255, 255, al);
+		GXTexCoord2f32(0.0f, 0.0f);
+		GXPosition3f32(tx + tw, ty, 0.0f);
+		GXColor4u8(255, 255, 255, al);
+		GXTexCoord2f32(u, 0.0f);
+		GXPosition3f32(tx + tw, ty + th, 0.0f);
+		GXColor4u8(255, 255, 255, al);
+		GXTexCoord2f32(u, v);
+		GXPosition3f32(tx, ty + th, 0.0f);
+		GXColor4u8(255, 255, 255, al);
+		GXTexCoord2f32(0.0f, v);
+		GXEnd();
+	}
+
+	// the sprites: world (x, z) to the picture, then the screen
+	const f32 worldW = sMap.w / sMap.density, worldH = sMap.h / sMap.density;
+	static Marker shines[64], coins[128];
+	int nCoins        = 0;
+	const int nShines = scan(shines, 64, coins, 128, &nCoins);
+	const f32 blueH = 13.0f, shineH = 19.0f;
+	for (int i = 0; i < nCoins; i++) {
+		const f32 sx = left + (coins[i].x - sMap.x0) / worldW * w, sy = top + (coins[i].z - sMap.z0) / worldH * h;
+		if (sx > left && sx < left + w && sy > top && sy < top + h)
+			sprite(sBlueCoinArt, sx, sy, blueH, 0xFFFFFFFF, ease);
+	}
+	for (int pass = 0; pass < 2; pass++) {
+		for (int i = 0; i < nShines; i++) {
+			if (shines[i].got != (pass == 0))
+				continue;
+			const f32 sx = left + (shines[i].x - sMap.x0) / worldW * w, sy = top + (shines[i].z - sMap.z0) / worldH * h;
+			if (!(sx > left && sx < left + w && sy > top && sy < top + h))
+				continue;
+			if (shines[i].got)
+				sprite(sShineArt, sx, sy, shineH * 0.85f, 0x9CC8FFFF, 0.65f * ease);
+			else
+				sprite(sShineArt, sx, sy, shineH, 0xFFFFFFFF, ease);
+		}
+	}
+	const f32 angle = (gpMarioAngleY ? *gpMarioAngleY : 0) * (6.2831853f / 65536.0f);
+	const f32 px = left + (mx - sMap.x0) / worldW * w, py = top + (mz - sMap.z0) / worldH * h;
+	arrow(px, py, sinf(angle), cosf(angle), 17.0f, ease);
+
+	// the area's name, as the pause menu names it
+	if (gpMarDirector) {
+		const u8 world = SMS_getShineStage(gpMarDirector->getCurrentMap());
+		if (world < 10)
+			if (const char* name = SMSGetMessageData(JKRFileLoader::getGlbResource("/common/2d/stagename.bmg"), world))
+				text(name, cx, top - 34.0f, 22.0f, ease);
+	}
+	GXPC_SetWide2D(0);
+}
+
 } // namespace
 
 void RadarDraw(const JDrama::TRect& viewport)
@@ -437,15 +663,44 @@ void RadarDraw(const JDrama::TRect& viewport)
 		sInit = true;
 		if (const char* z = getenv("SMS_RADAR_ZOOM"))
 			if (atof(z) >= 500.0f)
-				sZoom = (f32)atof(z);
+				sZoomBase = (f32)atof(z);
+		sZoom    = sZoomBase;
+		sPresses = port_radar_map_presses;
 		if (const char* s = getenv("SMS_RADAR_SIZE"))
 			if (atof(s) >= 40.0f && atof(s) <= 250.0f)
 				sRadius = kRadius * (f32)atof(s) / 100.0f;
 		sDisc = (u8*)port_low_alloc(kTex * kTex * 4);
 	}
-	const bool show = playing();
+	const bool play = playing();
+	const bool have = play && gpMarioPos && stage();
+
+	// MAP: the full map opens or closes, as the map screen does, with its sounds
+	if (port_radar_map_presses != sPresses) {
+		sPresses = port_radar_map_presses;
+		if (have && (sFullOpen || overviewTiles())) {
+			sFullOpen = !sFullOpen;
+			SMSGetMSound()->startSoundSystemSE(sFullOpen ? MSD_SE_SY_WIPE_IN : MSD_SE_SY_WIPE_OUT, 0, nullptr, 0);
+		}
+	}
+	sFullAlpha = clamp01(sFullAlpha + (sFullOpen && play ? 0.15f : -0.15f));
+
+	// D-pad up: the next zoom step, with the menus' cursor sound
+	if (have && !sFullOpen) {
+		TMarioGamePad* pad = gpMarDirector->getGamePad();
+		if (pad && pad->testTrigger(PAD_BUTTON_UP)) {
+			sZoomStep  = (sZoomStep + 1) % kZoomCount;
+			sZoom      = sZoomBase * 100.0f / kZoomSteps[sZoomStep];
+			sZoomShown = 75;
+			sLastX     = 1e30f;
+			SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_CURSOR, 0, nullptr, 0);
+		}
+	}
+
+	const bool show = play && !sFullOpen;
 	sAlpha += show ? 0.125f : -0.125f;
 	sAlpha = clamp01(sAlpha);
+	if (sFullAlpha > 0.0f && gpMarioPos && sMapState == 1 && sOverviewKey == sKey)
+		drawFullMap(viewport, gpMarioPos->x, gpMarioPos->z);
 	if (sAlpha <= 0.0f || !sDisc || !gpMarioPos || !stage())
 		return;
 
@@ -502,6 +757,15 @@ void RadarDraw(const JDrama::TRect& viewport)
 	// Mario: the way he faces (his angle, 0 facing +z: down the map)
 	const f32 angle = (gpMarioAngleY ? *gpMarioAngleY : 0) * (6.2831853f / 65536.0f);
 	arrow(cx, cy, sinf(angle), cosf(angle), R * kArrowLen, sAlpha);
+
+	// the zoom, for a moment after D-pad up
+	if (sZoomShown > 0) {
+		sZoomShown--;
+		// as the reach in metres (the system font has no %)
+		char label[24];
+		snprintf(label, sizeof label, "%d m", (int)(sZoom / 100.0f + 0.5f));
+		text(label, cx, cy + R + 2.0f, 13.0f, sAlpha * clamp01(sZoomShown / 15.0f));
+	}
 
 	GXPC_HudPaneEnd();
 }

@@ -191,6 +191,8 @@ The game log says how it opened the adapter (`[pad] GameCube adapter opened (...
 | Save states list (in the pause menu) | the same: F5, or L1 + R1 |
 | Tracker's previous / next area (in the pause menu) | L / R (Q / E) |
 | Load the newest save state | F6 |
+| Radar's full map, open / close (`radar = on`) | M, or a controller's Back/Select button |
+| Radar's zoom, next step (`radar = on`) | D-pad up (1) |
 | Quit (asks first: Y, or Enter on Quit, quits; Esc, N or B stays) | Esc |
 
 Esc asks before quitting, so a stray press does not lose unsaved progress: Cancel is picked to begin with, Left/Right (or the d-pad) moves between Quit and Cancel, and the mouse works too; the game keeps running behind the prompt but reads no input. Closing the window still quits straight away.
@@ -212,6 +214,8 @@ The counts are the game's: an area's eight episodes and its 100-coin and two oth
 `radar = on` in `settings.txt` (`SMS_RADAR=1`) shows a round map at the HUD's top right while a stage plays: the stage close around Mario (25 m to its edge), north up, scrolling as he moves, with an arrow at its centre that turns the way he faces.
 The stage's Shines and blue coins are on it as the HUD's own icons, at their places whether or not they have appeared yet; a Shine you already have is the pale blue of the game's empty Shine, and a blue coin you have is gone.
 It hides in cutscenes, conversations and the pause menu. `radar_zoom` sets how far it reaches (in the game's units, 100 a metre) and `radar_size` its size in percent; with `widescreen_hud = edges` it moves to the right edge with the HUD.
+D-pad up (1 on the keyboard) steps its zoom through 100%, 50%, 25% and 200% of `radar_zoom`, showing the reach under it for a moment.
+**M**, or a controller's Back (View, Select, Share) button, opens the full map: the whole stage over the dimmed game, as wide as the screen, with the area's name, Mario's arrow and the same Shines and blue coins, to the game's own map screen sounds. The game goes on under it, so Mario can still be steered; the same button closes it. It is the `MAP` control in `bindings.txt`.
 The maps are pictures of every stage from straight above, made from the disc by `tools/radar/gen_maps.py` (in `assets/maps`, one per stage, matched to the stage by its collision); a stage without one, a mod's, has no radar.
 
 ### Save states

@@ -25,6 +25,8 @@ struct PortRadarMap {
 	int w, h;
 	float x0, z0;  // world x and z of the picture's top left corner
 	float density; // pixels per world unit
+	const unsigned char* overview; // the whole picture smaller, for the full map: row-major RGBA
+	int ow, oh;
 };
 extern "C" int port_radar_map(unsigned long long colKey, PortRadarMap* out);
 

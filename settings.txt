@@ -99,7 +99,9 @@ frame_rate = 60
 # with an arrow for the way he faces and the stage's Shines and blue coins.
 # Its maps are in assets/maps (tools/radar/gen_maps.py makes them from the
 # disc). radar_zoom is how far it reaches from Mario, in the game's units
-# (100 a metre); radar_size is its size in percent.
+# (100 a metre), and D-pad up steps it through 100%, 50%, 25% and 200% of
+# that; radar_size is its size in percent. M, or a controller's Back button,
+# opens the full map (MAP in bindings.txt).
 # radar = off
 # radar_zoom = 2500
 # radar_size = 100
