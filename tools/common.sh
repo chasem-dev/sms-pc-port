@@ -28,7 +28,7 @@ sms_detect_os() {
       # its game memory in a 4 GiB window above PAGEZERO (docs/MACOS-ARM64.md).
       sms_os=macos
       sms_arches=(64)
-      [[ "$(uname -m)" == arm64 ]] && sms_arches+=(arm64)
+      if [[ "$(uname -m)" == arm64 ]]; then sms_arches+=(arm64); fi
       ;;
     MINGW* | MSYS*)
       if [[ "${MSYSTEM:-}" != MINGW64 && "${MSYSTEM:-}" != MINGW32 ]]; then
