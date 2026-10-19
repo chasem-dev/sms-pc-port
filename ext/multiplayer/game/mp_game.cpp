@@ -911,15 +911,57 @@ void skipTitle(TMarDirector* dir)
 const char kGuestCard[] = "Not in the host's game: these files are on the multiplayer card, not your own. "
                           "For your own saves, close the game and press Play.";
 
+// Why the host's game ended for us (mpg_host_left), told again at the title.
+char s_leftWhy[128];
+
 void guestCardNotice()
 {
 	if (gpApplication.mCurrArea.getStage() != 15 || !mpg_link_over())
 		return;
-	if (strcmp(s_notice, kGuestCard)) {
-		showNotice(kGuestCard);
+	char text[sizeof s_notice];
+	snprintf(text, sizeof text, "%s%s%s", s_leftWhy, s_leftWhy[0] ? " " : "", kGuestCard);
+	if (strcmp(s_notice, text)) {
+		showNotice(text);
 		s_statusFrames = 0; // the player list would cover it (why the link ended was its own notice)
 	}
 	s_noticeFrames = kNoticeFrames;
+}
+
+// The host left while we were in its game (closed it, went back to the title,
+// or was lost and not found again): there is no host's stage to be in, so
+// this game leaves it for the title as the reset does (its file select is the
+// multiplayer card's: guestCardNotice), a moment after saying why. A game on
+// its way somewhere goes once it is there; one at the title stays.
+int s_leaveFrames = -1; // until leaving for the title; -1: not leaving
+
+void leaveWithHost(TMarDirector* dir)
+{
+	if (mpg_host_left(s_leftWhy, sizeof s_leftWhy)) {
+		const int fps = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
+		s_leaveFrames = 2 * fps;
+		fprintf(stderr, "[multiplayer] the host left (%s): back to the title\n", s_leftWhy);
+	}
+	if (s_leaveFrames < 0)
+		return;
+	if (dir && gpApplication.mCurrArea.getStage() == 15) {
+		s_leaveFrames = -1;
+		return;
+	}
+	if (!dir || dir->mState == TMarDirector::STATE_UNK9 || dir->mState == TMarDirector::STATE_UNK12)
+		return;
+	if (s_leaveFrames > 0) {
+		s_leaveFrames--;
+		return;
+	}
+	s_leaveFrames = -1;
+	s_spectating  = false; // playing alone from here
+	// as TMarDirector::changeState takes the reset: a wipe out, then the title
+	dir->unkE4 = 4;
+	dir->unkB4 = TApplication::APP_STATE_DONE;
+	dir->currentStateFinalize(TMarDirector::STATE_UNK12);
+	dir->nextStateInitialize(TMarDirector::STATE_UNK12);
+	dir->mState = TMarDirector::STATE_UNK12;
+	fprintf(stderr, "[multiplayer] leaving the host's stage for the title\n");
 }
 
 // A client got a Shine: the host leaves with everyone, as when its own Mario
@@ -1975,6 +2017,7 @@ struct TestPlan {
 	bool surfed;
 	int boatAt;                 // nearboat@N: this player stands on the first fruit boat
 	int titleQuitAt;            // titlequit@N: this game goes back to the title, as the pause menu's Save & Quit does
+	int quitAt;                 // quit@N: this game closes, as closing its window does
 	int doorAt;                 // turbodoor@N: this game's first Turbo nozzle door broken down
 	int mantaAt;                // mantaout@N: Phantamanta comes out (its fight begun)
 	int rideAt, rideSeconds;    // rideboat@N[:S]: this player rides the nearest mud or leaf boat, driven on S seconds
@@ -2041,7 +2084,7 @@ void runTests(TMarDirector* dir, bool arrived)
 {
 	if (!s_test.parsed) {
 		s_test.parsed = true;
-		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.gateAt = s_test.flAt = s_test.demoAt = s_test.enemyAt = s_test.tearAt = s_test.blueAt = s_test.cornerAt = s_test.voidAt = s_test.surfAt = s_test.boatAt = s_test.sandAt = s_test.rideAt = s_test.titleQuitAt = s_test.doorAt = s_test.mantaAt = -1;
+		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.gateAt = s_test.flAt = s_test.demoAt = s_test.enemyAt = s_test.tearAt = s_test.blueAt = s_test.cornerAt = s_test.voidAt = s_test.surfAt = s_test.boatAt = s_test.sandAt = s_test.rideAt = s_test.titleQuitAt = s_test.quitAt = s_test.doorAt = s_test.mantaAt = -1;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
 		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = s_test.bossHitAt = s_test.setFlagAt = -1;
 		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.shadowRunAt = s_test.npcSprayAt = s_test.carryAt = s_test.slotSprayAt = s_test.melonAt = -1;
@@ -2074,6 +2117,8 @@ void runTests(TMarDirector* dir, bool arrived)
 				sscanf(nb, "nearboat@%d", &s_test.boatAt);
 			if (const char* tq = strstr(plan, "titlequit@"))
 				sscanf(tq, "titlequit@%d", &s_test.titleQuitAt);
+			if (const char* q = strstr(plan, ";quit@") ? strstr(plan, ";quit@") + 1 : !strncmp(plan, "quit@", 5) ? plan : nullptr)
+				sscanf(q, "quit@%d", &s_test.quitAt);
 			if (const char* mo = strstr(plan, "mantaout@"))
 				sscanf(mo, "mantaout@%d", &s_test.mantaAt);
 			if (const char* td = strstr(plan, "turbodoor@"))
@@ -2286,6 +2331,10 @@ void runTests(TMarDirector* dir, bool arrived)
 		dir->unkB4 = TApplication::APP_STATE_DONE;
 		gpApplication.getFader()->setFadeStatus(TSMSFader::FADE_STATUS_FULLY_FADED_OUT);
 		dir->mState = TMarDirector::STATE_UNK12;
+	}
+	if (s_test.quitAt >= 0 && s_test.frames == s_test.quitAt) {
+		fprintf(stderr, "[multiplayer] test: closing the game\n");
+		exit(0);
 	}
 	if (s_test.mantaAt >= 0 && s_test.frames == s_test.mantaAt && !MpBossTestMantaOut())
 		fprintf(stderr, "[multiplayer] test: no Phantamanta here\n");
@@ -3527,6 +3576,7 @@ void frame()
 	}
 	if (s_role == MPG_ROLE_CLIENT) {
 		skipTitle(dir);
+		leaveWithHost(dir);
 		guestCardNotice();
 		leadTrip(dir);
 		clientShineExit(dir);

@@ -138,6 +138,10 @@ int mpg_slot(void);    // ours; -1 before a client has one
 // Client: the link to the host is over for good (refused, closed, or lost and
 // not coming back); 0 while connecting, connected or reconnecting.
 int mpg_link_over(void);
+// Client: the host left while we were in its game (closed it, went back to
+// the title, or was lost and not found again): 1 once, with why (a sentence
+// for the player), for the game to leave the host's stage for the title.
+int mpg_host_left(char* why, int size);
 int mpg_ping(int slot); // round trip to `slot` (host) or to the host (client), ms; -1 unknown
 // Client: the newest snapshot of the host's world's number (each new one, a new number).
 uint32_t mpg_world_seq(void);

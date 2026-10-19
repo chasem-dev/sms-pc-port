@@ -98,6 +98,10 @@ int mp_config_from_env(MpConfig* cfg, const char* build);
 // opened (mp_link_message says why).
 int mp_start(const MpConfig* cfg);
 void mp_stop(void);
+// Client: leaves the host's game, saying goodbye (or stops connecting). The
+// link is then MP_LINK_FAILED with `why` as its message, and MP_EV_FAILED
+// comes as when the host drops us.
+void mp_leave(const char* why);
 
 MpRole mp_role(void);
 MpLinkState mp_link(void);

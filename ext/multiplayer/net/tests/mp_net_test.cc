@@ -434,6 +434,55 @@ int main()
 	CHECK(mp_players() == 1);
 	mp_stop();
 
+	// leaving says goodbye, both ways: the host drops a client that leaves at
+	// once, and a client hears at once that the host closed (no timeout)
+	g_port++;
+	g_onEvent = nullptr;
+	h.dropRate = 0;
+	h.port     = (uint16_t)g_port;
+	CHECK(mp_start(&h) == 0);
+	pid_t leaver = fork();
+	if (leaver == 0) {
+		MpConfig c = config(MP_ROLE_CLIENT, "leaver");
+		CHECK(mp_start(&c) == 0);
+		CHECK(pump(5, [](MpEvent*) { return mp_link() == MP_LINK_CONNECTED; }));
+		mp_leave("Left on purpose.");
+		CHECK(mp_link() == MP_LINK_FAILED);
+		CHECK(pump(1, [](MpEvent* ev) { return ev && ev->type == MP_EV_FAILED; }));
+		char why[256];
+		mp_link_message(why, sizeof why);
+		CHECK(!strcmp(why, "Left on purpose."));
+		sleepMs(500);
+		mp_stop(); // no second goodbye after the first
+		_exit(0);
+	}
+	double joinedAt = 0;
+	CHECK(pump(5, [&](MpEvent* ev) {
+		if (ev && ev->type == MP_EV_PLAYER_JOINED)
+			joinedAt = now();
+		return ev && ev->type == MP_EV_PLAYER_LEFT;
+	}));
+	fprintf(stderr, "[host] a client that left was gone %.2f s after joining\n", now() - joinedAt);
+	CHECK(joinedAt > 0 && now() - joinedAt < 1.0);
+	CHECK(exitedOk(leaver));
+	pid_t stayer = fork();
+	if (stayer == 0) {
+		MpConfig c = config(MP_ROLE_CLIENT, "stayer");
+		CHECK(mp_start(&c) == 0);
+		CHECK(pump(5, [](MpEvent*) { return mp_link() == MP_LINK_CONNECTED; }));
+		CHECK(mp_send(0, 7, "", 0) == 0); // ready
+		double start = now();
+		CHECK(pump(5, [](MpEvent* ev) { return ev && ev->type == MP_EV_FAILED; }));
+		char why[256];
+		mp_link_message(why, sizeof why);
+		fprintf(stderr, "[stayer] after %.2f s: %s\n", now() - start, why);
+		CHECK(strstr(why, "closed") && now() - start < 1.5); // the timeout is 2 s
+		_exit(0);
+	}
+	CHECK(pump(5, [](MpEvent* ev) { return ev && ev->type == MP_EV_MESSAGE && ev->kind == 7; }));
+	mp_stop();
+	CHECK(exitedOk(stayer));
+
 	// a client with nobody to join gives up with a message
 	pid_t pid = fork();
 	if (pid == 0) {

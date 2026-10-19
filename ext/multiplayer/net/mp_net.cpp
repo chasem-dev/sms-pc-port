@@ -835,6 +835,18 @@ void clientPacket(Session& s, const uint8_t* buf, int n, const Address& from, ui
 	}
 }
 
+// A goodbye, sent a few times: the other side drops this one at once instead
+// of waiting out the timeout, and one lost packet should not undo that.
+void sayBye(Session& s, const Peer& p)
+{
+	uint8_t out[32];
+	Writer w(out, sizeof out);
+	header(w, PK_BYE);
+	w.u32(p.token);
+	for (int i = 0; i < 3; i++)
+		s.sock.send(out, w.len, p.addr);
+}
+
 void tick(Session& s, uint32_t now)
 {
 	if (s.cfg.role == MP_ROLE_CLIENT && s.link == MP_LINK_CONNECTING) {
@@ -933,13 +945,8 @@ void run(Session* s)
 	// say goodbye so the others need not wait for a timeout
 	std::lock_guard<std::mutex> hold(s->lock);
 	for (Peer& p : s->peers)
-		if (p.active) {
-			uint8_t out[32];
-			Writer w(out, sizeof out);
-			header(w, PK_BYE);
-			w.u32(p.token);
-			s->sock.send(out, w.len, p.addr);
-		}
+		if (p.active)
+			sayBye(*s, p);
 }
 
 template <class F>
@@ -1084,6 +1091,26 @@ extern "C" void mp_stop(void)
 		g_rejoinToken = s->peers[0].token;
 	}
 	delete s;
+}
+
+extern "C" void mp_leave(const char* why)
+{
+	withSession(
+	    [why](Session& s) {
+		    if (s.cfg.role != MP_ROLE_CLIENT || s.link == MP_LINK_FAILED)
+			    return 0;
+		    if (s.peers[0].active) {
+			    sayBye(s, s.peers[0]);
+			    dropPeer(s, 0, why);
+		    } else { // still connecting: stop asking
+			    s.link    = MP_LINK_FAILED;
+			    s.message = why;
+			    pushEvent(s, MP_EV_FAILED, -1);
+			    fprintf(stderr, "[multiplayer] %s\n", why);
+		    }
+		    return 0;
+	    },
+	    0);
 }
 
 extern "C" MpRole mp_role(void)
