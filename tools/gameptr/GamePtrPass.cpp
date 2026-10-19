@@ -44,7 +44,11 @@
 #include "llvm/IR/Operator.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/Passes/PassBuilder.h"
-#include "llvm/Plugins/PassPlugin.h"
+#if __has_include("llvm/Plugins/PassPlugin.h")
+#include "llvm/Plugins/PassPlugin.h"  // LLVM 22 on
+#else
+#include "llvm/Passes/PassPlugin.h"
+#endif
 
 #include <map>
 #include <set>
