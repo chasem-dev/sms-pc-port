@@ -506,6 +506,12 @@ void readPetey(In& in)
 			mpg_boss_hit(0, HIT_WATER, b->mWaterMark - s_setValue[0]);
 	}
 	followNerve(b, 0, nerve, peteyNerve, 13, 14);
+	// his stomp reaction turns his head's hits off and on again only as its
+	// animation ends: a copy taken on to the host's next step before then
+	// kept it off, and his head swing never hit this game's player
+	if (b->mHeadHit && b->getLatestNerve() != &TNerveBPStompReact::theNerve()
+	    && b->getLatestNerve() != &TNerveBPPreDie::theNerve() && b->getLatestNerve() != &TNerveBPDie::theNerve())
+		b->mHeadHit->offHitFlag(HIT_FLAG_NO_COLLISION);
 	b->mState     = (s8)state;
 	b->mHitPoints = (u8)hp;
 	b->mWaterMark = water;

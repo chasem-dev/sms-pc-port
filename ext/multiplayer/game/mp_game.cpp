@@ -104,6 +104,7 @@ unsigned s_stageNumber;
 // session changes: the host moves on, or everyone is out and it restarts).
 bool s_spectating;
 u32 s_spectateSession;
+int s_spectateArea; // the stage they ran out of lives in: anywhere else, they play again
 int s_watching = -1;  // the slot whose player we watch
 bool s_restarting;    // host: everyone is out, the stage is starting again
 bool s_missReload;    // this stage again after a lost life (or a game over): no new session
@@ -1963,6 +1964,7 @@ int takeGameOver()
 	s_missReload      = true;
 	s_spectating      = true;
 	s_spectateSession = mpg_session();
+	s_spectateArea    = gpApplication.mCurrArea.getStage();
 	s_watching        = -1;
 	// the host, the last one out: its reload is everyone's way out instead
 	if (s_role == MPG_ROLE_HOST && !s_restarting && othersAllOut()) {
@@ -3565,8 +3567,14 @@ void frame()
 			TFlagManager::getInstance()->setFlag(0x20001, 3); // as a continue gives
 			fprintf(stderr, "[multiplayer] everyone back in with 3 lives\n");
 		}
-		if (s_spectating && mpg_session() != s_spectateSession) {
-			s_spectating = false; // a new start: alive again
+		// a new start, or another stage (out of the world with the group, or
+		// out of lives just as it left): alive again
+		if (s_spectating && (mpg_session() != s_spectateSession || area != s_spectateArea)) {
+			s_spectating = false;
+			if (TMario* m = gpMarioOriginal) {
+				m->offFlag(MARIO_FLAG_IS_PERFORMING);
+				m->offHitFlag(HIT_FLAG_NO_COLLISION);
+			}
 			showNotice("Back in the game");
 		}
 		if (s_spectating)
