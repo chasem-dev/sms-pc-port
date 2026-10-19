@@ -155,8 +155,14 @@ if(SMS_MAC_ARM64)
   if(NOT SMS_LLVM_CONFIG)
     message(FATAL_ERROR "llvm-config not found beside ${CMAKE_CXX_COMPILER} (Homebrew llvm has it)")
   endif()
+  # --cxxflags names LLVM's include folder unquoted, and SMS Launcher's tools
+  # are in Application Support: that one flag is taken as a whole from
+  # --includedir, the others split.
+  execute_process(COMMAND ${SMS_LLVM_CONFIG} --includedir OUTPUT_VARIABLE _llvm_include OUTPUT_STRIP_TRAILING_WHITESPACE)
   execute_process(COMMAND ${SMS_LLVM_CONFIG} --cxxflags OUTPUT_VARIABLE _llvm_cxxflags OUTPUT_STRIP_TRAILING_WHITESPACE)
+  string(REPLACE "-I${_llvm_include}" "" _llvm_cxxflags "${_llvm_cxxflags}")
   separate_arguments(_llvm_cxxflags UNIX_COMMAND "${_llvm_cxxflags}")
+  list(APPEND _llvm_cxxflags "-I${_llvm_include}")
   set(SMS_GAMEPTR_SRC ${CMAKE_CURRENT_SOURCE_DIR}/tools/gameptr/GamePtrPass.cpp)
   set(SMS_GAMEPTR_PLUGIN ${CMAKE_BINARY_DIR}/gameptr/libSmsGamePtr.dylib)
   file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/gameptr)
