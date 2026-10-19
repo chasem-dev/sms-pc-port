@@ -155,7 +155,7 @@ Keyboard defaults:
 
 GameCube adapters work too. An adapter in Wii U mode (the official Nintendo adapter, WUP-028, and Mayflash and other copies with the switch on Wii U; USB `057e:0337`) is read by the game itself, with no extra software, and its controller plays exactly as on a GameCube: analog triggers with their click, the sticks centred where they rest when plugged in. The first plugged port is controller 1. In PC mode an adapter is an ordinary controller for SDL instead.
 
-- **Windows:** works with Windows' own driver, or with the WinUSB driver that Zadig or Dolphin installs.
+- **Windows:** works with Windows' own driver, with the WinUSB driver that Zadig or Dolphin installs, or with WinUSB that the adapter sets up for itself (the Lossless Adapter in its Switch/Dolphin mode).
 - **Linux and Steam Deck:** the game needs permission to open the adapter, as Dolphin does. Steam's udev rules (the `steam-devices` package, and SteamOS) give it already, through libusb. Otherwise SMS Launcher can add a rule (Settings, Controls), or add it yourself and plug the adapter in again:
 
   ```sh

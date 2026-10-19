@@ -7,8 +7,9 @@
 // asks SDL to leave the adapter alone (port_gc_adapter_sdl_ignore, used by the
 // GX layer before SDL_Init) and a thread here reads it, opened through the
 // first way that works:
-//   Windows  WinUSB (the driver Zadig or Dolphin installs), else the stock HID
-//            driver ("USB Input Device"), through winusb.dll / hid.dll
+//   Windows  WinUSB (the driver Zadig or Dolphin installs, or that adapters
+//            such as the Lossless Adapter ask Windows for themselves), else the
+//            stock HID driver ("USB Input Device"), through winusb.dll / hid.dll
 //   Linux    /dev/hidraw*, else libusb (Steam's udev rule opens the adapter's
 //            USB device to the logged-in user)
 //   macOS    libusb, when it is installed (Homebrew)
@@ -20,6 +21,7 @@
 #include "gc_adapter.h"
 #include <atomic>
 #include <ctype.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -106,8 +108,11 @@ void sleep_ms(int ms)
 // An open adapter. read() returns one report's length, 0 when none came
 // within about 100 ms, or -1 once the adapter is gone, saying why in `error`.
 struct Link {
-	const char* how = "";
+	char how[48] = "";
 	char error[96] = "";
+	// interrupt endpoints, over USB: the official adapter's, unless its
+	// descriptors name others (as Dolphin reads them)
+	unsigned char epIn = 0x81, epOut = 0x02;
 	virtual ~Link() {}
 	virtual int read(unsigned char* buf, int cap) = 0;
 	virtual bool write(const unsigned char* buf, int len) = 0;
@@ -203,6 +208,14 @@ typedef BOOL (WINAPI *PWuFree)(void*);
 typedef BOOL (WINAPI *PWuWrite)(void*, UCHAR, PUCHAR, ULONG, PULONG, void*);
 typedef BOOL (WINAPI *PWuRead)(void*, UCHAR, PUCHAR, ULONG, PULONG, void*);
 typedef BOOL (WINAPI *PWuPolicy)(void*, UCHAR, ULONG, ULONG, PVOID);
+// USB_INTERFACE_DESCRIPTOR, WINUSB_PIPE_INFORMATION
+struct UsbIfDesc {
+	UCHAR bLength, bDescriptorType, bInterfaceNumber, bAlternateSetting, bNumEndpoints, bInterfaceClass,
+	    bInterfaceSubClass, bInterfaceProtocol, iInterface;
+};
+struct WuPipeInfo { int PipeType; UCHAR PipeId; USHORT MaximumPacketSize; UCHAR Interval; };
+typedef BOOL (WINAPI *PWuQuerySettings)(void*, UCHAR, UsbIfDesc*);
+typedef BOOL (WINAPI *PWuQueryPipe)(void*, UCHAR, UCHAR, WuPipeInfo*);
 typedef void (WINAPI *PHidGuid)(GUID*);
 typedef BOOLEAN (WINAPI *PHidPreparsed)(HANDLE, void**);
 typedef BOOLEAN (WINAPI *PHidFreePreparsed)(void*);
@@ -212,6 +225,7 @@ typedef BOOLEAN (WINAPI *PHidSetOutput)(HANDLE, void*, ULONG);
 PGetClassDevs pGetClassDevs; PEnumDeviceInfo pEnumDeviceInfo; PGetInstanceId pGetInstanceId;
 POpenDevRegKey pOpenDevRegKey; PEnumInterfaces pEnumInterfaces; PGetDetail pGetDetail; PDestroyList pDestroyList;
 PWuInit pWuInit; PWuFree pWuFree; PWuWrite pWuWrite; PWuRead pWuRead; PWuPolicy pWuPolicy;
+PWuQuerySettings pWuQuerySettings; PWuQueryPipe pWuQueryPipe;
 PHidGuid pHidGuid; PHidPreparsed pHidPreparsed; PHidFreePreparsed pHidFreePreparsed; PHidCaps pHidCaps;
 PHidSetOutput pHidSetOutput;
 bool g_winusb, g_hid;
@@ -238,6 +252,8 @@ bool load()
 		pWuRead   = (PWuRead)GetProcAddress(wu, "WinUsb_ReadPipe");
 		pWuPolicy = (PWuPolicy)GetProcAddress(wu, "WinUsb_SetPipePolicy");
 		g_winusb  = pWuInit && pWuFree && pWuWrite && pWuRead && pWuPolicy;
+		pWuQuerySettings = (PWuQuerySettings)GetProcAddress(wu, "WinUsb_QueryInterfaceSettings");
+		pWuQueryPipe     = (PWuQueryPipe)GetProcAddress(wu, "WinUsb_QueryPipe");
 	}
 	if (HMODULE hid = LoadLibraryA("hid.dll")) {
 		pHidGuid          = (PHidGuid)GetProcAddress(hid, "HidD_GetHidGuid");
@@ -281,14 +297,23 @@ bool find_winusb_path(WCHAR* out, size_t cap, bool* seen)
 		HKEY key = pOpenDevRegKey(set, &dev, 1 /* DICS_FLAG_GLOBAL */, 0, 1 /* DIREG_DEV */, KEY_READ);
 		if (key == (HKEY)INVALID_HANDLE_VALUE)
 			continue;
+		// Zadig's driver writes DeviceInterfaceGUIDs; an adapter that asks for
+		// WinUSB itself (WCID) names the value in its descriptors, often in the
+		// singular. libusb, and so Dolphin, looks for both.
 		WCHAR guids[200] = {};
 		DWORD sz         = sizeof guids - 4;
 		LSTATUS st       = RegQueryValueExW(key, L"DeviceInterfaceGUIDs", NULL, NULL, (LPBYTE)guids, &sz);
+		if (st == ERROR_FILE_NOT_FOUND) {
+			sz = sizeof guids - 4;
+			st = RegQueryValueExW(key, L"DeviceInterfaceGUID", NULL, NULL, (LPBYTE)guids, &sz);
+		}
 		RegCloseKey(key);
-		if (st != ERROR_SUCCESS || !guids[0])
-			continue; // not WinUSB (the stock HID driver, say)
+		if (st != ERROR_SUCCESS || guids[0] != L'{')
+			continue; // not WinUSB (the stock HID driver, say), or no GUID of its own
+		if (WCHAR* end = wcschr(guids, L'}'))
+			end[1] = 0;
 		// Device path = \\?\ + instance id with separators turned into '#' + '#' + interface GUID
-		// (the first "{...}" of DeviceInterfaceGUIDs).
+		// (the first "{...}" of the value).
 		for (WCHAR* c = id; *c; c++)
 			if (*c == L'\\' || *c == L'/')
 				*c = L'#';
@@ -299,19 +324,18 @@ bool find_winusb_path(WCHAR* out, size_t cap, bool* seen)
 	return found;
 }
 
-// Device path of the adapter's HID interface (the stock driver).
-bool find_hid_path(WCHAR* out, size_t cap, bool* seen)
+// Device path of the adapter's interface of class `cls`: HID (the stock
+// driver), or the USB device itself (GUID_DEVINTERFACE_USB_DEVICE).
+bool find_interface_path(GUID cls, WCHAR* out, size_t cap, bool* seen)
 {
-	GUID hid;
-	pHidGuid(&hid);
-	HDEVINFO_ set = pGetClassDevs(&hid, NULL, NULL, 0x2 | 0x10 /* DIGCF_PRESENT | DIGCF_DEVICEINTERFACE */);
+	HDEVINFO_ set = pGetClassDevs(&cls, NULL, NULL, 0x2 | 0x10 /* DIGCF_PRESENT | DIGCF_DEVICEINTERFACE */);
 	if (set == (HDEVINFO_)INVALID_HANDLE_VALUE)
 		return false;
 	bool found = false;
 	for (DWORD i = 0; !found; i++) {
 		SpDeviceInterfaceData ifd;
 		ifd.cbSize = sizeof ifd;
-		if (!pEnumInterfaces(set, NULL, &hid, i, &ifd))
+		if (!pEnumInterfaces(set, NULL, &cls, i, &ifd))
 			break;
 		union {
 			SpDeviceInterfaceDetailW d;
@@ -338,9 +362,22 @@ struct WinUsbLink : Link {
 	void* wu;
 	WinUsbLink(HANDLE h_, void* wu_) : h(h_), wu(wu_)
 	{
-		how           = "WinUSB";
+		UsbIfDesc d;
+		if (pWuQuerySettings && pWuQueryPipe && pWuQuerySettings(wu, 0, &d)) {
+			bool in = false, out = false;
+			for (UCHAR i = 0; i < d.bNumEndpoints; i++) {
+				WuPipeInfo p;
+				if (!pWuQueryPipe(wu, 0, i, &p) || p.PipeType < 2) // bulk or interrupt
+					continue;
+				if ((p.PipeId & 0x80) && !in)
+					epIn = p.PipeId, in = true;
+				else if (!(p.PipeId & 0x80) && !out)
+					epOut = p.PipeId, out = true;
+			}
+		}
+		snprintf(how, sizeof how, "WinUSB, endpoints %02x/%02x", epIn, epOut);
 		ULONG timeout = 100;
-		pWuPolicy(wu, 0x81, 0x03 /* PIPE_TRANSFER_TIMEOUT */, sizeof timeout, &timeout);
+		pWuPolicy(wu, epIn, 0x03 /* PIPE_TRANSFER_TIMEOUT */, sizeof timeout, &timeout);
 	}
 	~WinUsbLink()
 	{
@@ -350,7 +387,7 @@ struct WinUsbLink : Link {
 	int read(unsigned char* buf, int cap) override
 	{
 		ULONG n = 0;
-		if (!pWuRead(wu, 0x81, buf, cap, &n, NULL)) {
+		if (!pWuRead(wu, epIn, buf, cap, &n, NULL)) {
 			const DWORD e = GetLastError();
 			if (e == ERROR_SEM_TIMEOUT)
 				return 0;
@@ -362,7 +399,7 @@ struct WinUsbLink : Link {
 	bool write(const unsigned char* buf, int len) override
 	{
 		ULONG n = 0;
-		return pWuWrite(wu, 0x02, (PUCHAR)buf, len, &n, NULL) && n == (ULONG)len;
+		return pWuWrite(wu, epOut, (PUCHAR)buf, len, &n, NULL) && n == (ULONG)len;
 	}
 };
 
@@ -376,9 +413,9 @@ struct WinHidLink : Link {
 	unsigned char in[256];
 	WinHidLink(HANDLE h_, int inLen_, int outLen_) : h(h_), inLen(inLen_), outLen(outLen_)
 	{
-		how         = "HID driver";
-		rov.hEvent  = CreateEventW(NULL, TRUE, FALSE, NULL);
-		wov.hEvent  = CreateEventW(NULL, TRUE, FALSE, NULL);
+		strcpy(how, "HID driver");
+		rov.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+		wov.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
 	}
 	~WinHidLink()
 	{
@@ -436,20 +473,45 @@ struct WinHidLink : Link {
 	}
 };
 
+// The adapter through WinUSB at `path`, or NULL with GetLastError's reason.
+Link* open_winusb(const WCHAR* path)
+{
+	HANDLE h = CreateFileW(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+	                       OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, NULL);
+	if (h == INVALID_HANDLE_VALUE)
+		return NULL;
+	void* wu = NULL;
+	if (pWuInit(h, &wu))
+		return new WinUsbLink(h, wu);
+	const DWORD e = GetLastError();
+	CloseHandle(h);
+	SetLastError(e);
+	return NULL;
+}
+
 Link* open_link(char* why, size_t cap, bool* seen)
 {
 	WCHAR path[512];
 	if (g_winusb && find_winusb_path(path, 512, seen)) {
-		HANDLE h = CreateFileW(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
-		                       OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, NULL);
-		void* wu = NULL;
-		if (h != INVALID_HANDLE_VALUE && pWuInit(h, &wu))
-			return new WinUsbLink(h, wu);
+		if (Link* link = open_winusb(path))
+			return link;
 		snprintf(why, cap, "WinUSB would not open it (error %lu)", GetLastError());
-		if (h != INVALID_HANDLE_VALUE)
-			CloseHandle(h);
 	}
-	if (g_hid && find_hid_path(path, 512, seen)) {
+	// WinUSB with no interface GUID of its own to find it by (an adapter that
+	// asked for WinUSB itself and named none): the USB device's own interface
+	// reaches it too, as libusb opens it. Under the stock HID driver
+	// WinUsb_Initialize fails here and the HID driver is used below.
+	static const GUID kUsbDevice = { 0xA5DCBF10, 0x6530, 0x11D2, { 0x90, 0x1F, 0x00, 0xC0, 0x4F, 0xB9, 0x51, 0xED } };
+	DWORD usbError = 0;
+	if (g_winusb && !why[0] && find_interface_path(kUsbDevice, path, 512, seen)) {
+		if (Link* link = open_winusb(path))
+			return link;
+		usbError = GetLastError();
+	}
+	GUID hid = {};
+	if (g_hid)
+		pHidGuid(&hid);
+	if (g_hid && find_interface_path(hid, path, 512, seen)) {
 		HANDLE h = CreateFileW(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
 		                       OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
 		if (h == INVALID_HANDLE_VALUE) {
@@ -470,6 +532,8 @@ Link* open_link(char* why, size_t cap, bool* seen)
 			inLen = 256;
 		return new WinHidLink(h, inLen, outLen);
 	}
+	if (usbError && !why[0])
+		snprintf(why, cap, "neither WinUSB (error %lu) nor the HID driver has it", usbError);
 	return NULL;
 }
 
@@ -517,7 +581,7 @@ bool usb_present()
 
 struct FdLink : Link {
 	int fd;
-	explicit FdLink(int fd_) : fd(fd_) { how = "hidraw"; }
+	explicit FdLink(int fd_) : fd(fd_) { strcpy(how, "hidraw"); }
 	~FdLink() { close(fd); }
 	int read(unsigned char* buf, int cap) override
 	{
@@ -576,7 +640,33 @@ Link* open_hidraw(char* why, size_t cap, bool* seen)
 }
 #endif
 
-// libusb-1.0, loaded at run time.
+// libusb-1.0, loaded at run time, and its descriptor structs (libusb.h).
+struct LuEndpoint {
+	uint8_t bLength, bDescriptorType, bEndpointAddress, bmAttributes;
+	uint16_t wMaxPacketSize;
+	uint8_t bInterval, bRefresh, bSynchAddress;
+	const unsigned char* extra;
+	int extra_length;
+};
+struct LuAltsetting {
+	uint8_t bLength, bDescriptorType, bInterfaceNumber, bAlternateSetting, bNumEndpoints, bInterfaceClass,
+	    bInterfaceSubClass, bInterfaceProtocol, iInterface;
+	const LuEndpoint* endpoint;
+	const unsigned char* extra;
+	int extra_length;
+};
+struct LuInterface {
+	const LuAltsetting* altsetting;
+	int num_altsetting;
+};
+struct LuConfig {
+	uint8_t bLength, bDescriptorType;
+	uint16_t wTotalLength;
+	uint8_t bNumInterfaces, bConfigurationValue, iConfiguration, bmAttributes, MaxPower;
+	const LuInterface* interfaces;
+	const unsigned char* extra;
+	int extra_length;
+};
 struct Libusb {
 	void* ctx;
 	int (*init)(void**);
@@ -587,6 +677,10 @@ struct Libusb {
 	int (*release)(void*, int);
 	int (*interrupt)(void*, unsigned char, unsigned char*, int, int*, unsigned int);
 	const char* (*error_name)(int);
+	// optional: for the endpoints
+	void* (*get_device)(void*);
+	int (*get_config)(void*, LuConfig**);
+	void (*free_config)(LuConfig*);
 } lu;
 enum { LU_ERROR_BUSY = -6, LU_ERROR_TIMEOUT = -7 };
 
@@ -613,6 +707,9 @@ bool libusb_ready()
 		*(void**)&lu.release      = dlsym(lib, "libusb_release_interface");
 		*(void**)&lu.interrupt    = dlsym(lib, "libusb_interrupt_transfer");
 		*(void**)&lu.error_name   = dlsym(lib, "libusb_error_name");
+		*(void**)&lu.get_device   = dlsym(lib, "libusb_get_device");
+		*(void**)&lu.get_config   = dlsym(lib, "libusb_get_active_config_descriptor");
+		*(void**)&lu.free_config  = dlsym(lib, "libusb_free_config_descriptor");
 		return lu.init && lu.open_vid_pid && lu.close && lu.auto_detach && lu.claim && lu.release && lu.interrupt &&
 		       lu.error_name && lu.init(&lu.ctx) == 0;
 	}();
@@ -621,7 +718,27 @@ bool libusb_ready()
 
 struct UsbLink : Link {
 	void* dev;
-	explicit UsbLink(void* dev_) : dev(dev_) { how = "libusb"; }
+	explicit UsbLink(void* dev_) : dev(dev_)
+	{
+		LuConfig* cfg = NULL;
+		if (lu.get_device && lu.get_config && lu.free_config && lu.get_config(lu.get_device(dev), &cfg) == 0) {
+			if (cfg->bNumInterfaces > 0 && cfg->interfaces[0].num_altsetting > 0) {
+				const LuAltsetting& a = cfg->interfaces[0].altsetting[0];
+				bool in = false, out = false;
+				for (int e = 0; e < a.bNumEndpoints; e++) {
+					const unsigned char addr = a.endpoint[e].bEndpointAddress;
+					if ((a.endpoint[e].bmAttributes & 3) < 2) // bulk or interrupt
+						continue;
+					if ((addr & 0x80) && !in)
+						epIn = addr, in = true;
+					else if (!(addr & 0x80) && !out)
+						epOut = addr, out = true;
+				}
+			}
+			lu.free_config(cfg);
+		}
+		snprintf(how, sizeof how, "libusb, endpoints %02x/%02x", epIn, epOut);
+	}
 	~UsbLink()
 	{
 		lu.release(dev, 0);
@@ -630,7 +747,7 @@ struct UsbLink : Link {
 	int read(unsigned char* buf, int cap) override
 	{
 		int n       = 0;
-		const int r = lu.interrupt(dev, 0x81, buf, cap, &n, 100);
+		const int r = lu.interrupt(dev, epIn, buf, cap, &n, 100);
 		if (r == LU_ERROR_TIMEOUT)
 			return 0;
 		if (r == 0)
@@ -641,7 +758,7 @@ struct UsbLink : Link {
 	bool write(const unsigned char* buf, int len) override
 	{
 		int n = 0;
-		return lu.interrupt(dev, 0x02, (unsigned char*)buf, len, &n, 100) == 0 && n == len;
+		return lu.interrupt(dev, epOut, (unsigned char*)buf, len, &n, 100) == 0 && n == len;
 	}
 };
 
