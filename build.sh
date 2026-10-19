@@ -97,7 +97,8 @@ setup_macos() {
   # MoltenVK, the Vulkan backend's library on macOS (renderer = vulkan),
   # unless SMS_GX_VULKAN=OFF: beside the executable and in SMS.app's
   # Frameworks. A universal dylib; build/deps/ keeps it. Without it the game
-  # uses OpenGL.
+  # uses OpenGL. Checked with macOS's own shasum: SMS Launcher's relocated
+  # toolset has a Perl shasum whose interpreter path no longer exists.
   local mvk_ver=1.4.2
   local mvk_sha=f95765a6229cb7b915990a2890ce12ebe36a730b021545d3d52ae69ce4c4024e
   mvk_dylib=""
@@ -108,7 +109,7 @@ setup_macos() {
       mkdir -p "build/deps/MoltenVK-$mvk_ver"
       local tar="build/deps/MoltenVK-$mvk_ver.tar"
       if curl -fsSL -o "$tar.part" "https://github.com/KhronosGroup/MoltenVK/releases/download/v$mvk_ver/MoltenVK-macos.tar" &&
-         echo "$mvk_sha  $tar.part" | shasum -a 256 -c - >/dev/null; then
+         echo "$mvk_sha  $tar.part" | /usr/bin/shasum -a 256 -c - >/dev/null; then
         tar -xf "$tar.part" -C "build/deps/MoltenVK-$mvk_ver" --strip-components 5 \
           MoltenVK/MoltenVK/dynamic/dylib/macOS/libMoltenVK.dylib || true
         tar -xf "$tar.part" -C "build/deps/MoltenVK-$mvk_ver" --strip-components 1 MoltenVK/LICENSE || true
