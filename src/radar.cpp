@@ -8,11 +8,12 @@
 // gen_maps.py makes one per stage from the disc, assets/maps; sms_gx loads
 // it, platform/gx/src/gx_radar_maps.cpp), found by a hash of the stage's
 // loaded collision, so a stage without one (a mod's) has no radar. GX
-// textures are at most 1024 square and the pictures are larger, so the disc
-// is drawn here into a small RGBA8 texture whenever Mario moves: the map,
-// round, inside a white border with a dark edge and a soft shadow, all with
-// smooth edges in the alpha. Over it go the blue coins, the Shines (a Shine
-// got is the pale blue of the game's empty Shine) and Mario's arrow, always
+// textures are at most 1024 square and the pictures are larger, so the map
+// is drawn here into a small round RGBA8 texture whenever Mario moves. Over
+// it go the blue coins and the Shines (a Shine got is the pale blue of the
+// game's empty Shine), cut at the map's round edge so they scroll in from
+// past it rather than appear; then the border (made once: white, with a dark
+// edge and a soft shadow, smooth edges in the alpha), and Mario's arrow, all
 // on top of the map whatever their height.
 //
 // The HUD draws it last (patch zzzz-radar-01) while a stage plays (not in
@@ -64,8 +65,8 @@ extern "C" int port_radar_map_presses;
 
 namespace {
 
-// the disc's texture: kTex square; the map fills radius kMapR of its kTex / 2,
-// the border runs to kRingR, its dark edge to kEdgeR, and the shadow past it
+// the map's and the border's textures: kTex square; the map fills radius
+// kMapR of its kTex / 2, the border runs from there to kRingR, its dark edge to kEdgeR, and the shadow past it
 const int kTex      = 320;
 const f32 kMapR     = 143.5f;
 const f32 kRingR    = 153.0f;
@@ -116,7 +117,8 @@ unsigned long long sKey;
 int sMapState = -1; // 1 the map is here, 0 it is loading, -1 none
 PortRadarMap sMap;
 
-u8* sDisc; // GX RGBA8, kTex x kTex, below 4 GiB
+u8* sDisc;   // the map: GX RGBA8, kTex x kTex, below 4 GiB
+u8* sBorder; // the border over it, the same
 f32 sLastX = 1e30f, sLastZ;
 f32 sAlpha; // fades in and out, 0..1
 
@@ -274,7 +276,21 @@ inline void over(f32* rgb, f32& alpha, f32 r, f32 g, f32 b, f32 a)
 	alpha  = out;
 }
 
-// The map around (mx, mz), north up, in its border, into sDisc.
+// Writes the 4x4 block px (RGBA) to a GX RGBA8 texture at o: AR, then GB.
+inline void putBlock(u8* tex, size_t& o, const u8 (*px)[4])
+{
+	for (int i = 0; i < 16; i++) {
+		tex[o++] = px[i][3];
+		tex[o++] = px[i][0];
+	}
+	for (int i = 0; i < 16; i++) {
+		tex[o++] = px[i][1];
+		tex[o++] = px[i][2];
+	}
+}
+
+// The map around (mx, mz), north up, into sDisc: round, a little past kMapR
+// so the border's inner edge covers its own.
 void compose(f32 mx, f32 mz)
 {
 	const f32 half = kTex * 0.5f, perTexel = sZoom / kMapR;
@@ -285,48 +301,59 @@ void compose(f32 mx, f32 mz)
 			u8 px[16][4];
 			for (int i = 0; i < 16; i++) {
 				const f32 sx = bx + (i & 3) + 0.5f - half, sy = by + (i >> 2) + 0.5f - half;
+				const f32 r     = sqrtf(sx * sx + sy * sy);
+				const f32 cover = clamp01(kMapR + 2.5f - r);
+				px[i][0] = px[i][1] = px[i][2] = 0;
+				px[i][3] = (u8)(cover * 255.0f + 0.5f);
+				if (cover <= 0.0f)
+					continue;
+				const f32 wx = mx + sx * perTexel, wz = mz + sy * perTexel;
+				const f32 u = (wx - sMap.x0) * d - 0.5f, v = (wz - sMap.z0) * d - 0.5f;
+				const int x0 = (int)floorf(u), y0 = (int)floorf(v);
+				const f32 ax = u - x0, ay = v - y0;
+				const u8 *a = texel(x0, y0), *b = texel(x0 + 1, y0), *c = texel(x0, y0 + 1), *e = texel(x0 + 1, y0 + 1);
+				// a faint shade just inside the border, so the map sits in it
+				const f32 shade = 1.0f - 0.22f * clamp01((r - (kMapR - 12.0f)) / 12.0f);
+				for (int k = 0; k < 3; k++) {
+					const f32 top = a[k] + (b[k] - a[k]) * ax, bottom = c[k] + (e[k] - c[k]) * ax;
+					px[i][k]      = (u8)((top + (bottom - top) * ay) * shade + 0.5f);
+				}
+			}
+			putBlock(sDisc, o, px);
+		}
+	}
+	DCFlushRange(sDisc, kTex * kTex * 4); // the texture cache sees the new picture
+}
+
+// The border, once, into sBorder: the ring, lighter at the top, its dark
+// edge and a soft shadow a little low, clear inside kMapR. It goes over the
+// map and the sprites, so those slide in under it.
+void composeBorder()
+{
+	const f32 half = kTex * 0.5f;
+	size_t o       = 0;
+	for (int by = 0; by < kTex; by += 4) {
+		for (int bx = 0; bx < kTex; bx += 4) {
+			u8 px[16][4];
+			for (int i = 0; i < 16; i++) {
+				const f32 sx = bx + (i & 3) + 0.5f - half, sy = by + (i >> 2) + 0.5f - half;
 				const f32 r = sqrtf(sx * sx + sy * sy);
 				f32 rgb[3]  = { 0, 0, 0 }, alpha = 0;
-				// the shadow, a little low; the border's dark edge; the border,
-				// lighter at the top
 				const f32 rs = sqrtf(sx * sx + (sy - 3.0f) * (sy - 3.0f));
 				if (rs > kMapR)
 					over(rgb, alpha, 0, 0, 0, 0.35f * clamp01((kShadowR - rs) / (kShadowR - kEdgeR + 2.0f)));
 				over(rgb, alpha, 0.12f, 0.14f, 0.2f, clamp01(kEdgeR + 0.5f - r));
 				const f32 light = 1.0f - 0.16f * clamp01((sy / kRingR + 1.0f) * 0.5f);
 				over(rgb, alpha, light, light, light * 1.02f, clamp01(kRingR + 0.5f - r));
-				const f32 cover = clamp01(kMapR + 0.5f - r);
-				if (cover > 0.0f) {
-					const f32 wx = mx + sx * perTexel, wz = mz + sy * perTexel;
-					const f32 u = (wx - sMap.x0) * d - 0.5f, v = (wz - sMap.z0) * d - 0.5f;
-					const int x0 = (int)floorf(u), y0 = (int)floorf(v);
-					const f32 ax = u - x0, ay = v - y0;
-					const u8 *a = texel(x0, y0), *b = texel(x0 + 1, y0), *c = texel(x0, y0 + 1),
-					         *e = texel(x0 + 1, y0 + 1);
-					// a faint shade just inside the border, so the map sits in it
-					const f32 shade = 1.0f - 0.22f * clamp01((r - (kMapR - 12.0f)) / 12.0f);
-					f32 m[3];
-					for (int k = 0; k < 3; k++) {
-						const f32 top = a[k] + (b[k] - a[k]) * ax, bottom = c[k] + (e[k] - c[k]) * ax;
-						m[k]          = (top + (bottom - top) * ay) / 255.0f * shade;
-					}
-					over(rgb, alpha, m[0], m[1], m[2], cover);
-				}
+				alpha *= 1.0f - clamp01(kMapR + 0.5f - r); // the hole the map shows through
 				for (int k = 0; k < 3; k++)
 					px[i][k] = (u8)(clamp01(rgb[k]) * 255.0f + 0.5f);
 				px[i][3] = (u8)(clamp01(alpha) * 255.0f + 0.5f);
 			}
-			for (int i = 0; i < 16; i++) { // AR, then GB
-				sDisc[o++] = px[i][3];
-				sDisc[o++] = px[i][0];
-			}
-			for (int i = 0; i < 16; i++) {
-				sDisc[o++] = px[i][1];
-				sDisc[o++] = px[i][2];
-			}
+			putBlock(sBorder, o, px);
 		}
 	}
-	DCFlushRange(sDisc, kTex * kTex * 4); // the texture cache sees the new picture
+	DCFlushRange(sBorder, kTex * kTex * 4);
 }
 
 // --- drawing -----------------------------------------------------------------------
@@ -385,6 +412,72 @@ void sprite(JUTTexture& tex, f32 x, f32 y, f32 h, u32 colour, f32 alpha)
 	const ResTIMG* t = tex.getTexInfo();
 	tex.load(GX_TEXMAP0);
 	quad(x, y, t ? h * t->width / t->height : h, h, colour, alpha);
+}
+
+// The same, but only its part within clipR of (cx, cy): a sprite at the
+// radar's edge is cut by its round border rather than left out, so it slides
+// in under the border as the map scrolls.
+void clippedSprite(JUTTexture& tex, f32 x, f32 y, f32 h, u32 colour, f32 alpha, f32 cx, f32 cy, f32 clipR)
+{
+	const ResTIMG* t = tex.getTexInfo();
+	const f32 w = t ? h * t->width / t->height : h;
+	const f32 dx = x - cx, dy = y - cy, dist = sqrtf(dx * dx + dy * dy);
+	const f32 corner = 0.5f * sqrtf(w * w + h * h); // its centre to a corner
+	if (dist >= clipR + corner)
+		return; // wholly outside
+	// the quad as (x, y, u, v), cut by each side of a 64-gon just outside
+	// the circle (Sutherland-Hodgman); at most 4 + 64 corners
+	const int kSides = 64;
+	static f32 a[4 * 70], b[4 * 70];
+	f32 *in = a, *out = b;
+	static const f32 kU[4] = { 0, 1, 1, 0 }, kV[4] = { 0, 0, 1, 1 };
+	int n = 4;
+	for (int i = 0; i < 4; i++) {
+		in[i * 4 + 0] = x + (kU[i] - 0.5f) * w;
+		in[i * 4 + 1] = y + (kV[i] - 0.5f) * h;
+		in[i * 4 + 2] = kU[i];
+		in[i * 4 + 3] = kV[i];
+	}
+	if (dist + corner > clipR) { // not wholly inside
+		for (int s = 0; s < kSides && n >= 3; s++) {
+			const f32 ang = s * (6.2831853f / kSides), nx = cosf(ang), ny = sinf(ang);
+			// inside the side touching the circle at angle ang: (p - c) . n <= clipR
+			int m = 0;
+			for (int i = 0; i < n; i++) {
+				const f32* p = in + i * 4;
+				const f32* q = in + ((i + 1) % n) * 4;
+				const f32 fp = (p[0] - cx) * nx + (p[1] - cy) * ny - clipR;
+				const f32 fq = (q[0] - cx) * nx + (q[1] - cy) * ny - clipR;
+				if (fp <= 0.0f) {
+					for (int k = 0; k < 4; k++)
+						out[m * 4 + k] = p[k];
+					m++;
+				}
+				if ((fp <= 0.0f) != (fq <= 0.0f)) {
+					const f32 tt = fp / (fp - fq);
+					for (int k = 0; k < 4; k++)
+						out[m * 4 + k] = p[k] + (q[k] - p[k]) * tt;
+					m++;
+				}
+			}
+			f32* sw = in;
+			in      = out;
+			out     = sw;
+			n       = m;
+		}
+	}
+	if (n < 3)
+		return;
+	const u8 al = (u8)((colour & 0xFF) * alpha);
+	setupTextured();
+	tex.load(GX_TEXMAP0);
+	GXBegin(GX_TRIANGLEFAN, GX_VTXFMT0, (u16)n);
+	for (int i = 0; i < n; i++) {
+		GXPosition3f32(in[i * 4], in[i * 4 + 1], 0.0f);
+		GXColor4u8(colour >> 24, colour >> 16, colour >> 8, al);
+		GXTexCoord2f32(in[i * 4 + 2], in[i * 4 + 3]);
+	}
+	GXEnd();
 }
 
 // Mario's arrow at (x, y) pointing along (dx, dy): an arrowhead with a notch
@@ -669,7 +762,10 @@ void RadarDraw(const JDrama::TRect& viewport)
 		if (const char* s = getenv("SMS_RADAR_SIZE"))
 			if (atof(s) >= 40.0f && atof(s) <= 250.0f)
 				sRadius = kRadius * (f32)atof(s) / 100.0f;
-		sDisc = (u8*)port_low_alloc(kTex * kTex * 4);
+		sDisc   = (u8*)port_low_alloc(kTex * kTex * 4);
+		sBorder = (u8*)port_low_alloc(kTex * kTex * 4);
+		if (sBorder)
+			composeBorder();
 	}
 	const bool play = playing();
 	const bool have = play && gpMarioPos && stage();
@@ -701,7 +797,7 @@ void RadarDraw(const JDrama::TRect& viewport)
 	sAlpha = clamp01(sAlpha);
 	if (sFullAlpha > 0.0f && gpMarioPos && sMapState == 1 && sOverviewKey == sKey)
 		drawFullMap(viewport, gpMarioPos->x, gpMarioPos->z);
-	if (sAlpha <= 0.0f || !sDisc || !gpMarioPos || !stage())
+	if (sAlpha <= 0.0f || !sDisc || !sBorder || !gpMarioPos || !stage())
 		return;
 
 	const f32 mx = gpMarioPos->x, mz = gpMarioPos->z;
@@ -728,31 +824,35 @@ void RadarDraw(const JDrama::TRect& viewport)
 	GXLoadTexObj(&disc, GX_TEXMAP0);
 	quad(cx, cy, 2 * R, 2 * R, 0xFFFFFFFF, sAlpha);
 
-	// the sprites, inside the border (whole, so none spills over it)
+	// the sprites, cut at the border's inner edge (a little under it), so
+	// one coming in from past the edge slides in under the border
 	static Marker shines[64], coins[128];
 	int nCoins         = 0;
 	const int nShines  = scan(shines, 64, coins, 128, &nCoins);
 	const f32 blueH    = R * kBlueH, shineH = R * kShineH;
+	const f32 clipR    = R * (kMapR + 1.0f) / (kTex * 0.5f);
 	for (int i = 0; i < nCoins; i++) {
 		const f32 sx = (coins[i].x - mx) * scale, sy = (coins[i].z - mz) * scale;
-		const f32 lim = mapR - blueH * 0.5f;
-		if (sx * sx + sy * sy < lim * lim)
-			sprite(sBlueCoinArt, cx + sx, cy + sy, blueH, 0xFFFFFFFF, sAlpha);
+		clippedSprite(sBlueCoinArt, cx + sx, cy + sy, blueH, 0xFFFFFFFF, sAlpha, cx, cy, clipR);
 	}
 	for (int pass = 0; pass < 2; pass++) { // Shines got under those still to get
 		for (int i = 0; i < nShines; i++) {
 			if (shines[i].got != (pass == 0))
 				continue;
 			const f32 sx = (shines[i].x - mx) * scale, sy = (shines[i].z - mz) * scale;
-			const f32 h = shines[i].got ? shineH * 0.85f : shineH, lim = mapR - h * 0.5f;
-			if (sx * sx + sy * sy >= lim * lim)
-				continue;
 			if (shines[i].got)
-				sprite(sShineArt, cx + sx, cy + sy, h, 0x9CC8FFFF, sAlpha * 0.65f);
+				clippedSprite(sShineArt, cx + sx, cy + sy, shineH * 0.85f, 0x9CC8FFFF, sAlpha * 0.65f, cx, cy, clipR);
 			else
-				sprite(sShineArt, cx + sx, cy + sy, h, 0xFFFFFFFF, sAlpha);
+				clippedSprite(sShineArt, cx + sx, cy + sy, shineH, 0xFFFFFFFF, sAlpha, cx, cy, clipR);
 		}
 	}
+
+	// the border over them
+	GXTexObj border;
+	GXInitTexObj(&border, sBorder, kTex, kTex, GX_TF_RGBA8, GX_CLAMP, GX_CLAMP, GX_FALSE);
+	GXInitTexObjLOD(&border, GX_LINEAR, GX_LINEAR, 0.0f, 0.0f, 0.0f, GX_FALSE, GX_FALSE, GX_ANISO_1);
+	GXLoadTexObj(&border, GX_TEXMAP0);
+	quad(cx, cy, 2 * R, 2 * R, 0xFFFFFFFF, sAlpha);
 
 	// Mario: the way he faces (his angle, 0 facing +z: down the map)
 	const f32 angle = (gpMarioAngleY ? *gpMarioAngleY : 0) * (6.2831853f / 65536.0f);
