@@ -27,19 +27,61 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 set(SMS_ECLIPSE_SRC_DIR "${CMAKE_BINARY_DIR}/eclipse-src" CACHE PATH
   "Where the Eclipse, BetterSunshineEngine, BetterSunshineMoveset and SunshineHeaderInterface sources are fetched to")
+# Every build folder checks the sources out for itself, since fixup_sources.py
+# edits them. What they are checked out from is downloaded once, into
+# SMS_ECLIPSE_GIT_CACHE (one repository per revision), so the next build
+# folder copies it from there instead of downloading about 110 MB again. SMS
+# Launcher points it at one folder for all its game versions. Empty: none.
+if(DEFINED ENV{SMS_ECLIPSE_GIT_CACHE})
+  set(_eclipse_git_cache "$ENV{SMS_ECLIPSE_GIT_CACHE}")
+else()
+  set(_eclipse_git_cache "${CMAKE_CURRENT_SOURCE_DIR}/build/deps/eclipse-git")
+endif()
+set(SMS_ECLIPSE_GIT_CACHE "${_eclipse_git_cache}" CACHE PATH
+  "Where the Eclipse sources' downloads are kept for other build folders (empty: download for each)")
 
-# name  url  revision
+# name  url  revision  [a folder the port doesn't use, left out of the checkout]
 set(_eclipse_repos
   "eclipse|https://github.com/JoshuaMKW/super-mario-eclipse|792e14fa1583910673ddae7e85048c6ddb4ba700"
-  "bse|https://github.com/JoshuaMKW/BetterSunshineEngine|bc6840e373d59a2601e7b5f9011732390561f6dd"
+  # compiler/: a 764 MB Windows clang for building BSE for the GameCube.
+  "bse|https://github.com/JoshuaMKW/BetterSunshineEngine|bc6840e373d59a2601e7b5f9011732390561f6dd|compiler"
   "moveset|https://github.com/JoshuaMKW/BetterSunshineMoveset|2eb6f136cce4c0c7816808ad9dc3d1d95ef52b83"
   "shi|https://github.com/JoshuaMKW/SunshineHeaderInterface|a0d858951e7fb22dce5304aa5c50287ecb0d6862")
 
+# Downloads `refspec` (a revision, or revision:ref) of `url` into the
+# repository at `dir`, setting `result` to Git's exit code. A stalled
+# download (under 1 KB/s for a minute) fails instead of waiting for ever,
+# and is tried again.
+function(_sms_eclipse_download dir url refspec name result)
+  foreach(_attempt 1 2 3)
+    if(_attempt GREATER 1)
+      message(STATUS "SMS_ECLIPSE: download of ${name} stalled or failed, trying again (${_attempt} of 3)")
+    endif()
+    execute_process(COMMAND ${GIT_EXECUTABLE} -C "${dir}" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60
+      fetch --progress --depth 1 "${url}" "${refspec}"
+      RESULT_VARIABLE _rc)
+    if(_rc EQUAL 0)
+      break()
+    endif()
+  endforeach()
+  set(${result} ${_rc} PARENT_SCOPE)
+endfunction()
+
+if(SMS_ECLIPSE_GIT_CACHE)
+  get_filename_component(_eclipse_git_cache "${SMS_ECLIPSE_GIT_CACHE}" ABSOLUTE)
+else()
+  set(_eclipse_git_cache "")
+endif()
 foreach(r ${_eclipse_repos})
   string(REPLACE "|" ";" r "${r}")
   list(GET r 0 _name)
   list(GET r 1 _url)
   list(GET r 2 _rev)
+  set(_skip "")
+  list(LENGTH r _fields)
+  if(_fields GREATER 3)
+    list(GET r 3 _skip)
+  endif()
   set(_dir "${SMS_ECLIPSE_SRC_DIR}/${_name}")
   set(_have "")
   if(EXISTS "${_dir}/.git")
@@ -50,19 +92,40 @@ foreach(r ${_eclipse_repos})
     message(STATUS "SMS_ECLIPSE: fetching ${_name} ${_rev}")
     file(MAKE_DIRECTORY "${_dir}")
     execute_process(COMMAND ${GIT_EXECUTABLE} init -q "${_dir}")
-    # A stalled download (under 1 KB/s for a minute) fails instead of waiting
-    # for ever, and is tried again.
-    foreach(_attempt 1 2 3)
-      if(_attempt GREATER 1)
-        message(STATUS "SMS_ECLIPSE: download of ${_name} stalled or failed, trying again (${_attempt} of 3)")
+    if(_skip)
+      execute_process(COMMAND ${GIT_EXECUTABLE} -C "${_dir}" config core.sparseCheckout true)
+      file(WRITE "${_dir}/.git/info/sparse-checkout" "/*\n!/${_skip}/\n")
+    endif()
+    set(_rc 1)
+    if(_eclipse_git_cache)
+      string(SUBSTRING "${_rev}" 0 12 _short)
+      set(_kept "${_eclipse_git_cache}/${_name}-${_short}.git")
+      # Fetched by a relative path: MSYS Git reads C:/... as a host name. On
+      # another drive there is none, and the build folder downloads its own.
+      file(RELATIVE_PATH _from "${_dir}" "${_kept}")
+      if(NOT IS_ABSOLUTE "${_from}")
+        execute_process(COMMAND ${GIT_EXECUTABLE} -C "${_kept}" cat-file -e "${_rev}^{commit}"
+          RESULT_VARIABLE _found OUTPUT_QUIET ERROR_QUIET)
+        if(NOT _found EQUAL 0)
+          file(MAKE_DIRECTORY "${_kept}")
+          execute_process(COMMAND ${GIT_EXECUTABLE} init -q --bare "${_kept}")
+          # A branch keeps the revision from Git's garbage collection, and
+          # lets other repositories fetch it by its hash.
+          _sms_eclipse_download("${_kept}" "${_url}" "+${_rev}:refs/heads/kept" "${_name}" _found)
+        endif()
+        if(_found EQUAL 0)
+          file(TOUCH "${_kept}/last-used")
+          execute_process(COMMAND ${GIT_EXECUTABLE} -C "${_dir}" fetch -q --depth 1 "${_from}" "${_rev}"
+            RESULT_VARIABLE _rc)
+        endif()
       endif()
-      execute_process(COMMAND ${GIT_EXECUTABLE} -C "${_dir}" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60
-        fetch --progress --depth 1 "${_url}" "${_rev}"
-        RESULT_VARIABLE _rc)
-      if(_rc EQUAL 0)
-        break()
+      if(NOT _rc EQUAL 0)
+        message(STATUS "SMS_ECLIPSE: no kept download of ${_name} to use, downloading it for this build folder")
       endif()
-    endforeach()
+    endif()
+    if(NOT _rc EQUAL 0)
+      _sms_eclipse_download("${_dir}" "${_url}" "${_rev}" "${_name}" _rc)
+    endif()
     if(NOT _rc EQUAL 0)
       message(FATAL_ERROR "SMS_ECLIPSE: could not fetch ${_url} at ${_rev}")
     endif()
@@ -77,6 +140,22 @@ foreach(r ${_eclipse_repos})
     endif()
   endif()
 endforeach()
+# Downloads of revisions no build folder has checked out for 30 days (older
+# game versions') are removed.
+if(_eclipse_git_cache)
+  string(TIMESTAMP _now "%s" UTC)
+  file(GLOB _kept_downloads LIST_DIRECTORIES true "${_eclipse_git_cache}/*.git")
+  foreach(_kept ${_kept_downloads})
+    if(EXISTS "${_kept}/last-used")
+      file(TIMESTAMP "${_kept}/last-used" _used "%s" UTC)
+      math(EXPR _age "${_now} - ${_used}")
+      if(_age GREATER 2592000)
+        message(STATUS "SMS_ECLIPSE: removing ${_kept}, unused for 30 days")
+        file(REMOVE_RECURSE "${_kept}")
+      endif()
+    endif()
+  endforeach()
+endif()
 
 execute_process(COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/platform/mods/eclipse/fixup_sources.py
   "${SMS_ECLIPSE_SRC_DIR}/eclipse" "${SMS_ECLIPSE_SRC_DIR}/bse" "${SMS_ECLIPSE_SRC_DIR}/shi"

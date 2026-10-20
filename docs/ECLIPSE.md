@@ -37,6 +37,7 @@ SMS_DISC_IMAGE="mods/eclipse/Super Mario Eclipse v1.1.0.iso" build-ecl/sms
 
 `-DSMS_ECLIPSE=ON` ([cmake/eclipse.cmake](../cmake/eclipse.cmake)) fetches Eclipse, BSE, [BetterSunshineMoveset](https://github.com/JoshuaMKW/BetterSunshineMoveset) (a third module Eclipse requires) and SunshineHeaderInterface at pinned revisions into the build directory (`SMS_ECLIPSE_SRC_DIR` to put them elsewhere), fixes them up ([fixup_sources.py](../platform/mods/eclipse/fixup_sources.py), which also applies the two patches below) and builds them with clang into the port.
 Nothing of theirs is kept in this repository.
+Each revision is downloaded once, into `SMS_ECLIPSE_GIT_CACHE` (default `build/deps/eclipse-git`; SMS Launcher uses one folder for all its game versions), and each build directory checks it out from there, leaving out BSE's `compiler/` (a Windows clang for its GameCube build). Downloads no build directory has checked out for 30 days are removed; an empty `SMS_ECLIPSE_GIT_CACHE` downloads for each build directory.
 Without it, the build is the plain port: every hook below is in the source but finds nothing registered and runs the original code.
 
 `SMS_ECLIPSE=1 ./build.sh` does the same with the platform setup of `./build.sh`, into `build/<os>-<arch>-eclipse/`.
