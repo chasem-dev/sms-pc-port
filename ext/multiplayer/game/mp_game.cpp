@@ -105,6 +105,7 @@ unsigned s_stageNumber;
 bool s_spectating;
 u32 s_spectateSession;
 int s_spectateArea; // the stage they ran out of lives in: anywhere else, they play again
+bool s_arrivedHere;  // the stage loaded last is being played (its arrival is past)
 int s_watching = -1;  // the slot whose player we watch
 bool s_restarting;    // host: everyone is out, the stage is starting again
 bool s_missReload;    // this stage again after a lost life (or a game over): no new session
@@ -1189,11 +1190,15 @@ void playOthersShineGets()
 	if (!m)
 		return;
 	const bool win = m->mStatus == MARIO_STATUS_WIN_DEMO;
+	// out of play: losing a life (Mario takes no touch then), or not moved at
+	// all (the Shine Get would wait for him to land forever). The host's
+	// game then plays the Shine's exit without him (hostShineExit).
+	const bool out = m->checkFlag(MARIO_FLAG_GAME_OVER | MARIO_FLAG_IS_PERFORMING);
 	int slot, eventId, yaw;
 	float pos[3];
 	while (mpg_next_shine_get(&slot, &eventId, pos, &yaw)) {
-		if (win || s_spectating)
-			continue; // in one already, or watching
+		if (win || s_spectating || out)
+			continue; // in one already, or watching, or out of play
 		TShine* shine = findShine(eventId, pos);
 		if (!shine) {
 			fprintf(stderr, "[multiplayer] %s got Shine %d, which this game does not have\n", mpg_character_name(slot),
@@ -3546,6 +3551,7 @@ void frame()
 	if (s_playing)
 		arrivedStage = s_stageNumber;
 	if (s_arrivedNow) {
+		s_arrivedHere = true;
 		snapshotItems();
 		collectManagers();
 		collectShared();
@@ -3666,6 +3672,7 @@ void stageSetup()
 	if (!enabled())
 		return;
 	s_readyDir = gpMarDirector;
+	s_arrivedHere = false;
 	s_stageNumber++;
 	// the last stage's objects are gone from here on: nothing of theirs is
 	// touched again (the lists of this stage's are made once it plays, and
@@ -3851,7 +3858,10 @@ void afterMovement()
 	} else {
 		steerEnemies(); // those a client's game runs, where it says
 	}
-	if (s_spectating)
+	// not before the stage is played: while it loads, the player watched is
+	// still where they were in the last stage, and Mario would be left there
+	// (out of the world, here) as the arrival brings him back
+	if (s_spectating && s_arrivedHere)
 		spectateTick();
 }
 
