@@ -328,9 +328,51 @@ static bool exitedOk(pid_t pid)
 	return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
+// Versions: their order, and whom a host takes under each policy.
+void versionTests()
+{
+	CHECK(mp_version_compare("2026.10.18.1", "2026.10.18.1") == 0);
+	CHECK(mp_version_compare("2026.10.18.1", "2026.10.18.2") < 0);
+	CHECK(mp_version_compare("2026.10.9.1", "2026.10.18.1") < 0); // numbers, not text
+	CHECK(mp_version_compare("2026.10.18", "2026.10.18.0") == 0); // a missing number counts as 0
+	CHECK(mp_version_compare("2026.11.1.1", "2026.10.30.9") > 0);
+	CHECK(mp_version_compare("1.2.0-beta", "1.2.0") < 0);          // a beta before its release
+	CHECK(mp_version_compare("1.2.0-beta", "1.1.9") > 0);
+	CHECK(mp_version_compare("", "2026.1.1") < 0);
+
+	MpConfig h;
+	memset(&h, 0, sizeof h);
+	snprintf(h.build, sizeof h.build, "%s", "aaaaaaaaaaaa");
+	char why[200];
+	const uint16_t proto = 2; // net/mp_net.cpp's kProtocol
+	// exact (the default): the same build only
+	CHECK(!mp_join_refusal(&h, 0, proto, "aaaaaaaaaaaa", "", "", 0, why, sizeof why));
+	CHECK(mp_join_refusal(&h, 0, proto, "bbbbbbbbbbbb", "", "", 0, why, sizeof why));
+	CHECK(mp_join_refusal(&h, 0, proto + 1, "aaaaaaaaaaaa", "", "", 0, why, sizeof why)); // another protocol, never
+	// drift: another build of the same protocol, but not with Eclipse on one side only
+	h.versions = MP_VERSIONS_DRIFT;
+	CHECK(!mp_join_refusal(&h, 0, proto, "bbbbbbbbbbbb", "", "", 0, why, sizeof why));
+	CHECK(mp_join_refusal(&h, 0, proto + 1, "bbbbbbbbbbbb", "", "", 0, why, sizeof why));
+	CHECK(mp_join_refusal(&h, 0, proto, "bbbbbbbbbbbb-eclipse", "", "", 0, why, sizeof why) && strstr(why, "Eclipse"));
+	// at least a game version: older, unknown and newer
+	snprintf(h.minVersion, sizeof h.minVersion, "%s", "2026.10.18.1");
+	CHECK(mp_join_refusal(&h, 0, proto, "bbbbbbbbbbbb", "2026.10.15.1", "", 0, why, sizeof why) && strstr(why, "or newer"));
+	CHECK(mp_join_refusal(&h, 0, proto, "bbbbbbbbbbbb", "", "", 0, why, sizeof why));
+	CHECK(!mp_join_refusal(&h, 0, proto, "bbbbbbbbbbbb", "2026.10.20.1", "", 0, why, sizeof why));
+	// at least a launcher
+	snprintf(h.minLauncher, sizeof h.minLauncher, "%s", "0.1.62");
+	CHECK(mp_join_refusal(&h, 0, proto, "bbbbbbbbbbbb", "2026.10.20.1", "0.1.61", 0, why, sizeof why) && strstr(why, "launcher"));
+	CHECK(!mp_join_refusal(&h, 0, proto, "bbbbbbbbbbbb", "2026.10.20.1", "0.1.62", 0, why, sizeof why));
+	// the server mods' mod API
+	CHECK(mp_join_refusal(&h, 0x0102, proto, "bbbbbbbbbbbb", "2026.10.20.1", "0.1.62", 0x0101, why, sizeof why) && strstr(why, "1.2"));
+	CHECK(!mp_join_refusal(&h, 0x0102, proto, "bbbbbbbbbbbb", "2026.10.20.1", "0.1.62", 0x0103, why, sizeof why));
+	fprintf(stderr, "[versions] ok\n");
+}
+
 int main()
 {
 	alarm(180); // a failed check in a child must not leave the host waiting forever
+	versionTests();
 	srand((unsigned)time(nullptr) ^ (unsigned)getpid());
 	g_port = 30000 + rand() % 20000;
 	g_onEvent = hostEvent;

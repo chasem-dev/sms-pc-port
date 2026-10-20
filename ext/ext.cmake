@@ -39,6 +39,16 @@ if(NOT _sms_ext_git EQUAL 0 OR NOT _sms_ext_commit)
   set(_sms_ext_commit "unknown")
 endif()
 string(SUBSTRING "${_sms_ext_commit}" 0 12 _sms_ext_build)
+# The game's version, which a multiplayer host may ask a minimum of: the
+# launcher's ("2026.10.18.1", passed as SMS_GAME_VERSION when it starts the
+# game, or here when it builds), else the last commit's date.
+set(SMS_GAME_VERSION "" CACHE STRING "The game's version (the launcher's); empty: the last commit's date")
+set(_sms_ext_version "${SMS_GAME_VERSION}")
+if(NOT _sms_ext_version)
+  execute_process(COMMAND git log -1 --format=%cd --date=format:%Y.%m.%d WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/..
+    OUTPUT_VARIABLE _sms_ext_date OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+  set(_sms_ext_version "${_sms_ext_date}")
+endif()
 if(SMS_ECLIPSE)
   string(APPEND _sms_ext_build "-eclipse")
 endif()
@@ -46,7 +56,7 @@ endif()
 # every toolchain's compiler wrapper (32-bit Windows).
 set(SMS_GAME_BUILD_STRING "${_sms_ext_build}")
 file(CONFIGURE OUTPUT ${CMAKE_BINARY_DIR}/ext-generated/sms_game_build.h
-     CONTENT "#define SMS_GAME_BUILD \"@SMS_GAME_BUILD_STRING@\"\n" @ONLY)
+     CONTENT "#define SMS_GAME_BUILD \"@SMS_GAME_BUILD_STRING@\"\n#define SMS_GAME_VERSION \"@_sms_ext_version@\"\n" @ONLY)
 target_include_directories(sms PRIVATE ${CMAKE_BINARY_DIR}/ext-generated)
 set_property(SOURCE ${SMS_EXT_HOST_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS SMS_HAVE_GAME_BUILD_H=1)
 # for test tools that join this build (ext/multiplayer/tools/mp_shots.py)

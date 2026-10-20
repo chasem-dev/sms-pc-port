@@ -1,8 +1,8 @@
 {
-  "name": "lua mod v1.2.0 (sms-mod-sdk)",
-  "page": "https://github.com/chasem-dev/sms-mod-sdk/releases/tag/v1.2.0",
-  "url": "https://github.com/chasem-dev/sms-mod-sdk/releases/download/v1.2.0/sms-lua-mod-1.2.0.zip",
-  "file": "sms-lua-mod-1.2.0.zip",
-  "md5": "af5ad2058a28e2bd7eade16d2d2f9989",
-  "size": 1297433
+  "name": "lua mod v1.3.0 (sms-mod-sdk)",
+  "page": "https://github.com/chasem-dev/sms-mod-sdk/releases/tag/v1.3.0",
+  "url": "https://github.com/chasem-dev/sms-mod-sdk/releases/download/v1.3.0/sms-lua-mod-1.3.0.zip",
+  "file": "sms-lua-mod-1.3.0.zip",
+  "md5": "643fcd10b8e69b21a894456a4da381e3",
+  "size": 1297918
 }

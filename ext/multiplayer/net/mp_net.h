@@ -65,12 +65,25 @@ typedef struct MpEvent {
 	char name[MP_NAME_LEN];
 } MpEvent;
 
+enum { MP_VERSIONS_EXACT = 0, MP_VERSIONS_DRIFT = 1 };
+
 typedef struct MpConfig {
 	MpRole role;
 	char address[256]; // client: host name or address to join
 	uint16_t port;     // host: port to listen on; client: the host's port
 	char name[MP_NAME_LEN];
-	char build[64];    // both sides must run the same game build
+	char build[64];    // the game's build (its commit, "-eclipse" for Eclipse): the same on both sides unless the
+	                   // host lets versions drift
+	// this game's version (the launcher's, "2026.10.18.1": SMS_GAME_VERSION; empty: not known), the launcher
+	// that started it (SMS_LAUNCHER_VERSION), and the mod API it carries (major << 8 | minor): what a host may ask of
+	// the games that join it
+	char version[32], launcher[32];
+	uint16_t api;
+	// host: whom it takes. MP_VERSIONS_EXACT: its own build only; MP_VERSIONS_DRIFT: any build with the same
+	// protocol and the same Eclipse setting (SMS_MULTIPLAYER_VERSIONS=exact|drift); and at least these versions
+	// of the game and the launcher, when given (SMS_MULTIPLAYER_MIN_VERSION, SMS_MULTIPLAYER_MIN_LAUNCHER)
+	int versions;
+	char minVersion[32], minLauncher[32];
 	// tests: drop this share of incoming packets (0..1), to exercise resends
 	float dropRate;
 	// tests: hold incoming packets this long, give or take up to the jitter
@@ -160,6 +173,17 @@ void mp_set_host_status(const char* status);
 // playing together, at most 15 characters), and whether it is a server
 // rather than a player (probes then count the players without it).
 void mp_set_host_mode(const char* mode, int dedicated);
+// Host: the mod API a joining game must carry at least (major << 8 | minor; 0: any), the server mods' need.
+void mp_set_min_api(uint16_t api);
+// A player's game version, launcher and mod API as their game said when it joined (host; the host's own for
+// slot 0); "" and 0 when not known.
+void mp_player_version(int slot, char* version, int versionSize, char* launcher, int launcherSize, uint16_t* api);
+// Versions "2026.10.18.1" compared a number at a time (a missing one counts as 0): <0, 0 or >0.
+int mp_version_compare(const char* a, const char* b);
+// Host: whether a game of `build`, `version`, `launcher`, `api` may join under `cfg` and the server mods' minimum
+// `minApi`: NULL, or why not (for the player).
+const char* mp_join_refusal(const MpConfig* cfg, uint16_t minApi, uint16_t protocol, const char* build,
+                            const char* version, const char* launcher, uint16_t api, char* why, int whySize);
 // Host: whether players may join now (they are refused, and probes answer
 // "not open", while not); yes until set.
 void mp_set_accepting(int accepting);

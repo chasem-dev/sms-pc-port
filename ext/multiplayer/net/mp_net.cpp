@@ -55,6 +55,7 @@ enum PacketType : uint8_t {
 enum RejectReason : uint8_t {
 	REJECT_FULL = 1,
 	REJECT_BUILD,
+	REJECT_VERSION, // an older game or launcher than the host takes
 	REJECT_CLOSED,
 };
 // Messages the session itself sends (above the game's kinds).
@@ -137,6 +138,8 @@ struct Peer {
 	uint32_t token = 0;
 	uint32_t nonce = 0;
 	char name[MP_NAME_LEN] = {};
+	char version[32] = {}, launcher[32] = {}; // as their game said when it joined
+	uint16_t api     = 0;
 	uint32_t lastHeard     = 0;
 	uint32_t nextSeq       = 1; // ours, outgoing
 	std::deque<Outgoing> out;
@@ -184,6 +187,7 @@ struct Session {
 	uint32_t localStateSeq = 0;
 	std::deque<MpEvent> events;
 	std::string status;
+	uint16_t minApi = 0;       // host: the mod API joining games need (the server mods'), mp_set_min_api
 	std::string mode;          // host: its game mode (a server mod's name; empty: playing together), for the launcher
 	bool dedicated = false;    // host: a server, not a player (left out of the count probes see)
 	std::thread thread;
@@ -642,6 +646,13 @@ void hostPacket(Session& s, const uint8_t* buf, int n, const Address& from, uint
 		// after what older launchers read: the game mode, and whether this is a server
 		w.str(s.mode.c_str(), 15);
 		w.u8((uint8_t)server);
+		// then whom it takes: its version, whether builds may drift, the least game and launcher versions, the
+		// least mod API (the launcher's join check says why before starting the game)
+		w.str(s.cfg.version, 31);
+		w.u8((uint8_t)s.cfg.versions);
+		w.str(s.cfg.minVersion, 31);
+		w.str(s.cfg.minLauncher, 31);
+		w.u16(s.minApi);
 		s.sock.send(out, w.len, from);
 		return;
 	}
@@ -676,12 +687,29 @@ void hostPacket(Session& s, const uint8_t* buf, int n, const Address& from, uint
 			s.sock.send(out, w.len, from);
 			return;
 		}
-		const char* why = nullptr;
-		uint8_t reason  = 0;
-		if (version != kProtocol || strcmp(build, s.cfg.build) != 0) {
-			reason = REJECT_BUILD;
-			why    = "The host is playing a different version of the game. Update both games to the same version.";
+		// after what older games send: their version, launcher and mod API
+		const size_t before = r.pos;
+		const int rejoinSlotPeek = r.u8();
+		const uint32_t rejoinTokenPeek = r.u32();
+		(void)rejoinSlotPeek;
+		(void)rejoinTokenPeek;
+		char theirVersion[32] = "", theirLauncher[32] = "";
+		uint16_t theirApi = 0;
+		if (r.ok && r.pos < r.len) {
+			r.str(theirVersion, sizeof theirVersion);
+			r.str(theirLauncher, sizeof theirLauncher);
+			theirApi = r.u16();
+			if (!r.ok) {
+				theirVersion[0] = theirLauncher[0] = 0;
+				theirApi = 0;
+			}
 		}
+		r.pos = before;
+		r.ok  = true;
+		char whyBuf[200];
+		const char* why = mp_join_refusal(&s.cfg, s.minApi, version, build, theirVersion, theirLauncher, theirApi,
+		                                  whyBuf, sizeof whyBuf);
+		uint8_t reason  = why ? (strstr(why, "or newer") ? REJECT_VERSION : REJECT_BUILD) : 0;
 		if (!why && !s.accepting) {
 			reason = REJECT_CLOSED;
 			why    = "The host is still choosing a save file. Join again once they're playing.";
@@ -731,6 +759,9 @@ void hostPacket(Session& s, const uint8_t* buf, int n, const Address& from, uint
 		p.token     = (uint32_t)s.rng() | 1;
 		p.lastHeard = now;
 		snprintf(p.name, sizeof p.name, "%s", name[0] ? name : "Player");
+		snprintf(p.version, sizeof p.version, "%s", theirVersion);
+		snprintf(p.launcher, sizeof p.launcher, "%s", theirLauncher);
+		p.api = theirApi;
 		PlayerSlot& pl = s.players[slot];
 		pl             = PlayerSlot();
 		pl.present     = true;
@@ -883,6 +914,10 @@ void tick(Session& s, uint32_t now)
 			w.u64(s.connectCookie);
 			w.u8((uint8_t)g_rejoinSlot);
 			w.u32(g_rejoinToken);
+			// what a host may ask of us (an older host reads no further)
+			w.str(s.cfg.version, 31);
+			w.str(s.cfg.launcher, 31);
+			w.u16(s.cfg.api);
 			s.sock.send(out, w.len, s.hostAddr);
 			s.connectLastTry = now;
 		}
@@ -1032,7 +1067,94 @@ extern "C" int mp_config_from_env(MpConfig* cfg, const char* build)
 	cfg->loopback     = local && !strcmp(local, "1");
 	if (const char* t = getenv("SMS_MULTIPLAYER_TIMEOUT"))
 		cfg->timeout = (float)atof(t) > 1.0f ? (float)atof(t) : cfg->timeout;
+	// versions: ours (the launcher says which), and whom a host takes
+	auto text = [](const char* name, char* out, size_t size) {
+		if (const char* v = getenv(name))
+			snprintf(out, size, "%s", v);
+	};
+	text("SMS_GAME_VERSION", cfg->version, sizeof cfg->version);
+	text("SMS_LAUNCHER_VERSION", cfg->launcher, sizeof cfg->launcher);
+	if (const char* v = getenv("SMS_MULTIPLAYER_VERSIONS")) {
+		if (!strcmp(v, "drift"))
+			cfg->versions = MP_VERSIONS_DRIFT;
+		else if (*v && strcmp(v, "exact")) {
+			snprintf(cfg->address, sizeof cfg->address, "SMS_MULTIPLAYER_VERSIONS must be exact or drift, not %s", v);
+			return -1;
+		}
+	}
+	text("SMS_MULTIPLAYER_MIN_VERSION", cfg->minVersion, sizeof cfg->minVersion);
+	text("SMS_MULTIPLAYER_MIN_LAUNCHER", cfg->minLauncher, sizeof cfg->minLauncher);
 	return 1;
+}
+
+extern "C" int mp_version_compare(const char* a, const char* b)
+{
+	// numbers a dot (or dash) apart; text after a number ("1.2.0-beta") counts
+	// before the plain number, so a beta sorts before its release
+	a = a ? a : "";
+	b = b ? b : "";
+	while (*a || *b) {
+		char* ea = nullptr;
+		char* eb = nullptr;
+		const unsigned long na = strtoul(a, &ea, 10), nb = strtoul(b, &eb, 10);
+		if (na != nb)
+			return na < nb ? -1 : 1;
+		a = ea, b = eb;
+		const bool ta = *a && *a != '.', tb = *b && *b != '.';
+		if (ta != tb)
+			return ta ? -1 : 1; // "1-beta" before "1"
+		if (ta && tb) {
+			// both carry text: compare it up to the next dot
+			const size_t la = strcspn(a, "."), lb = strcspn(b, ".");
+			const int c = strncmp(a, b, la < lb ? la : lb);
+			if (c || la != lb)
+				return c ? c : (la < lb ? -1 : 1);
+			a += la, b += lb;
+		}
+		if (*a == '.')
+			a++;
+		if (*b == '.')
+			b++;
+	}
+	return 0;
+}
+
+extern "C" const char* mp_join_refusal(const MpConfig* cfg, uint16_t minApi, uint16_t protocol, const char* build,
+                                       const char* version, const char* launcher, uint16_t api, char* why, int whySize)
+{
+	auto eclipse = [](const char* b) {
+		const size_t n = strlen(b);
+		return n >= 8 && !strcmp(b + n - 8, "-eclipse");
+	};
+	if (protocol != kProtocol) {
+		snprintf(why, (size_t)whySize, "The host is playing a different version of the game. Update both games to the same version.");
+		return why;
+	}
+	if (eclipse(build) != eclipse(cfg->build)) {
+		snprintf(why, (size_t)whySize, "The host has Super Mario Eclipse %s and you have it %s. Both players need the same Eclipse setting.",
+		         eclipse(cfg->build) ? "on" : "off", eclipse(build) ? "on" : "off");
+		return why;
+	}
+	if (cfg->versions == MP_VERSIONS_EXACT && strcmp(build, cfg->build) != 0) {
+		snprintf(why, (size_t)whySize, "The host is playing a different version of the game. Update both games to the same version.");
+		return why;
+	}
+	if (cfg->minVersion[0] && (!version[0] || mp_version_compare(version, cfg->minVersion) < 0)) {
+		snprintf(why, (size_t)whySize, "This game needs game version %s or newer (you have %s). Update your game to join.",
+		         cfg->minVersion, version[0] ? version : "an older one that doesn't say");
+		return why;
+	}
+	if (cfg->minLauncher[0] && (!launcher[0] || mp_version_compare(launcher, cfg->minLauncher) < 0)) {
+		snprintf(why, (size_t)whySize, "This game needs launcher %s or newer (you have %s). Update your launcher to join.",
+		         cfg->minLauncher, launcher[0] ? launcher : "an older one, or none");
+		return why;
+	}
+	if (minApi && api < minApi) {
+		snprintf(why, (size_t)whySize, "This game's mode needs mod API %d.%d or newer (you have %d.%d). Update your game to join.",
+		         minApi >> 8, minApi & 0xFF, api >> 8, api & 0xFF);
+		return why;
+	}
+	return nullptr;
 }
 
 extern "C" int mp_start(const MpConfig* cfg)
@@ -1276,6 +1398,42 @@ extern "C" void mp_set_accepting(int accepting)
 		s.accepting = accepting != 0;
 		return 0;
 	}, 0);
+}
+
+extern "C" void mp_set_min_api(uint16_t api)
+{
+	withSession(
+	    [&](Session& s) {
+		    s.minApi = api;
+		    return 0;
+	    },
+	    0);
+}
+
+extern "C" void mp_player_version(int slot, char* version, int versionSize, char* launcher, int launcherSize, uint16_t* api)
+{
+	if (version && versionSize > 0)
+		version[0] = 0;
+	if (launcher && launcherSize > 0)
+		launcher[0] = 0;
+	if (api)
+		*api = 0;
+	withSession(
+	    [&](Session& s) {
+		    const bool own = slot == s.localSlot;
+		    if (!own && (slot < 1 || slot >= MP_MAX_PLAYERS || s.cfg.role != MP_ROLE_HOST || !s.peers[slot].active))
+			    return 0;
+		    const char* v = own ? s.cfg.version : s.peers[slot].version;
+		    const char* l = own ? s.cfg.launcher : s.peers[slot].launcher;
+		    if (version && versionSize > 0)
+			    snprintf(version, (size_t)versionSize, "%s", v);
+		    if (launcher && launcherSize > 0)
+			    snprintf(launcher, (size_t)launcherSize, "%s", l);
+		    if (api)
+			    *api = own ? s.cfg.api : s.peers[slot].api;
+		    return 0;
+	    },
+	    0);
 }
 
 extern "C" void mp_set_host_mode(const char* mode, int dedicated)

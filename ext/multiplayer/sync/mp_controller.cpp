@@ -24,6 +24,21 @@
 #ifndef SMS_GAME_BUILD
 #define SMS_GAME_BUILD "dev"
 #endif
+#ifndef SMS_GAME_VERSION
+#define SMS_GAME_VERSION ""
+#endif
+// The mod API this game carries, for hosts whose server mods need a newer one
+// (the commands it knows)
+#if defined(__has_include)
+#if __has_include("../../../sdk/include/sms_mod.h")
+#include "../../../sdk/include/sms_mod.h"
+#endif
+#endif
+#ifdef SMS_MOD_API_MAJOR
+#define MP_LOCAL_API ((SMS_MOD_API_MAJOR << 8) | SMS_MOD_API_MINOR)
+#else
+#define MP_LOCAL_API 0
+#endif
 
 namespace mp {
 namespace {
@@ -1606,12 +1621,29 @@ extern "C" void mpg_set_build(const char* build) { g_build = build ? build : SMS
 bool g_started = false;
 extern "C" int mpg_started(void) { return g_started; }
 
+extern "C" void mpg_set_min_client_api(int major, int minor)
+{
+	if (g.role == MPG_ROLE_HOST)
+		mp_set_min_api((uint16_t)((major << 8) | (minor & 0xFF)));
+}
+
+extern "C" void mpg_player_version(int slot, char* version, int size, int* api)
+{
+	uint16_t a = 0;
+	mp_player_version(slot, version, size, nullptr, 0, &a);
+	if (api)
+		*api = a;
+}
+
 extern "C" int mpg_start(void)
 {
 	std::lock_guard<std::mutex> hold(g_lock);
 	g_started = true;
 	MpConfig cfg;
 	int want = mp_config_from_env(&cfg, g_build.c_str());
+	if (!cfg.version[0]) // the launcher says which; else the build's own
+		snprintf(cfg.version, sizeof cfg.version, "%s", SMS_GAME_VERSION);
+	cfg.api = MP_LOCAL_API;
 	if (want == 0)
 		return g.role = MPG_ROLE_OFF;
 	if (want < 0) {

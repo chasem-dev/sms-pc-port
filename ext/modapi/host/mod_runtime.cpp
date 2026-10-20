@@ -548,6 +548,10 @@ bool parseManifest(SmsMod* m, const std::string& path)
 		return false;
 	}
 	m->server   = side == "server";
+	const std::string capi = get("client_api", "");
+	int cmaj = 0, cmin = 0;
+	if (!capi.empty() && sscanf(capi.c_str(), "%d.%d", &cmaj, &cmin) >= 1)
+		m->clientApi = (cmaj << 8) | (cmin & 0xFF);
 	m->runtime  = get("runtime", "");
 	m->script   = get("script", m->runtime.empty() ? "" : ("main." + m->runtime).c_str());
 	m->ini      = kv;
@@ -985,6 +989,9 @@ int apiNetPlayer(int slot, SmsNetPlayer* out)
 		snprintf(p.name, sizeof p.name, "%s", mpg_character_name(slot));
 	p.color = kCharColor[p.character & 7];
 	p.ping  = slot == mpg_slot() ? 0 : mpg_ping(mpg_role() == MPG_ROLE_HOST ? slot : 0);
+	int api = 0;
+	mpg_player_version(slot, p.game_version, sizeof p.game_version, &api);
+	p.api_version = (uint32_t)(api >> 8) << 16 | (uint32_t)(api & 0xFF);
 	if (slot == mpg_slot()) {
 		SmsPlayer me;
 		memset(&me, 0, sizeof me);
@@ -1369,6 +1376,15 @@ void start()
 			tryLoad(m);
 		}
 	s_booting = false;
+	// what the server mods need of the players' games: the host refuses older ones
+	int clientApi = 0;
+	for (SmsMod* m : g_mods)
+		if (m->state == SmsMod::LOADED && m->server && m->clientApi > clientApi)
+			clientApi = m->clientApi;
+	if (clientApi) {
+		mpg_set_min_client_api(clientApi >> 8, clientApi & 0xFF);
+		port_log("[mods] players' games need mod API %d.%d (the server mods' client_api)\n", clientApi >> 8, clientApi & 0xFF);
+	}
 	std::string gameplay;
 	for (SmsMod* m : g_mods)
 		if (m->state == SmsMod::LOADED && m->gameplay)

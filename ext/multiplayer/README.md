@@ -49,7 +49,16 @@ Without the launcher, these variables do the same:
 | `SMS_MARIO_PAINT=dir` | Mario's pictures and their colour regions, for painting the others in their colours (the launcher's `bakePaint` makes it): `paint.txt` and a `.paint` file per texture, described in [`sync/mp_look.cpp`](sync/mp_look.cpp) |
 
 A joining player's game keeps its own memory card out of it: the launcher gives it a `multiplayer-guest` card folder, since what it plays is the host's save. Back at the title with no host to follow (the host left, or refused it), its file select shows that card's files, so a notice says why the host's game ended for it, that these are not the player's own saves, and how to get to those.
-Both games must be the same build (the launcher's game version); a different one is refused with a message saying so.
+By default both games must be the same build (the launcher's game version); a different one is refused with a message saying so. A host may let versions drift instead, and ask for at least some versions:
+
+| Variable | Effect |
+| --- | --- |
+| `SMS_MULTIPLAYER_VERSIONS=drift` | host: take any build of the same protocol and the same Eclipse setting (`exact`, the default: its own build only) |
+| `SMS_MULTIPLAYER_MIN_VERSION=v` | host: and at least game version `v` ("2026.10.18.1"; a game that does not say its version is refused) |
+| `SMS_MULTIPLAYER_MIN_LAUNCHER=v` | host: and at least launcher `v` |
+| `SMS_GAME_VERSION`, `SMS_LAUNCHER_VERSION` | this game's version and the launcher that started it (the launcher sets both); without the first, the build's own (`-DSMS_GAME_VERSION`, else its last commit's date) |
+
+The protocol number must always match. A joining game sends its version, its launcher's and the mod API it carries; the host refuses one that is too old, saying which version it needs, and also refuses games older than its server mods' `client_api` (ext/modapi). Probes carry the host's version and what it takes, after the mode and server byte, so the launcher's join check says so before starting the game. Versions compare a number at a time (`mp_version_compare`), a beta (`1.2.0-beta`) before its release.
 
 ## Servers and server mods
 

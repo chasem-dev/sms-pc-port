@@ -374,6 +374,11 @@ typedef struct MpgNetEvent {
 int mpg_next_net_event(MpgNetEvent* out);
 // mpg_start has run (the role is known, multiplayer or not).
 int mpg_started(void);
+// Host: the mod API joining games must carry at least (the server mods' client_api); 0, 0: any.
+void mpg_set_min_client_api(int major, int minor);
+// A player's game version and mod API (major << 8 | minor), as their game said when it joined (host; the host's
+// own for slot 0): "" and 0 when not known.
+void mpg_player_version(int slot, char* version, int size, int* api);
 
 // Text for the player: the next notice ("Bob joined"), 0 when none;
 // and the list of players for the status panel.
