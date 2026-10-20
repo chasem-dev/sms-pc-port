@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <map>
+#include <vector>
 
 #include "../../../platform/gx/src/third_party/stb_easy_font.h"
 
@@ -26,6 +27,9 @@ std::vector<SmsRect> s_clips;
 bool s_drawing = false;
 float s_w = 640, s_h = 480;
 float s_used[9]; // each anchor's panels so far this frame
+// the panels each column (left, middle, right) gave out this frame, from any
+// of its three anchors: a top stack and a bottom stack must not meet
+std::vector<SmsRect> s_taken[3];
 std::map<SmsMod*, bool> s_warned;
 
 struct ImageInfo {
@@ -530,8 +534,12 @@ int apiHudSlot(SmsMod*, int anchor, float w, float h, SmsRect* out)
 		y = s_h * 0.32f + s_used[anchor];
 	if (y < 0 || y + h > s_h)
 		return 0;
+	for (const SmsRect& r : s_taken[col])
+		if (y < r.y + r.h + kGap && y + h + kGap > r.y)
+			return 0; // into another anchor's panels on this side
 	s_used[anchor] += h + kGap;
 	*out = SmsRect{x, y, w, h};
+	s_taken[col].push_back(*out);
 	return 1;
 }
 
@@ -553,6 +561,8 @@ void drawBegin()
 	s_b.clear();
 	s_clips.clear();
 	memset(s_used, 0, sizeof s_used);
+	for (auto& t : s_taken)
+		t.clear();
 	s_drawing = true;
 }
 
