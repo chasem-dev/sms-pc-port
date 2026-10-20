@@ -35,6 +35,8 @@ void modg_state(SmsGameState* out);
 int32_t modg_flag_get(uint32_t id);
 void modg_flag_set(uint32_t id, int32_t value);
 int modg_warp(int area, int episode);
+int modg_cube_count(int set);
+int modg_in_cube(int set, int index, float x, float y, float z); /* -1: no such cube */
 SmsObject modg_find_object(const char* name);
 const char* modg_object_name(SmsObject obj);
 int modg_object_position(SmsObject obj, SmsVec3* out);

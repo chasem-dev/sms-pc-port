@@ -6,6 +6,7 @@
 // Platform code: C++11 and the host's libraries; every entry point runs on the
 // game thread, the log on any.
 #include "mod_host.h"
+#include "../../multiplayer/mp_game_api.h"
 
 #include "port_warp.h"
 #include "sms_gx/gx_pc.h"
@@ -16,6 +17,7 @@
 #define SMS_GAME_BUILD "unknown"
 #endif
 
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -540,6 +542,12 @@ bool parseManifest(SmsMod* m, const std::string& path)
 	m->priority    = atoi(get("priority", "0").c_str());
 	const std::string gp = get("gameplay", "0");
 	m->gameplay = gp == "1" || gp == "on" || gp == "yes" || gp == "true";
+	const std::string side = get("side", "local");
+	if (side != "local" && side != "server") {
+		m->error = "its side \"" + side + "\" is neither local nor server";
+		return false;
+	}
+	m->server   = side == "server";
 	m->runtime  = get("runtime", "");
 	m->script   = get("script", m->runtime.empty() ? "" : ("main." + m->runtime).c_str());
 	m->ini      = kv;
@@ -858,10 +866,13 @@ const char* apiAreaName(int area)
 	return it == s_areaNames.end() ? "" : it->second.c_str();
 }
 
+int apiInCube(int set, int index, const SmsVec3* p) { return p ? modg_in_cube(set, index, p->x, p->y, p->z) : -1; }
+
 const SmsGameApi s_game = {
 	sizeof(SmsGameApi), apiState,        modg_flag_get,       modg_flag_set,         apiCoins,
 	apiLives,           apiShines,       apiBlueCoins,        apiHasShine,           modg_warp,
 	modg_find_object,   modg_object_name, modg_object_position, modg_object_set_position, apiAreaName,
+	modg_cube_count,    apiInCube,
 };
 
 int apiPlayerGet(SmsPlayer* out)
@@ -937,6 +948,122 @@ const char* apiNativeBuild(void)
 }
 
 const SmsNativeApi s_native = {sizeof(SmsNativeApi), apiNativeBuild, modg_native};
+
+// ------------------------------------------------------------------ the API: multiplayer
+
+// Each character's colour, for text about them (SMS_NET_CHAR_*).
+const SmsColor kCharColor[SMS_NET_MAX_PLAYERS] = {
+	SMS_RGB(255, 64, 64),  SMS_RGB(64, 208, 96),  SMS_RGB(255, 208, 32), SMS_RGB(200, 200, 216),
+	SMS_RGB(255, 255, 255), SMS_RGB(192, 112, 255), SMS_RGB(255, 154, 48), SMS_RGB(128, 216, 255),
+};
+
+int apiNetRole(void) { return mpg_role(); }
+int apiNetDedicated(void) { return mpg_dedicated(); }
+int apiNetLocalSlot(void) { return mpg_slot(); }
+
+uint32_t apiNetPlayers(void)
+{
+	uint32_t bits = 0;
+	for (int i = 0; i < SMS_NET_MAX_PLAYERS; i++)
+		if (mpg_player_present(i))
+			bits |= 1u << i;
+	return bits;
+}
+
+int apiNetPlayer(int slot, SmsNetPlayer* out)
+{
+	if (!out || slot < 0 || slot >= SMS_NET_MAX_PLAYERS || !mpg_player_present(slot))
+		return 0;
+	SmsNetPlayer p;
+	memset(&p, 0, sizeof p);
+	p.size      = sizeof p;
+	p.slot      = slot;
+	p.server    = mpg_dedicated() && slot == 0;
+	p.character = mpg_character(slot);
+	mpg_player_name(slot, p.name, sizeof p.name);
+	if (!p.name[0])
+		snprintf(p.name, sizeof p.name, "%s", mpg_character_name(slot));
+	p.color = kCharColor[p.character & 7];
+	p.ping  = slot == mpg_slot() ? 0 : mpg_ping(mpg_role() == MPG_ROLE_HOST ? slot : 0);
+	if (slot == mpg_slot()) {
+		SmsPlayer me;
+		memset(&me, 0, sizeof me);
+		me.size = sizeof me;
+		if (modg_player_get(&me)) {
+			p.position = me.position;
+			p.yaw      = me.yaw;
+			p.flags    = (p.server ? 0 : SMS_NETP_VISIBLE) | (me.on_yoshi ? SMS_NETP_YOSHI : 0);
+		}
+		p.in_stage = mpg_role() == MPG_ROLE_HOST ? mpg_player_arrived(slot) : mpg_session() != 0;
+	} else {
+		MpgPose pose;
+		float age = 0;
+		if (mpg_pose(slot, &pose, &age)) {
+			p.position.x = pose.mtx[0][3];
+			p.position.y = pose.mtx[1][3];
+			p.position.z = pose.mtx[2][3];
+			p.yaw        = atan2f(pose.mtx[0][2], pose.mtx[2][2]) * (180.0f / 3.14159265f);
+			p.flags = (pose.flags & MPG_POSE_VISIBLE ? SMS_NETP_VISIBLE : 0) | (pose.more & MPG_POSE2_SURF ? SMS_NETP_SURFING : 0)
+			          | (pose.flags & MPG_POSE_YOSHI ? SMS_NETP_YOSHI : 0)
+			          | (pose.flags & MPG_POSE_SPECTATING ? SMS_NETP_SPECTATING : 0)
+			          | (pose.more & MPG_POSE2_PAUSED ? SMS_NETP_PAUSED : 0) | (pose.flags & MPG_POSE_DEMO ? SMS_NETP_CUTSCENE : 0);
+		}
+		p.in_stage = mpg_role() == MPG_ROLE_HOST ? mpg_player_arrived(slot) : pose.session == mpg_session() && pose.session;
+	}
+	const uint32_t n = out->size && out->size < sizeof p ? out->size : (uint32_t)sizeof p;
+	memcpy(out, &p, n);
+	out->size = n;
+	return 1;
+}
+
+uint32_t apiNetSession(void) { return mpg_session(); }
+
+uint32_t apiNetSend(uint32_t to, const SmsCmd* cmd)
+{
+	if (!cmd || mpg_role() != MPG_ROLE_HOST)
+		return 0;
+	MpgCmd c;
+	memset(&c, 0, sizeof c);
+	c.type    = (uint8_t)(cmd->type <= MPG_CMD_LAST ? cmd->type : 0);
+	c.flags   = (uint8_t)(cmd->flags & SMS_CMD_STICKY ? MPG_CMD_STICKY : 0);
+	c.delayMs = cmd->delay_ms;
+	memcpy(c.i, cmd->i, sizeof c.i);
+	memcpy(c.f, cmd->f, sizeof c.f);
+	if (cmd->text)
+		snprintf(c.text, sizeof c.text, "%s", cmd->text);
+	if (!c.type) {
+		log(current(), SMS_LOG_WARN, "net->send: no command of type %u", (unsigned)cmd->type);
+		return 0;
+	}
+	return mpg_server_send(to, &c);
+}
+
+int apiNetLoadStage(int area, int episode) { return mpg_server_load_stage(area, episode); }
+void apiNetSetMode(const char* name) { mpg_server_mode(name); }
+void apiNetSetStatus(const char* text) { mpg_server_status(text); }
+
+const SmsNetApi s_net = {
+	sizeof(SmsNetApi), apiNetRole, apiNetDedicated, apiNetLocalSlot, apiNetPlayers,  apiNetPlayer,
+	apiNetSession,     apiNetSend, apiNetLoadStage, apiNetSetMode,   apiNetSetStatus,
+};
+
+// What the multiplayer game says happened, to every mod.
+void netEvents()
+{
+	MpgNetEvent e;
+	while (mpg_next_net_event(&e)) {
+		if (e.type == MPG_NET_SESSION) {
+			SmsEvNetSession ev = {e.area, e.episode, e.session};
+			modh_dispatch(SMS_EV_NET_SESSION, &ev, sizeof ev);
+			continue;
+		}
+		static const uint32_t kType[] = {0, SMS_EV_NET_PLAYER_JOINED, SMS_EV_NET_PLAYER_LEFT, SMS_EV_NET_PLAYER_ARRIVED};
+		if (e.type < 1 || e.type > 3)
+			continue;
+		SmsEvNetPlayer ev = {e.slot, e.name[0] ? e.name : mpg_character_name(e.slot), mpg_character(e.slot)};
+		modh_dispatch(kType[e.type], &ev, sizeof ev);
+	}
+}
 
 // ------------------------------------------------------------------ the API: input
 
@@ -1217,6 +1344,12 @@ void start()
 			m->state = SmsMod::OFF;
 			m->error = "switched off in the Mods menu";
 		}
+	// a server mod runs where multiplayer is hosted; the players need nothing
+	for (SmsMod* m : g_mods)
+		if (m->state == SmsMod::FOUND && m->server && mpg_role() != MPG_ROLE_HOST) {
+			m->state = SmsMod::OFF;
+			m->error = "a server mod: it runs when this game hosts multiplayer";
+		}
 	order();
 	port_log("[mods] API %d.%d: %zu native mod(s) in %s (%s); settings in %s\n", SMS_MOD_API_MAJOR, SMS_MOD_API_MINOR,
 	         g_mods.size(), s_root.c_str(), platformDir(), dataRoot().c_str());
@@ -1278,6 +1411,7 @@ namespace modhost {
 const SmsApi g_api = {
 	sizeof(SmsApi), SMS_MOD_API_MAJOR, SMS_MOD_API_MINOR, &s_core,   &s_game,  &s_player,
 	&s_camera,      &g_drawApi,        &s_input,          &s_config, &s_audio, &s_native,
+	&s_net,
 };
 
 void log(SmsMod* mod, int level, const char* fmt, ...)
@@ -1511,6 +1645,10 @@ void settingSet(SmsMod* m, const std::string& key, const std::string& value)
 
 extern "C" void modh_frame(uint32_t frame, int mode)
 {
+	// once multiplayer has started (its role decides which mods run, and what
+	// api->net says while they load)
+	if (!s_started && !mpg_started() && frame < 300) // (a build without multiplayer: not for long)
+		return;
 	if (!s_started)
 		start();
 	s_frame = frame;
@@ -1543,6 +1681,7 @@ extern "C" void modh_frame(uint32_t frame, int mode)
 	if (s_hot && frame % 30 == 0)
 		hotReload();
 
+	netEvents();
 	SmsEvFrame fe = {frame, mode};
 	modh_dispatch(SMS_EV_FRAME, &fe, sizeof fe);
 	drawBegin();

@@ -12,6 +12,7 @@
 #include "port_framerate.h"
 
 #include <Camera/Camera.hpp>
+#include <Camera/CubeManagerBase.hpp>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
 #include <JSystem/JDrama/JDRPlacement.hpp>
 #include <MSound/MSound.hpp>
@@ -361,6 +362,42 @@ extern "C" int modg_warp(int area, int episode)
 		return 0;
 	gpMarDirector->setNextStage((u16)(((area + 1) << 8) | episode), 0);
 	return 1;
+}
+
+// The stage's cube sets (SmsCubeSet's order).
+static TCubeManagerBase* cubeSet(int set)
+{
+	if (!s_stageReady)
+		return nullptr;
+	switch (set) {
+	case 0: return gpCubeCamera;
+	case 1: return gpCubeArea;
+	case 2: return gpCubeFastA;
+	case 3: return gpCubeFastB;
+	case 4: return gpCubeFastC;
+	case 5: return gpCubeMirror;
+	case 6: return gpCubeWire;
+	case 7: return gpCubeStream;
+	case 8: return gpCubeShadow;
+	case 9: return gpCubeSoundChange;
+	case 10: return gpCubeSoundEffect;
+	default: return nullptr;
+	}
+}
+
+extern "C" int modg_cube_count(int set)
+{
+	TCubeManagerBase* c = cubeSet(set);
+	return c ? (int)c->unk10 : 0;
+}
+
+extern "C" int modg_in_cube(int set, int index, float x, float y, float z)
+{
+	TCubeManagerBase* c = cubeSet(set);
+	if (!c || index < 0 || index >= (int)c->unk10)
+		return -1;
+	Vec v = {x, y, z};
+	return c->isInCube(v, index) ? 1 : 0;
 }
 
 extern "C" SmsObject modg_find_object(const char* name)

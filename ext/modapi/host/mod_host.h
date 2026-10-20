@@ -25,6 +25,7 @@ struct SmsMod {
 	int priority = 0;
 	bool gameplay = false; // changes how the game plays (multiplayer needs it on every side)
 	std::string runtime, script; // a script mod: run by the native mod hosting `runtime`
+	bool server = false;  // side = server: runs only in a game hosting multiplayer (api->net's commands reach the players)
 	std::map<std::string, std::string> ini; // every key of mod.ini
 	// where it is
 	std::string dir, libPath, loadedPath, dataDir;

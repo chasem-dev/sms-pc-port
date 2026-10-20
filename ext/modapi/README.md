@@ -19,6 +19,8 @@ Keys come from the SDL event pump (`GXPC_SetKeyHook`, in `PADRead` on the game t
 
 Script mods (`runtime = <name>` in `mod.ini`) have no library: `loadScript` hands them to the native mod that called `core->host_runtime` for that runtime (the lua mod, the SDK's `lua/`, an optional install: `tools/mods/get.py lua`), after every native mod has loaded; a host's script mods stop before it unloads and start again when it is back (`startWaitingScripts`).
 
+Multiplayer (`api->net`, API 1.2) is the multiplayer extension's, through [`mp_game_api.h`](../multiplayer/mp_game_api.h): the players and where they are, and on the host the server commands, a stage for everyone, the mode's name and state for the launcher's list ([ext/multiplayer/README.md](../multiplayer/README.md#servers-and-server-mods)). What it hears (joined, left, arrived, a new session) becomes `SMS_EV_NET_*` at the top of each frame. A mod whose `mod.ini` says `side = server` loads only in a game hosting multiplayer (in any other it is listed, off, saying so); mods load once multiplayer has started, so its role is known while they load.
+
 Ownership: every subscription, service, key binding, option, image and the input capture is recorded against its mod, so unloading a mod (exit, the Mods menu, hot reload) drops all of it before the library is closed.
 Handlers added or removed during a dispatch take effect when it ends.
 
