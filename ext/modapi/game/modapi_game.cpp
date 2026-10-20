@@ -192,10 +192,10 @@ int hidePlayerModel(void* m)
 
 void padRead(void* status) { modh_pad_read((SmsPadStatus*)status); }
 
-void demoCamera(const char* name, const float* pos, int frames, float, int, int, void* actor, unsigned)
+int demoCamera(const char* name, const float* pos, int frames, float, int, int, void* actor, unsigned)
 {
 	if (!modh_wants(SMS_EV_CUTSCENE))
-		return;
+		return 0;
 	SmsEvCutscene ev;
 	ev.name         = name ? name : "";
 	ev.has_position = pos != 0;
@@ -206,6 +206,7 @@ void demoCamera(const char* name, const float* pos, int frames, float, int, int,
 	ev.frames = frames;
 	ev.actor  = actor ? obj((JDrama::TActor*)actor) : 0;
 	modh_dispatch(SMS_EV_CUTSCENE, &ev, sizeof ev);
+	return 0; // mods hear of it; none leaves it out
 }
 
 void pollutionClean(float x, float y, float z, float size)
@@ -318,15 +319,40 @@ void shineCollected(int shine, int total)
 	modh_dispatch(SMS_EV_SHINE_COLLECTED, &ev, sizeof ev);
 }
 
-PortExtension s_extension = {
-	"modapi",        frame,          afterMovement,   stageSetup,  allowNextStage, moveStage,
-	missNextArea,    takeGameOver,   keepCoinsOnMiss, afterFileSelect, itemTaken,  allowSaveStates,
-	saveStatesOffReason, hidePlayerModel, padRead,    demoCamera,  pollutionClean, objectMove,
-	objectHit,       camera,         playerStatus,    playerDamage, shineCollected,
-};
+// Filled by name, so a hook added to PortExtension anywhere (main's
+// particleEmit, before the mod API's) never shifts these into the wrong places.
+PortExtension s_extension;
 
 struct Register {
-	Register() { port_ext_register(&s_extension); }
+	Register()
+	{
+		memset(&s_extension, 0, sizeof s_extension);
+		PortExtension& e      = s_extension;
+		e.name                = "modapi";
+		e.frame               = frame;
+		e.afterMovement       = afterMovement;
+		e.stageSetup          = stageSetup;
+		e.allowNextStage      = allowNextStage;
+		e.moveStage           = moveStage;
+		e.missNextArea        = missNextArea;
+		e.takeGameOver        = takeGameOver;
+		e.keepCoinsOnMiss     = keepCoinsOnMiss;
+		e.afterFileSelect     = afterFileSelect;
+		e.itemTaken           = itemTaken;
+		e.allowSaveStates     = allowSaveStates;
+		e.saveStatesOffReason = saveStatesOffReason;
+		e.hidePlayerModel     = hidePlayerModel;
+		e.padRead             = padRead;
+		e.demoCamera          = demoCamera;
+		e.pollutionClean      = pollutionClean;
+		e.objectMove          = objectMove;
+		e.objectHit           = objectHit;
+		e.camera              = camera;
+		e.playerStatus        = playerStatus;
+		e.playerDamage        = playerDamage;
+		e.shineCollected      = shineCollected;
+		port_ext_register(&s_extension);
+	}
 } s_register;
 
 } // namespace
