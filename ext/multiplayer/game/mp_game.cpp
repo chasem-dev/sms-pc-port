@@ -29,8 +29,12 @@
 #include <GC2D/GCConsole2.hpp>
 #include <GC2D/ScrnFader.hpp>
 #include <GC2D/SelectMenu.hpp>
+#include <MSound/MSound.hpp>
 #include <MSound/MSoundBGM.hpp>
+#include <MSound/MSoundSE.hpp>
 #include <JSystem/JKernel/JKRHeap.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DJoint.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DSys.hpp>
 #include <M3DUtil/M3UModelMario.hpp>
 #include <M3DUtil/MActor.hpp>
 #include <Enemy/FruitsBoat.hpp>
@@ -44,11 +48,14 @@
 #include <JSystem/JUtility/JUTTexture.hpp>
 #include <JSystem/J2D/J2DPicture.hpp>
 #include <Camera/Camera.hpp>
+#include <Camera/CameraMapTool.hpp>
 #include <MoveBG/MapObjCorona.hpp>
 #include <MoveBG/Item.hpp>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
 #include <MoveBG/ItemManager.hpp>
 #include <NPC/NpcBase.hpp>
+#include <MoveBG/MapObjBall.hpp>
+#include <MoveBG/MapObjHide.hpp>
 #include <MoveBG/MapObjManager.hpp>
 #include <MoveBG/MapObjTown.hpp>
 #include <Player/ModelWaterManager.hpp>
@@ -94,6 +101,7 @@ uint8_t s_itemAlive[kMaxItems]; // the stage's own items, alive when it started
 int s_itemCount;
 uint8_t s_itemLive[kMaxItems]; // every item, alive last frame
 int s_takenAtSeen;             // the session's taken-at list, looked at so far
+int s_fxSent[2], s_fxShown[MPG_MAX_PLAYERS][2]; // debug: effects sent and shown lately
 int s_lastCoins = -1;          // the coin count after the last sync (the 100-coin Shine)
 TMpPuppet* s_puppets[MPG_MAX_PLAYERS];
 int s_clock; // frames since the game started
@@ -384,11 +392,31 @@ void removeItem(TItem* item)
 	}
 }
 
+const uint32_t kErasedKey = 0x80000000u; // a taken-list key: a graffiti's change (| number << 24 | manager << 16 | index)
+void changeGraffiti(uint32_t where, int changes); // shared objects, below
+
 void takeRemovals()
 {
 	uint32_t key;
 	TItemManager* mgr = items();
+	// graffiti changes, the newest of each (a session's list comes all at once)
+	uint32_t graffitiWhere[32];
+	int graffitiChanges[32], graffitiCount = 0;
 	while (mpg_next_removal(&key)) {
+		if (key & kErasedKey) {
+			const uint32_t where = key & 0x00FFFFFFu;
+			const int changes    = (int)(key >> 24 & 0x7F);
+			int k                = 0;
+			while (k < graffitiCount && graffitiWhere[k] != where)
+				k++;
+			if (k == graffitiCount && graffitiCount < 32) {
+				graffitiWhere[graffitiCount]     = where;
+				graffitiChanges[graffitiCount++] = changes;
+			} else if (k < graffitiCount && changes > graffitiChanges[k]) {
+				graffitiChanges[k] = changes;
+			}
+			continue;
+		}
 		const int index = (int)(key & 0xFFFF);
 		if (!mgr || index >= mgr->getObjNum())
 			continue;
@@ -397,12 +425,17 @@ void takeRemovals()
 			continue;
 		removeItem(static_cast<TItem*>(a));
 	}
+	for (int k = 0; k < graffitiCount; k++)
+		changeGraffiti(graffitiWhere[k], graffitiChanges[k]);
 }
+
+void hideTakenBlueCoins(const int32_t* before); // shared objects, below
 
 // After the flags were shared: the Shines and blue coins someone else got
 // leave this stage too.
 void takeCollectedBy(const int32_t* before)
 {
+	hideTakenBlueCoins(before);
 	TItemManager* mgr = items();
 	if (!mgr)
 		return;
@@ -441,9 +474,28 @@ void syncFlags()
 			s_flagIds[i] = mpg_flag_id(i);
 	}
 	static int32_t before[kMaxFlags];
-	for (int i = 0; i < s_flagCount; i++)
+	int livesAt = -1;
+	for (int i = 0; i < s_flagCount; i++) {
 		before[i] = s_flags[i] = fm->getFlag(s_flagIds[i]);
+		if (s_flagIds[i] == 0x20001)
+			livesAt = i;
+	}
 	const s32 coinsHere = fm->getFlag(0x40002); // with this frame's own pickups
+	// Every 50 coins is a life (TMario::getCoin): the game gives it when its
+	// own pickup makes the count a multiple of 50, but the count is
+	// everyone's, so the others' coins take it past 50 with nobody's pickup
+	// landing on it (no life), or two games land on it at once (two). The
+	// game's own are taken back here, and the host gives one for each 50 the
+	// shared count passes, once (below).
+	int ownCoinLives = 0;
+	if (inStage() && s_lastCoins >= 0 && coinsHere > s_lastCoins)
+		ownCoinLives = coinsHere / 50 - s_lastCoins / 50;
+	if (ownCoinLives > 0 && livesAt >= 0) {
+		s_flags[livesAt] -= ownCoinLives;
+		if (getenv("SMS_MULTIPLAYER_DEBUG"))
+			fprintf(stderr, "[multiplayer] coins %d -> %d here: this game's own 50-coin life taken back (the host gives it)\n",
+			        (int)s_lastCoins, (int)coinsHere);
+	}
 	mpg_flags_sync(s_flags);
 	bool counts = false, hud = false;
 	for (int i = 0; i < s_flagCount; i++) {
@@ -480,6 +532,20 @@ void syncFlags()
 		fprintf(stderr, "[multiplayer] the coins passed 100 (%d): the 100-coin Shine comes out\n", (int)coins);
 		gpItemManager->makeShineAppearWithDemo("シャイン（１００枚コイン用）", "シャイン（１００枚コイン用）カメラ", at.x, at.y,
 		                                       at.z);
+	}
+	// a life for each 50 the shared count passed: the host's to give (the
+	// others' come with its lives); everyone hears it, as the game plays it
+	// (the game that landed on it played it already)
+	const int passed = inStage() && s_lastCoins >= 0 && coins > s_lastCoins ? coins / 50 - s_lastCoins / 50 : 0;
+	if (passed > 0) {
+		if (s_role == MPG_ROLE_HOST && livesAt >= 0) {
+			fm->incMario(passed);
+			s_flags[livesAt] = fm->getFlag(0x20001);
+			hud              = true;
+			fprintf(stderr, "[multiplayer] the coins passed %d (%d): a life for everyone\n", coins / 50 * 50, (int)coins);
+		}
+		if (ownCoinLives <= 0)
+			SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_1UP, 0, nullptr, 0);
 	}
 	if (inStage())
 		s_lastCoins = coins;
@@ -527,6 +593,55 @@ bool MpHostPaused()
 	       && (pose.more & MPG_POSE2_PAUSED);
 }
 
+// Mario's head and waist controls (MarioDraw.cpp's MarioHeadCtrl and
+// MarioWaistCtrl): TMario::calcAnim sets them on his joints just for his
+// calc, and takes them off again, so they are picked up from there, by a
+// callback of ours on his root joint (the first one calculated).
+J3DNodeCallBack s_marioHeadCtrl, s_marioWaistCtrl;
+
+static BOOL pickUpMarioCtrls(J3DNode*, BOOL)
+{
+	TMario* m = gpMarioForCallBack;
+	if (!m || !m->getM3UModel())
+		return TRUE;
+	J3DModelData* data = m->getM3UModel()->getModel()->getModelData();
+	if (m->mJointIdHead < data->getJointNum())
+		if (J3DNodeCallBack c = data->getJointNodePointer(m->mJointIdHead)->getCallBack())
+			s_marioHeadCtrl = c;
+	if (m->mJointIdChnChest < data->getJointNum())
+		if (J3DNodeCallBack c = data->getJointNodePointer(m->mJointIdChnChest)->getCallBack())
+			s_marioWaistCtrl = c;
+	return TRUE;
+}
+
+// The turn one of those adds to his animation this frame, which a puppet's
+// model, without them, cannot work out: the control run once more over
+// nothing. They only read Mario (the waist's writes what it wrote this frame
+// already).
+static void captureJointTurn(TMario* m, u16 joint, J3DNodeCallBack ctrl, int16_t out[4])
+{
+	out[0] = out[1] = out[2] = 0;
+	out[3]                   = 32767;
+	J3DModelData* data       = m->getM3UModel()->getModel()->getModelData();
+	if (!ctrl || joint >= data->getJointNum())
+		return;
+	Mtx saved;
+	MTXCopy(J3DSys::mCurrentMtx, saved);
+	TMario* was        = gpMarioForCallBack;
+	gpMarioForCallBack = m;
+	MTXIdentity(J3DSys::mCurrentMtx);
+	ctrl(data->getJointNodePointer(joint), 0);
+	f32 q[4];
+	MpMtxToQuat(J3DSys::mCurrentMtx, q);
+	gpMarioForCallBack = was;
+	MTXCopy(saved, J3DSys::mCurrentMtx);
+	if (q[3] < 0.0f)
+		for (int i = 0; i < 4; i++)
+			q[i] = -q[i];
+	for (int i = 0; i < 4; i++)
+		out[i] = (int16_t)lroundf((q[i] < -1.0f ? -1.0f : q[i] > 1.0f ? 1.0f : q[i]) * 32767.0f);
+}
+
 void MpCapturePose(TMario* m, MpgPose* out)
 {
 	MpgPose& p = *out;
@@ -557,6 +672,11 @@ void MpCapturePose(TMario* m, MpgPose* out)
 	// surfing on a Blooper: the game draws it with Mario (TMario::entryModels)
 	if (m->checkStatusType(MARIO_STATUS_FLAG_UNK10000) && m->mSurfGesso)
 		p.more |= MPG_POSE2_SURF | (u8)((m->mSurfGessoType & 3) << 2);
+	// riding the coaster car (drawn with Mario: TMario::entryModels)
+	if (m->mStatus == MARIO_STATUS_TOROCCO && m->mTorocco) {
+		p.more |= MPG_POSE2_COASTER;
+		p.coasterAngle = m->mToroccoAngle;
+	}
 	memcpy(p.mtx, mm->getModel()->getBaseTRMtx(), sizeof p.mtx);
 	p.bodyBck    = mm->unk24[0].unk4[0];
 	p.bodyFrame  = mm->getFrameCtrl(0).getFrame();
@@ -577,8 +697,18 @@ void MpCapturePose(TMario* m, MpgPose* out)
 		p.hand = 1;
 	else
 		p.hand = 2;
+	J3DJoint* root = body->getJointNodePointer(0);
+	if (!root->getCallBack())
+		root->setCallBack(&pickUpMarioCtrls);
+	captureJointTurn(m, m->mJointIdHead, m->isMario() ? s_marioHeadCtrl : nullptr, p.headTurn);
+	captureJointTurn(m, m->mJointIdChnChest, s_marioWaistCtrl, p.waistTurn);
 	if (TWaterGun* gun = m->mWaterGun) {
 		p.nozzle = gun->mCurrentNozzle;
+		if (gun->mCurrentNozzle < 6 && gun->mNozzleList[gun->mCurrentNozzle])
+			p.gunAngle = gun->mNozzleList[gun->mCurrentNozzle]->getGunAngle();
+		p.hoverTiltL = (int16_t)gun->getNozzleSpeedY();
+		p.hoverTiltR = (int16_t)gun->getNozzleSpeedZ();
+		p.propAngle  = gun->getHoverAngle();
 		if (MActor* f = gun->mFluddModel) {
 			p.fluddBck = (u16)f->getCurAnmIdx(ANM_TYPE_BCK);
 			if (J3DFrameCtrl* fc = f->getFrameCtrl(ANM_TYPE_BCK))
@@ -623,6 +753,12 @@ static const u16 kDrawnWater = 0x8000;
 // Its drops carry kDrawnWater: they do not hit NPCs or map objects here
 // (that player's own game sends the hits it lands, mp_game.cpp's
 // objectHit), so nothing is hit twice.
+void MpCountEffect(int slot, bool ongoing)
+{
+	if (slot >= 0 && slot < MPG_MAX_PLAYERS)
+		s_fxShown[slot][ongoing]++;
+}
+
 void MpEmitWater(const MpgPose& p, f32* carry)
 {
 	TMario* m = gpMarioOriginal;
@@ -666,6 +802,16 @@ void MpEmitWater(const MpgPose& p, f32* carry)
 
 namespace {
 
+// The player's effects so far (effects, below).
+int s_fxMoving;                     // inside Mario's move (objectMove)
+MpgFx s_fxTick[MPG_MAX_FX];         // this tick's ongoing ones so far
+int s_fxTickCount;
+MpgFx s_fxOngoing[MPG_MAX_FX];      // the last whole tick's
+int s_fxOngoingCount;
+MpgFx s_fxShots[MPG_MAX_FX];        // the newest asked for once, oldest first
+int s_fxShotCount;
+uint8_t s_fxShotSeq;
+
 void sendPose()
 {
 	MpgPose p;
@@ -674,8 +820,14 @@ void sendPose()
 		p.more |= MPG_POSE2_ON_TUB;
 	if (MpPausedHere())
 		p.more |= MPG_POSE2_PAUSED;
-	if (p.flags & MPG_POSE_VISIBLE)
+	if (p.flags & MPG_POSE_VISIBLE) {
 		MpMeasureSmoothness(mpg_slot(), p);
+		p.fxCount = (uint8_t)s_fxOngoingCount;
+		memcpy(p.fx, s_fxOngoing, sizeof p.fx);
+	}
+	p.shotCount = (uint8_t)s_fxShotCount;
+	p.shotSeq   = s_fxShotSeq;
+	memcpy(p.shots, s_fxShots, sizeof p.shots);
 	mpg_set_pose(&p);
 }
 
@@ -756,7 +908,7 @@ void followHost(TMarDirector* dir)
 		static int told;
 		if (told++ % (5 * fps) == 0) {
 			char text[128];
-			snprintf(text, sizeof text, "%s is choosing an episode of %s", mpg_character_name(0), worldName(area));
+			snprintf(text, sizeof text, "%s is choosing an episode of %s", mpg_display_name(0), worldName(area));
 			showNotice(text);
 		}
 		return;
@@ -856,7 +1008,7 @@ void selectFrame()
 	}
 	if (s_selectFrames++ == 0) {
 		char text[128];
-		snprintf(text, sizeof text, "%s is choosing the episode", mpg_character_name(0));
+		snprintf(text, sizeof text, "%s is choosing the episode", mpg_display_name(0));
 		showNotice(text);
 	}
 	s_noticeFrames = kNoticeFrames; // the line stays while we watch
@@ -1052,7 +1204,7 @@ void hostBlueSave(TMarDirector* dir)
 	dir->unk261 = 1;
 	fprintf(stderr, "[multiplayer] the host's save prompt, for %s\n", mpg_character_name(s_blueSaveFrom));
 	char text[96];
-	snprintf(text, sizeof text, "Saving what %s got", mpg_character_name(s_blueSaveFrom));
+	snprintf(text, sizeof text, "Saving what %s got", mpg_display_name(s_blueSaveFrom));
 	showNotice(text);
 	s_blueSaveFrom = -1;
 }
@@ -1212,7 +1364,7 @@ void playOthersShineGets()
 		}
 		fprintf(stderr, "[multiplayer] %s got Shine %d: everyone to it\n", mpg_character_name(slot), eventId);
 		char text[96];
-		snprintf(text, sizeof text, "%s got a Shine!", mpg_character_name(slot));
+		snprintf(text, sizeof text, "%s got a Shine!", mpg_display_name(slot));
 		showNotice(text);
 		// beside them, as they stand where they touched it (the touch puts
 		// Mario on the Shine and turns him its way: he is put back after)
@@ -1802,7 +1954,7 @@ void showWatching()
 {
 	char text[128];
 	if (s_watching >= 0)
-		snprintf(text, sizeof text, "Out of lives: watching %s. L / R to watch another player", mpg_character_name(s_watching));
+		snprintf(text, sizeof text, "Out of lives: watching %s. L / R to watch another player", mpg_display_name(s_watching));
 	else
 		snprintf(text, sizeof text, "Out of lives: waiting for the others");
 	showNotice(text);
@@ -2016,6 +2168,11 @@ struct TestPlan {
 	int blueAt;                 // bluecoin@N: a blue coin of the stage taken, as touching it does
 	bool blued;
 	int voidAt;                 // void@N: out of the world (far under the stage), falling
+	int aimAt;                  // aim@N: spray in place (R held down), the stick up a while, then down
+	int graffitiAt;             // graffiti@N: spray the first graffiti hiding a blue coin (as water does), till it is clean
+	bool graffitiQuiet;         // graffitilocal@N: the same, its water not sent (only the erasing is)
+	int graffitiCoinAt;         // graffiticoin@N: take that graffiti's blue coin, as if from behind it
+	int shineOutAt;             // shineout@N: the stage's first hidden Shine comes out, with its camera (an event's)
 	bool voided;
 	int cornerAt;               // tubmiddle@N: onto the middle of Bowser's tub, then where Mario stands, now and then
 	bool cornered;
@@ -2057,6 +2214,7 @@ struct TestPlan {
 	int melonAt;                      // rollmelon@N: the big watermelon rolled along for 150 frames
 	bool slotSprayed;
 	int carryAt, carryFrames;         // carry@N:K: pick up the nearest thing that can be carried, put it down K ticks on
+	int fruitAt, fruitIndex;          // nearfruit@N[:K]: stand facing the nearest fruit (or the K-th) and press B (picking it up)
 	int setFlagAt;                   // setflag@N:ID: a flag of the game's set (hex), e.g. what starts a fight
 	unsigned setFlagId;
 	int frames; // in this stage
@@ -2064,6 +2222,7 @@ struct TestPlan {
 };
 TestPlan s_test;
 int s_testPressA; // test aids: frames left to hold B down (padRead; B talks)
+int s_testAim;    // aim@N: frames left spraying in place (padRead: R down, the stick up, then down)
 
 void testPadRead(void* status)
 {
@@ -2080,9 +2239,23 @@ void testPadRead(void* status)
 		static_cast<PADStatus*>(status)[0].button |= PAD_BUTTON_B;
 		s_testPressA--;
 	}
+	if (s_testAim > 0) {
+		PADStatus& pad   = static_cast<PADStatus*>(status)[0];
+		pad.button      |= PAD_TRIGGER_R;
+		pad.triggerRight = 255;
+		pad.stickX       = 0;
+		pad.stickY       = s_testAim > 240 ? 0 : s_testAim > 120 ? 72 : -72;
+		s_testAim--;
+	}
 }
 
 void testSprayNpc(bool first); // shared objects, below
+void testNearFruit(int index);
+void testSprayGraffiti(int frame, bool quiet);
+void watchGraffiti();
+TWaterHitPictureHideObj* firstBlueGraffiti();
+TShine* testHiddenShine(const char** camera);
+TResetFruit* s_testFruit;
 bool testPoundTub();
 bool testSpraySlot();
 void testCarry(bool take);
@@ -2091,10 +2264,10 @@ void runTests(TMarDirector* dir, bool arrived)
 {
 	if (!s_test.parsed) {
 		s_test.parsed = true;
-		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.gateAt = s_test.flAt = s_test.demoAt = s_test.enemyAt = s_test.tearAt = s_test.blueAt = s_test.cornerAt = s_test.voidAt = s_test.surfAt = s_test.boatAt = s_test.sandAt = s_test.rideAt = s_test.titleQuitAt = s_test.quitAt = s_test.doorAt = s_test.mantaAt = -1;
+		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.gateAt = s_test.flAt = s_test.demoAt = s_test.enemyAt = s_test.tearAt = s_test.blueAt = s_test.cornerAt = s_test.voidAt = s_test.aimAt = s_test.graffitiAt = s_test.graffitiCoinAt = s_test.shineOutAt = s_test.surfAt = s_test.boatAt = s_test.sandAt = s_test.rideAt = s_test.titleQuitAt = s_test.quitAt = s_test.doorAt = s_test.mantaAt = -1;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
 		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = s_test.bossHitAt = s_test.setFlagAt = -1;
-		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.shadowRunAt = s_test.npcSprayAt = s_test.carryAt = s_test.slotSprayAt = s_test.melonAt = -1;
+		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.shadowRunAt = s_test.npcSprayAt = s_test.carryAt = s_test.fruitAt = s_test.slotSprayAt = s_test.melonAt = -1;
 		s_test.dieLives = -1;
 		if (const char* plan = getenv("SMS_MULTIPLAYER_TEST")) {
 			const char* t = strstr(plan, "take@");
@@ -2116,6 +2289,18 @@ void runTests(TMarDirector* dir, bool arrived)
 				sscanf(bc, "bluecoin@%d", &s_test.blueAt);
 			if (const char* vo = strstr(plan, "void@"))
 				sscanf(vo, "void@%d", &s_test.voidAt);
+			if (const char* am = strstr(plan, "aim@"))
+				sscanf(am, "aim@%d", &s_test.aimAt);
+			if (const char* so = strstr(plan, "shineout@"))
+				sscanf(so, "shineout@%d", &s_test.shineOutAt);
+			if (const char* gc = strstr(plan, "graffiticoin@"))
+				sscanf(gc, "graffiticoin@%d", &s_test.graffitiCoinAt);
+			if (const char* gr = strstr(plan, "graffiti@"))
+				sscanf(gr, "graffiti@%d", &s_test.graffitiAt);
+			if (const char* gl = strstr(plan, "graffitilocal@")) {
+				sscanf(gl, "graffitilocal@%d", &s_test.graffitiAt);
+				s_test.graffitiQuiet = true;
+			}
 			if (const char* co = strstr(plan, "tubmiddle@"))
 				sscanf(co, "tubmiddle@%d", &s_test.cornerAt);
 			if (const char* su = strstr(plan, "surf@"))
@@ -2199,6 +2384,9 @@ void runTests(TMarDirector* dir, bool arrived)
 				sscanf(ss, "slotspray@%d", &s_test.slotSprayAt);
 			if (const char* cs = strstr(plan, "carry@"))
 				sscanf(cs, "carry@%d:%d", &s_test.carryAt, &s_test.carryFrames);
+			if (const char* nf = strstr(plan, "nearfruit@"))
+				if (sscanf(nf, "nearfruit@%d:%d", &s_test.fruitAt, &s_test.fruitIndex) < 2)
+					s_test.fruitIndex = -1;
 			if (const char* sf = strstr(plan, "setflag@"))
 				sscanf(sf, "setflag@%d:%x", &s_test.setFlagAt, &s_test.setFlagId);
 		}
@@ -2275,6 +2463,81 @@ void runTests(TMarDirector* dir, bool arrived)
 		s_test.onSand = MpMirrorTestSandBlock();
 	if (s_test.tearAt >= 0 && !s_test.tore && s_test.frames >= s_test.tearAt)
 		s_test.tore = MpBossTestTear() != 0;
+	if (s_test.graffitiAt >= 0 && s_test.frames >= s_test.graffitiAt && s_test.frames < s_test.graffitiAt + 600)
+		testSprayGraffiti(s_test.frames - s_test.graffitiAt, s_test.graffitiQuiet);
+	if (getenv("SMS_MULTIPLAYER_TEST") && s_test.frames % 30 == 0)
+		watchGraffiti();
+	if (s_test.shineOutAt >= 0 && s_test.frames == s_test.shineOutAt) {
+		const char* camera = nullptr;
+		TShine* hidden     = testHiddenShine(&camera);
+		if (hidden) {
+			fprintf(stderr, "[multiplayer] test: a Shine comes out at %.0f %.0f %.0f\n", hidden->mPosition.x,
+			        hidden->mPosition.y, hidden->mPosition.z);
+			hidden->appearWithDemo(camera);
+		} else {
+			fprintf(stderr, "[multiplayer] test: no hidden Shine (or no camera for one) here\n");
+		}
+	}
+	if (s_test.shineOutAt >= 0 && s_test.frames % 15 == 0) {
+		static int outBefore = -1;
+		int out = 0;
+		for (int i = 0; TShine* sh = shineAt(i); i++)
+			out += !sh->checkLiveFlag(LIVE_FLAG_DEAD);
+		if (out != outBefore)
+			fprintf(stderr, "[multiplayer] test: %d Shines out here (stage frame %d)\n", out, s_test.frames);
+		outBefore = out;
+	}
+	if (s_test.graffitiCoinAt >= 0 && s_test.frames == s_test.graffitiCoinAt)
+		if (TWaterHitPictureHideObj* g = firstBlueGraffiti())
+			if (TItem* coin = dynamic_cast<TItem*>(g->mHiddenObj)) {
+				fprintf(stderr, "[multiplayer] test: taking the graffiti's blue coin\n");
+				coin->taken(gpMarioOriginal);
+			}
+	if (s_test.aimAt >= 0 && s_test.frames == s_test.aimAt) {
+		s_testAim = 300;
+		fprintf(stderr, "[multiplayer] test: spraying in place, aiming up, then down\n");
+	}
+	if (s_testAim > 0 && s_testAim % 30 == 0 && gpMarioOriginal && mpg_slot() >= 0 && s_puppets[mpg_slot()]) {
+		// this player's own puppet against Mario's own models, posed alike:
+		// each joint's axes, how far apart (0: the same turn)
+		TMpPuppet* self   = s_puppets[mpg_slot()];
+		TMario* m         = gpMarioOriginal;
+		TWaterGun* gun    = m->mWaterGun;
+		struct Joint {
+			const char* name;
+			bool nozzle;
+		};
+		static const Joint joints[] = {{"jnt_head", false}, {"chn_chest", false}, {"chn_muzzle_1", true}};
+		for (const Joint& j : joints) {
+			J3DModel* real = j.nozzle ? (gun && gun->mCurrentNozzle < 6 && gun->mNozzleList[gun->mCurrentNozzle]
+			                                 ? gun->mNozzleList[gun->mCurrentNozzle]->getMActor()->getModel()
+			                                 : nullptr)
+			                          : m->getM3UModel()->getModel();
+			const int idx = real ? real->getModelData()->getJointName()->getIndex(j.name) : -1;
+			MtxPtr a      = idx >= 0 && idx < real->getModelData()->getJointNum() ? real->getAnmMtx((u16)idx) : nullptr;
+			MtxPtr b      = self->jointMtx(j.name, j.nozzle);
+			if (!a || !b)
+				continue;
+			f32 off = 0.0f;
+			for (int c = 0; c < 3; c++) {
+				f32 la = 0.0f, lb = 0.0f, dot = 0.0f;
+				for (int r = 0; r < 3; r++)
+					la += a[r][c] * a[r][c], lb += b[r][c] * b[r][c], dot += a[r][c] * b[r][c];
+				const f32 cosine = dot / sqrtf(la * lb + 1e-12f);
+				off += 1.0f - cosine;
+			}
+			fprintf(stderr, "[multiplayer] test: %s: puppet against Mario %.4f (up %.2f %.2f %.2f / %.2f %.2f %.2f)\n", j.name, off,
+			        a[0][1], a[1][1], a[2][1], b[0][1], b[1][1], b[2][1]);
+		}
+	}
+	if (s_testAim > 0 && s_testAim % 30 == 0 && gpMarioOriginal) {
+		MpgPose p;
+		MpCapturePose(gpMarioOriginal, &p);
+		fprintf(stderr, "[multiplayer] test: field %u: aim %d, head %d %d %d %d, waist %d %d %d %d, hover %d %d\n",
+		        (unsigned)VIGetRetraceCount(), p.gunAngle,
+		        p.headTurn[0], p.headTurn[1], p.headTurn[2], p.headTurn[3], p.waistTurn[0], p.waistTurn[1],
+		        p.waistTurn[2], p.waistTurn[3], p.hoverTiltL, p.hoverTiltR);
+	}
 	if (s_test.voidAt >= 0 && !s_test.voided && s_test.frames >= s_test.voidAt && gpMarioOriginal) {
 		s_test.voided = true;
 		gpMarioOriginal->mPosition.y -= 30000.0f;
@@ -2565,6 +2828,27 @@ void runTests(TMarDirector* dir, bool arrived)
 	}
 	if (s_test.carryAt >= 0 && (s_test.frames == s_test.carryAt || s_test.frames == s_test.carryAt + s_test.carryFrames))
 		testCarry(s_test.frames == s_test.carryAt);
+	if (s_test.fruitAt >= 0 && s_test.frames == s_test.fruitAt)
+		testNearFruit(s_test.fruitIndex);
+	if (s_test.fruitAt >= 0 && s_test.frames == s_test.fruitAt + 20 && gpMarioOriginal && s_testFruit) {
+		// as TMario::taking does (landed by then)
+		TMario* m = gpMarioOriginal;
+		if (s_testFruit->receiveMessage(m, HIT_MESSAGE_TAKE)) {
+			m->mHeldObject = s_testFruit;
+			m->mUpperState = TMario::UPPER_STATE_HOLDING_OBJECT;
+		}
+		fprintf(stderr, "[multiplayer] test: taking the fruit (field %u): %s\n", (unsigned)VIGetRetraceCount(),
+		        m->mHeldObject ? "holding it" : "refused");
+	}
+	if (s_test.fruitAt >= 0 && s_test.frames == s_test.fruitAt + 200 && gpMarioOriginal && gpMarioOriginal->mHeldObject) {
+		s_testPressA = 6; // and throw it
+		fprintf(stderr, "[multiplayer] test: throwing it (field %u)\n", (unsigned)VIGetRetraceCount());
+	}
+	if (s_test.fruitAt >= 0 && s_test.frames > s_test.fruitAt && s_test.frames <= s_test.fruitAt + 300
+	    && (s_test.frames - s_test.fruitAt) % 30 == 0 && gpMarioOriginal)
+		fprintf(stderr, "[multiplayer] test: holding %s (status %08x)\n",
+		        gpMarioOriginal->mHeldObject ? typeid(*gpMarioOriginal->mHeldObject).name() : "nothing",
+		        (unsigned)gpMarioOriginal->mStatus);
 	if (s_test.melonAt >= 0 && s_test.frames >= s_test.melonAt && s_test.frames < s_test.melonAt + 150)
 		MpMirrorTestRollMelon(s_test.frames - s_test.melonAt);
 	// sprayed again every 20 seconds, six times: some spins pay out
@@ -2645,10 +2929,7 @@ void updateNames()
 			GXPCLabel& l = labels[count];
 			if (!p->nameSpot(viewer, &l.x, &l.y, &l.alpha))
 				continue;
-			char name[64];
-			mpg_player_name(slot, name, sizeof name);
-			if (!name[0])
-				snprintf(name, sizeof name, "%s", mpg_character_name(slot));
+			const char* name = mpg_display_name(slot);
 			// the overlay's font has ASCII only
 			size_t n = 0;
 			for (const char* c = name; *c && n < sizeof l.text - 1; c++)
@@ -2773,30 +3054,66 @@ bool watchedFromHere(const char* name, const float* pos)
 	return false;
 }
 
-void demoCamera(const char* name, const float* pos, int frames, float angle, int option, int hasCallback, void* actor,
-                unsigned flags)
+// Shines another game's cutscene brought out here (TShine::appearWithDemo,
+// as that game's event did), this stage: when this game's own event gets
+// there, its cutscene for them is left out.
+TShine* s_shinesOutEarly[8];
+int s_shinesOutEarlyNext;
+unsigned s_shinesOutEarlyStage;
+
+// The Shine a cutscene is about (its camera centres on it), if any.
+TShine* shineOfDemo(const float* pos, bool exact)
 {
-	(void)hasCallback;
+	if (!pos)
+		return nullptr;
+	for (int i = 0; TShine* sh = shineAt(i); i++)
+		if (exact ? (const float*)&sh->mPosition.x == pos : atPlace(sh->mPosition, pos))
+			return sh;
+	return nullptr;
+}
+
+bool shineOutEarly(TShine* shine)
+{
+	if (s_shinesOutEarlyStage != s_stageNumber)
+		return false;
+	for (TShine* sh : s_shinesOutEarly)
+		if (sh == shine)
+			return true;
+	return false;
+}
+
+int demoCamera(const char* name, const float* pos, int frames, float angle, int option, int hasCallback, void* actor,
+               unsigned flags)
+{
 	(void)actor;
 	if (getenv("SMS_MULTIPLAYER_DEBUG") && name)
 		fprintf(stderr, "[multiplayer] cutscene asked for: %s (stage frame %d)\n", name, s_stageFrames);
 	TMario* m = gpMarioOriginal;
+	// a Shine coming out (TShine::appearWithDemo) that another game's
+	// cutscene brought out here already, or that is out: it played
+	if (enabled() && !s_replayingDemo && hasCallback && inStage()) {
+		TShine* shine = shineOfDemo(pos, true);
+		if (shine && (shineOutEarly(shine) || !shine->checkLiveFlag(LIVE_FLAG_DEAD))) {
+			fprintf(stderr, "[multiplayer] the Shine's cutscene (%s) played here already: left out\n", name);
+			return 1;
+		}
+	}
 	if (!enabled() || s_replayingDemo || !inStage() || !s_playing || !name || !m || s_spectating || flags == 1
 	    || m->mStatus == MARIO_STATUS_WIN_DEMO)
-		return;
+		return 0;
 	// not in this player's first seconds in the stage: what plays then is
 	// their arrival's (an opening, an episode's introduction), theirs alone;
 	// passed on, a player who joins would pull everyone else to the start
 	// to watch it
 	const int fps = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
 	if (s_stageFrames < 12 * fps || ownCameraEverywhere(name))
-		return;
+		return 0;
 	if (getenv("SMS_MULTIPLAYER_DEBUG"))
 		fprintf(stderr, "[multiplayer] cutscene here: %s%s\n", name, seenDemoLately(name) ? " (seen lately)" : "");
 	// another game's, just got (or ours, again): nothing to tell anyone
 	if (seenDemoLately(name)) {
 		rememberDemo(name);
-		return;
+		return 0;
 	}
 	rememberDemo(name);
 	uint8_t buf[128];
@@ -2815,6 +3132,7 @@ void demoCamera(const char* name, const float* pos, int frames, float angle, int
 	n += 4;
 	buf[n++] = (uint8_t)((option != 0) | (watchedFromHere(name, pos) ? 2 : 0)); // 2: everyone watches from where they are
 	mpg_demo(buf, n);
+	return 0;
 }
 
 void playOthersCutscenes(TMarDirector* dir)
@@ -2876,8 +3194,22 @@ void playOthersCutscenes(TMarDirector* dir)
 		fprintf(stderr, "[multiplayer] %s started a cutscene (%s): everyone watches%s\n", mpg_character_name(slot),
 		        s_demoNames[k], warp ? "" : " (from here)");
 		s_replayingDemo = true;
-		dir->fireStartDemoCamera(s_demoNames[k], hasPos ? &s_demoPos[k] : nullptr, frames, values[3], option, nullptr, 0,
-		                         nullptr, JDrama::TFlagT<u16>(0));
+		// a Shine coming out there (its event's TShine::appearWithDemo): this
+		// game's comes out with it, as there, not seconds later when this
+		// game's own event gets there (the cutscene showed no Shine until then)
+		TShine* shine = hasPos ? shineOfDemo(&s_demoPos[k].x, false) : nullptr;
+		if (shine && shine->checkLiveFlag(LIVE_FLAG_DEAD) && JDrama::TNameRefGen::search<TCameraMapTool>(s_demoNames[k])) {
+			if (s_shinesOutEarlyStage != s_stageNumber) {
+				memset(s_shinesOutEarly, 0, sizeof s_shinesOutEarly);
+				s_shinesOutEarlyStage = s_stageNumber;
+			}
+			s_shinesOutEarly[s_shinesOutEarlyNext++ & 7] = shine;
+			fprintf(stderr, "[multiplayer] its Shine comes out here too\n");
+			shine->appearWithDemo(s_demoNames[k]);
+		} else {
+			dir->fireStartDemoCamera(s_demoNames[k], hasPos ? &s_demoPos[k] : nullptr, frames, values[3], option, nullptr,
+			                         0, nullptr, JDrama::TFlagT<u16>(0));
+		}
 		s_replayingDemo = false;
 		s_replaySlot    = slot;
 		s_replayFrames  = 0;
@@ -2928,7 +3260,7 @@ void noticeCutscenes()
 		                  && (pose.flags & MPG_POSE_DEMO);
 		if (demo && !s_inDemo[slot]) {
 			char text[96];
-			snprintf(text, sizeof text, "%s is watching a cutscene", mpg_character_name(slot));
+			snprintf(text, sizeof text, "%s is watching a cutscene", mpg_display_name(slot));
 			showNotice(text);
 		}
 		s_inDemo[slot] = demo;
@@ -3055,8 +3387,134 @@ const JGeometry::TVec3<f32>& aimOf(int slot)
 	return s_aims[slot].have ? s_aims[slot].at : s_puppets[slot]->mPosition;
 }
 
+// ------------------------------------------------------------------- effects
+
+// The player's effects (Mario's particle manager's, as his own move asks for
+// them: a slide's spray, a landing's dust, the steps' splashes), sent with
+// the pose for the others to show at them (TMpPuppet::showEffects). Those
+// asked for every frame while they go on (groups 1 and 3) are sent as a
+// list, the newest tick's; those asked for once are numbered, and the
+// newest few go with every pose, so a pose lost or not sent loses none.
+
+// Which joint of `model` this matrix is (the game binds effects to them), or -1.
+int jointOf(J3DModel* model, const void* mtx)
+{
+	if (!model)
+		return -1;
+	for (u16 j = 0; j < model->getModelData()->getJointNum() && j < 255; j++)
+		if ((const void*)model->getAnmMtx(j) == mtx)
+			return j;
+	return -1;
+}
+
+int8_t fxTurnByte(f32 v) { return (int8_t)(v > 1.0f ? 127 : v < -1.0f ? -127 : lroundf(v * 127.0f)); }
+
+void particleEmit(int how, int id, const void* at, int rx, int ry, int rz, int group, const void* owner)
+{
+	TMario* m = gpMarioOriginal;
+	if (s_fxMoving <= 0 || !m || !at || !enabled() || !inStage() || id < 0 || id > 0xFFFF)
+		return;
+	// Mario's, or his FLUDD's: not what he sets off in something else (an
+	// enemy's, its own game shows it)
+	if (owner && owner != m && owner != m->mWaterGun)
+		return;
+	MtxPtr root = m->getM3UModel()->getModel()->getBaseTRMtx();
+	MpgFx f;
+	memset(&f, 0, sizeof f);
+	f.id    = (uint16_t)id;
+	f.how   = (uint8_t)how;
+	f.group = (uint8_t)group;
+	f32 pos[3];
+	if (how <= 2) {
+		const JGeometry::TVec3<f32>* v = static_cast<const JGeometry::TVec3<f32>*>(at);
+		pos[0] = v->x, pos[1] = v->y, pos[2] = v->z;
+		if (how == 2 && v == &m->mPosition)
+			f.bind = MPG_FX_BIND_ROOT;
+		if (how == 1) {
+			f.turn[0] = (int8_t)(rx >> 8);
+			f.turn[1] = (int8_t)(ry >> 8);
+			f.turn[2] = (int8_t)(rz >> 8);
+		}
+	} else {
+		const f32 (*mtx)[4] = static_cast<const f32 (*)[4]>(at);
+		pos[0] = mtx[0][3], pos[1] = mtx[1][3], pos[2] = mtx[2][3];
+		int joint = jointOf(m->getM3UModel()->getModel(), at);
+		if (joint >= 0) {
+			f.bind = MPG_FX_BIND_BODY;
+		} else if (m->mWaterGun && m->mWaterGun->mFluddModel
+		           && (joint = jointOf(m->mWaterGun->mFluddModel->getModel(), at)) >= 0) {
+			f.bind = MPG_FX_BIND_FLUDD;
+		} else {
+			f32 q[4];
+			Mtx turn;
+			for (int r = 0; r < 3; r++)
+				for (int c = 0; c < 3; c++)
+					turn[r][c] = mtx[r][c];
+			MpMtxToQuat(turn, q);
+			for (int i = 0; i < 4; i++)
+				f.turn[i] = fxTurnByte(q[i]);
+		}
+		f.joint = (uint8_t)(joint >= 0 ? joint : 0);
+	}
+	for (int i = 0; i < 3; i++) {
+		const f32 d = pos[i] - root[i][3];
+		if (d > 2000.0f || d < -2000.0f)
+			return; // not at him (something he set off far away)
+		f.off[i] = (int16_t)lroundf(d);
+	}
+	s_fxSent[group == 1 || group == 3]++;
+	if (group == 1 || group == 3) {
+		if (s_fxTickCount < MPG_MAX_FX)
+			s_fxTick[s_fxTickCount++] = f;
+		return;
+	}
+	if (s_fxShotCount == MPG_MAX_FX) {
+		memmove(s_fxShots, s_fxShots + 1, sizeof s_fxShots[0] * (MPG_MAX_FX - 1));
+		s_fxShotCount--;
+	}
+	s_fxShots[s_fxShotCount++] = f;
+	s_fxShotSeq++;
+}
+
+// Debug: effects sent and shown, every 10 seconds.
+
+void fxDebug()
+{
+	static const bool debug = getenv("SMS_MULTIPLAYER_DEBUG") != nullptr;
+	static unsigned at;
+	if (!debug || s_clock - at < 300)
+		return;
+	at = s_clock;
+	fprintf(stderr, "[multiplayer] effects: sent %d once, %d going on;", s_fxSent[0], s_fxSent[1]);
+	for (int slot = 0; slot < MPG_MAX_PLAYERS; slot++)
+		if (s_fxShown[slot][0] || s_fxShown[slot][1])
+			fprintf(stderr, " %s's shown %d once, %d going on;", mpg_display_name(slot), s_fxShown[slot][0], s_fxShown[slot][1]);
+	fprintf(stderr, "\n");
+	memset(s_fxSent, 0, sizeof s_fxSent);
+	memset(s_fxShown, 0, sizeof s_fxShown);
+}
+
+// Mario's move begins (0) or ends (1): what it asks for is the player's.
+void fxMove(int after)
+{
+	if (!after) {
+		if (s_fxMoving++ == 0)
+			s_fxTickCount = 0;
+		return;
+	}
+	if (s_fxMoving > 0 && --s_fxMoving == 0) {
+		memcpy(s_fxOngoing, s_fxTick, sizeof s_fxTick);
+		s_fxOngoingCount = s_fxTickCount;
+	}
+}
+
 void objectMove(void* object, int after)
 {
+	if (object && object == gpMarioOriginal) {
+		fxMove(after);
+		if (after)
+			fxDebug();
+	}
 	if (after) {
 		if (s_swapDepth > 0 && s_swaps[s_swapDepth - 1].object == object) {
 			MoveSwap& w = s_swaps[--s_swapDepth];
@@ -3193,10 +3651,12 @@ void collectShared()
 		const int m       = s_sharedCount++;
 		s_sharedManagers[m] = nullptr;
 		// enemies (the host's run them), bosses (mp_boss.cpp) and items share
-		// their own way; NPCs and animals sit in enemy managers too, and are shared here
+		// their own way; NPCs and animals sit in enemy managers too, and are
+		// shared here, as are the item manager's objects that are not items
+		// (fruit: carried, thrown, sprayed)
 		TLiveActor* first = mgr && mgr->getObjNum() ? mgr->getObj(0) : nullptr;
-		const bool skip   = !mgr || dynamic_cast<TItemManager*>(mgr) || dynamic_cast<TSmallEnemy*>(first)
-		                  || MpBossIsBoss(first);
+		const bool items  = dynamic_cast<TItemManager*>(mgr) != nullptr;
+		const bool skip   = !mgr || (!items && (dynamic_cast<TSmallEnemy*>(first) || MpBossIsBoss(first)));
 		if (getenv("SMS_MULTIPLAYER_DEBUG") && mgr)
 			fprintf(stderr, "[multiplayer] objects: manager %d %s, %d of %s%s\n", m, typeid(*mgr).name(), mgr->getObjNum(),
 			        mgr->getObjNum() && mgr->getObj(0) ? typeid(*mgr->getObj(0)).name() : "-", skip ? " (not shared here)" : "");
@@ -3205,7 +3665,8 @@ void collectShared()
 		s_sharedManagers[m] = mgr;
 		for (int i = 0; i < mgr->getObjNum() && i < 0x10000; i++)
 			if (TLiveActor* a = mgr->getObj(i))
-				shareObject(a, (uint32_t)m << 16 | (uint32_t)i);
+				if (!items || !dynamic_cast<TItem*>(a))
+					shareObject(a, (uint32_t)m << 16 | (uint32_t)i);
 	}
 }
 
@@ -3216,7 +3677,9 @@ THitActor* sharedAt(int manager, int index)
 	if (manager < 0 || manager >= s_sharedCount || !s_sharedManagers[manager])
 		return nullptr;
 	TLiveManager* mgr = s_sharedManagers[manager];
-	return index >= 0 && index < mgr->getObjNum() ? mgr->getObj(index) : nullptr;
+	TLiveActor* a     = index >= 0 && index < mgr->getObjNum() ? mgr->getObj(index) : nullptr;
+	uint32_t where;
+	return a && sharedWhere(a, &where) ? a : nullptr; // not the item manager's items
 }
 
 bool sharedHit(unsigned message)
@@ -3315,6 +3778,213 @@ bool testPoundTub()
 	return false;
 }
 
+// The flag of the blue coin a hiding place hides (a graffiti, a box), or 0.
+uint32_t hiddenBlueCoinFlag(THideObjBase* hide)
+{
+	if (!hide->mHiddenObj || !hide->mHiddenObj->isActorType(0x20000010))
+		return 0;
+	const u8 world = SMS_getShineStage(gpApplication.mCurrArea.getStage());
+	const u8 w     = world == 0 || world >= 10 ? 1 : world;
+	const u32 id   = hide->getEventId();
+	return 0x10078 + (w - 1) * 50 + (id < 50 ? id : 0);
+}
+
+// After the flags were shared: a graffiti (or a box) hiding a blue coin
+// someone else got is as the game loads it once the coin is taken (gone,
+// TWaterHitPictureHideObj::loadAfter; or nothing comes out, THideObjBase's),
+// not left to clean for nothing.
+void hideTakenBlueCoins(const int32_t* before)
+{
+	for (int k = 0; k < kSharedSlots; k++) {
+		THideObjBase* hide = s_shared[k].object ? dynamic_cast<THideObjBase*>((TLiveActor*)s_shared[k].object) : nullptr;
+		const uint32_t flag = hide ? hiddenBlueCoinFlag(hide) : 0;
+		const int idx       = (int)flag - 0x10000;
+		if (!flag || idx < 0 || idx >= s_flagCount || before[idx] || !s_flags[idx])
+			continue;
+		hide->mAllowReveal = false;
+		TWaterHitPictureHideObj* graffiti = dynamic_cast<TWaterHitPictureHideObj*>(hide);
+		if (!graffiti || graffiti->isState(TWaterHitPictureHideObj::STATE_FINISHED))
+			continue;
+		graffiti->makeObjDead();
+		if (THideObjPictureTwin* twin = dynamic_cast<THideObjPictureTwin*>(graffiti))
+			if (twin->unk174 && !twin->unk174->isState(TWaterHitPictureHideObj::STATE_FINISHED))
+				twin->unk174->makeObjDead();
+		fprintf(stderr, "[multiplayer] someone else's blue coin %05x: its graffiti here is gone\n", (unsigned)flag);
+	}
+}
+
+// Test aid (shineout@N): a Shine a hiding place (a graffiti, a box) hides,
+// still hidden, and its camera (named for the hiding place).
+TShine* testHiddenShine(const char** camera)
+{
+	for (int k = 0; k < kSharedSlots; k++) {
+		THideObjBase* hide = s_shared[k].object ? dynamic_cast<THideObjBase*>((TLiveActor*)s_shared[k].object) : nullptr;
+		TShine* sh         = hide ? dynamic_cast<TShine*>(hide->mHiddenObj) : nullptr;
+		if (sh && hide->mHiddenShineDemoName && sh->checkLiveFlag(LIVE_FLAG_DEAD)
+		    && JDrama::TNameRefGen::search<TCameraMapTool>(hide->mHiddenShineDemoName)) {
+			*camera = hide->mHiddenShineDemoName;
+			return sh;
+		}
+	}
+	return nullptr;
+}
+
+// The first graffiti hiding a blue coin (test aids).
+TWaterHitPictureHideObj* firstBlueGraffiti()
+{
+	for (int m = 0; m < s_sharedCount; m++)
+		for (int i = 0; s_sharedManagers[m] && i < s_sharedManagers[m]->getObjNum(); i++)
+			if (TWaterHitPictureHideObj* g = dynamic_cast<TWaterHitPictureHideObj*>(s_sharedManagers[m]->getObj(i)))
+				if (hiddenBlueCoinFlag(g))
+					return g;
+	return nullptr;
+}
+
+// Test aid (graffiti@N): this game's water on that graffiti, a drop a frame
+// through the hit hook (sent as any spray is), facing it, till it is clean.
+void testSprayGraffiti(int frame, bool quiet)
+{
+	TWaterHitPictureHideObj* g = firstBlueGraffiti();
+	if (!g || g->checkLiveFlag(LIVE_FLAG_DEAD) || g->isState(TWaterHitPictureHideObj::STATE_FINISHED))
+		return;
+	if (frame == 0)
+		fprintf(stderr, "[multiplayer] test: spraying the graffiti at %.0f %.0f %.0f\n", g->mPosition.x, g->mPosition.y,
+		        g->mPosition.z);
+	TWaterHitActor& water = TModelWaterManager::mStaticHitActor;
+	water.mPosition       = g->mPosition;
+	water.mParticleIndex  = -1; // not a drawn drop: this game's own
+	for (int i = 0; i < 6; i++) // a few drops a frame, as a stream is
+		if (quiet || !objectHit(g, &water, HIT_MESSAGE_SPRAYED_BY_WATER))
+			g->forward(g->mSprayProgressSpeed); // as touchWater does for water coming at its face
+}
+
+// Test aid: that graffiti's state here, when it changes.
+void watchGraffiti()
+{
+	static f32 lastProgress = -1.0f;
+	static int lastState = -1, lastDead = -1;
+	TWaterHitPictureHideObj* g = firstBlueGraffiti();
+	if (!g)
+		return;
+	const int dead = g->checkLiveFlag(LIVE_FLAG_DEAD) ? 1 : 0;
+	if (g->mProgress == lastProgress && (int)g->mState == lastState && dead == lastDead)
+		return;
+	lastProgress = g->mProgress, lastState = (int)g->mState, lastDead = dead;
+	TMapObjBase* coin = g->mHiddenObj;
+	fprintf(stderr, "[multiplayer] test: graffiti progress %.1f, state %d, gone %d; its coin %s\n", g->mProgress, lastState,
+	        dead, coin ? (coin->checkLiveFlag(LIVE_FLAG_DEAD) ? "hidden or taken" : "out") : "-");
+}
+
+// Graffiti erased (sprayed till clean: TWaterHitPictureHideObj's
+// STATE_FINISHED) in any game are erased in every game, and back in every
+// game when they come back (what one hid, a coin nobody took, went back in
+// it: TItem::appeared). Each game numbers each graffiti's changes, odd
+// erased, even back, and reports its own in the session's list of taken
+// items (a key of their own: kErasedKey | number << 24 | where), which the
+// host keeps and gives again to a player who joins or loads the stage
+// again: the newest number is how the graffiti is.
+struct Graffiti {
+	TWaterHitPictureHideObj* g;
+	uint32_t where;
+	u8 changes;  // its number of changes here, as above
+	bool erased; // as last seen here
+};
+Graffiti s_graffiti[128];
+int s_graffitiCount;
+const int kGraffitiChanges = 127;
+
+bool graffitiErased(TWaterHitPictureHideObj* g)
+{
+	return g->isState(TWaterHitPictureHideObj::STATE_FINISHED) && !g->checkLiveFlag(LIVE_FLAG_DEAD);
+}
+
+void collectGraffiti()
+{
+	s_graffitiCount = 0;
+	for (int k = 0; k < kSharedSlots && s_graffitiCount < 128; k++)
+		if (TWaterHitPictureHideObj* g
+		    = s_shared[k].object ? dynamic_cast<TWaterHitPictureHideObj*>((TLiveActor*)s_shared[k].object) : nullptr) {
+			Graffiti& e = s_graffiti[s_graffitiCount++];
+			e.g         = g;
+			e.where     = s_shared[k].where;
+			e.erased    = graffitiErased(g);
+			e.changes   = e.erased ? 1 : 0;
+		}
+}
+
+// Each tick: a graffiti erased here, or back, just now is told to the others.
+void reportGraffiti()
+{
+	for (int i = 0; i < s_graffitiCount; i++) {
+		Graffiti& e       = s_graffiti[i];
+		const bool erased = graffitiErased(e.g);
+		if (erased == e.erased)
+			continue;
+		e.erased = erased;
+		if (e.changes >= kGraffitiChanges - 1)
+			continue;
+		e.changes++;
+		if ((e.changes & 1) != (erased ? 1 : 0)) // the odd ones erased
+			e.changes++;
+		mpg_item_taken(kErasedKey | (uint32_t)e.changes << 24 | e.where);
+		if (getenv("SMS_MULTIPLAYER_DEBUG"))
+			fprintf(stderr, "[multiplayer] graffiti %u.%u %s here (change %d): everyone's is\n", (unsigned)(e.where >> 16),
+			        (unsigned)(e.where & 0xFFFF), erased ? "erased" : "back", e.changes);
+	}
+}
+
+// Another game's graffiti change (or the newest of this session's so far,
+// arriving): erased, it is as its own finishing leaves it, what it hid out;
+// back, as the game brings it back when that goes back in.
+void changeGraffiti(uint32_t where, int changes)
+{
+	for (int i = 0; i < s_graffitiCount; i++) {
+		Graffiti& e = s_graffiti[i];
+		if (e.where != where)
+			continue;
+		if (changes <= e.changes)
+			return;
+		e.changes                  = (u8)changes;
+		const bool erased          = (changes & 1) != 0;
+		TWaterHitPictureHideObj* g = e.g;
+		if (g->checkLiveFlag(LIVE_FLAG_DEAD) || graffitiErased(g) == erased) {
+			e.erased = graffitiErased(g);
+			return;
+		}
+		if (erased) {
+			g->mProgress = g->mReverse ? g->mMinProgress : g->mMaxProgress;
+			g->mColor.a  = (u16)g->mProgress & 0xff;
+			g->afterFinishedAnim();
+		} else {
+			// as TWaterHitPictureHideObj::receiveMessage does as its coin goes back in
+			g->offHitFlag(HIT_FLAG_NO_COLLISION);
+			g->offHitFlag(HIT_FLAG_CANNOT_GET_HIT);
+			g->offHitFlag(HIT_FLAG_CANNOT_ATTACK);
+			g->mState       = TMapObjBase::STATE_NORMAL;
+			g->mAllowReveal = true;
+		}
+		e.erased = graffitiErased(g);
+		if (getenv("SMS_MULTIPLAYER_DEBUG"))
+			fprintf(stderr, "[multiplayer] graffiti %u.%u %s elsewhere (change %d): here too\n", (unsigned)(where >> 16),
+			        (unsigned)(where & 0xFFFF), erased ? "erased" : "back", changes);
+		return;
+	}
+}
+
+// Another player's water on a graffiti here: cleaned as much as their game
+// cleaned theirs. Their drops' speed is not known here (touchWater keeps only
+// water coming at its face, by the drop's speed), and their game sends only
+// the hits it took.
+bool landWaterOnGraffiti(THitActor* to, int count)
+{
+	TWaterHitPictureHideObj* graffiti = dynamic_cast<TWaterHitPictureHideObj*>(to);
+	if (!graffiti || graffiti->checkLiveFlag(LIVE_FLAG_DEAD))
+		return graffiti != nullptr;
+	for (int i = 0; i < count && i < 30 && !graffiti->isState(TWaterHitPictureHideObj::STATE_FINISHED); i++)
+		graffiti->forward(graffiti->mSprayProgressSpeed);
+	return true;
+}
+
 // The others' hits on shared objects, landed here as theirs were.
 void landHits()
 {
@@ -3324,6 +3994,8 @@ void landHits()
 		THitActor* to = sharedAt(manager, index);
 		if (!to || MpMirrorKeepsHits(to))
 			continue; // its owner runs it, and sends how it went
+		if (water && message == HIT_MESSAGE_SPRAYED_BY_WATER && landWaterOnGraffiti(to, count))
+			continue;
 		THitActor* from = nullptr;
 		if (water) {
 			TWaterHitActor& waterHit = TModelWaterManager::mStaticHitActor;
@@ -3425,6 +4097,9 @@ void watchMyCarry()
 		const float still[3] = {0.0f, 0.0f, 0.0f};
 		mpg_carry((int)(where >> 16), (int)(where & 0xFFFF), 0, &now->mPosition.x, still, yaw);
 	}
+	if (getenv("SMS_MULTIPLAYER_DEBUG"))
+		fprintf(stderr, "[multiplayer] carry: this player holds %s (was %s)\n", now ? typeid(*now).name() : "nothing",
+		        s_myHeld ? typeid(*s_myHeld).name() : "nothing");
 	s_myHeld = now;
 }
 
@@ -3468,6 +4143,48 @@ void testCarry(bool take)
 	}
 }
 
+// Test aid (nearfruit@N): this game's Mario stands facing the nearest fruit,
+// and presses B (picks it up, as the player does).
+void testNearFruit(int index)
+{
+	TMario* m = gpMarioOriginal;
+	if (!m)
+		return;
+	TResetFruit* best = nullptr;
+	f32 nearest       = 0.0f;
+	int n             = 0;
+	for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin(); it != gpConductor->unk10.end(); ++it)
+		for (int i = 0; *it && i < (*it)->getObjNum(); i++) {
+			TResetFruit* f = dynamic_cast<TResetFruit*>((*it)->getObj(i));
+			if (!f)
+				continue;
+			uint32_t at = 0;
+			const bool shared = sharedWhere(f, &at);
+			const int k       = n++;
+			fprintf(stderr, "[multiplayer] test: fruit %d: %s in %s (%s), dead %d, at %.0f %.0f %.0f\n", k, typeid(*f).name(),
+			        typeid(**it).name(), shared ? "shared" : "not shared", (int)f->checkLiveFlag(LIVE_FLAG_DEAD),
+			        f->mPosition.x, f->mPosition.y, f->mPosition.z);
+			if (f->checkLiveFlag(LIVE_FLAG_DEAD) || (index >= 0 && k != index))
+				continue;
+			const f32 d = distance2(f->mPosition, m->mPosition);
+			if (!best || d < nearest)
+				best = f, nearest = d;
+		}
+	s_testFruit = best;
+	if (!best) {
+		fprintf(stderr, "[multiplayer] test: no fruit here\n");
+		return;
+	}
+	uint32_t where = 0;
+	sharedWhere(best, &where);
+	const f32 yaw = 0.0f;
+	m->mPosition.set(best->mPosition.x - sinf(yaw) * 150.0f, best->mPosition.y + 10.0f, best->mPosition.z - cosf(yaw) * 150.0f);
+	m->mFaceAngle.y = 0;
+	m->mForwardVel  = 0.0f;
+	fprintf(stderr, "[multiplayer] test: by the fruit %s %u.%u at %.0f %.0f %.0f\n", typeid(*best).name(), (unsigned)(where >> 16),
+	        (unsigned)(where & 0xFFFF), best->mPosition.x, best->mPosition.y, best->mPosition.z);
+}
+
 // What the other players picked up, put down and threw, done here.
 void landCarries()
 {
@@ -3475,6 +4192,9 @@ void landCarries()
 	float pos[3], vel[3];
 	while (mpg_next_carry(&slot, &manager, &index, &action, pos, vel, &yaw)) {
 		TLiveActor* obj = dynamic_cast<TLiveActor*>(sharedAt(manager, index));
+		if (getenv("SMS_MULTIPLAYER_DEBUG"))
+			fprintf(stderr, "[multiplayer] carry: from slot %d: %d.%d action %d (%s here)\n", slot, manager, index, action,
+			        obj ? typeid(*obj).name() : "nothing");
 		if (!obj || slot < 0 || slot >= MPG_MAX_PLAYERS || slot == mpg_slot())
 			continue;
 		TMpHolder* h = holderFor(slot);
@@ -3505,6 +4225,7 @@ void landCarries()
 }
 
 // ------------------------------------------------------------------- hooks
+
 
 void takeTrips(TMarDirector* dir); // below
 unsigned g_moves; // debug: movement passes so far
@@ -3555,6 +4276,7 @@ void frame()
 		snapshotItems();
 		collectManagers();
 		collectShared();
+		collectGraffiti();
 		MpMirrorCollect();
 		s_myHeld = nullptr;
 		for (int slot = 0; slot < MPG_MAX_PLAYERS; slot++)
@@ -3681,6 +4403,7 @@ void stageSetup()
 	s_sharedCount  = 0;
 	s_aloneCount   = 0;
 	memset(s_shared, 0, sizeof s_shared);
+	s_graffitiCount = 0;
 	s_switchCount = 0;
 	s_gatesFound  = false;
 	memset(s_gates, 0, sizeof s_gates);
@@ -3844,6 +4567,7 @@ void afterMovement()
 	dumpActors();
 	applyCleans();
 	landHits();
+	reportGraffiti();
 	watchMyCarry();
 	landCarries();
 	tickHolders();
@@ -3964,11 +4688,11 @@ void takeTrips(TMarDirector* dir)
 		char text[128];
 		const u8 here = gpApplication.mCurrArea.getStage();
 		if (area == here)
-			snprintf(text, sizeof text, "%s moved the story on: everyone goes", mpg_character_name(slot));
+			snprintf(text, sizeof text, "%s moved the story on: everyone goes", mpg_display_name(slot));
 		else if (SMS_getShineStage((u8)area) == SMS_getShineStage(here))
-			snprintf(text, sizeof text, "%s leads everyone on", mpg_character_name(slot));
+			snprintf(text, sizeof text, "%s leads everyone on", mpg_display_name(slot));
 		else
-			snprintf(text, sizeof text, "%s leads everyone to %s", mpg_character_name(slot), worldName(area));
+			snprintf(text, sizeof text, "%s leads everyone to %s", mpg_display_name(slot), worldName(area));
 		showNotice(text);
 		fprintf(stderr, "[multiplayer] %s (area %d, episode %d, movie %d)\n", text, area, episode, movie);
 		dir->setNextStage(episode == 0xFF ? (u16)area : (u16)(((area + 1) << 8) | episode), nullptr);
@@ -4115,6 +4839,7 @@ PortExtension s_extension = {
 	"multiplayer",   frame,           afterMovement,   stageSetup,     allowNextStage, moveStage,
 	missNextArea,    takeGameOver,    keepCoinsOnMiss, afterFileSelect, itemTaken,      allowSaveStates,
 	saveStatesOffReason, hidePlayerModel, testPadRead, demoCamera, pollutionClean, objectMove, objectHit,
+	particleEmit,
 };
 
 struct Register {

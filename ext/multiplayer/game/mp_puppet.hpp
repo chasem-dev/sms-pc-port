@@ -18,6 +18,7 @@
 #include <Strategic/HitActor.hpp>
 
 class J3DModel;
+class J3DNode;
 class J3DModelData;
 class J3DDrawBuffer;
 class M3UModelMario;
@@ -31,6 +32,8 @@ void MpCapturePose(TMario* mario, MpgPose* pose);
 unsigned MpStageNumber();
 // Another player's FLUDD water, emitted in this game (mp_game.cpp).
 void MpEmitWater(const MpgPose& pose, f32* carry);
+// A rotation matrix's quaternion (x, y, z, w).
+void MpMtxToQuat(const f32 (*m)[4], f32 q[4]);
 
 class TMpPuppet : public THitActor {
 public:
@@ -52,6 +55,9 @@ public:
 	// shows (0..1, fading out with distance from `viewer`); false when it is
 	// too far away or out of view.
 	bool nameSpot(const f32* viewer, f32* x, f32* y, f32* alpha) const;
+	// Debug: a joint's matrix as last posed, of the body (nozzle false) or
+	// of the nozzle worn; null when there is none.
+	MtxPtr jointMtx(const char* name, bool nozzle) const;
 
 private:
 	void applyPose(JDrama::TGraphics* graphics);
@@ -61,7 +67,18 @@ private:
 	bool buildFludd();
 	bool buildYoshi();
 	bool buildSurf();
+	bool buildCoaster();
 	void dress();
+	void hookJoints();
+	void showEffects(const MpgPose& pose);
+	void showEffect(const MpgFx& fx, int ongoing);
+	static BOOL turnHead(J3DNode* node, BOOL after);
+	static BOOL turnWaist(J3DNode* node, BOOL after);
+	static BOOL aimNozzle(J3DNode* node, BOOL after);
+	static BOOL tiltHoverL(J3DNode* node, BOOL after);
+	static BOOL tiltHoverR(J3DNode* node, BOOL after);
+	static BOOL turnProp(J3DNode* node, BOOL after);
+	static BOOL aimYoshi(J3DNode* node, BOOL after);
 
 	int mSlot;
 	int mCharacter;
@@ -84,8 +101,10 @@ private:
 	J3DModelData* mFluddData; // this puppet's own copy of FLUDD's, or null when it shares Mario's
 	MActor* mNozzles[6];
 	u8 mNozzleJoint;
+	bool mNozzlesOwn;        // every nozzle its own copy (its joints turned from the pose)
 	MActor* mYoshi;
 	MActor* mSurf;           // the Blooper they ride (Ricco Harbor's, Gelato's)
+	MActor* mCoaster;        // the coaster car they ride (Mecha-Bowser's fight), in stages with one
 	MActor* mRide;           // the boat they ride in their game, this frame (MpMirrorRide), or null
 	s16 mSurfColor[4];       // its colour (GXColorS10, as the game's three)
 	u16 mJointChest, mJointHandR, mJointHandL, mJointHead, mJointMHead;
@@ -97,7 +116,17 @@ private:
 	f32 mView[3][4];         // the camera as last drawn, for the name
 	f32 mProjection[7];      // GXGetProjectionv's, as it was drawn
 	bool mDrawn;             // drawn at least once since it appeared
+	// their effects (showEffects): where each ongoing one is, and each one
+	// shown once (the particle manager follows these while the effect lasts)
+	JGeometry::TVec3<f32> mFxPos[MPG_MAX_FX], mFxShotPos[16];
+	Mtx mFxMtx[MPG_MAX_FX], mFxShotMtx[16];
+	int mFxShotNext;
+	u8 mFxSeq;               // the newest effect shown once
+	bool mFxSeen;            // mFxSeq is known (none from before replayed)
 };
+
+// Debug: an effect of `slot`'s shown here (`ongoing`: one going on every frame).
+void MpCountEffect(int slot, bool ongoing);
 
 // Debug: how smoothly a player moves as drawn here (their own game's player too,
 // to hold the others' against).

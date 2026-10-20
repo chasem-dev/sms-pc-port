@@ -62,9 +62,10 @@ typedef struct PortExtension {
 	void (*padRead)(void* status);
 	// A camera cutscene was asked for (TMarDirector::fireStartDemoCamera):
 	// its camera's name, the point it centres on (or null), its arguments,
-	// whether a callback or an actor came with it, and its flags.
-	void (*demoCamera)(const char* name, const float* pos, int frames, float angle, int option, int hasCallback,
-	                   void* actor, unsigned flags);
+	// whether a callback or an actor came with it, and its flags. Return 1 to
+	// leave it out (it played already: another game's, played here).
+	int (*demoCamera)(const char* name, const float* pos, int frames, float angle, int option, int hasCallback,
+	                  void* actor, unsigned flags);
 	// Goop was cleaned at x, y, z over `size` (TPollutionManager::clean, as
 	// FLUDD's water and Mario's feet do), about to be.
 	void (*pollutionClean)(float x, float y, float z, float size);
@@ -78,6 +79,13 @@ typedef struct PortExtension {
 	// stomped...), from `sender` (the player, or the water's hit actor):
 	// return 1 to stop it from reaching the object.
 	int (*objectHit)(void* object, void* sender, unsigned message);
+	// An effect was asked of Mario's particle manager (gpMarioParticleManager,
+	// TMarioParticleManager::emit and its kin, `how` saying which: 0 emit, 1
+	// emitWithRotate, 2 emitAndBindToPosPtr, 3 emitAndBindToMtxPtr, 4
+	// emitAndBindToSRTMtxPtr, 5 emitAndBindToMtx): its effect, where (a
+	// position for 0 to 2, a matrix for 3 to 5), the turn (1), its group and
+	// owner, about to be.
+	void (*particleEmit)(int how, int id, const void* at, int rx, int ry, int rz, int group, const void* owner);
 } PortExtension;
 
 // Adds an extension; call from a static constructor or before the first frame.
@@ -100,11 +108,12 @@ void port_ext_item_taken(void* item, void* taker);
 int port_ext_allow_save_states(const char** reason);
 int port_ext_hide_player_model(void* mario);
 void port_ext_pad_read(void* status);
-void port_ext_demo_camera(const char* name, const float* pos, int frames, float angle, int option, int hasCallback,
-                          void* actor, unsigned flags);
+int port_ext_demo_camera(const char* name, const float* pos, int frames, float angle, int option, int hasCallback,
+                         void* actor, unsigned flags);
 void port_ext_pollution_clean(float x, float y, float z, float size);
 void port_ext_object_move(void* object, int after);
 int port_ext_object_hit(void* object, void* sender, unsigned message);
+void port_ext_particle_emit(int how, int id, const void* at, int rx, int ry, int rz, int group, const void* owner);
 
 #ifdef __cplusplus
 }

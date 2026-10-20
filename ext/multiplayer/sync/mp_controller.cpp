@@ -77,7 +77,7 @@ const char* const kCharacters[MP_MAX_PLAYERS] = {"Mario",       "Luigi",        
                                                  "Fire Mario",  "Purple Mario", "Orange Mario", "Ice Mario"};
 const char* const kWorlds[] = {"the Airstrip", "Delfino Plaza", "Bianco Hills", "Ricco Harbor", "Gelato Beach",
                                "Pinna Park", "Sirena Beach", "Pianta Village", "Noki Bay", "Corona Mountain"}; // SMS_getShineStage's order
-const size_t kPoseSize = 4 + 4 + 4 + 12 + 4 + 18 + 4 + 16 + 4 + 8 + 4 + 4 + 1 + 48 + 16; // at most (spraying from two)
+const size_t kPoseSize = MP_MAX_STATE; // at most: spraying from two (178 bytes), then effects as many as fit
 const size_t kEnemySize = 18;
 
 struct Controller {
@@ -1052,9 +1052,9 @@ void events()
 		switch (ev.type) {
 		case MP_EV_CONNECTED:
 			if (g.reconnectUntil)
-				notice("Back in the game as " + std::string(kCharacters[ev.slot]));
+				notice("Back in the game");
 			else
-				notice("Joined the game as player " + std::to_string(ev.slot + 1) + " (" + kCharacters[ev.slot] + ")");
+				notice("Joined the game as player " + std::to_string(ev.slot + 1));
 			g.hadSlot        = true;
 			g.reconnectAt    = 0;
 			g.reconnectUntil = 0;
@@ -1089,7 +1089,7 @@ void events()
 			break;
 		}
 		case MP_EV_PLAYER_JOINED:
-			notice(std::string(ev.name[0] ? ev.name : "A player") + " joined as " + kCharacters[ev.slot]);
+			notice(std::string(ev.name[0] ? ev.name : "A player") + " joined");
 			setLook(ev.slot, ""); // theirs comes next
 			if (g.role == MPG_ROLE_HOST) {
 				// everyone's colours for the newcomer (theirs come to the others as they arrive)
@@ -1111,7 +1111,7 @@ void events()
 		case MP_EV_PLAYER_LEFT:
 			g.waitingStage &= ~(1u << ev.slot);
 			setLook(ev.slot, "");
-			notice(std::string(kCharacters[ev.slot]) + " left the game");
+			notice(std::string(ev.name[0] ? ev.name : "A player") + " left the game");
 			if (g.role == MPG_ROLE_HOST)
 				g.hostFlags.forget(ev.slot);
 			break;
@@ -1127,9 +1127,38 @@ void events()
 	}
 }
 
+// An effect as sent: 10 bytes, 14 with a turn.
+const size_t kFxBytes = 14;
+bool fxTurns(const MpgFx& f) { return f.how == 1 || (f.how >= 3 && f.bind == MPG_FX_BIND_NONE); }
+void writeFx(Writer& w, const MpgFx& f)
+{
+	w.u16(f.id);
+	w.u8((uint8_t)((f.how & 7) | (f.group & 3) << 3 | (f.bind & 7) << 5));
+	w.u8(f.joint);
+	for (int i = 0; i < 3; i++)
+		w.s16(f.off[i]);
+	if (fxTurns(f))
+		for (int i = 0; i < 4; i++)
+			w.u8((uint8_t)f.turn[i]);
+}
+void readFx(Reader& r, MpgFx& f)
+{
+	f.id          = r.u16();
+	const int k   = r.u8();
+	f.how         = (uint8_t)(k & 7);
+	f.group       = (uint8_t)(k >> 3 & 3);
+	f.bind        = (uint8_t)(k >> 5 & 7);
+	f.joint       = r.u8();
+	for (int i = 0; i < 3; i++)
+		f.off[i] = r.s16();
+	if (fxTurns(f))
+		for (int i = 0; i < 4; i++)
+			f.turn[i] = (int8_t)r.u8();
+}
+
 // A pose as sent, about half its size in memory: the body's turn as 16-bit
-// fractions of its largest element (a turn is all ones and less), and FLUDD's
-// emitters only while it sprays.
+// fractions of its largest element (a turn is all ones and less), FLUDD's
+// emitters only while it sprays, and as many of the effects as fit after.
 void packPose(const MpgPose& p, std::vector<uint8_t>& out)
 {
 	out.assign(kPoseSize, 0);
@@ -1165,6 +1194,15 @@ void packPose(const MpgPose& p, std::vector<uint8_t>& out)
 	w.u8(p.yoshiColor[2]);
 	w.u8(p.more);
 	w.u32(p.hiddenShapes);
+	for (int i = 0; i < 4; i++)
+		w.s16(p.headTurn[i]);
+	for (int i = 0; i < 4; i++)
+		w.s16(p.waistTurn[i]);
+	w.s16(p.gunAngle);
+	w.s16(p.hoverTiltL);
+	w.s16(p.hoverTiltR);
+	w.s16(p.propAngle);
+	w.s16(p.coasterAngle);
 	const int emitters = p.emitters > 2 ? 2 : p.emitters;
 	w.u8((uint8_t)emitters);
 	for (int e = 0; e < emitters; e++)
@@ -1177,6 +1215,20 @@ void packPose(const MpgPose& p, std::vector<uint8_t>& out)
 			w.f32(p.emitSpeed[c]);
 		w.f32(p.pressure);
 	}
+	// the effects going on first (they show for as long as they are sent),
+	// then the newest of those asked for once (each is in a few poses)
+	int fx = std::min<int>(p.fxCount, MPG_MAX_FX), shots = std::min<int>(p.shotCount, MPG_MAX_FX);
+	while (fx > 0 && w.len + 3 + fx * kFxBytes > kPoseSize)
+		fx--;
+	while (shots > 0 && w.len + 3 + fx * kFxBytes + shots * kFxBytes > kPoseSize)
+		shots--;
+	w.u8((uint8_t)fx);
+	for (int i = 0; i < fx; i++)
+		writeFx(w, p.fx[i]);
+	w.u8((uint8_t)shots);
+	w.u8(p.shotSeq);
+	for (int i = p.shotCount - shots; i < p.shotCount; i++) // the newest
+		writeFx(w, p.shots[i]);
 	out.resize(w.len);
 }
 
@@ -1211,6 +1263,15 @@ bool unpackPose(const uint8_t* d, size_t n, MpgPose& p)
 	p.yoshiColor[2] = r.u8();
 	p.more          = r.u8();
 	p.hiddenShapes  = r.u32();
+	for (int i = 0; i < 4; i++)
+		p.headTurn[i] = r.s16();
+	for (int i = 0; i < 4; i++)
+		p.waistTurn[i] = r.s16();
+	p.gunAngle      = r.s16();
+	p.hoverTiltL    = r.s16();
+	p.hoverTiltR    = r.s16();
+	p.propAngle     = r.s16();
+	p.coasterAngle  = r.s16();
 	p.emitters      = r.u8();
 	if (p.emitters > 2)
 		return false;
@@ -1224,6 +1285,17 @@ bool unpackPose(const uint8_t* d, size_t n, MpgPose& p)
 			p.emitSpeed[c] = r.f32();
 		p.pressure = r.f32();
 	}
+	p.fxCount = r.u8();
+	if (p.fxCount > MPG_MAX_FX)
+		return false;
+	for (int i = 0; i < p.fxCount; i++)
+		readFx(r, p.fx[i]);
+	p.shotCount = r.u8();
+	p.shotSeq   = r.u8();
+	if (p.shotCount > MPG_MAX_FX)
+		return false;
+	for (int i = 0; i < p.shotCount; i++)
+		readFx(r, p.shots[i]);
 	return r.ok;
 }
 
@@ -1592,7 +1664,7 @@ extern "C" void mpg_flags_sync(int32_t* values)
 			for (uint32_t i = 0; i < FLAG_SHINES_N; i++)
 				if (!before[i] && game[i]) {
 					g.shineExit = true;
-					notice(std::string(kCharacters[slot]) + " got a Shine!");
+					notice(std::string(mpg_display_name(slot)) + " got a Shine!");
 				}
 			// what the game asks to save for (a blue coin, a nozzle's box
 			// opened for good, Yoshi hatched: TMarDirector::fireGetBlueCoin,
@@ -2135,8 +2207,11 @@ extern "C" int mpg_pose(int slot, MpgPose* pose, float* age)
 		return 0;
 	uint8_t buf[MP_MAX_STATE];
 	size_t n = mp_remote_state(slot, buf, sizeof buf, age);
-	if (!n || !unpackPose(buf, n, *pose))
+	if (!n || !unpackPose(buf, n, *pose)) {
+		if (g_debug && n)
+			fprintf(stderr, "[multiplayer] slot %d's pose did not read: %zu bytes\n", slot, n);
 		return 0;
+	}
 	const uint32_t here = mpg_session();
 	return here && pose->session == here;
 }
@@ -2152,6 +2227,20 @@ extern "C" int mpg_look(int slot, char* out, int size)
 		return 0;
 	snprintf(out, (size_t)size, "%s", g.looks[slot].c_str());
 	return out[0] != 0;
+}
+
+extern "C" const char* mpg_display_name(int slot)
+{
+	static char names[MP_MAX_PLAYERS][MP_NAME_LEN + 16];
+	if (slot < 0 || slot >= MP_MAX_PLAYERS)
+		return "A player";
+	char* out = names[slot];
+	out[0]    = 0;
+	if (g.role != MPG_ROLE_OFF)
+		mp_player_name(slot, out, MP_NAME_LEN);
+	if (!out[0])
+		snprintf(out, MP_NAME_LEN + 16, "Player %d", slot + 1);
+	return out;
 }
 
 extern "C" void mpg_player_name(int slot, char* out, int size)
@@ -2192,15 +2281,13 @@ extern "C" void mpg_status(char* out, int size)
 	for (int i = 0; i < MP_MAX_PLAYERS; i++) {
 		if (!(players & (1u << i)))
 			continue;
-		char name[MP_NAME_LEN];
-		mp_player_name(i, name, sizeof name);
 		const int ping = i == me ? -1 : mp_ping(g.role == MPG_ROLE_HOST ? i : 0);
 		if (i == me)
-			snprintf(line, sizeof line, "\nP%d %-11s %s (you)", i + 1, kCharacters[i], name);
+			snprintf(line, sizeof line, "\nP%d %s (you)", i + 1, mpg_display_name(i));
 		else if (ping >= 0)
-			snprintf(line, sizeof line, "\nP%d %-11s %s  %d ms", i + 1, kCharacters[i], name, ping);
+			snprintf(line, sizeof line, "\nP%d %s  %d ms", i + 1, mpg_display_name(i), ping);
 		else
-			snprintf(line, sizeof line, "\nP%d %-11s %s", i + 1, kCharacters[i], name);
+			snprintf(line, sizeof line, "\nP%d %s", i + 1, mpg_display_name(i));
 		s += line;
 	}
 	if (g.role == MPG_ROLE_CLIENT && mp_link() != MP_LINK_CONNECTED) {
