@@ -11,8 +11,9 @@
 // Output: SDL2 audio (loaded with dlopen, so builds without the GX layer still
 // link) at 32 kHz; the SDL callback drains the FIFO and kicks the CPU when it
 // runs low (three blocks queued, 52 ms, or up to eight after the output ran
-// dry). Without a device (headless, SMS_AUDIO_OUT=null, or SDL failure) a
-// host timer paces blocks at the DAC rate. SMS_AUDIO_WAV=path also records
+// dry). Without a device (headless, SMS_AUDIO_OUT=null, SDL failure, or no
+// answer from the sound server within SMS_AUDIO_OPEN_TIMEOUT seconds) a host
+// timer paces blocks at the DAC rate. SMS_AUDIO_WAV=path also records
 // every block. SMS_AUDIO=0 drops the output only: the DMA engine keeps its
 // clock (as with no device), so JAudio's audio thread, its sequencer and the
 // DSP run as on the console; stopping them would leave every sequence the game
@@ -29,12 +30,21 @@
 
 #include <atomic>
 #include <algorithm>
+#include <chrono>
+#include <condition_variable>
 #include <dlfcn.h>
 #include "port_host.h"
 #include <mutex>
 #include <pthread.h>
+#include <string>
 #include <time.h>
 #include <vector>
+#ifdef __linux__
+#include <errno.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+#endif
 
 extern "C" int port_audio_dsp_frame_pending(void) __attribute__((weak));
 extern "C" int GXPC_GetSpeed(void) __attribute__((weak));
@@ -61,6 +71,11 @@ typedef int (*PFN_SDL_InitSubSystem)(uint32_t);
 typedef uint32_t (*PFN_SDL_OpenAudioDevice)(const char*, int, const SdlAudioSpec*, SdlAudioSpec*, int);
 typedef void (*PFN_SDL_PauseAudioDevice)(uint32_t, int);
 typedef const char* (*PFN_SDL_GetError)(void);
+typedef void (*PFN_SDL_CloseAudioDevice)(uint32_t);
+typedef void (*PFN_SDL_GetVersion)(uint8_t*); // SDL_version: major, minor, patch
+typedef int (*PFN_SDL_GetNumAudioDrivers)(void);
+typedef const char* (*PFN_SDL_GetAudioDriver)(int);
+typedef const char* (*PFN_SDL_GetCurrentAudioDriver)(void);
 
 const u32 kRate = 32000;
 const u32 kBlockFrames = 560; // JAudio's DAC block (0x460 samples), 17.5 ms
@@ -219,7 +234,21 @@ void* null_clock(void*)
 	return NULL;
 }
 
-bool open_sdl()
+// The SDL calls the output makes (loaded with dlopen).
+struct Sdl {
+	PFN_SDL_InitSubSystem init;
+	PFN_SDL_OpenAudioDevice open;
+	PFN_SDL_PauseAudioDevice pause;
+	PFN_SDL_CloseAudioDevice close;
+	PFN_SDL_GetError error;
+	// for the log, if opening hangs
+	PFN_SDL_GetVersion version;
+	PFN_SDL_GetNumAudioDrivers numDrivers;
+	PFN_SDL_GetAudioDriver driver;
+	PFN_SDL_GetCurrentAudioDriver currentDriver;
+} sdl;
+
+bool load_sdl()
 {
 #ifdef _WIN32
 	void* h = dlopen("SDL2.dll", RTLD_NOW | RTLD_GLOBAL);
@@ -240,34 +269,193 @@ bool open_sdl()
 #endif
 	if (!h)
 		return false;
-	PFN_SDL_InitSubSystem init  = (PFN_SDL_InitSubSystem)dlsym(h, "SDL_InitSubSystem");
-	PFN_SDL_OpenAudioDevice op  = (PFN_SDL_OpenAudioDevice)dlsym(h, "SDL_OpenAudioDevice");
-	PFN_SDL_PauseAudioDevice pa = (PFN_SDL_PauseAudioDevice)dlsym(h, "SDL_PauseAudioDevice");
-	PFN_SDL_GetError err        = (PFN_SDL_GetError)dlsym(h, "SDL_GetError");
-	if (!init || !op || !pa || !err)
+	sdl.init          = (PFN_SDL_InitSubSystem)dlsym(h, "SDL_InitSubSystem");
+	sdl.open          = (PFN_SDL_OpenAudioDevice)dlsym(h, "SDL_OpenAudioDevice");
+	sdl.pause         = (PFN_SDL_PauseAudioDevice)dlsym(h, "SDL_PauseAudioDevice");
+	sdl.close         = (PFN_SDL_CloseAudioDevice)dlsym(h, "SDL_CloseAudioDevice");
+	sdl.error         = (PFN_SDL_GetError)dlsym(h, "SDL_GetError");
+	sdl.version       = (PFN_SDL_GetVersion)dlsym(h, "SDL_GetVersion");
+	sdl.numDrivers    = (PFN_SDL_GetNumAudioDrivers)dlsym(h, "SDL_GetNumAudioDrivers");
+	sdl.driver        = (PFN_SDL_GetAudioDriver)dlsym(h, "SDL_GetAudioDriver");
+	sdl.currentDriver = (PFN_SDL_GetCurrentAudioDriver)dlsym(h, "SDL_GetCurrentAudioDriver");
+	return sdl.init && sdl.open && sdl.pause && sdl.close && sdl.error;
+}
+
+// Opening the output can hang: SDL's PulseAudio backend waits for the sound
+// server with no time limit, and a PipeWire PulseAudio layer that stopped
+// answering new streams (other programs' streams stuck starting too) froze
+// the game at boot, with the emulated CPU held so not even Ctrl+C got
+// through. So the output opens on a thread of its own, and past
+// SMS_AUDIO_OPEN_TIMEOUT seconds (default 5; 0 waits for ever) the game goes
+// on without sound, paced by the host clock as with no device, and the log
+// says what it was waiting for. Should SDL answer later, the device is closed
+// again: this run stays silent.
+struct Opening {
+	std::mutex mu;
+	std::condition_variable cv;
+	bool done;      // the thread has an answer
+	bool abandoned; // the game stopped waiting for it
+	const char* step;
+	uint32_t dev;
+	SdlAudioSpec have;
+	char error[256];
+	std::chrono::steady_clock::time_point start;
+} s_open;
+
+void opening_step(const char* step)
+{
+	std::lock_guard<std::mutex> l(s_open.mu);
+	s_open.step = step;
+}
+
+void* open_thread(void*)
+{
+	char error[256] = "";
+	uint32_t dev    = 0;
+	SdlAudioSpec want, have;
+	memset(&want, 0, sizeof want);
+	memset(&have, 0, sizeof have);
+	opening_step("starting SDL's audio (SDL_InitSubSystem)");
+	if (sdl.init(kSdlInitAudio) != 0) {
+		snprintf(error, sizeof error, "SDL audio init failed: %s", sdl.error());
+	} else {
+		opening_step("opening the output device (SDL_OpenAudioDevice)");
+		want.freq     = kRate;
+		want.format   = kAudioS16Sys;
+		want.channels = 2;
+		want.samples  = 512;
+		want.callback = sdl_callback;
+		dev           = sdl.open(NULL, 0, &want, &have, 0); // no changes allowed: SDL converts
+		if (!dev)
+			snprintf(error, sizeof error, "no SDL audio device: %s", sdl.error());
+	}
+	std::unique_lock<std::mutex> l(s_open.mu);
+	if (s_open.abandoned) {
+		l.unlock();
+		const double late = std::chrono::duration<double>(std::chrono::steady_clock::now() - s_open.start).count();
+		if (dev) {
+			sdl.close(dev);
+			port_log("[audio] the sound output answered after %.1f s, too late: this run stays without sound "
+			         "(restart the game for sound)\n",
+			         late);
+		} else {
+			port_log("[audio] the sound output gave up after %.1f s: %s\n", late, error);
+		}
+		return NULL;
+	}
+	s_open.done = true;
+	s_open.dev  = dev;
+	s_open.have = have;
+	memcpy(s_open.error, error, sizeof error);
+	s_open.cv.notify_all();
+	return NULL;
+}
+
+// What is known about the output that did not answer, for the log.
+void log_stuck(const char* step, int seconds)
+{
+	port_log("[audio] no answer from the sound output after %d s, while %s: the game goes on without sound\n",
+	         seconds, step ? step : "starting it");
+	char line[512];
+	int n = 0;
+	if (sdl.version) {
+		uint8_t v[3] = { 0, 0, 0 }; // SDL_version
+		sdl.version(v);
+		n += snprintf(line + n, sizeof line - n, "SDL %u.%u.%u", v[0], v[1], v[2]);
+	}
+	const char* current = sdl.currentDriver ? sdl.currentDriver() : NULL;
+	n += snprintf(line + n, sizeof line - n, "%sdriver %s", n ? ", " : "",
+	              current ? current : "not chosen yet (its first choice was still starting)");
+	if (sdl.numDrivers && sdl.driver) {
+		n += snprintf(line + n, sizeof line - n, ", built with");
+		for (int i = 0, count = sdl.numDrivers(); i < count && n < (int)sizeof line - 32; i++)
+			n += snprintf(line + n, sizeof line - n, "%s%s", i ? ", " : " ", sdl.driver(i));
+	}
+	port_log("[audio]   %s\n", line);
+	const char* names[] = { "SDL_AUDIODRIVER", "SDL_AUDIO_DEVICE_NAME", "AUDIODEV", "PULSE_SERVER", "PIPEWIRE_REMOTE",
+		                    "XDG_RUNTIME_DIR" };
+	n       = 0;
+	line[0] = 0;
+	for (const char* name : names)
+		if (const char* v = getenv(name))
+			n += snprintf(line + n, sizeof line - n, "%s%s=%s", n ? " " : "", name, v);
+	port_log("[audio]   environment: %s\n", n ? line : "no audio variables set");
+#ifdef __linux__
+	// The sound servers' sockets: one that takes a connection but does not
+	// answer is a stuck server, not a missing one.
+	const char* run    = getenv("XDG_RUNTIME_DIR");
+	const char* pulse  = getenv("PULSE_SERVER");
+	std::string pulsePath = pulse && !strncmp(pulse, "unix:", 5) ? std::string(pulse + 5)
+	                        : run                               ? std::string(run) + "/pulse/native"
+	                                                            : std::string();
+	std::string pwPath = run ? std::string(run) + "/pipewire-0" : std::string();
+	const std::string* paths[] = { &pulsePath, &pwPath };
+	const char* labels[]       = { "PulseAudio", "PipeWire" };
+	for (int i = 0; i < 2; i++) {
+		const std::string& path = *paths[i];
+		if (path.empty())
+			continue;
+		const char* state = "no socket";
+		char why[128]     = "";
+		if (access(path.c_str(), F_OK) == 0) {
+			int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+			sockaddr_un a;
+			memset(&a, 0, sizeof a);
+			a.sun_family = AF_UNIX;
+			snprintf(a.sun_path, sizeof a.sun_path, "%s", path.c_str());
+			if (fd >= 0 && connect(fd, (sockaddr*)&a, sizeof a) == 0) {
+				state = "takes connections";
+			} else {
+				state = "refuses connections";
+				snprintf(why, sizeof why, " (%s)", strerror(errno));
+			}
+			if (fd >= 0)
+				close(fd);
+		}
+		port_log("[audio]   %s socket %s: %s%s\n", labels[i], path.c_str(), state, why);
+	}
+	port_log("[audio]   for sound, restart the sound server (systemctl --user restart pipewire pipewire-pulse "
+	         "wireplumber, or pulseaudio -k), or choose another SDL driver (SDL_AUDIODRIVER=pipewire or alsa)\n");
+#else
+	port_log("[audio]   for sound, check the system's sound output, or restart the computer's audio service\n");
+#endif
+}
+
+bool open_sdl()
+{
+	if (!load_sdl())
 		return false;
 	// SDL turns SIGINT/SIGTERM into an SDL_QUIT event; nothing pumps events in
 	// a headless run, so the process would ignore them. (No effect if the GX
 	// layer initialised SDL first; the user's own setting wins.)
 	port_setenv("SDL_NO_SIGNAL_HANDLERS", "1", 0);
-	if (init(kSdlInitAudio) != 0) {
-		port_log("[audio] SDL audio init failed: %s\n", err());
+	const char* e = getenv("SMS_AUDIO_OPEN_TIMEOUT");
+	const int seconds = e && *e ? std::max(0, atoi(e)) : 5;
+	s_open.start      = std::chrono::steady_clock::now();
+	pthread_t th;
+	if (pthread_create(&th, NULL, open_thread, NULL) != 0)
+		open_thread(NULL);
+	else
+		pthread_detach(th);
+	std::unique_lock<std::mutex> l(s_open.mu);
+	if (seconds)
+		s_open.cv.wait_until(l, s_open.start + std::chrono::seconds(seconds), [] { return s_open.done; });
+	else
+		s_open.cv.wait(l, [] { return s_open.done; });
+	if (!s_open.done) {
+		s_open.abandoned = true;
+		const char* step = s_open.step;
+		l.unlock();
+		log_stuck(step, seconds);
 		return false;
 	}
-	SdlAudioSpec want, have;
-	memset(&want, 0, sizeof want);
-	want.freq     = kRate;
-	want.format   = kAudioS16Sys;
-	want.channels = 2;
-	want.samples  = 512;
-	want.callback = sdl_callback;
-	uint32_t dev  = op(NULL, 0, &want, &have, 0); // no changes allowed: SDL converts
-	if (!dev) {
-		port_log("[audio] no SDL audio device: %s\n", err());
+	l.unlock();
+	if (!s_open.dev) {
+		port_log("[audio] %s\n", s_open.error);
 		return false;
 	}
-	pa(dev, 0);
-	port_log("[audio] SDL output: %d Hz, %u-frame device buffer\n", have.freq, have.samples);
+	sdl.pause(s_open.dev, 0);
+	port_log("[audio] SDL output: %d Hz, %u-frame device buffer\n", s_open.have.freq, s_open.have.samples);
 	return true;
 }
 
