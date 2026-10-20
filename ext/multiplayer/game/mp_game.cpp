@@ -4923,6 +4923,27 @@ extern "C" int mp_player_position(int slot, float* xyz)
 	return 1;
 }
 
+// Another player for the radar (src/radar.cpp): where they are on the
+// ground (x, z), the way they face there (a unit x, z, from their root
+// matrix as drawn) and their name; 1 when they are in play in this stage
+// (not this game's own player, nor one out of lives watching).
+extern "C" int mp_radar_player(int slot, float* xz, float* facing, char* name, int nameSize)
+{
+	if (!enabled() || !inStage() || !watchable(slot))
+		return 0;
+	const TMpPuppet* p  = s_puppets[slot];
+	const MpgPose& pose = p->pose();
+	xz[0]               = p->mPosition.x;
+	xz[1]               = p->mPosition.z;
+	f32 fx = pose.mtx[0][2], fz = pose.mtx[2][2];
+	const f32 len = sqrtf(fx * fx + fz * fz);
+	facing[0]     = len > 1e-4f ? fx / len : 0.0f;
+	facing[1]     = len > 1e-4f ? fz / len : 1.0f;
+	if (name && nameSize > 0)
+		snprintf(name, nameSize, "%s", mpg_display_name(slot));
+	return 1;
+}
+
 // Host: a client's word on an enemy its game runs (mp_mirror.cpp passes it
 // on): the host's copy goes where it is, as a client's copy follows the host's.
 void MpEnemyReport(int slot, int key, const void* data, int size)

@@ -14,7 +14,9 @@
 // game's empty Shine), cut at the map's round edge so they scroll in from
 // past it rather than appear; then the border (made once: white, with a dark
 // edge and a soft shadow, smooth edges in the alpha), and Mario's arrow, all
-// on top of the map whatever their height.
+// on top of the map whatever their height. In multiplayer the other players
+// are smaller white arrows (ext/multiplayer's mp_radar_player); one beyond
+// the radar's reach waits at its edge, the way to them.
 //
 // The HUD draws it last (patch zzzz-radar-01) while a stage plays (not in
 // cutscenes, conversations or the pause menu), fading in and out, and with
@@ -24,7 +26,8 @@
 // sound and its reach shown under it for a moment. MAP (M, or a controller's
 // Back; platform/pad) opens the full map: the whole stage's picture over the
 // dimmed game, as wide as the frame, with the area's name and the same
-// sprites, to the game's own map screen sounds (the wipe in and out of TGuide).
+// sprites and arrows (the other players' names under theirs), to the game's
+// own map screen sounds (the wipe in and out of TGuide).
 // The game goes on under it, so Mario can be steered with it open.
 #include <Enemy/Conductor.hpp>
 #include <GC2D/MessageUtil.hpp>
@@ -62,6 +65,8 @@ extern "C" void GXPC_SetWide2D(int on);
 extern "C" float GXPC_GetWidescreen(void);
 // MAP's presses (platform/pad/pad.cpp)
 extern "C" int port_radar_map_presses;
+// another player's place, facing and name (ext/multiplayer/game/mp_game.cpp)
+extern "C" int mp_radar_player(int slot, float* xz, float* facing, char* name, int nameSize) __attribute__((weak));
 
 namespace {
 
@@ -81,6 +86,8 @@ const f32 kMargin   = 22.0f; // from the frame's right and top edges
 const f32 kShineH   = 0.27f;
 const f32 kBlueH    = 0.19f;
 const f32 kArrowLen = 0.27f; // tip to back, before its outline
+const f32 kOtherLen = 0.72f; // another player's arrow, as a part of Mario's
+const u32 kOtherFill = 0xFFFFFFFF, kOtherOutline = 0x1F2433FF; // white around the border's dark edge
 
 const u32 kBlueCoinType = 0x20000010, kShineType = 0x20000013; // MapObjInit's coin_blue, shine
 
@@ -480,15 +487,15 @@ void clippedSprite(JUTTexture& tex, f32 x, f32 y, f32 h, u32 colour, f32 alpha, 
 	GXEnd();
 }
 
-// Mario's arrow at (x, y) pointing along (dx, dy): an arrowhead with a notch
-// at its back, white around red.
-void arrow(f32 x, f32 y, f32 dx, f32 dy, f32 len, f32 alpha)
+// An arrow at (x, y) pointing along (dx, dy): an arrowhead with a notch at
+// its back, outline around fill (Mario's: white around red).
+void arrow(f32 x, f32 y, f32 dx, f32 dy, f32 len, f32 alpha, u32 fill = 0xE6231EFF, u32 outline = 0xFFFFFFFF)
 {
 	setupColour();
 	const f32 px = -dy, py = dx;
 	for (int pass = 0; pass < 2; pass++) {
 		const f32 s = pass ? 1.0f : 1.45f; // the white outline: the same shape, larger
-		const u32 c = pass ? 0xE6231EFF : 0xFFFFFFFF;
+		const u32 c = pass ? fill : outline;
 		const u8 a  = (u8)(255 * alpha);
 		// tip, the wings and the notch, about the arrow's middle
 		const f32 tx = x + dx * len * 0.62f * s, ty = y + dy * len * 0.62f * s;
@@ -562,6 +569,37 @@ int scan(Marker* shines, int maxShines, Marker* coins, int maxCoins, int* nCoins
 	return ns;
 }
 
+// The other players in a multiplayer game (ext/multiplayer; none without
+// it), drawn as smaller arrows in white.
+struct Other {
+	f32 x, z;   // where they are
+	f32 dx, dz; // the way they face, a unit vector
+	char name[32];
+};
+const int kMaxOthers = 8;
+int scanOthers(Other* out)
+{
+	if (!mp_radar_player)
+		return 0;
+	int n = 0;
+	for (int slot = 0; slot < kMaxOthers; slot++) {
+		f32 xz[2], facing[2];
+		Other& o = out[n];
+		if (!mp_radar_player(slot, xz, facing, o.name, sizeof o.name))
+			continue;
+		o.x  = xz[0];
+		o.z  = xz[1];
+		o.dx = facing[0];
+		o.dz = facing[1];
+		// the system font has ASCII only
+		for (char* c = o.name; *c; c++)
+			if ((u8)*c < 0x20 || (u8)*c >= 0x7F)
+				*c = '?';
+		n++;
+	}
+	return n;
+}
+
 
 // A w x h rectangle in a colour, its top left at (x, y).
 void rect(f32 x, f32 y, f32 w, f32 h, u32 colour, f32 alpha)
@@ -582,14 +620,23 @@ void rect(f32 x, f32 y, f32 w, f32 h, u32 colour, f32 alpha)
 
 // Text in the system font, h tall, centred on x with its top at y, over a
 // soft shadow.
+// How wide text() draws s at height h.
+f32 textWidth(const char* s, f32 h)
+{
+	JUTFont* font = gpSystemFont;
+	f32 w         = 0.0f;
+	if (font && s)
+		for (const char* p = s; *p; p++)
+			w += font->getWidth((u8)*p) * (h / font->getWidth());
+	return w;
+}
+
 void text(const char* s, f32 x, f32 y, f32 h, f32 alpha)
 {
 	JUTFont* font = gpSystemFont;
 	if (!font || !s)
 		return;
-	f32 w = 0.0f;
-	for (const char* p = s; *p; p++)
-		w += font->getWidth((u8)*p) * (h / font->getWidth());
+	const f32 w = textWidth(s, h);
 	font->setGX();
 	font->setCharColor(JUtility::TColor(0, 0, 0, (u8)(160 * alpha)));
 	font->drawString_size_scale(x - w / 2 + 1.5f, y + h * 0.82f + 1.5f, h, h, s, strlen(s), false);
@@ -731,9 +778,47 @@ void drawFullMap(const JDrama::TRect& viewport, f32 mx, f32 mz)
 				sprite(sShineArt, sx, sy, shineH, 0xFFFFFFFF, ease);
 		}
 	}
+	// the other players, then Mario over them, then the others' names
+	// under their arrows over all: a name that would cover one already
+	// placed (players close together) moves down a line
+	static Other others[kMaxOthers];
+	const int nOthers = scanOthers(others);
+	f32 ox[kMaxOthers], oy[kMaxOthers];
+	bool shown[kMaxOthers];
+	for (int i = 0; i < nOthers; i++) {
+		ox[i]    = left + (others[i].x - sMap.x0) / worldW * w;
+		oy[i]    = top + (others[i].z - sMap.z0) / worldH * h;
+		shown[i] = ox[i] > left && ox[i] < left + w && oy[i] > top && oy[i] < top + h;
+		if (shown[i])
+			arrow(ox[i], oy[i], others[i].dx, others[i].dz, 17.0f * kOtherLen, ease, kOtherFill, kOtherOutline);
+	}
 	const f32 angle = (gpMarioAngleY ? *gpMarioAngleY : 0) * (6.2831853f / 65536.0f);
 	const f32 px = left + (mx - sMap.x0) / worldW * w, py = top + (mz - sMap.z0) / worldH * h;
 	arrow(px, py, sinf(angle), cosf(angle), 17.0f, ease);
+	const f32 nameH = 12.0f;
+	f32 placed[kMaxOthers][4]; // x0, y0, x1, y1
+	int nPlaced = 0;
+	for (int i = 0; i < nOthers; i++) {
+		if (!shown[i])
+			continue;
+		const f32 nw = textWidth(others[i].name, nameH);
+		f32 ny       = oy[i] + 10.0f;
+		for (int tries = 0; tries < kMaxOthers; tries++) {
+			bool clear = true;
+			for (int k = 0; k < nPlaced && clear; k++)
+				clear = ox[i] + nw / 2 < placed[k][0] || ox[i] - nw / 2 > placed[k][2] || ny + nameH < placed[k][1]
+				        || ny > placed[k][3];
+			if (clear)
+				break;
+			ny += nameH + 1.0f;
+		}
+		placed[nPlaced][0] = ox[i] - nw / 2;
+		placed[nPlaced][1] = ny;
+		placed[nPlaced][2] = ox[i] + nw / 2;
+		placed[nPlaced][3] = ny + nameH;
+		nPlaced++;
+		text(others[i].name, ox[i], ny, nameH, ease);
+	}
 
 	// the area's name, as the pause menu names it
 	if (gpMarDirector) {
@@ -853,6 +938,22 @@ void RadarDraw(const JDrama::TRect& viewport)
 	GXInitTexObjLOD(&border, GX_LINEAR, GX_LINEAR, 0.0f, 0.0f, 0.0f, GX_FALSE, GX_FALSE, GX_ANISO_1);
 	GXLoadTexObj(&border, GX_TEXMAP0);
 	quad(cx, cy, 2 * R, 2 * R, 0xFFFFFFFF, sAlpha);
+
+	// the other players: one past the radar's reach waits at its edge,
+	// fainter, the way to them
+	static Other others[kMaxOthers];
+	const int nOthers = scanOthers(others);
+	const f32 otherLen = R * kArrowLen * kOtherLen, reach = mapR - otherLen;
+	for (int i = 0; i < nOthers; i++) {
+		f32 sx = (others[i].x - mx) * scale, sy = (others[i].z - mz) * scale, fade = 1.0f;
+		const f32 d = sqrtf(sx * sx + sy * sy);
+		if (d > reach) {
+			sx *= reach / d;
+			sy *= reach / d;
+			fade = 0.7f;
+		}
+		arrow(cx + sx, cy + sy, others[i].dx, others[i].dz, otherLen, sAlpha * fade, kOtherFill, kOtherOutline);
+	}
 
 	// Mario: the way he faces (his angle, 0 facing +z: down the map)
 	const f32 angle = (gpMarioAngleY ? *gpMarioAngleY : 0) * (6.2831853f / 65536.0f);
