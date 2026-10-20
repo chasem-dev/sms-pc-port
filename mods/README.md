@@ -50,6 +50,11 @@ Replacements take more video memory than the original textures; their cost depen
 Past `SMS_TEXTURE_PACK_MB` (1536 by default), the replacements unused for longest are freed, and read again when needed.
 The decoder pauses when images awaiting upload reach `SMS_TEXTURE_PACK_PENDING_MB` (256 by default), allowing at most one additional decoded result. This budget excludes decode scratch space and GPU memory. `SMS_TEXTURE_PACK_SYNC=1` restores synchronous first-use loading for repeatable captures and bypasses preloading and upload limits. The matching settings are `texture_pack_preload`, `texture_pack_pending_mb` and `texture_pack_upload_mb` in `settings.txt`.
 
+## Native mods
+
+A folder here with a `mod.ini` and a shared library is a native mod: a program of its own the game loads at start, which can hear of the game's events, change the game, draw over it and add settings to the Mods menu (F1).
+Any number run together. Writing one, and every function they can use: [sdk/docs/MODDING.md](../sdk/docs/MODDING.md); the SDK and examples are in [`sdk/`](../sdk/README.md).
+
 ## <name>/files/: game file mods
 
 A mod that changes the game's files (models, stages, textures inside archives, text) goes in `mods/<name>/files/`, laid out like the disc's own `files/` folder, and is switched on with `mod = <name>` in `settings.txt` (or `SMS_MOD=<name>`; several as `a;b`, a later one winning).
