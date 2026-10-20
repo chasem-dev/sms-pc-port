@@ -7,7 +7,7 @@
 // 0x180000000 to 0x300000000. So there a game address x lives at
 //   0x100000000 + x  for x below 0x80000000 (the executable, which the kernel
 //                    loads just above PAGEZERO, thread stacks, port_low_alloc)
-//   0x700000000 + x  from 0x80000000 (MEM1)
+//   0x10000000000 + x  from 0x80000000 (MEM1)
 // (PORT_GAME_LO and PORT_GAME_HI in the port's dolphin/types.h). Truncating
 // such a pointer gives the same 32-bit address as on the other builds; this
 // pass makes the way back work by rebasing every integer the code turns into
@@ -59,7 +59,7 @@ using namespace llvm;
 namespace {
 
 constexpr uint64_t kLo = 0x100000000ull;  // PORT_GAME_LO
-constexpr uint64_t kHi = 0x700000000ull;  // PORT_GAME_HI
+constexpr uint64_t kHi = 0x10000000000ull;  // PORT_GAME_HI
 
 constexpr uint64_t kMin = 0x10000;  // PORT_GAME_MIN
 

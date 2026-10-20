@@ -36,6 +36,8 @@
 #endif
 #ifdef __APPLE__
 #include <sys/ucontext.h>
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
 #endif
 #endif
 
@@ -538,6 +540,28 @@ static void* low_map(size_t size, int prot)
 #endif
 #endif
 
+#if PORT_GAME_HI
+// What already holds [at, at + size) on macOS, for a report when MEM1 cannot
+// be mapped there.
+static void log_mapping_at(uintptr_t at, size_t size)
+{
+	mach_vm_address_t addr = at;
+	for (int n = 0; n < 8; n++) {
+		mach_vm_size_t len = 0;
+		natural_t depth = 0;
+		vm_region_submap_info_data_64_t info;
+		mach_msg_type_number_t count = VM_REGION_SUBMAP_INFO_COUNT_64;
+		if (mach_vm_region_recurse(mach_task_self(), &addr, &len, &depth, (vm_region_recurse_info_t)&info, &count) != KERN_SUCCESS
+			|| addr >= at + size)
+			break;
+		port_log("[port]   taken: 0x%llx-0x%llx prot %d/%d tag %u share %u%s\n", (unsigned long long)addr,
+			(unsigned long long)(addr + len), info.protection, info.max_protection, info.user_tag, info.share_mode,
+			info.is_submap ? " (submap: shared cache)" : "");
+		addr += len;
+	}
+}
+#endif
+
 static void map_mem1()
 {
 	// 64-bit hosts: objects holding pointers are larger, and the fixed-size
@@ -557,6 +581,16 @@ static void map_mem1()
 	}
 #else
 	void* p = map_exact(want, port_mem1_size);
+#if PORT_GAME_HI
+	// Native arm64 macOS: the game's code reaches MEM1 at PORT_GAME_HI only
+	// (the pass plugin builds the address in), so MEM1 anywhere else cannot work.
+	if (p != want) {
+		port_log("[port] cannot map MEM1 at %p (%u MiB): the address is taken\n", want, mb);
+		log_mapping_at((uintptr_t)want, port_mem1_size);
+		port_log("[port] the Apple Silicon build cannot start on this Mac: turn off Apple Silicon build in SMS Launcher (Manage game, Files), or build with SMS_ARCH=64\n");
+		exit(1);
+	}
+#endif
 	if (p != want) {
 		port_log("[port] cannot map MEM1 at %p; falling back to a heap block\n", want);
 		p = mmap(NULL, port_mem1_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);

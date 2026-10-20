@@ -70,7 +70,9 @@ typedef int BOOL;
 /* Native arm64 macOS reserves the low 4 GiB (PAGEZERO) and puts its shared
  * library cache at 0x180000000-0x300000000, so there a game address x lives
  * at PORT_GAME_LO + x below 0x80000000 (the executable, stacks,
- * port_low_alloc) and at PORT_GAME_HI + x from 0x80000000 (MEM1). A pointer
+ * port_low_alloc) and at PORT_GAME_HI + x from 0x80000000 (MEM1, at 1 TiB:
+ * the system takes addresses above the shared cache too, and on macOS 27
+ * something already held 0x780000000 when PORT_GAME_HI was 28 GiB). A pointer
  * truncated to a u32 is the game address, and tools/gameptr's pass plugin
  * rebases every integer the game and platform code turn into a pointer
  * (docs/MACOS-ARM64.md; it defines PORT_GAMEPTR_PLUGIN); code built
@@ -78,7 +80,7 @@ typedef int BOOL;
  * other host. */
 #if defined(__APPLE__) && defined(__aarch64__)
 #define PORT_GAME_LO 0x100000000ull
-#define PORT_GAME_HI 0x700000000ull
+#define PORT_GAME_HI 0x10000000000ull
 #else
 #define PORT_GAME_LO 0ull
 #define PORT_GAME_HI 0ull
