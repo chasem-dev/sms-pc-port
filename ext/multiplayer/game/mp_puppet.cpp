@@ -928,14 +928,16 @@ void TMpPuppet::applyPose(JDrama::TGraphics* graphics)
 		// under them: the game sits Mario on its joint 2, turned by his own
 		// angle (TMario::calcBaseMtx), so the car's base is his root without those
 		J3DModel* car = mCoaster->getModel();
-		Mtx at, seat, turn, unturn, b;
+		Mtx at, seat, turn, unturn, b, root;
 		MTXIdentity(at);
 		car->setBaseTRMtx(at);
 		mCoaster->calcAnm();
 		MTXInverse(car->getAnmMtx(2), seat);
 		MsMtxSetRotRPH(turn, 0.0f, p.coasterAngle * (360.0f / 65536.0f), 0.0f);
 		MTXInverse(turn, unturn);
-		MTXConcat(p.mtx, unturn, b);
+		// the unscaled pose (base may be scaled): MTXConcat takes no const Mtx
+		memcpy(root, p.mtx, sizeof root);
+		MTXConcat(root, unturn, b);
 		MTXConcat(b, seat, at);
 		car->setBaseTRMtx(at);
 		mCoaster->calcAnm();
