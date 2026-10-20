@@ -209,6 +209,13 @@ int GXPC_ReadXFB(const void* xfb, uint8_t* rgba, int* w, int* h);
 enum { GXPC_EXT_OVERLAY_NOTICE, GXPC_EXT_OVERLAY_STATUS, GXPC_EXT_OVERLAY_BANNER, GXPC_EXT_OVERLAY_PANELS };
 void GXPC_ExtOverlaySet(int panel, const char* text);
 
+// Auto save's indicator (ext/autosave, gx_autosave_overlay.cpp): SAVING turns
+// a Shine at the bottom left of the game's picture; SAVED stops it beside
+// "Saved", FAILED says the game could not save, and either fades out by
+// itself; OFF hides it. Any thread; only a window shows it, not SMS_SHOTS.
+enum { GXPC_AUTOSAVE_OFF, GXPC_AUTOSAVE_SAVING, GXPC_AUTOSAVE_SAVED, GXPC_AUTOSAVE_FAILED };
+void GXPC_AutoSaveIndicator(int state);
+
 // Names over other players (multiplayer, gx_ext_overlay.cpp): each label's
 // bottom centre at (x, y) across the game's picture (0..1 from its top left),
 // `alpha` 0..1. Replaces the last list; count 0 hides them all. Any thread;

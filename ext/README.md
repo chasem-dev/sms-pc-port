@@ -8,6 +8,7 @@ They are the start of a code-mod framework for the port: a new feature that need
 | [`core/`](core/port_ext.cpp) | the registry: the game's hooks call each registered extension in turn |
 | [`multiplayer/`](multiplayer/README.md) | up to eight players in one game over the network |
 | [`demo/`](demo/README.md) | plays Mario from a script, as a player holds the controller, for trailers and footage |
+| [`autosave/`](autosave/README.md) | saves by itself where the game would ask to save, with an indicator and the save sound |
 | [`modapi/`](modapi/README.md) | native mods: loads mods from `mods/` (shared libraries) and turns these hooks into their events ([MODDING.md](https://github.com/chasem-dev/sms-mod-sdk/blob/main/docs/MODDING.md)) |
 
 ## The hooks
@@ -39,6 +40,7 @@ An extension fills in a `PortExtension` with the hooks it needs, leaving the res
 | `playerStatus` | `TMario::changePlayerStatus` | change the status, or return 1 to refuse it |
 | `playerDamage` | `TMario::decHP` | change the amount, or return 1 to stop it |
 | `shineCollected` | `TFlagManager::setShineFlag` sets a Shine's flag for the first time | note it |
+| `savePrompt` | the stage is about to ask the player to save, after a Shine, a blue coin, a nozzle's box or Yoshi (not a game over's) | return 1 to leave the prompt out (auto save saves instead) |
 
 Every hook runs on the game thread inside the game's own steps, so an extension uses the game's globals (`gpApplication`, `gpMarDirector`, `gpMarioOriginal`, `TFlagManager`) as the game does there.
 With no extension switched on, each hook is a loop over nothing.

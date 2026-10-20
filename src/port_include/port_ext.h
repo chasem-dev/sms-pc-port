@@ -103,6 +103,11 @@ typedef struct PortExtension {
 	// TFlagManager::setShineFlag set Shine `shine`'s flag for the first
 	// time; `total` Shines are on the file now.
 	void (*shineCollected)(int shine, int total);
+	// The stage is about to ask the player to save (TMarDirector's card save
+	// prompt), for `kind`: 1 a blue coin, 3 or 4 a nozzle's box opened for
+	// good, 5 Yoshi hatched, 6 a Shine. Return 1 to leave the prompt out (the
+	// extension saved, or the game need not); the stage goes on as after it.
+	int (*savePrompt)(int kind);
 } PortExtension;
 
 // Adds an extension; call from a static constructor or before the first frame.
@@ -135,6 +140,7 @@ void port_ext_camera(void* camera, float* eye, float* at, float* fovy);
 int port_ext_player_status(void* mario, unsigned* status, unsigned* arg, int force);
 int port_ext_player_damage(void* mario, int* amount);
 void port_ext_shine_collected(int shine, int total);
+int port_ext_save_prompt(int kind);
 
 #ifdef __cplusplus
 }

@@ -108,6 +108,10 @@ gdb -q -batch -nx -ex 'set debuginfod enabled off' \
     --args build/linux-64/sms /path/to/GMSE01.iso
 ```
 
+Auto save ([ext/autosave](../ext/autosave/README.md)) has `tools/regress/autosave.py`, run under gdb on regular Sunshine with `SMS_AUTO_SAVE=1` and the same environment as the nozzle check (a fresh card, `SMS_WARP=2,7,1`, the file-select presses, which create file A).
+It opens a Turbo box for good, raises a blue coin's prompt, then makes a Shine in the stage appear and puts Mario on it. Each must save (the save count and last save time move on, and the saved copy of the flags is taken) without the director opening the prompt, and the Shine must still leave the stage.
+`AUTOSAVE_PART=shine` runs only the Shine. `AUTOSAVE_PART=fallback` makes the slot look saved over by another game, and the prompt must then open.
+
 ## Platform layer
 
 

@@ -161,3 +161,9 @@ extern "C" void port_ext_shine_collected(int shine, int total)
 {
 	EACH(shineCollected) s_ext[i]->shineCollected(shine, total);
 }
+
+extern "C" int port_ext_save_prompt(int kind)
+{
+	EACH(savePrompt) if (s_ext[i]->savePrompt(kind)) return 1;
+	return 0;
+}

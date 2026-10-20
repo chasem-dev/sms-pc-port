@@ -9,6 +9,7 @@
 #include "gx_warp_menu.h"
 #include "gx_quit_prompt.h"
 #include "gx_savestate_overlay.h"
+#include "gx_autosave_overlay.h"
 #include "gx_ext_overlay.h"
 #include "gx_glthread.h"
 #include "gx_window_layout.h"
@@ -957,6 +958,7 @@ void GXPC_Present(const void* xfb) {
             warpMenuRender(w, h);
             quitPromptRender(w, h);
             savestateOverlayRender(w, h);
+            autosaveOverlayRender(w, h);
             extOverlayRender(w, h);
             captureWindow(s_frame, w, h);
             t1 = nowSeconds();

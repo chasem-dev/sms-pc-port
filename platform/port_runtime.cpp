@@ -842,6 +842,7 @@ static const struct {
 	{ "skip_intro", "SMS_SKIP_INTRO" }, // straight to the title: no logos or opening movie
 	{ "heat_haze", "SMS_HEAT_HAZE" }, // the heat-wave shimmer, on by default
 	{ "pause_tracker", "SMS_PAUSE_TRACKER" }, // the pause menu's Shine and blue coin tracker, on by default
+	{ "auto_save", "SMS_AUTO_SAVE" },   // save by itself after Shines and blue coins, no prompt (ext/autosave), off by default
 	{ "radar", "SMS_RADAR" },           // the radar: the stage around Mario with its Shines and blue coins, off by default
 	{ "radar_zoom", "SMS_RADAR_ZOOM" }, // world units from the radar's centre to its edge (2500, 25 m)
 	{ "radar_size", "SMS_RADAR_SIZE" }, // the radar's size, percent

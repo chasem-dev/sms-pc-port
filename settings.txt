@@ -95,6 +95,12 @@ frame_rate = 60
 # The pause menu's tracker: an area's Shine Sprites and blue coins, got out of
 # all there are; L and R step through the areas you have been to.
 # pause_tracker = on
+# Save by itself where the game asks whether to save: after a Shine, a blue
+# coin, a nozzle's box and Yoshi. A Shine turns at the bottom left while it
+# saves. Anything the prompt has to ask about (no save file yet, a file saved
+# over since) still opens the prompt; so does a game over. Super Mario
+# Eclipse has its own (its settings' Save Prompts).
+# auto_save = off
 # The radar at the HUD's top right: the stage close around Mario, north up,
 # with an arrow for the way he faces and the stage's Shines and blue coins.
 # Its maps are in assets/maps (tools/radar/gen_maps.py makes them from the
