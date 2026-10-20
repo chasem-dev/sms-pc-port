@@ -52,6 +52,7 @@ inline constexpr sms_offset_entry sms_offset_table[] = {
     {"TMarDirector", 0x50, 0x50, 0x9c},  // unk50
     {"TMarDirector", 0x68, 0x68, 0xb4},  // unk68
     {"TMarDirector", 0xe4, 0xe4, 0x198},  // unkE4
+    {"TMarDirector", 0x261, 0x261, 0x411},  // unk261
     {"TMarioCap", 0x4, 0x4, 0x8},  // unk4
     {"TMarioEffect", 0x68, 0x68, 0x80},  // unk68
     {"TMarioEffect", 0x7c, 0x7c, 0xa0},  // unk7C

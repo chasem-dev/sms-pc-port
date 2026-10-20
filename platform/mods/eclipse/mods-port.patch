@@ -267,6 +267,35 @@
      u16 unk2 = messageEntry[2];
      if (unk2 <= unk) {
          return false;
+--- a/bse/src/patches/generic.cpp
++++ b/bse/src/patches/generic.cpp
+@@ -91,21 +91,21 @@
+     case SavePromptsSetting::ALL:
+         return true;
+     case SavePromptsSetting::NO_BLUE:
+-        if (nextState == 11 && reinterpret_cast<u8 *>(director)[0x261] == 1) {
++        if (nextState == 11 && reinterpret_cast<u8 *>(director)[SMS_OFFSET(TMarDirector, 0x261)] == 1) {
+             return false;
+         } else {
+             return true;
+         }
+     case SavePromptsSetting::NONE:
+-        if (nextState == 11 && reinterpret_cast<u8 *>(director)[0x261] != 0 &&
+-            reinterpret_cast<u8 *>(director)[0x261] != 7) {
++        if (nextState == 11 && reinterpret_cast<u8 *>(director)[SMS_OFFSET(TMarDirector, 0x261)] != 0 &&
++            reinterpret_cast<u8 *>(director)[SMS_OFFSET(TMarDirector, 0x261)] != 7) {
+             return false;
+         } else {
+             return true;
+         }
+     case SavePromptsSetting::AUTO_SAVE:
+-        if (nextState == 11 && reinterpret_cast<u8 *>(director)[0x261] != 0 &&
+-            reinterpret_cast<u8 *>(director)[0x261] != 7) {
++        if (nextState == 11 && reinterpret_cast<u8 *>(director)[SMS_OFFSET(TMarDirector, 0x261)] != 0 &&
++            reinterpret_cast<u8 *>(director)[SMS_OFFSET(TMarDirector, 0x261)] != 7) {
+             if (!BetterSMS::triggerAutoSave()) {
+                 OSReport("AutoSave failed!\n");
+             }
 --- a/bse/src/patches/ui.cpp
 +++ b/bse/src/patches/ui.cpp
 @@ -47,7 +47,8 @@
