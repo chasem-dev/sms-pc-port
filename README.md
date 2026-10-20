@@ -125,6 +125,7 @@ Options can be kept in [`settings.txt`](settings.txt) (`resolution = 2`, `textur
 | `SMS_WIDESCREEN_HUD=edges` | with widescreen, move the gameplay HUD's counters to the left edge and the water gauge to the right one |
 
 Optional mods, such as HD texture packs, go in [`mods/`](mods/README.md); `python3 tools/mods/get.py textures` downloads and installs the UHD texture pack there.
+Native mods, programs and Lua scripts that hook into the game, draw over it and add settings to its Mods menu (F1), go there too; they are made with the [mod SDK](https://github.com/chasem-dev/sms-mod-sdk), and [sms-mod-templates](https://github.com/chasem-dev/sms-mod-templates) has templates and example mods to start from.
 
 Saves go to a memory card in slot A, kept as files in `~/.local/share/sms-port/card-a` on Linux and macOS (`$XDG_DATA_HOME/sms-port/card-a` if that is set) and in `%APPDATA%\sms-port\card-a` on Windows.
 Every other switch (debugging, tracing, graphics) is listed in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#environment-variables).
@@ -248,9 +249,10 @@ bindings.txt          keyboard bindings
 rom/                  your disc image (ignored by git)
 build/<os>-<arch>/    build output (ignored by git)
 decomp/               the decompilation (git submodule: sms-english)
+sdk/                  the mod SDK for native mods (git submodule: sms-mod-sdk)
 decomp-patches/       PC-only changes applied to copies of decomp sources at configure time
 platform/             host replacements for the GameCube SDK: graphics, disc, audio, input, OS
-ext/                  optional features the game calls at chosen points: multiplayer
+ext/                  optional features the game calls at chosen points: multiplayer, native mods
 src/                  entry point and compatibility headers
 tools/                build helpers and developer tools
 docs/                 developer documentation and reference screenshots

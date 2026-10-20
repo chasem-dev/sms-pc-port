@@ -12,6 +12,7 @@ python3 tools/mods/get.py textures    # the UHD texture pack, into mods/textures
 python3 tools/mods/get.py extras      # only the extras, into mods/textures/sms-hd-texture-extras
 python3 tools/mods/get.py eclipse     # Super Mario Eclipse, patched from your disc, into mods/eclipse
 python3 tools/mods/get.py language fr  # the French language pack, into mods/languages/fr (de, es, it, pl)
+python3 tools/mods/get.py lua         # the lua mod, into mods/lua: runs Lua script mods (native mods, below)
 python3 tools/mods/get.py all
 ```
 
@@ -53,7 +54,11 @@ The decoder pauses when images awaiting upload reach `SMS_TEXTURE_PACK_PENDING_M
 ## Native mods
 
 A folder here with a `mod.ini` and a shared library is a native mod: a program of its own the game loads at start, which can hear of the game's events, change the game, draw over it and add settings to the Mods menu (F1).
-Any number run together. Writing one, and every function they can use: [sdk/docs/MODDING.md](../sdk/docs/MODDING.md); the SDK and examples are in [`sdk/`](../sdk/README.md).
+Any number run together, and a mod built for the game's API version runs with every build of the game, so mods are made and released apart from it.
+
+- **Writing one:** the [mod SDK](https://github.com/chasem-dev/sms-mod-sdk) (here as the `sdk/` submodule) and its manual, [MODDING.md](https://github.com/chasem-dev/sms-mod-sdk/blob/main/docs/MODDING.md), with every event and function.
+- **Templates and examples** to start from: [sms-mod-templates](https://github.com/chasem-dev/sms-mod-templates) (C, C++ and Lua templates; the `hello`, `trainer-hud`, `stage-timer` and `lua-challenges` examples, also prebuilt on its releases page).
+- **Lua script mods** (`runtime = lua` in their `mod.ini`) run in the **lua** mod, which is optional: `python3 tools/mods/get.py lua` installs it in `mods/lua` (from the [SDK's releases](https://github.com/chasem-dev/sms-mod-sdk/releases)). Without it the Mods menu lists script mods as needing it.
 
 ## <name>/files/: game file mods
 

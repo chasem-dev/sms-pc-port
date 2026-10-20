@@ -7,6 +7,8 @@
     python3 tools/mods/get.py eclipse     Super Mario Eclipse (patched from your disc)
     python3 tools/mods/get.py language fr the game's text in French (de, es, it, pl: German,
                                           Spanish, Italian, Polish); --if-outdated as for extras
+    python3 tools/mods/get.py lua         the lua mod, which runs Lua script mods (native
+                                          mods, docs in the mod SDK); --if-outdated as for extras
     python3 tools/mods/get.py all         textures and Eclipse
 
 Each mod's previous install is removed first, then its release is downloaded
@@ -70,6 +72,12 @@ EXTRAS_RECORD = ".release"
 # languages released after it.
 with open(os.path.join(HERE, "language-packs.json"), encoding="utf-8") as f:
     LANGUAGE_PACKS = json.load(f)
+# The lua mod (https://github.com/chasem-dev/sms-mod-sdk, its lua/): a native
+# mod that runs Lua script mods (`runtime = lua` in their mod.ini). Optional,
+# so not part of the game; its release holds lua/ with a library for every
+# platform. Pinned in lua-mod.json, for SMS Launcher too.
+with open(os.path.join(HERE, "lua-mod.json"), encoding="utf-8") as f:
+    LUA = dict(json.load(f), install=os.path.join(MODS, "lua"))
 ECLIPSE = {
     "name": "Super Mario Eclipse v1.1.0 (Eclipse Team)",
     "page": "https://gamebanana.com/mods/536309",
@@ -373,6 +381,50 @@ def get_language(code, keep, if_outdated=False):
         % (langs[code]["name"], os.path.relpath(install, ROOT), code))
 
 
+def lua_current():
+    """Whether the installed lua mod is the pinned release."""
+    try:
+        with open(os.path.join(LUA["install"], EXTRAS_RECORD), encoding="utf-8") as f:
+            return json.load(f).get("md5") == LUA["md5"]
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def get_lua(keep, if_outdated=False):
+    mod = LUA
+    if if_outdated and lua_current():
+        say("The lua mod is up to date (%s)." % mod["name"])
+        return
+    say("== The lua mod: %s" % mod["name"])
+    if os.path.isdir(mod["install"]):
+        say("Removing the previous install, %s" % os.path.relpath(mod["install"], ROOT))
+        remove(mod["install"])
+    need_space(MODS, 3 * mod["size"] + (16 << 20))
+    archive = fetch(mod)
+    tmp = mod["install"] + ".part"
+    remove(tmp)
+    try:
+        # the zip holds lua/ (mod.ini, bin/<platform>/lua_host.*), as mods/lua/
+        with zipfile.ZipFile(archive) as z:
+            names = [n for n in z.namelist() if not n.endswith("/")]
+            if "lua/mod.ini" not in names or any(not n.startswith("lua/") or ".." in n.split("/") for n in names):
+                raise Failure("the archive is not laid out as expected (lua/mod.ini, ...)")
+            z.extractall(tmp)
+        os.replace(os.path.join(tmp, "lua"), mod["install"])
+        with open(os.path.join(mod["install"], EXTRAS_RECORD), "w", encoding="utf-8") as f:
+            json.dump({"name": mod["name"], "file": mod["file"], "md5": mod["md5"]}, f, indent=2)
+    except (OSError, zipfile.BadZipFile) as e:
+        remove(mod["install"])
+        raise Failure("could not unpack %s: %s" % (os.path.basename(archive), e))
+    finally:
+        remove(tmp)
+        if not keep:
+            remove(archive)
+    platforms = sorted(os.listdir(os.path.join(mod["install"], "bin")))
+    say("Installed the lua mod in %s (%s); Lua script mods in mods/ now run."
+        % (os.path.relpath(mod["install"], ROOT), ", ".join(platforms)))
+
+
 def get_eclipse(keep, iso_arg):
     mod = ECLIPSE
     say("== Eclipse: %s" % mod["name"])
@@ -439,7 +491,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter,
                                  epilog="\n\n".join(__doc__.split("\n\n")[1:]))
-    ap.add_argument("what", choices=["textures", "extras", "eclipse", "language", "all"])
+    ap.add_argument("what", choices=["textures", "extras", "eclipse", "language", "lua", "all"])
     ap.add_argument("language", nargs="?", help="with language: fr, de, es, it or pl")
     ap.add_argument("--iso")
     ap.add_argument("--keep-download", action="store_true")
@@ -460,6 +512,8 @@ def main():
             if not args.language:
                 raise Failure("which language? fr, de, es, it or pl")
             get_language(args.language, args.keep_download, args.if_outdated)
+        if args.what == "lua":
+            get_lua(args.keep_download, args.if_outdated)
         if args.what in ("eclipse", "all"):
             get_eclipse(args.keep_download, args.iso)
     except Failure as e:

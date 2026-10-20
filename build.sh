@@ -160,9 +160,12 @@ if [[ -n "$disc" ]]; then
   fi
 fi
 
-# Skip `git submodule` when decomp is already at its commit: older Git for
-# Windows runs it as a shell script whose forks can fail (e.g. Windows 7).
-[[ "$(git -C decomp rev-parse HEAD 2>/dev/null)" == "$(git rev-parse :decomp)" ]] || git submodule update --init decomp
+# Skip `git submodule` when decomp and sdk (the mod SDK) are already at their
+# commits: older Git for Windows runs it as a shell script whose forks can
+# fail (e.g. Windows 7).
+for sub in decomp sdk; do
+  [[ "$(git -C "$sub" rev-parse HEAD 2>/dev/null)" == "$(git rev-parse ":$sub")" ]] || git submodule update --init "$sub"
+done
 cmake -S . -B "$bdir" ${cmake_args[@]+"${cmake_args[@]}"} \
   -DSMS_ARCH="${sms_arch/arm64/64}" -DSMS_GX_BUILD_TESTS="${SMS_GX_BUILD_TESTS:-OFF}" -DSMS_BUNDLE_DISC="$disc"
 cmake --build "$bdir" --target sms --parallel "$(sms_jobs)"

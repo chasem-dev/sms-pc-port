@@ -1,7 +1,8 @@
 # ext/modapi: the native mod runtime
 
-Loads native mods from `mods/` and gives them the API of [`sdk/include/sms_mod.h`](../../sdk/include/sms_mod.h).
-What mods see is documented in [sdk/docs/MODDING.md](../../sdk/docs/MODDING.md); this page is how it is built.
+Loads native mods from `mods/` and gives them the API of `sms_mod.h`, from the mod SDK ([sms-mod-sdk](https://github.com/chasem-dev/sms-mod-sdk), the `sdk/` submodule).
+What mods see is documented in the [mod SDK](https://github.com/chasem-dev/sms-mod-sdk)'s manual, [MODDING.md](https://github.com/chasem-dev/sms-mod-sdk/blob/main/docs/MODDING.md); this page is how it is built.
+The SDK is the `sdk/` submodule: the API changes there first (append-only, with a release tag), then `sdk/` moves to that tag and the runtime implements it.
 
 | File | Half | What it does |
 | --- | --- | --- |
@@ -16,7 +17,7 @@ How a frame goes: the extension's `frame` hook (top of `TApplication`'s loop) ca
 `gx_platform.cpp` presents the game's picture, then `modLayerRender`, then the port's own overlays.
 Keys come from the SDL event pump (`GXPC_SetKeyHook`, in `PADRead` on the game thread) after the port's own keys and menus, before the controls; the controllers from the extension's `padRead` hook after `PADRead`.
 
-Script mods (`runtime = <name>` in `mod.ini`) have no library: `loadScript` hands them to the native mod that called `core->host_runtime` for that runtime (the lua mod, `sdk/examples/lua`), after every native mod has loaded; a host's script mods stop before it unloads and start again when it is back (`startWaitingScripts`).
+Script mods (`runtime = <name>` in `mod.ini`) have no library: `loadScript` hands them to the native mod that called `core->host_runtime` for that runtime (the lua mod, the SDK's `lua/`, an optional install: `tools/mods/get.py lua`), after every native mod has loaded; a host's script mods stop before it unloads and start again when it is back (`startWaitingScripts`).
 
 Ownership: every subscription, service, key binding, option, image and the input capture is recorded against its mod, so unloading a mod (exit, the Mods menu, hot reload) drops all of it before the library is closed.
 Handlers added or removed during a dispatch take effect when it ends.

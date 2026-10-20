@@ -2,3 +2,7 @@
 	path = decomp
 	url = https://github.com/chasem-dev/sms-english.git
 	branch = main
+[submodule "sdk"]
+	path = sdk
+	url = https://github.com/chasem-dev/sms-mod-sdk.git
+	branch = main

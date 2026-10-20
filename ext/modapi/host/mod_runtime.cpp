@@ -1,4 +1,4 @@
-// The native mod API's runtime (ext/modapi/README.md, docs/MODDING.md): finds
+// The native mod API's runtime (ext/modapi/README.md, sdk/docs/MODDING.md): finds
 // the mods under mods/ (a folder with a mod.ini and a shared library), puts
 // them in order, loads them, and keeps what each registered — event handlers,
 // services, settings, key bindings, the input capture — so it can be dropped
@@ -1218,8 +1218,8 @@ void start()
 			m->error = "switched off in the Mods menu";
 		}
 	order();
-	port_log("[mods] %zu native mod(s) in %s (%s); settings in %s\n", g_mods.size(), s_root.c_str(), platformDir(),
-	         dataRoot().c_str());
+	port_log("[mods] API %d.%d: %zu native mod(s) in %s (%s); settings in %s\n", SMS_MOD_API_MAJOR, SMS_MOD_API_MINOR,
+	         g_mods.size(), s_root.c_str(), platformDir(), dataRoot().c_str());
 	// native mods first, then the script mods their runtimes run
 	s_booting = true;
 	for (int scripts = 0; scripts < 2; scripts++)
@@ -1309,7 +1309,9 @@ bool loadScript(SmsMod* m)
 {
 	auto host = s_hosts.find(m->runtime);
 	if (host == s_hosts.end()) {
-		m->error = "needs a mod that runs " + m->runtime + " scripts" + (m->runtime == "lua" ? " (the lua mod)" : "");
+		// the lua mod is optional, from the mod SDK's releases
+		m->error = "needs a mod that runs " + m->runtime + " scripts" +
+		           (m->runtime == "lua" ? ": the lua mod (tools/mods/get.py lua)" : "");
 		return false;
 	}
 	m->libPath = m->dir + "/" + m->script;

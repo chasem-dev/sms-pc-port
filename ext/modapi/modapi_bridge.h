@@ -7,7 +7,7 @@
 #ifndef MODAPI_BRIDGE_H
 #define MODAPI_BRIDGE_H
 
-#include "../../sdk/include/sms_mod.h"
+#include <sms_mod.h> /* the mod SDK: sdk/include, the sdk/ submodule */
 
 #ifdef __cplusplus
 extern "C" {

@@ -8,7 +8,7 @@ They are the start of a code-mod framework for the port: a new feature that need
 | [`core/`](core/port_ext.cpp) | the registry: the game's hooks call each registered extension in turn |
 | [`multiplayer/`](multiplayer/README.md) | up to eight players in one game over the network |
 | [`demo/`](demo/README.md) | plays Mario from a script, as a player holds the controller, for trailers and footage |
-| [`modapi/`](modapi/README.md) | native mods: loads mods from `mods/` (shared libraries) and turns these hooks into their events ([sdk/docs/MODDING.md](../sdk/docs/MODDING.md)) |
+| [`modapi/`](modapi/README.md) | native mods: loads mods from `mods/` (shared libraries) and turns these hooks into their events ([MODDING.md](https://github.com/chasem-dev/sms-mod-sdk/blob/main/docs/MODDING.md)) |
 
 ## The hooks
 
@@ -58,6 +58,6 @@ An extension is a folder `ext/<name>/` with:
 - `tests/` folders, left out of the game build, for host tests.
 
 [`ext.cmake`](ext.cmake) picks up every `ext/*/game`, `ext/*/net`, `ext/*/sync` and `ext/*/host` source by itself.
-Features that need not be built into the game belong in a native mod instead ([sdk/docs/MODDING.md](../sdk/docs/MODDING.md)), which players install and switch on and off themselves.
+Features that need not be built into the game belong in a native mod instead ([MODDING.md](https://github.com/chasem-dev/sms-mod-sdk/blob/main/docs/MODDING.md)), which players install and switch on and off themselves.
 A feature that needs a hook the game does not have yet adds it to `port_ext.h`, `core/port_ext.cpp` and the hooks patch, each hook general enough for other extensions to use.
 On screen, `GXPC_ExtOverlaySet` (`platform/gx`) shows a notice near the top of the window and a status panel at its right.

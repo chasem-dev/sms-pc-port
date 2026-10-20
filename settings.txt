@@ -35,7 +35,7 @@ frame_rate = 60
 
 # Game file mods from mods/<name>/files/ (see mods/README.md), as name or a;b.
 # mod = none
-# Native mods: every folder in mods/ with a mod.ini (docs/MODDING.md); F1 in
+# Native mods: every folder in mods/ with a mod.ini (mods/README.md); F1 in
 # the game lists them and their settings. off loads none; native_mods_disabled
 # leaves out the ones named (ids, a;b).
 # native_mods = on

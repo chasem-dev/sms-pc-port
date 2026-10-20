@@ -10,6 +10,22 @@ file(GLOB SMS_EXT_HOST_SOURCES CONFIGURE_DEPENDS
   ${CMAKE_CURRENT_LIST_DIR}/*/net/*.cpp ${CMAKE_CURRENT_LIST_DIR}/*/sync/*.cpp ${CMAKE_CURRENT_LIST_DIR}/*/host/*.cpp)
 target_sources(sms PRIVATE ${SMS_EXT_HOST_SOURCES})
 target_include_directories(sms PRIVATE ${CMAKE_CURRENT_LIST_DIR})
+
+# The native mod API's header comes from the mod SDK, the sdk/ submodule
+# (https://github.com/chasem-dev/sms-mod-sdk). A checkout that set up only
+# decomp/ (older build scripts and launchers) gets it here.
+set(_sms_mod_sdk ${CMAKE_CURRENT_LIST_DIR}/../sdk)
+if(NOT EXISTS ${_sms_mod_sdk}/include/sms_mod.h)
+  message(STATUS "sdk/ is not checked out: git submodule update --init sdk")
+  execute_process(COMMAND git submodule update --init sdk WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/..
+    RESULT_VARIABLE _sms_mod_sdk_git)
+  if(NOT EXISTS ${_sms_mod_sdk}/include/sms_mod.h)
+    message(FATAL_ERROR "The mod SDK (sdk/, a git submodule) is missing and could not be fetched. "
+      "Run `git submodule update --init sdk` in ${CMAKE_CURRENT_LIST_DIR}/.., or clone with --recursive.")
+  endif()
+endif()
+target_include_directories(sms PRIVATE ${_sms_mod_sdk}/include)
+target_include_directories(sms_game AFTER PRIVATE ${_sms_mod_sdk}/include)
 if(WIN32)
   # multiplayer's sockets
   target_link_libraries(sms PRIVATE ws2_32)
