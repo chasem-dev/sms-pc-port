@@ -1,17 +1,16 @@
 name: Game window settings
+# Pull requests only: the required check makes a pull request merge only when
+# it is up to date with main, so main's commit is the one its run tested.
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  # One run per pull request, and one for main: a newer push (or a merge, which
-  # pushes to main) cancels the older run still in progress or queued. Manual
-  # runs get a group of their own. cancel-superseded.yml stops a pull
-  # request's runs once it is merged or closed.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  # One run per pull request: a newer push cancels the older run still in
+  # progress or queued. Manual runs get a group of their own.
+  # cancel-superseded.yml stops a pull request's runs once it is merged or closed.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 jobs:
   window:

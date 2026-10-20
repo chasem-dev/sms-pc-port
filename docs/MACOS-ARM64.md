@@ -57,9 +57,9 @@ Frame rate (`tools/vulkan/bench.py --exe`, the plaza tour in a 1280x960 window, 
 
 - The plugin needs a Clang built with plugin support and `llvm-config` with LLVM's headers beside it: Homebrew's `llvm`, or the arm64 toolset of SMS Launcher (LLVM's clang and `llvm-config` in its `env/llvm/bin`, which the launcher puts first for an arm64 build). Apple's clang cannot load it.
 - `tools/gameptr/test.sh` builds the plugin and checks what it rebases and converts.
-- `.github/workflows/macos-arm64.yml` runs that test and builds `SMS_ARCH=arm64` with Homebrew's LLVM on an Apple Silicon runner; `launcher-build.yml` builds it with the launcher's toolset (`SMS_SMOKE_ARCHES=64,arm64` on the Apple Silicon runner).
+- `.github/workflows/native-build.yml` runs that test on an Apple Silicon runner and builds `SMS_ARCH=arm64` with Homebrew's LLVM, checking the executable's signature and the Vulkan backend with MoltenVK; `launcher-build.yml` builds it with the launcher's toolset (`SMS_SMOKE_ARCHES=64,arm64` on the Apple Silicon runner).
 - Every compile's arguments carry the plugin's hash (`PORT_GAMEPTR_HASH`), so a compiler cache does not reuse objects built with another plugin.
-- `.github/workflows/eclipse.yml` builds Eclipse with `SMS_ARCH=arm64` on the Apple Silicon runner too, and checks that the game finds the mods' constructors.
+- The same `native-build.yml` job then builds Eclipse with `SMS_ARCH=arm64`, and checks that the game finds the mods' constructors.
 
 ## Super Mario Eclipse
 
