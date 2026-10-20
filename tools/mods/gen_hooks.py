@@ -855,6 +855,24 @@ def entry_hook(p, fnq, clean, text, brace, modsig):
             % (p["addr"], p["addr"], act))
 
 
+_c_decls = None
+
+
+def c_variadic(name):
+    """Whether a decomp header declares the C function name variadic."""
+    global _c_decls
+    if _c_decls is None:
+        _c_decls = []
+        for inc in include_roots():
+            for dp, _, fs in os.walk(inc):
+                for f in sorted(fs):
+                    if f.endswith((".h", ".hpp")):
+                        _c_decls.append(blank_comments_strings(
+                            open(os.path.join(dp, f), encoding="utf-8", errors="replace").read()))
+    pat = re.compile(r"\b%s\s*\([^;{}]*\.\.\.\s*\)\s*;" % re.escape(name))
+    return any(pat.search(t) for t in _c_decls)
+
+
 def c_name(sym):
     """A C function's symbol is its name: -> ([], name, False), else None."""
     if re.fullmatch(r"[A-Za-z_]\w*", sym) and "__" not in sym.lstrip("_"):
@@ -1066,8 +1084,15 @@ def main():
             args_ = [argtext] if argtext else []
             if sig is None and not tq and c_name(callee):
                 # a C function: its own type (a mod's replacement is called
-                # through it, variadic ones included, as the retail bl was)
-                rep = hook_expr(p["addr"], stmt, original, "__typeof__(&%s)" % tname, args_)
+                # through it, as the retail bl was). A variadic one's
+                # replacement is the mod's fixed function, called with the
+                # arguments as the variadic call passes them (sms_modhook.h's
+                # SMS_MOD_VA_: Apple's arm64 ABI puts variadic ones elsewhere).
+                fntype = "__typeof__(&%s)" % tname
+                if c_variadic(tname):
+                    fntype = "sms_mod_r_ (*)(%s)" % ", ".join(
+                        "SMS_MOD_VA_(%s)" % a for c in args_ for a in split_args(c))
+                rep = hook_expr(p["addr"], stmt, original, fntype, args_)
                 edits.setdefault(f, []).append((start, close + 1, rep, p))
                 done.append(p)
                 continue

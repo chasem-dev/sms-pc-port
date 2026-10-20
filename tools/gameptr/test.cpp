@@ -30,6 +30,7 @@ __attribute__((noinline)) char* fromSum(u32 a, u32 b) { return (char*)((uintptr_
 __attribute__((noinline)) uintptr_t message(void* m) { return (uintptr_t)m; }
 __attribute__((noinline)) char* relocate(Info* info) { return (char*)info->layers + (u32)(uintptr_t)info; }
 __attribute__((noinline)) int indexFrom(u32 base, int i) { return ((int*)base)[i]; }
+__attribute__((noinline)) int* hostIndex(uintptr_t p, int i) { return &((int*)p)[i]; }
 __attribute__((noinline)) unsigned char toU8(float f) { return (unsigned char)f; }
 __attribute__((noinline)) unsigned short toU16(float f) { return (unsigned short)f; }
 __attribute__((noinline)) unsigned toU32(float f) { return (unsigned)f; }
@@ -60,6 +61,11 @@ int main() {
     check("an offset plus an address relocates in 32 bits", relocate(info) == mem1 + 0x100 + 0x20000);
     ((int*)(mem1 + 0x200))[3] = 77;
     check("indexing from a 32-bit address", indexFrom(0x80000200u, 3) == 77);
+    // A host pointer the code turns into an integer and back (a small struct
+    // returned in registers, such as unordered_map's pair<iterator, bool>):
+    // the malloc heap is far above the game window.
+    check("indexing from a host heap address keeps it", hostIndex(0x600001234560ull, 2) == (int*)0x600001234568ull);
+    check("indexing from a low-window address stays there", hostIndex(0x110000040ull, 1) == (int*)(low + 0x44));
 
     volatile float neg = -41.92f, negBig = -3149.98f, big = 3e9f, nan = NAN, wide = 48788.4f;
     check("negative float to u8 wraps as on x86 (0xD7)", toU8(neg) == 0xD7);

@@ -23,6 +23,9 @@ refuses to record when 32 and 64-bit differ.
 Nothing is built: the executables are taken as they are from build/linux-32
 and build/linux-64 (vanilla), build-ecl and build-ecl64 (Eclipse,
 docs/ECLIPSE.md), or the folders given with --build32/--build64/--ecl32/--ecl64.
+On macOS, which has no headless OpenGL, --window runs them in a window; with
+--ecl32 and --ecl64 naming the x86_64 and arm64 builds, the word-size check
+compares those (docs/MACOS-ARM64.md).
 """
 import argparse
 import hashlib
@@ -159,6 +162,9 @@ def image_hash(exe):
             os.remove(tmp)
 
 
+WINDOW = False
+
+
 def base_env(save_dir, shot_dir=None):
     env = {k: v for k, v in os.environ.items() if not k.startswith('SMS_')}
     env.update({
@@ -172,6 +178,9 @@ def base_env(save_dir, shot_dir=None):
         'SMS_QUIET_STUBS': '1',
         'SMS_SAVE_DIR': save_dir,
     })
+    if WINDOW:  # macOS has no headless OpenGL
+        env['SMS_HEADLESS'] = '0'
+        env.setdefault('SMS_WINDOW_SIZE', '640x480')
     if shot_dir:
         env['SMS_SHOT_DIR'] = shot_dir
     return env
@@ -379,7 +388,10 @@ def main():
                     help='folder for the runs (default build/regress)')
     ap.add_argument('--jobs', type=int, default=2, help='runs at a time (default 2: one per word size)')
     ap.add_argument('--keep', action='store_true', help='keep the captures and WAVs')
+    ap.add_argument('--window', action='store_true', help='run in a window instead of headless (macOS)')
     args = ap.parse_args()
+    global WINDOW
+    WINDOW = args.window
 
     if args.list:
         for g, runs in GROUPS.items():
