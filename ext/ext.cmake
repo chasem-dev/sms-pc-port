@@ -2,12 +2,12 @@
 # game code (sms_game, the game's flags and headers); their other halves
 # (networking, anything that needs the host's libraries) are platform code
 # (sms). An extension is a folder ext/<name>/ with game/ and, optionally,
-# net/ and sync/ sources; tests/ folders are left out.
+# net/, sync/ and host/ sources; tests/ folders are left out.
 target_sources(sms_game PRIVATE ${CMAKE_CURRENT_LIST_DIR}/core/port_ext.cpp)
 file(GLOB SMS_EXT_GAME_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_LIST_DIR}/*/game/*.cpp)
 target_sources(sms_game PRIVATE ${SMS_EXT_GAME_SOURCES})
 file(GLOB SMS_EXT_HOST_SOURCES CONFIGURE_DEPENDS
-  ${CMAKE_CURRENT_LIST_DIR}/*/net/*.cpp ${CMAKE_CURRENT_LIST_DIR}/*/sync/*.cpp)
+  ${CMAKE_CURRENT_LIST_DIR}/*/net/*.cpp ${CMAKE_CURRENT_LIST_DIR}/*/sync/*.cpp ${CMAKE_CURRENT_LIST_DIR}/*/host/*.cpp)
 target_sources(sms PRIVATE ${SMS_EXT_HOST_SOURCES})
 target_include_directories(sms PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 if(WIN32)

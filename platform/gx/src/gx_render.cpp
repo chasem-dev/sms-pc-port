@@ -390,6 +390,7 @@ static GLuint compileProgram(const char* vs, const char* fs) {
     glDeleteShader(f);
     return p;
 }
+unsigned compileInternalProgram(const char* vs, const char* fs) { return compileProgram(vs, fs); }
 
 // EFB -> texture conversion.  The output is what sampling the GX texture of
 // the copy's format would return, so later draws can use it directly.

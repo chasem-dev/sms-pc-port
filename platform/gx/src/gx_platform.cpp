@@ -944,6 +944,7 @@ void GXPC_Present(const void* xfb) {
             if (s_vulkan) glvk::setDefaultFramebufferSize(w, h);
 #endif
             GXPC_PresentXFB(xfb, w, h);
+            modLayerRender(w, h);
             GXPC_OverlayDraw(w, h);
             cheatMenuRender(w, h);
             warpMenuRender(w, h);
@@ -993,7 +994,19 @@ void sms_gx_set_event_callback(void (*cb)(const union SDL_Event*)) {
 #endif
 }
 
+// Native mods' key hook (GXPC_SetKeyHook): set and called on the game thread.
+static GXPCKeyHook s_modKeyHook;
+extern "C" void GXPC_SetKeyHook(GXPCKeyHook hook) { s_modKeyHook = hook; }
+
 #ifdef SMS_GX_HAVE_SDL2
+// A key event for the native mods; true when one consumed it.
+static bool modKeyEvent(const SDL_Event& ev) {
+    if (!s_modKeyHook) return false;
+    const Uint16 m = ev.key.keysym.mod;
+    const int mods = (m & KMOD_SHIFT ? 1 : 0) | (m & KMOD_CTRL ? 2 : 0) | (m & KMOD_ALT ? 4 : 0);
+    return s_modKeyHook(int(ev.key.keysym.scancode), ev.type == SDL_KEYDOWN, ev.key.repeat != 0, mods) != 0;
+}
+
 extern "C" void GXPC_NoteInputDevice(int controller, int sdlType, const char* name);
 
 // Tell the button prompts which device the player last used: a key, mouse
@@ -1138,6 +1151,8 @@ void sms_gx_pump_events(void) {
             syncMenuInput();
             continue;
         }
+        // native mods' keys (ext/modapi): a key a mod consumes never reaches the pad layer
+        if ((ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) && modKeyEvent(ev)) continue;
         if (s_eventCb) s_eventCb(&ev);
         syncMenuInput();  // the pad layer's quit key opens the quit prompt (GXPC_RequestQuit)
         if (ev.type == SDL_QUIT ||

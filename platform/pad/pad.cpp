@@ -830,6 +830,18 @@ extern "C" int port_pad_savestate_labels(int style, char labels[2][16])
 	return n;
 }
 
+// The control bindings.txt binds a key (an SDL scancode) to, alone or as
+// part of a pair, or null: native mods are warned of keys the controls use
+// (ext/modapi).
+extern "C" const char* port_pad_key_control(int scancode)
+{
+	for (int c = 0; c < C_COUNT; c++)
+		for (int i = 0; i < g_nbind[c]; i++)
+			if (combo_first(g_bind[c][i]) == scancode || combo_second(g_bind[c][i]) == scancode)
+				return kControlNames[c];
+	return nullptr;
+}
+
 extern "C" BOOL PADInit()
 {
 	init();

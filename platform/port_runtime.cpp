@@ -783,6 +783,8 @@ static const struct {
 	{ "widescreen_hud", "SMS_WIDESCREEN_HUD" }, // centre or edges
 	{ "frame_rate", "SMS_FRAME_RATE" },         // 30, 60 (default), or 120
 	{ "mod", "SMS_MOD" },
+	{ "native_mods", "SMS_NATIVE_MODS" },                   // native mods in mods/ (docs/MODDING.md), on by default
+	{ "native_mods_disabled", "SMS_NATIVE_MODS_DISABLED" }, // ids of native mods to leave out
 	{ "language", "SMS_LANGUAGE" }, // en (default), or any pack in mods/languages/<code>
 	{ "resolution", "SMS_GX_SCALE" },
 	{ "anisotropic", "SMS_ANISO" }, // 0, 2, 4, 8 or 16

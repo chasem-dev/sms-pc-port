@@ -15,6 +15,7 @@ set(SMS_GX_SOURCES
     src/gx_glthread.cpp
     src/gx_hdr.cpp
     src/gx_hires.cpp
+    src/gx_mod_layer.cpp
     src/gx_overlay.cpp
     src/gx_platform.cpp
     src/gx_prompts.cpp
