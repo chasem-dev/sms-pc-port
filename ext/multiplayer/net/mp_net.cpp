@@ -3,7 +3,7 @@
 //
 // Every packet starts "SMMP", the protocol version and its type:
 //   PROBE   nonce, padding                 anyone -> host: is this a game?
-//   INFO    nonce, players, max, open, build, name, status   host's answer
+//   INFO    nonce, players, max, open, build, name, status, protocol, mode, server   host's answer
 //   CONNECT nonce, build, name, cookie     client -> host, until answered
 //   CHALLENGE nonce, cookie                host -> client: say that again with this
 //   ACCEPT  nonce, slot, token             host -> client
@@ -184,6 +184,8 @@ struct Session {
 	uint32_t localStateSeq = 0;
 	std::deque<MpEvent> events;
 	std::string status;
+	std::string mode;          // host: its game mode (a server mod's name; empty: playing together), for the launcher
+	bool dedicated = false;    // host: a server, not a player (left out of the count probes see)
 	std::thread thread;
 	std::atomic<bool> running{false};
 	std::mt19937 rng{std::random_device{}()};
@@ -626,15 +628,20 @@ void hostPacket(Session& s, const uint8_t* buf, int n, const Address& from, uint
 		int count      = 0;
 		for (const PlayerSlot& pl : s.players)
 			count += pl.present;
+		// a server is not a player: the launcher shows the players, of the most it takes
+		const int server = s.dedicated ? 1 : 0;
 		header(w, PK_INFO);
 		w.u32(nonce);
-		w.u8((uint8_t)count);
-		w.u8((uint8_t)maxPlayers(s));
+		w.u8((uint8_t)(count - server));
+		w.u8((uint8_t)(maxPlayers(s) - server));
 		w.u8(version == kProtocol && count < maxPlayers(s) && s.accepting);
 		w.str(s.cfg.build, 63);
 		w.str(s.cfg.name, MP_NAME_LEN - 1);
 		w.str(s.status.c_str(), 63);
 		w.u16(kProtocol);
+		// after what older launchers read: the game mode, and whether this is a server
+		w.str(s.mode.c_str(), 15);
+		w.u8((uint8_t)server);
 		s.sock.send(out, w.len, from);
 		return;
 	}
@@ -1269,6 +1276,17 @@ extern "C" void mp_set_accepting(int accepting)
 		s.accepting = accepting != 0;
 		return 0;
 	}, 0);
+}
+
+extern "C" void mp_set_host_mode(const char* mode, int dedicated)
+{
+	withSession(
+	    [&](Session& s) {
+		    s.mode      = mode ? mode : "";
+		    s.dedicated = dedicated != 0;
+		    return 0;
+	    },
+	    0);
 }
 
 extern "C" void mp_set_host_status(const char* status)

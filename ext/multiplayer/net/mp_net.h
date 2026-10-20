@@ -156,6 +156,10 @@ int mp_poll_event(MpEvent* ev);
 // What a host answers to a probe (the launcher's join check): the host
 // sets a short status ("Delfino Plaza") as it plays.
 void mp_set_host_status(const char* status);
+// Host: its game mode for probes (a server mod's name, "squid-race"; empty:
+// playing together, at most 15 characters), and whether it is a server
+// rather than a player (probes then count the players without it).
+void mp_set_host_mode(const char* mode, int dedicated);
 // Host: whether players may join now (they are refused, and probes answer
 // "not open", while not); yes until set.
 void mp_set_accepting(int accepting);

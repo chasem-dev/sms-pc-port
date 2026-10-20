@@ -52,6 +52,9 @@ enum Kind : uint8_t {
 	K_SELECT,       // host -> client: area, the episode its episode select points at, whether it chose it
 	K_LOOK,         // either way: slot, a player's colours (Customize Mario's, "hat=2fa846;shirt=..."; empty:
 	                // Mario's own): a client's own to the host, which passes everyone's on to everyone
+	K_SERVER,       // host -> client: whether it is a server (not a player), its game mode's name (a server
+	                // mod's); first to a newcomer, so the characters are known
+	K_CMD,          // host -> client: a server command (cmdMessage: type, flags, delay, numbers, text)
 };
 // The longest look kept (every region chosen takes 14 bytes).
 const size_t kMaxLook = 400;
@@ -75,6 +78,15 @@ const uint32_t kCleanFresh = 2000;
 static_assert(MPG_MAX_PLAYERS == MP_MAX_PLAYERS, "the game's players are the session's slots");
 const char* const kCharacters[MP_MAX_PLAYERS] = {"Mario",       "Luigi",        "Wario",        "Metal Mario",
                                                  "Fire Mario",  "Purple Mario", "Orange Mario", "Ice Mario"};
+// A server (SMS_MULTIPLAYER_DEDICATED) is no player: the first to join plays
+// Mario, the next Luigi, and so on; the server keeps the last character, unseen.
+bool g_dedicated = false;
+int characterOf(int slot)
+{
+	if (slot < 0 || slot >= MP_MAX_PLAYERS)
+		return 0;
+	return g_dedicated ? (slot == 0 ? MP_MAX_PLAYERS - 1 : slot - 1) : slot;
+}
 const char* const kWorlds[] = {"the Airstrip", "Delfino Plaza", "Bianco Hills", "Ricco Harbor", "Gelato Beach",
                                "Pinna Park", "Sirena Beach", "Pianta Village", "Noki Bay", "Corona Mountain"}; // SMS_getShineStage's order
 const size_t kPoseSize = MP_MAX_STATE; // at most: spraying from two (178 bytes), then effects as many as fit
@@ -119,6 +131,27 @@ struct Controller {
 	RecentTake recentTakes[16];
 	int recentTake = 0;
 	bool restartSession  = false;
+	// servers (mpg_server_*): the game mode's name and state line (a server
+	// mod's), the session's sticky commands (each kept with whom it went to,
+	// replayed to a player arriving), who has arrived in the session, a stage
+	// asked for, this game's own commands waiting for their moment, and what
+	// a server mod hears
+	std::string modeName, modStatus;
+	struct Sticky {
+		uint64_t key;
+		uint32_t to;
+		MpgCmd cmd;
+	};
+	std::vector<Sticky> sticky;
+	uint32_t readySession[MP_MAX_PLAYERS] = {};
+	int loadArea = -1, loadEpisode = -1;
+	struct Due {
+		uint32_t at; // mp_clock_ms
+		MpgCmd cmd;
+	};
+	std::vector<Due> due;
+	std::deque<MpgNetEvent> netEvents;
+	int joinNotice = 0; // client: joined (1) or back (2): told once the host's first word says who we play
 	unsigned waitingStage = 0; // players who joined while the host was between stages: told once it has arrived
 
 	// the host's episode select: where (its area), which episode it points
@@ -268,6 +301,107 @@ void notice(const std::string& text)
 }
 
 void send(int slot, Kind kind, const std::vector<uint8_t>& data) { mp_send(slot, kind, data.data(), data.size()); }
+
+// ------------------------------------------------------------------- servers
+
+void netEvent(int type, int slot, const char* name)
+{
+	if (g.netEvents.size() >= 64)
+		g.netEvents.pop_front(); // nobody is reading them (no server mod)
+	MpgNetEvent e;
+	memset(&e, 0, sizeof e);
+	e.type = type;
+	e.slot = slot;
+	if (name)
+		snprintf(e.name, sizeof e.name, "%s", name);
+	e.area    = g.sessionArea;
+	e.episode = g.sessionEpisode;
+	e.session = g.session;
+	g.netEvents.push_back(e);
+}
+
+// A command as sent: its type, flags, delay, four whole numbers and four
+// others, and its text.
+std::vector<uint8_t> cmdMessage(const MpgCmd& c, uint32_t delayMs)
+{
+	std::vector<uint8_t> buf(14 + 32 + 1 + MPG_CMD_TEXT);
+	Writer w(buf.data(), buf.size());
+	w.u8(c.type);
+	w.u8(c.flags);
+	w.u32(delayMs);
+	for (int k = 0; k < 4; k++)
+		w.u32((uint32_t)c.i[k]);
+	for (int k = 0; k < 4; k++)
+		w.f32(c.f[k]);
+	w.str(c.text, MPG_CMD_TEXT - 1);
+	buf.resize(w.len);
+	return buf;
+}
+
+bool readCmd(Reader& r, MpgCmd* c)
+{
+	memset(c, 0, sizeof *c);
+	c->type    = r.u8();
+	c->flags   = r.u8();
+	c->delayMs = r.u32();
+	for (int k = 0; k < 4; k++)
+		c->i[k] = (int32_t)r.u32();
+	for (int k = 0; k < 4; k++)
+		c->f[k] = r.f32();
+	r.str(c->text, sizeof c->text);
+	for (int k = 0; k < 4; k++)
+		if (c->f[k] != c->f[k])
+			return false; // no NaNs into the game
+	return r.ok && c->type >= 1 && c->type <= MPG_CMD_LAST;
+}
+
+// This game's own: carried out once its moment comes (mpg_next_cmd).
+void queueLocal(const MpgCmd& c, uint32_t delayMs)
+{
+	if (g.due.size() >= 256)
+		g.due.erase(g.due.begin());
+	g.due.push_back({mp_clock_ms() + delayMs, c});
+}
+
+void sendCmd(int slot, const MpgCmd& c, uint32_t delayMs)
+{
+	if (slot == mp_local_slot())
+		queueLocal(c, delayMs);
+	else
+		send(slot, K_CMD, cmdMessage(c, delayMs));
+}
+
+// What a sticky command replaces: one of its kind to the same players (for
+// actors, the same types; for a script, the same script).
+uint64_t stickyKey(const MpgCmd& c, uint32_t to)
+{
+	uint64_t sub = 0;
+	if (c.type == MPG_CMD_ACTORS)
+		sub = (uint64_t)(uint32_t)c.i[0] * 31 + (uint32_t)c.i[1];
+	else if (c.type == MPG_CMD_STOP_SCRIPT)
+		for (const char* t = c.text; *t; t++)
+			sub = sub * 131 + (uint8_t)*t;
+	return ((uint64_t)c.type << 56) ^ ((uint64_t)to << 48) ^ (sub & 0xFFFFFFFFFFFFull);
+}
+
+// The session's sticky commands, again, for a player arriving in it.
+void replaySticky(int slot)
+{
+	for (const Controller::Sticky& st : g.sticky)
+		if (st.to & (1u << slot))
+			sendCmd(slot, st.cmd, 0);
+}
+
+void sendServerInfo(int slot)
+{
+	uint8_t buf[24];
+	Writer w(buf, sizeof buf);
+	w.u8(g_dedicated ? 1 : 0);
+	w.str(g.modeName.c_str(), 15);
+	for (int i = 1; i < MP_MAX_PLAYERS; i++)
+		if ((slot < 0 || slot == i) && (mp_players() & (1u << i)))
+			mp_send(i, K_SERVER, buf, w.len);
+}
 
 void sendStage(int slot)
 {
@@ -790,6 +924,13 @@ void hostMessage(const MpEvent& ev)
 	case K_READY: {
 		uint32_t s = r.u32();
 		if (r.ok && s == g.session && g.session) {
+			if (ev.slot > 0 && ev.slot < MP_MAX_PLAYERS) {
+				g.readySession[ev.slot] = s;
+				replaySticky(ev.slot);
+				char name[MP_NAME_LEN];
+				mp_player_name(ev.slot, name, sizeof name);
+				netEvent(MPG_NET_ARRIVED, ev.slot, name);
+			}
 			sendTakenList(ev.slot);
 			for (const MpgTakenAt& t : g.takenAt)
 				send(ev.slot, K_TAKEN_AT, takenAtMessage(g.session, t));
@@ -904,6 +1045,27 @@ void clientMessage(const MpEvent& ev)
 {
 	Reader r(ev.data, ev.size);
 	switch (ev.kind) {
+	case K_SERVER: {
+		const int dedicated = r.u8();
+		char mode[16];
+		r.str(mode, sizeof mode);
+		if (!r.ok)
+			break;
+		g_dedicated = dedicated != 0;
+		g.modeName  = mode;
+		break;
+	}
+	case K_CMD: {
+		MpgCmd c;
+		if (!readCmd(r, &c))
+			break;
+		// at the same moment as everyone: what is left of its delay once it
+		// has come, less the half of the round trip it took
+		const int ping      = mp_ping(0);
+		const uint32_t half = ping > 0 ? (uint32_t)ping / 2 : 0;
+		queueLocal(c, c.delayMs > half ? c.delayMs - half : 0);
+		break;
+	}
 	case K_STAGE: {
 		int area = r.u8(), episode = r.u8();
 		uint32_t s = r.u32();
@@ -1051,10 +1213,9 @@ void events()
 	while (mp_poll_event(&ev)) {
 		switch (ev.type) {
 		case MP_EV_CONNECTED:
-			if (g.reconnectUntil)
-				notice("Back in the game");
-			else
-				notice("Joined the game as player " + std::to_string(ev.slot + 1));
+			// told once the host's first word has said whether it is a server
+			// (who plays whom)
+			g.joinNotice = g.reconnectUntil ? 2 : 1;
 			g.hadSlot        = true;
 			g.reconnectAt    = 0;
 			g.reconnectUntil = 0;
@@ -1089,9 +1250,12 @@ void events()
 			break;
 		}
 		case MP_EV_PLAYER_JOINED:
-			notice(std::string(ev.name[0] ? ev.name : "A player") + " joined");
+			notice(std::string(ev.name[0] ? ev.name : "A player") + " joined as " + kCharacters[characterOf(ev.slot)]);
 			setLook(ev.slot, ""); // theirs comes next
+			netEvent(MPG_NET_JOINED, ev.slot, ev.name);
 			if (g.role == MPG_ROLE_HOST) {
+				g.readySession[ev.slot] = 0;
+				sendServerInfo(ev.slot); // first: a server, and who plays whom
 				// everyone's colours for the newcomer (theirs come to the others as they arrive)
 				for (int i = 0; i < MP_MAX_PLAYERS; i++)
 					if (i != ev.slot && !g.looks[i].empty())
@@ -1110,16 +1274,30 @@ void events()
 			break;
 		case MP_EV_PLAYER_LEFT:
 			g.waitingStage &= ~(1u << ev.slot);
+			netEvent(MPG_NET_LEFT, ev.slot, ev.name);
+			if (ev.slot >= 0 && ev.slot < MP_MAX_PLAYERS)
+				g.readySession[ev.slot] = 0;
 			setLook(ev.slot, "");
 			notice(std::string(ev.name[0] ? ev.name : "A player") + " left the game");
 			if (g.role == MPG_ROLE_HOST)
 				g.hostFlags.forget(ev.slot);
 			break;
 		case MP_EV_MESSAGE:
-			if (g.role == MPG_ROLE_HOST)
+			if (g.role == MPG_ROLE_HOST) {
 				hostMessage(ev);
-			else
-				clientMessage(ev);
+				break;
+			}
+			clientMessage(ev);
+			if (g.joinNotice) {
+				const int slot = mp_local_slot();
+				if (g.joinNotice == 2)
+					notice("Back in the game");
+				else if (g_dedicated)
+					notice("Joined the server as " + std::string(kCharacters[characterOf(slot)]));
+				else
+					notice("Joined the game as player " + std::to_string(slot + 1));
+				g.joinNotice = 0;
+			}
 			break;
 		default:
 			break;
@@ -1425,9 +1603,13 @@ static const std::string& roomCode()
 
 extern "C" void mpg_set_build(const char* build) { g_build = build ? build : SMS_GAME_BUILD; }
 
+bool g_started = false;
+extern "C" int mpg_started(void) { return g_started; }
+
 extern "C" int mpg_start(void)
 {
 	std::lock_guard<std::mutex> hold(g_lock);
+	g_started = true;
 	MpConfig cfg;
 	int want = mp_config_from_env(&cfg, g_build.c_str());
 	if (want == 0)
@@ -1461,6 +1643,13 @@ extern "C" int mpg_start(void)
 		else
 			notice("Hosting on port " + std::to_string(cfg.port) + ". Players who join come to the level you are in.");
 		mp_set_host_status("the title screen");
+		// a server rather than a player (a server mod runs the game: a
+		// dedicated server's mods)
+		const char* dedicated = getenv("SMS_MULTIPLAYER_DEDICATED");
+		g_dedicated           = dedicated && !strcmp(dedicated, "1");
+		mp_set_host_mode("", g_dedicated);
+		if (g_dedicated)
+			notice("Running as a server: the first player to join plays Mario.");
 		mp_set_accepting(0); // until the host has chosen a file and is in a stage
 	} else {
 		char msg[256];
@@ -1493,10 +1682,128 @@ extern "C" int mpg_host_left(char* why, int size)
 }
 extern "C" int mpg_ping(int slot) { return g.role == MPG_ROLE_OFF ? -1 : mp_ping(slot); }
 extern "C" uint32_t mpg_world_seq(void) { return g.role == MPG_ROLE_CLIENT ? mp_world_seq() : 0; }
-extern "C" int mpg_character(int slot) { return slot >= 0 && slot < MP_MAX_PLAYERS ? slot : 0; }
-extern "C" const char* mpg_character_name(int slot)
+extern "C" int mpg_character(int slot) { return characterOf(slot); }
+extern "C" const char* mpg_character_name(int slot) { return kCharacters[characterOf(slot)]; }
+
+// ------------------------------------------------------------------- servers
+
+extern "C" uint32_t mpg_server_send(uint32_t to, const MpgCmd* cmd)
 {
-	return slot >= 0 && slot < MP_MAX_PLAYERS ? kCharacters[slot] : "Mario";
+	if (g.role != MPG_ROLE_HOST || !cmd || cmd->type < 1 || cmd->type > MPG_CMD_LAST)
+		return 0;
+	std::lock_guard<std::mutex> hold(g_lock);
+	MpgCmd c = *cmd;
+	c.text[MPG_CMD_TEXT - 1] = 0;
+	const unsigned players = mp_players() | 1u; // the host's own game is slot 0
+	uint32_t sent = 0;
+	for (int i = 0; i < MP_MAX_PLAYERS; i++) {
+		if (!(to & (1u << i)) || !(players & (1u << i)))
+			continue;
+		// a sticky command reaches a player still on their way into the
+		// session as they arrive (replaySticky), not in the stage they leave
+		if ((c.flags & MPG_CMD_STICKY) && g.readySession[i] != g.session)
+			continue;
+		sendCmd(i, c, c.delayMs);
+		sent |= 1u << i;
+	}
+	if (c.flags & MPG_CMD_STICKY) {
+		// kept for the session without its delay (one arriving later gets it now)
+		MpgCmd kept  = c;
+		kept.delayMs = 0;
+		const uint64_t key = stickyKey(c, to);
+		for (size_t k = 0; k < g.sticky.size(); k++)
+			if (g.sticky[k].key == key) {
+				g.sticky.erase(g.sticky.begin() + (long)k);
+				break;
+			}
+		if (g.sticky.size() >= 64)
+			g.sticky.erase(g.sticky.begin());
+		g.sticky.push_back({key, to, kept});
+	}
+	return sent;
+}
+
+extern "C" int mpg_next_cmd(MpgCmd* out)
+{
+	if (g.role == MPG_ROLE_OFF || !out)
+		return 0;
+	std::lock_guard<std::mutex> hold(g_lock);
+	const uint32_t now = mp_clock_ms();
+	// the soonest due, in the order they came when due together
+	int best = -1;
+	for (size_t k = 0; k < g.due.size(); k++)
+		if ((int32_t)(now - g.due[k].at) >= 0 && (best < 0 || (int32_t)(g.due[k].at - g.due[best].at) < 0))
+			best = (int)k;
+	if (best < 0)
+		return 0;
+	*out = g.due[best].cmd;
+	g.due.erase(g.due.begin() + best);
+	return 1;
+}
+
+extern "C" int mpg_dedicated(void) { return g.role != MPG_ROLE_OFF && g_dedicated; }
+
+extern "C" void mpg_server_mode(const char* name)
+{
+	if (g.role != MPG_ROLE_HOST)
+		return;
+	std::lock_guard<std::mutex> hold(g_lock);
+	g.modeName = name ? std::string(name).substr(0, 15) : std::string();
+	mp_set_host_mode(g.modeName.c_str(), g_dedicated);
+	sendServerInfo(-1);
+}
+
+extern "C" void mpg_server_status(const char* text)
+{
+	if (g.role != MPG_ROLE_HOST)
+		return;
+	std::lock_guard<std::mutex> hold(g_lock);
+	g.modStatus = text ? std::string(text).substr(0, 63) : std::string();
+	if (!g.modStatus.empty())
+		mp_set_host_status(g.modStatus.c_str());
+}
+
+extern "C" int mpg_server_load_stage(int area, int episode)
+{
+	if (g.role != MPG_ROLE_HOST || area < 0 || area > 255 || episode < 0 || episode > 255)
+		return 0;
+	std::lock_guard<std::mutex> hold(g_lock);
+	g.loadArea    = area;
+	g.loadEpisode = episode;
+	return 1;
+}
+
+extern "C" int mpg_take_load_stage(int* area, int* episode)
+{
+	if (g.role != MPG_ROLE_HOST)
+		return 0;
+	std::lock_guard<std::mutex> hold(g_lock);
+	if (g.loadArea < 0)
+		return 0;
+	*area      = g.loadArea;
+	*episode   = g.loadEpisode;
+	g.loadArea = g.loadEpisode = -1;
+	return 1;
+}
+
+extern "C" int mpg_player_arrived(int slot)
+{
+	if (g.role != MPG_ROLE_HOST || slot < 0 || slot >= MP_MAX_PLAYERS)
+		return 0;
+	std::lock_guard<std::mutex> hold(g_lock);
+	return g.session && g.readySession[slot] == g.session && (slot == 0 || (mp_players() & (1u << slot)));
+}
+
+extern "C" int mpg_next_net_event(MpgNetEvent* out)
+{
+	if (g.role == MPG_ROLE_OFF || !out)
+		return 0;
+	std::lock_guard<std::mutex> hold(g_lock);
+	if (g.netEvents.empty())
+		return 0;
+	*out = g.netEvents.front();
+	g.netEvents.pop_front();
+	return 1;
 }
 
 extern "C" void mpg_frame(const MpgGame* game)
@@ -1573,6 +1880,7 @@ extern "C" void mpg_frame(const MpgGame* game)
 			g.goneBatch  = 0;
 			g.enemyKills.clear();
 			forgetCleans();
+			g.sticky.clear(); // a server mod's word was for the last stage
 			for (int i = 1; i < MP_MAX_PLAYERS; i++)
 				if (mp_players() & (1u << i)) {
 					sendFull(i);
@@ -1582,7 +1890,9 @@ extern "C" void mpg_frame(const MpgGame* game)
 			char status[96];
 			const int world = game->world >= 0 && game->world < 10 ? game->world : 1;
 			snprintf(status, sizeof status, "%s", kWorlds[world]);
-			mp_set_host_status(status);
+			if (g.modStatus.empty()) // a server mod's own line stands
+				mp_set_host_status(status);
+			netEvent(MPG_NET_SESSION, -1, nullptr);
 			fprintf(stderr, "[multiplayer] session %u: area %d, episode %d\n", g.session, game->area, game->episode);
 		} else if (arrived) {
 			// the same stage again (we lost a life): put it back as it was
@@ -1591,6 +1901,17 @@ extern "C" void mpg_frame(const MpgGame* game)
 			g.restoreRed = true;
 			// the stage's goop is back as it loaded: clean again what was cleaned
 			g.cleanIn.assign(g.cleanLog.begin(), g.cleanLog.end());
+		}
+		// our own arrival in the session (a new one, or the same again after
+		// a lost life): its sticky commands for this game too
+		if (arrived && g.session) {
+			g.readySession[0] = g.session;
+			replaySticky(0);
+			if (!g_dedicated) {
+				char name[MP_NAME_LEN];
+				mp_player_name(0, name, sizeof name);
+				netEvent(MPG_NET_ARRIVED, 0, name);
+			}
 		}
 		// players may join once the host has chosen a file and is in a stage
 		mp_set_accepting(g.session != 0);
@@ -2274,20 +2595,22 @@ extern "C" void mpg_status(char* out, int size)
 	const unsigned players = mp_players();
 	const int me           = mp_local_slot();
 	char line[128];
-	snprintf(line, sizeof line, "MULTIPLAYER  %d/%d", __builtin_popcount(players), mp_max_players());
+	const int server = g_dedicated ? 1 : 0; // a server is no player
+	snprintf(line, sizeof line, "%s  %d/%d", server ? "SERVER" : "MULTIPLAYER", __builtin_popcount(players) - server,
+	         mp_max_players() - server);
 	s += line;
 	if (g.role == MPG_ROLE_HOST && !roomCode().empty())
 		s += "  ROOM " + roomCode();
-	for (int i = 0; i < MP_MAX_PLAYERS; i++) {
+	for (int i = server; i < MP_MAX_PLAYERS; i++) {
 		if (!(players & (1u << i)))
 			continue;
 		const int ping = i == me ? -1 : mp_ping(g.role == MPG_ROLE_HOST ? i : 0);
 		if (i == me)
-			snprintf(line, sizeof line, "\nP%d %s (you)", i + 1, mpg_display_name(i));
+			snprintf(line, sizeof line, "\nP%d %s (you)", i + 1 - server, mpg_display_name(i));
 		else if (ping >= 0)
-			snprintf(line, sizeof line, "\nP%d %s  %d ms", i + 1, mpg_display_name(i), ping);
+			snprintf(line, sizeof line, "\nP%d %s  %d ms", i + 1 - server, mpg_display_name(i), ping);
 		else
-			snprintf(line, sizeof line, "\nP%d %s", i + 1, mpg_display_name(i));
+			snprintf(line, sizeof line, "\nP%d %s", i + 1 - server, mpg_display_name(i));
 		s += line;
 	}
 	if (g.role == MPG_ROLE_CLIENT && mp_link() != MP_LINK_CONNECTED) {

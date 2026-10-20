@@ -309,6 +309,72 @@ int mpg_pose(int slot, MpgPose* pose, float* age);
 int mpg_pose_pair(int slot, MpgPose* a, MpgPose* b, float* t);
 uint32_t mpg_session(void); // the session this game is playing in (0: none)
 
+// ------------------------------------------------------------------- servers
+// Dedicated servers and server commands (README "Servers and server mods").
+// A host can be a server rather than a player (SMS_MULTIPLAYER_DEDICATED=1):
+// its own Mario is out of play and unseen, and the first to join plays
+// Mario. A server mod on the host (ext/modapi's api->net) runs a game mode
+// through commands every game carries out, so players need nothing but the
+// game: the clients hear them as K_CMD and carry them out (game/mp_server.cpp),
+// the host its own.
+enum {
+	MPG_CMD_BANNER = 1, // text in i[0]'s colour (0xRRGGBBAA), big in the middle; "" hides it
+	MPG_CMD_NOTICE,     // text: a line of news
+	MPG_CMD_STATUS,     // text: the standing line when there is no news
+	MPG_CMD_TIMER,      // the HUD clock: i[0] 0 hide, 1 stopped, 2 up, 3 down; i[1] hundredths
+	MPG_CMD_READY_GO,   // the game's "Ready... Go!"
+	MPG_CMD_SOUND,      // i[0]: a system sound
+	MPG_CMD_MUSIC,      // i[0]: background music (0: stop)
+	MPG_CMD_WARP,       // the player to f[0..2], facing f[3] degrees
+	MPG_CMD_HOLD,       // i[0]: controls held (1) or free (0)
+	MPG_CMD_MOUNT,      // onto a Blooper (actor types i[0]..i[1]) at f[0..2], facing f[3]
+	MPG_CMD_WATCH,      // i[0]: ride with that slot (out of play); -1: back in play
+	MPG_CMD_ACTORS,     // actor types i[0]..i[1]: i[2] 0 shown, 1 hidden, 2 killed
+	MPG_CMD_STOP_SCRIPT, // text: the stage's event script loaded from that resource
+	MPG_CMD_STAY,       // i[0]: the player's own ways out of the stage lead nowhere
+	MPG_CMD_LAST = MPG_CMD_STAY,
+};
+#define MPG_CMD_STICKY 1
+#define MPG_CMD_TEXT 160
+typedef struct MpgCmd {
+	uint8_t type, flags;
+	uint32_t delayMs; // from when the host sent it
+	int32_t i[4];
+	float f[4];
+	char text[MPG_CMD_TEXT];
+} MpgCmd;
+// Host: carry out `cmd` in the games of the players in `to` (bit n: slot n;
+// the host's own is slot 0). Returns those it went to.
+uint32_t mpg_server_send(uint32_t to, const MpgCmd* cmd);
+// This game: the next command due now (its delay over, on our clock), 1 if one.
+int mpg_next_cmd(MpgCmd* out);
+// The host is a server, not a player (a client's as heard from it).
+int mpg_dedicated(void);
+// Host: the game mode's name and a line of its state, for probes (the
+// launcher's list); the mode's name goes to the players too.
+void mpg_server_mode(const char* name);
+void mpg_server_status(const char* text);
+// Host: everyone to that stage afresh (a new session). The game half takes
+// the request (mpg_take_load_stage) and sets off; a server waiting at the
+// title goes there.
+int mpg_server_load_stage(int area, int episode);
+int mpg_take_load_stage(int* area, int* episode);
+// Host: `slot` has arrived in the session the host plays (the host's own
+// slot once it plays it).
+int mpg_player_arrived(int slot);
+// What a server mod hears of the game (ext/modapi's SMS_EV_NET_*).
+enum { MPG_NET_JOINED = 1, MPG_NET_LEFT, MPG_NET_ARRIVED, MPG_NET_SESSION };
+typedef struct MpgNetEvent {
+	int type;    // MPG_NET_*
+	int slot;    // the player (JOINED, LEFT, ARRIVED)
+	char name[24];
+	int area, episode; // SESSION
+	uint32_t session;
+} MpgNetEvent;
+int mpg_next_net_event(MpgNetEvent* out);
+// mpg_start has run (the role is known, multiplayer or not).
+int mpg_started(void);
+
 // Text for the player: the next notice ("Bob joined"), 0 when none;
 // and the list of players for the status panel.
 int mpg_take_notice(char* out, int size);

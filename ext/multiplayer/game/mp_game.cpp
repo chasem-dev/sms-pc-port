@@ -15,6 +15,7 @@
 #include "mp_boss.hpp"
 #include "mp_mirror.hpp"
 #include "mp_puppet.hpp"
+#include "mp_server.hpp"
 #include "port_ext.h"
 #include "port_framerate.h"
 
@@ -2179,6 +2180,12 @@ struct TestPlan {
 	bool tore;
 	int surfAt;                 // surf@N: this player gets on a Blooper (surfing)
 	bool surfed;
+	int routeAt;                // route@N:x,y,z/x,y,z/...: this player put on each point in turn, 10 frames apart
+	                            // (surfroute@N:...: N frames after getting on a Blooper, each time)
+	bool routeSurf;
+	int surfFrames;             // frames on a Blooper so far (surfroute)
+	int routeCount;
+	float route[8][3];
 	int boatAt;                 // nearboat@N: this player stands on the first fruit boat
 	int titleQuitAt;            // titlequit@N: this game goes back to the title, as the pause menu's Save & Quit does
 	int quitAt;                 // quit@N: this game closes, as closing its window does
@@ -2226,6 +2233,7 @@ int s_testAim;    // aim@N: frames left spraying in place (padRead: R down, the 
 
 void testPadRead(void* status)
 {
+	MpServerPadRead(status); // held by the server (a race's start line), or watching
 	if (s_selectLocked) {
 		// the host's episode select: this player's controller does nothing
 		// there, the host's choosing presses for them
@@ -2264,7 +2272,7 @@ void runTests(TMarDirector* dir, bool arrived)
 {
 	if (!s_test.parsed) {
 		s_test.parsed = true;
-		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.gateAt = s_test.flAt = s_test.demoAt = s_test.enemyAt = s_test.tearAt = s_test.blueAt = s_test.cornerAt = s_test.voidAt = s_test.aimAt = s_test.graffitiAt = s_test.graffitiCoinAt = s_test.shineOutAt = s_test.surfAt = s_test.boatAt = s_test.sandAt = s_test.rideAt = s_test.titleQuitAt = s_test.quitAt = s_test.doorAt = s_test.mantaAt = -1;
+		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.gateAt = s_test.flAt = s_test.demoAt = s_test.enemyAt = s_test.tearAt = s_test.blueAt = s_test.cornerAt = s_test.voidAt = s_test.aimAt = s_test.graffitiAt = s_test.graffitiCoinAt = s_test.shineOutAt = s_test.surfAt = s_test.routeAt = s_test.boatAt = s_test.sandAt = s_test.rideAt = s_test.titleQuitAt = s_test.quitAt = s_test.doorAt = s_test.mantaAt = -1;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
 		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = s_test.bossHitAt = s_test.setFlagAt = -1;
 		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.shadowRunAt = s_test.npcSprayAt = s_test.carryAt = s_test.fruitAt = s_test.slotSprayAt = s_test.melonAt = -1;
@@ -2305,6 +2313,21 @@ void runTests(TMarDirector* dir, bool arrived)
 				sscanf(co, "tubmiddle@%d", &s_test.cornerAt);
 			if (const char* su = strstr(plan, "surf@"))
 				sscanf(su, "surf@%d", &s_test.surfAt);
+			if (const char* ro = strstr(plan, "route@")) {
+				int used = 0;
+				s_test.routeSurf = ro >= plan + 4 && !strncmp(ro - 4, "surf", 4);
+				if (sscanf(ro, "route@%d:%n", &s_test.routeAt, &used) == 1 && used > 0)
+					for (const char* pt = ro + used; s_test.routeCount < 8;) {
+						float* xyz = s_test.route[s_test.routeCount];
+						if (sscanf(pt, "%f,%f,%f", &xyz[0], &xyz[1], &xyz[2]) != 3)
+							break;
+						s_test.routeCount++;
+						pt = strchr(pt, '/');
+						if (!pt)
+							break;
+						pt++;
+					}
+			}
 			if (const char* nb = strstr(plan, "nearboat@"))
 				sscanf(nb, "nearboat@%d", &s_test.boatAt);
 			if (const char* tq = strstr(plan, "titlequit@"))
@@ -2569,6 +2592,21 @@ void runTests(TMarDirector* dir, bool arrived)
 				static_cast<TItem*>(a)->taken(gpMarioOriginal);
 				break;
 			}
+		}
+	}
+	if (gpMarioOriginal && s_test.routeSurf) {
+		const bool on = gpMarioOriginal->checkStatusType(MARIO_STATUS_FLAG_UNK10000) && gpMarioOriginal->mSurfGesso;
+		s_test.surfFrames = on ? s_test.surfFrames + 1 : 0;
+	}
+	const int routeFrames = s_test.routeSurf ? s_test.surfFrames : s_test.frames;
+	if (s_test.routeAt >= 0 && routeFrames >= s_test.routeAt && gpMarioOriginal) {
+		const int step = (routeFrames - s_test.routeAt) / 10;
+		if (step < s_test.routeCount && (routeFrames - s_test.routeAt) % 10 == 0) {
+			const float* xyz = s_test.route[step];
+			gpMarioOriginal->mPosition.set(xyz[0], xyz[1], xyz[2]);
+			gpMarioOriginal->mForwardVel = 0.0f;
+			fprintf(stderr, "[multiplayer] test: route point %d of %d (%.0f %.0f %.0f)\n", step + 1, s_test.routeCount, xyz[0],
+			        xyz[1], xyz[2]);
 		}
 	}
 	if (s_test.surfAt >= 0 && !s_test.surfed && s_test.frames >= s_test.surfAt && gpConductor) {
@@ -2949,7 +2987,8 @@ void updateText()
 		showNotice(line);
 	if (s_noticeFrames > 0 && --s_noticeFrames == 0)
 		s_notice[0] = 0;
-	overlay(OVERLAY_NOTICE, s_notice);
+	// a server's standing line (MPG_CMD_STATUS: a race's state) when there is no news
+	overlay(OVERLAY_NOTICE, s_notice[0] ? s_notice : MpServerStatusLine());
 	TMarDirector* dir = director();
 	const bool paused = dir && dir->mState == TMarDirector::STATE_PAUSE_MENU;
 	if (s_statusFrames > 0)
@@ -4380,6 +4419,7 @@ void frame()
 		mpg_set_pose(&none);
 	}
 	selectFrame();
+	MpServerFrame(dir, s_arrivedNow, s_playing && inStage());
 	updateText();
 }
 
@@ -4393,6 +4433,7 @@ void stageSetup()
 	s_shineGetFrames  = 0;
 	if (!enabled())
 		return;
+	MpServerStageSetup();
 	s_readyDir = gpMarDirector;
 	s_arrivedHere = false;
 	s_stageNumber++;
@@ -4587,6 +4628,8 @@ void afterMovement()
 	// (out of the world, here) as the arrival brings him back
 	if (s_spectating && s_arrivedHere)
 		spectateTick();
+	if (s_arrivedHere)
+		MpServerTick();
 }
 
 // A client's own way out (a pipe, a painting, a secret course's entrance, a
@@ -4605,6 +4648,8 @@ int allowNextStage(unsigned code, void* actor)
 	int area, episode;
 	const int next        = code >= 0x100 ? (int)(code >> 8) - 1 : (int)code;
 	const int nextEpisode = code >= 0x100 ? (int)(code & 0xFF) : 0xFF;
+	if (inStage() && !MpServerAllowLeave(next))
+		return 0; // the server keeps everyone in its stage (MPG_CMD_STAY)
 	if (s_role == MPG_ROLE_HOST && inStage()) {
 		// setting off: everyone sets off now, so the fades go together. Not
 		// into the stage it is in (a lost life's start over is the host's
@@ -4727,7 +4772,7 @@ void moveStage()
 		if (next.getStage() == 15)
 			return;
 		const bool same = next.getStage() == cur.getStage() && next.getScenario() == cur.getScenario();
-		const bool miss = s_missReload;
+		const bool miss = s_missReload && !MpServerLoading(); // a server mod's stage afresh is everyone's
 		s_missReload    = false;
 		if (same && miss)
 			return; // the host's own start over: nothing for the others
@@ -4790,6 +4835,8 @@ int keepCoinsOnMiss() { return enabled(); }
 void afterFileSelect()
 {
 	int area, episode;
+	if (s_role == MPG_ROLE_HOST && MpServerAfterFileSelect())
+		return; // a server mod's stage, not the file's
 	if (s_role != MPG_ROLE_CLIENT || !mpg_flags_ready() || !mpg_target(&area, &episode))
 		return;
 	// the host's save, then straight to the host's stage
@@ -4847,6 +4894,14 @@ struct Register {
 } s_register;
 
 } // namespace
+
+TMpPuppet* MpPuppet(int slot) { return slot >= 0 && slot < MPG_MAX_PLAYERS ? s_puppets[slot] : nullptr; }
+bool MpWatchable(int slot) { return enabled() && watchable(slot); }
+void MpShowNotice(const char* text)
+{
+	if (enabled() && text && text[0])
+		showNotice(text);
+}
 
 // Where player `slot` is in this game's stage (another extension's question,
 // e.g. ext/demo): 1 and xyz filled in when they are here and in play.
