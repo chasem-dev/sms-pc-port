@@ -131,3 +131,25 @@ extern "C" int port_ext_object_hit(void* object, void* sender, unsigned message)
 	EACH(objectHit) if (s_ext[i]->objectHit(object, sender, message)) return 1;
 	return 0;
 }
+
+extern "C" void port_ext_camera(void* camera, float* eye, float* at, float* fovy)
+{
+	EACH(camera) s_ext[i]->camera(camera, eye, at, fovy);
+}
+
+extern "C" int port_ext_player_status(void* mario, unsigned* status, unsigned* arg, int force)
+{
+	EACH(playerStatus) if (s_ext[i]->playerStatus(mario, status, arg, force)) return 1;
+	return 0;
+}
+
+extern "C" int port_ext_player_damage(void* mario, int* amount)
+{
+	EACH(playerDamage) if (s_ext[i]->playerDamage(mario, amount)) return 1;
+	return 0;
+}
+
+extern "C" void port_ext_shine_collected(int shine, int total)
+{
+	EACH(shineCollected) s_ext[i]->shineCollected(shine, total);
+}

@@ -78,6 +78,23 @@ typedef struct PortExtension {
 	// stomped...), from `sender` (the player, or the water's hit actor):
 	// return 1 to stop it from reaching the object.
 	int (*objectHit)(void* object, void* sender, unsigned message);
+	// The game camera (CPolarSubCamera) placed itself this tick and is about
+	// to make the view it draws from its eye, the point it looks at and its
+	// vertical field of view in degrees (copies, each a float[3] but fovy),
+	// which the hook may change; the eye and the point it looks at change
+	// only what is drawn this tick (the extension may set the camera's own
+	// field of view as well).
+	void (*camera)(void* camera, float* eye, float* at, float* fovy);
+	// TMario::changePlayerStatus(*status, *arg, force) on any TMario (the
+	// player's, or Shadow Mario's): the hook may change the status asked
+	// for and its argument, or return 1 to refuse it (the call returns 0).
+	int (*playerStatus)(void* mario, unsigned* status, unsigned* arg, int force);
+	// TMario::decHP(*amount) on any TMario: the hook may change the amount
+	// (health, or air under water), or return 1 to stop it.
+	int (*playerDamage)(void* mario, int* amount);
+	// TFlagManager::setShineFlag set Shine `shine`'s flag for the first
+	// time; `total` Shines are on the file now.
+	void (*shineCollected)(int shine, int total);
 } PortExtension;
 
 // Adds an extension; call from a static constructor or before the first frame.
@@ -105,6 +122,10 @@ void port_ext_demo_camera(const char* name, const float* pos, int frames, float 
 void port_ext_pollution_clean(float x, float y, float z, float size);
 void port_ext_object_move(void* object, int after);
 int port_ext_object_hit(void* object, void* sender, unsigned message);
+void port_ext_camera(void* camera, float* eye, float* at, float* fovy);
+int port_ext_player_status(void* mario, unsigned* status, unsigned* arg, int force);
+int port_ext_player_damage(void* mario, int* amount);
+void port_ext_shine_collected(int shine, int total);
 
 #ifdef __cplusplus
 }
