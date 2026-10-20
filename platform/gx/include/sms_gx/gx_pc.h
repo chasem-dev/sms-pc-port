@@ -25,6 +25,7 @@ typedef void* (*GXPCGetProcFn)(const char* name);
  *   GXPC_SetHeadless(1) or --headless (GXPC_ParseArgs)   force offscreen
  *   GXPC_SetHeadless(0) or --window                      force a window
  *   SMS_HEADLESS=1                                       force offscreen
+ *   SMS_GX_BACKEND=none          no context at all: nothing is drawn (servers)
  * Other environment: SMS_GX_SCALE=n (internal EFB scale), SMS_WINDOW_SCALE=n
  * (preferred window size multiple of 640x480, fitted to the desktop). By default
  * the window is at most 1280x720, fitted and centered in the usable desktop on

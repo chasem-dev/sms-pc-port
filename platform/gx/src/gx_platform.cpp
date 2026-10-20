@@ -866,6 +866,13 @@ int GXPC_InitAuto(float efbScale) {
     if (rendererReady()) return 1;
     if (const char* e = getenv("SMS_GX_SCALE")) efbScale = atof(e) >= 1.0 ? std::min(8.0f, float(atof(e))) : efbScale;
     if (envTrue("SMS_VSYNC")) s_vsync = strcmp(getenv("SMS_VSYNC"), "adaptive") == 0 ? -1 : 1;
+    // SMS_GX_BACKEND=none: no window, no context, nothing drawn (a dedicated
+    // server: the game runs on, as on a computer with no OpenGL at all)
+    const char* backend = getenv("SMS_GX_BACKEND");
+    if (backend && !strcmp(backend, "none")) {
+        logmsg("renderer none: nothing is drawn");
+        return 0;
+    }
     bool headless;
     if (s_forceHeadless >= 0) headless = s_forceHeadless != 0;
     else if (envTrue("SMS_HEADLESS")) headless = true;

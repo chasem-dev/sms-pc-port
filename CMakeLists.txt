@@ -525,6 +525,15 @@ endif()
 # Extensions: optional features the game calls at chosen points (ext/README.md).
 include(${CMAKE_CURRENT_SOURCE_DIR}/ext/ext.cmake)
 
+# A dedicated server (github.com/chasem-dev/sms-server): -DSMS_SERVER_DIR=<its
+# checkout> builds the game as sms-server, with its sources added; its
+# server.cmake says how. The game itself only calls sms_server_init first
+# thing (port_runtime.cpp).
+set(SMS_SERVER_DIR "" CACHE PATH "sms-server checkout to build the dedicated server from")
+if(SMS_SERVER_DIR)
+  include(${SMS_SERVER_DIR}/server.cmake)
+endif()
+
 option(SMS_ECLIPSE "Build Super Mario Eclipse in (fetches its sources, see docs/ECLIPSE.md)" OFF)
 if(SMS_ECLIPSE)
   include(cmake/eclipse.cmake)

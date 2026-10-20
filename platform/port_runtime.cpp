@@ -940,8 +940,17 @@ static void load_settings()
 		port_log("[port] %d settings from %s\n", n, path);
 }
 
+#ifdef SMS_SERVER_BUILD
+// sms-server (CMakeLists.txt, SMS_SERVER_DIR): its settings, as the
+// environment everything below reads, and its room for the public list
+extern "C" void sms_server_init(int argc, char** argv);
+#endif
+
 extern "C" void port_init(int argc, char** argv)
 {
+#ifdef SMS_SERVER_BUILD
+	sms_server_init(argc, argv);
+#endif
 	load_settings();
 	pick_glx_vendor();
 	if (const char* m = getenv("SMS_SKIP_MOVIES"))

@@ -236,6 +236,12 @@ The icon is the game's memory-card icon (the Mario head), always taken from your
 
 Linux executables carry no icon of their own; the window icon is what the desktop shows.
 
+## Dedicated server
+
+[sms-server](https://github.com/chasem-dev/sms-server) builds the game as a dedicated multiplayer server, which draws nothing and plays no sound, and lists itself in SMS Launcher's public games.
+Its sources stay in that repository: `SMS_SERVER_DIR=<its checkout> ./build.sh` adds them and builds `build/<os>-<arch>-server/sms-server` (CMake: `-DSMS_SERVER_DIR=...`, which includes its `server.cmake`).
+The game's only part in it is calling `sms_server_init` first thing (`platform/port_runtime.cpp`); `SMS_GX_BACKEND=none` is the renderer it runs with.
+
 ## Manual CMake build
 
 `build.sh` is a thin wrapper around CMake; this is what it runs (Linux, 32-bit):

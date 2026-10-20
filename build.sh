@@ -15,6 +15,8 @@
 # SMS_GX_BUILD_TESTS=ON also configures platform/gx's self-tests (for CI).
 # SMS_GX_VULKAN=ON|OFF builds the optional Vulkan backend in or leaves it out
 # (default: on Linux and macOS; docs/VULKAN.md).
+# SMS_SERVER_DIR=<sms-server checkout> builds the dedicated server instead
+# (github.com/chasem-dev/sms-server): build/<os>-<arch>-server/sms-server.
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -33,6 +35,13 @@ eclipse=${SMS_ECLIPSE:-0}
 if [[ "$eclipse" == 1 ]]; then
   bdir+=-eclipse
   cmake_args+=(-DSMS_ECLIPSE=ON)
+fi
+server=${SMS_SERVER_DIR:-}
+if [[ -n "$server" ]]; then
+  [[ -f "$server/server.cmake" ]] || sms_die "SMS_SERVER_DIR has no server.cmake: $server"
+  server=$(cd "$server" && if [[ "$sms_os" == windows ]]; then pwd -W; else pwd; fi)
+  bdir+=-server
+  cmake_args+=(-DSMS_SERVER_DIR="$server")
 fi
 
 need() {
@@ -150,7 +159,8 @@ setup_windows() {
 [[ -z "${SMS_GX_VULKAN:-}" ]] || cmake_args+=(-DSMS_GX_VULKAN="$SMS_GX_VULKAN")
 
 disc="${1:-${SMS_DISC_IMAGE:-}}"
-[[ -n "$disc" || "$eclipse" == 1 ]] || disc=$(sms_find_rom)
+[[ -n "$disc" || "$eclipse" == 1 || -n "$server" ]] || disc=$(sms_find_rom)
+[[ -z "$server" ]] || disc="" # a server reads its operator's disc image, never one built in
 if [[ -n "$disc" ]]; then
   [[ -f "$disc" ]] || sms_die "Disc image not found: $disc"
   if [[ "$sms_os" == windows ]]; then
@@ -178,6 +188,11 @@ if [[ "$sms_os" == macos ]]; then
   [[ -z "$mvk_dylib" ]] || cp "$mvk_dylib" "$bdir/libMoltenVK.dylib"
 fi
 
+if [[ -n "$server" ]]; then
+  echo
+  echo "Built $bdir/sms-server$sms_exe_suffix ($sms_os, $sms_arch)"
+  exit 0
+fi
 exe="$bdir/sms$sms_exe_suffix"
 echo
 if [[ "$sms_arch" == arm64 ]]; then echo "Built $exe ($sms_os, native arm64)"; else echo "Built $exe ($sms_os, $sms_arch-bit)"; fi

@@ -2807,6 +2807,9 @@ static GLuint peekSource(bool depth) {
 
 // Returns the raw texel: RGBA bytes packed little-endian, or the 32-bit depth.
 static uint32_t peekRaw(int x, int y, bool depth) {
+    // no renderer (SMS_GX_BACKEND=none, or no OpenGL at all): nothing was drawn,
+    // so clear colour and the far plane
+    if (!s_ready) return depth ? 0xFFFFFF00u : 0;
     if (s_efbW != EFB_W && x >= 0) x = int((float(x) + 0.5f) * s_wide);  // the game camera's coordinates: stretched
     flushBatch();
     glcInvalidate();
