@@ -415,9 +415,11 @@ void dropPeer(Session& s, int idx, const char* why)
 		return;
 	if (s.cfg.role == MP_ROLE_HOST) {
 		fprintf(stderr, "[multiplayer] %s (slot %d) %s\n", p.name, idx, why);
+		char name[MP_NAME_LEN];
+		snprintf(name, sizeof name, "%s", s.players[idx].name);
 		p          = Peer();
 		s.players[idx] = PlayerSlot();
-		pushEvent(s, MP_EV_PLAYER_LEFT, idx);
+		pushEvent(s, MP_EV_PLAYER_LEFT, idx, 0, nullptr, 0, name);
 		uint8_t slot = (uint8_t)idx;
 		for (int i = 1; i < MP_MAX_PLAYERS; i++)
 			if (s.peers[i].active)
@@ -432,8 +434,10 @@ void dropPeer(Session& s, int idx, const char* why)
 		s.message = why;
 		for (int i = 0; i < MP_MAX_PLAYERS; i++)
 			if (i != s.localSlot && s.players[i].present) {
+				char name[MP_NAME_LEN];
+				snprintf(name, sizeof name, "%s", s.players[i].name);
 				s.players[i] = PlayerSlot();
-				pushEvent(s, MP_EV_PLAYER_LEFT, i);
+				pushEvent(s, MP_EV_PLAYER_LEFT, i, 0, nullptr, 0, name);
 			}
 		pushEvent(s, MP_EV_FAILED, -1);
 		fprintf(stderr, "[multiplayer] %s\n", why);
@@ -465,8 +469,10 @@ void deliver(Session& s, int fromSlot, uint8_t kind, const uint8_t* data, size_t
 		r.str(pl.name, sizeof pl.name);
 		pushEvent(s, MP_EV_PLAYER_JOINED, slot, 0, nullptr, 0, pl.name);
 	} else if (kind == SYS_PLAYER_LEFT && s.players[slot].present) {
+		char name[MP_NAME_LEN];
+		snprintf(name, sizeof name, "%s", s.players[slot].name);
 		s.players[slot] = PlayerSlot();
-		pushEvent(s, MP_EV_PLAYER_LEFT, slot);
+		pushEvent(s, MP_EV_PLAYER_LEFT, slot, 0, nullptr, 0, name);
 	}
 }
 

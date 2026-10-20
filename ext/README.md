@@ -11,7 +11,7 @@ They are the start of a code-mod framework for the port: a new feature that need
 
 ## The hooks
 
-The game calls the functions of [`src/port_include/port_ext.h`](../src/port_include/port_ext.h) from its patches, [`decomp-patches/zzzzz-ext-01-hooks.patch`](../decomp-patches/zzzzz-ext-01-hooks.patch) and `zzzzz-ext-02-demo-camera.patch`.
+The game calls the functions of [`src/port_include/port_ext.h`](../src/port_include/port_ext.h) from its patches, [`decomp-patches/zzzzz-ext-01-hooks.patch`](../decomp-patches/zzzzz-ext-01-hooks.patch) and the other `zzzzz-ext-*` patches.
 An extension fills in a `PortExtension` with the hooks it needs, leaving the rest null:
 
 | Hook | When the game calls it | What it may do |
@@ -29,7 +29,11 @@ An extension fills in a `PortExtension` with the hooks it needs, leaving the res
 | `allowSaveStates`, `saveStatesOffReason` | the controls or menu ask for a save state | return 0 to refuse, and say why |
 | `hidePlayerModel` | Mario's models are about to be drawn | return 1 to leave them out (and draw the player yourself) |
 | `padRead` | the controllers were read (`PADRead`), before the game sees them | change the input (scripted play, input mods) |
-| `demoCamera` | a camera cutscene is asked for (`TMarDirector::fireStartDemoCamera`) | note it (multiplayer plays it in every game) |
+| `demoCamera` | a camera cutscene is asked for (`TMarDirector::fireStartDemoCamera`) | note it (multiplayer plays it in every game), or return 1 to leave it out |
+| `pollutionClean` | goop is about to be cleaned (`TPollutionManager::clean`) | note it |
+| `objectMove` | an object is about to move this tick, and has (`JDrama::TViewObj::testPerform`) | change what it decides by (`gpMarioPos`) until it has moved |
+| `objectHit` | the player or their water hits an object | return 1 to stop the hit |
+| `particleEmit` | an effect is asked of Mario's particle manager (`TMarioParticleManager::emit` and its kin) | note it (multiplayer shows the player's at them in the other games) |
 
 Every hook runs on the game thread inside the game's own steps, so an extension uses the game's globals (`gpApplication`, `gpMarDirector`, `gpMarioOriginal`, `TFlagManager`) as the game does there.
 With no extension switched on, each hook is a loop over nothing.
