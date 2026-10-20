@@ -1,8 +1,15 @@
-name: Eclipse build
-# Builds the 64-bit game with and without Super Mario Eclipse on each platform
-# (and Eclipse in the native Apple Silicon build, docs/MACOS-ARM64.md) and
-# starts it far enough to see whether the mods' constructors were linked in
-# where platform/mods/modhooks.cpp finds them. No disc image is used.
+name: Native build
+# Builds the game with the public toolchains BUILD.md describes (apt, MSYS2,
+# Homebrew's LLVM), in a folder whose path has spaces, and starts each build far
+# enough to see its disc check and whether Super Mario Eclipse's mods are linked
+# in. No disc image is used. The launcher's toolsets build every platform in
+# launcher-build.yml; this covers what those builds do not:
+#   - Linux: Sunshine and Eclipse, with Eclipse's SHI flag check;
+#   - Windows: Eclipse, kept as an artifact for testing a change on a Windows
+#     machine before it is released;
+#   - Apple Silicon: Sunshine and Eclipse natively (docs/MACOS-ARM64.md): the
+#     gameptr pass plugin's test, the Vulkan backend with MoltenVK, and the
+#     executable's signature.
 on:
   push:
     branches: [main]
@@ -18,40 +25,46 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
   cancel-in-progress: true
 jobs:
-  eclipse:
+  native:
     strategy:
       fail-fast: false
       matrix:
-        eclipse: ['1', '0']
-        os: [ubuntu-24.04, macos-15, windows-2025]
-        arch: ['64']
         include:
           - os: ubuntu-24.04
             shell: bash
-          - os: macos-15
-            shell: bash
+            arch: '64'
+            build: linux-64
+            exe: sms
+            sunshine: true
+            cache-size: 1G
           - os: windows-2025
             shell: msys2 {0}
-          # macos-15 runners are Apple Silicon: Eclipse built natively too.
+            arch: '64'
+            build: windows-64
+            exe: sms.exe
+            sunshine: false
+            cache-size: 500M
           - os: macos-15
-            eclipse: '1'
-            arch: arm64
             shell: bash
+            arch: arm64
+            build: macos-arm64
+            exe: sms
+            sunshine: true
+            cache-size: 1G
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     defaults:
       run:
         shell: ${{ matrix.shell }}
-        working-directory: Eclipse CI with spaces/port
-    name: ${{ matrix.os }}${{ matrix.arch == 'arm64' && ' arm64' || '' }}${{ matrix.eclipse == '1' && ' Eclipse' || ' Sunshine' }}
+        working-directory: Native CI with spaces/port
+    name: ${{ matrix.os }} ${{ matrix.arch }}
     env:
       SMS_ARCH: ${{ matrix.arch }}
-      SMS_ECLIPSE: ${{ matrix.eclipse }}
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
-          path: Eclipse CI with spaces/port
+          path: Native CI with spaces/port
       - name: Install Linux tools
         if: runner.os == 'Linux'
         timeout-minutes: 25
@@ -76,6 +89,7 @@ jobs:
         run: |
           brew install llvm
           echo "SMS_LLVM_BIN=$(brew --prefix llvm)/bin" >> "$GITHUB_ENV"
+          "$(brew --prefix llvm)/bin/clang" --version
           sudo softwareupdate --install-rosetta --agree-to-license
       - uses: msys2/setup-msys2@v2
         if: runner.os == 'Windows'
@@ -92,49 +106,62 @@ jobs:
           version: v0.18.0
       - name: Enable compiler cache
         shell: pwsh
+        working-directory: .
         run: |
           "SMS_COMPILER_CACHE=$((Get-Command sccache).Source.Replace('\', '/'))" >> $env:GITHUB_ENV
           # A local cache, kept between runs as one archive per job: sccache's
           # Actions cache backend stores each object file as a cache entry of
           # its own, which filled the repository's 10 GB and made writes fail.
           "SCCACHE_DIR=${{ runner.temp }}/sccache" >> $env:GITHUB_ENV
-          "SCCACHE_CACHE_SIZE=500M" >> $env:GITHUB_ENV
+          "SCCACHE_CACHE_SIZE=${{ matrix.cache-size }}" >> $env:GITHUB_ENV
       - name: Restore compiler cache
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/sccache
-          key: sccache-eclipse-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.eclipse }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: sccache-eclipse-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.eclipse }}-
-      - name: Test Windows cross compiler cache routing
-        if: runner.os == 'Windows'
-        run: python tools/tests/test_msys_cross_compile.py
-      - name: Test partial-link response files with long paths
+          key: sccache-native-${{ matrix.os }}-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: sccache-native-${{ matrix.os }}-${{ matrix.arch }}-
+      - name: Test the tools' Python helpers
         run: |
-          if [[ "$RUNNER_OS" == Windows ]]; then python tools/mods/tests/test_object_response.py
-          else python3 tools/mods/tests/test_object_response.py; fi
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            python tools/tests/test_msys_cross_compile.py
+            python tools/mods/tests/test_object_response.py
+          else
+            python3 tools/mods/tests/test_object_response.py
+          fi
+      - name: Check the gameptr pass plugin
+        if: runner.os == 'macOS'
+        run: tools/gameptr/test.sh
+      - name: Build Sunshine
+        if: matrix.sunshine
+        run: ./build.sh
+      - name: Check Sunshine starts without the mods
+        if: matrix.sunshine
+        run: tools/tests/check_start.sh "build/${{ matrix.build }}/${{ matrix.exe }}" 0
+      - name: Check the arm64 executable
+        if: runner.os == 'macOS'
+        run: |
+          exe=build/macos-arm64/sms
+          file "$exe"
+          lipo -archs "$exe" | grep -qx arm64
+          codesign --verify --strict "$exe"
+          # the Vulkan backend's library, beside it
+          test -f build/macos-arm64/libMoltenVK.dylib
+          lipo -archs build/macos-arm64/libMoltenVK.dylib | grep -qw arm64
+          # and the backend itself (configure leaves it out when a dependency
+          # cannot be fetched, which would pass silently otherwise). Not
+          # grep -q: it stops reading at the match, and nm fails on the broken pipe.
+          nm "$exe" | grep '__ZN4glvk7getProcEPKc' > /dev/null
       - name: Build Eclipse
+        env:
+          SMS_ECLIPSE: '1'
         run: ./build.sh
       - name: Check SHI flag masks
-        if: runner.os == 'Linux' && matrix.eclipse == '1'
+        if: runner.os == 'Linux'
         run: python3 tools/mods/test_shi_flags.py build/linux-64-eclipse/eclipse-src/shi --compiler clang++ --arch 64
-      - name: Check whether the mods are linked in
-        run: |
-          if [[ "$RUNNER_OS" == Linux ]]; then os=linux; elif [[ "$RUNNER_OS" == macOS ]]; then os=macos; else os=windows; fi
-          exe=build/$os-$SMS_ARCH$([[ "$SMS_ECLIPSE" != 1 ]] || echo -eclipse)/sms
-          [[ "$os" != windows ]] || exe+=.exe
-          head -c 32 /dev/zero > invalid.iso
-          set +e
-          limit=$(command -v timeout || command -v gtimeout || true)
-          SMS_CODE_MODS=0 SMS_HEADLESS=1 SMS_SAVE_DIR="$PWD/test-saves" SMS_DISC_IMAGE="$PWD/invalid.iso" \
-            ${limit:+$limit 60} "$exe" "$PWD/invalid.iso" > start.log 2>&1
-          echo "exit status $?"
-          set -e
-          cat start.log
-          if [[ "$SMS_ECLIPSE" == 1 ]]; then grep -q 'code mods linked in but switched off' start.log
-          else ! grep -q 'code mods linked in' start.log; fi
-          grep -q 'not a usable GameCube disc image' start.log
+      - name: Check Eclipse starts with its mods linked in
+        run: tools/tests/check_start.sh "build/${{ matrix.build }}-eclipse/${{ matrix.exe }}" 1
       - name: Collect the Windows executable and its DLLs
-        if: runner.os == 'Windows' && matrix.eclipse == '1'
+        if: runner.os == 'Windows'
         run: |
           mkdir -p windows-game
           cp build/windows-64-eclipse/sms.exe windows-game/
@@ -142,10 +169,10 @@ jobs:
           ls -l windows-game
       # For testing a change on a Windows machine before it is released.
       - uses: actions/upload-artifact@v4
-        if: runner.os == 'Windows' && matrix.eclipse == '1'
+        if: runner.os == 'Windows'
         with:
           name: windows-64-eclipse
-          path: Eclipse CI with spaces/port/windows-game
+          path: Native CI with spaces/port/windows-game
           retention-days: 7
       # Only main saves: a pull request starts from main's cache, so the
       # repository keeps one archive per job (the Actions cache holds 10 GB).
@@ -154,11 +181,11 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ runner.temp }}/sccache
-          key: sccache-eclipse-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.eclipse }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: sccache-native-${{ matrix.os }}-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Show the Windows executable's sections
         if: failure() && runner.os == 'Windows'
         run: |
-          exe=build/windows-64$([[ "$SMS_ECLIPSE" != 1 ]] || echo -eclipse)/sms.exe
+          exe=build/windows-64-eclipse/sms.exe
           ls -l "$exe"
           objdump -p "$exe" | sed -n '1,60p'
           objdump -h "$exe"

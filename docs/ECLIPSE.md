@@ -41,7 +41,7 @@ Without it, the build is the plain port: every hook below is in the source but f
 
 `SMS_ECLIPSE=1 ./build.sh` does the same with the platform setup of `./build.sh`, into `build/<os>-<arch>-eclipse/`.
 It needs clang besides the usual tools: on Linux `clang`, on macOS Homebrew's LLVM (as for the plain build), on Windows `mingw-w64-x86_64-clang` in MINGW64.
-The [Eclipse build workflow](../.github/workflows/eclipse.yml) builds it 64-bit on Linux, macOS and Windows, and natively on Apple Silicon ([MACOS-ARM64.md](MACOS-ARM64.md#super-mario-eclipse)), and checks that the game finds the mods' constructors (`SMS_CODE_MODS=0` reports `code mods linked in but switched off`).
+The [native build workflow](../.github/workflows/native-build.yml) builds it 64-bit on Linux and Windows and natively on Apple Silicon ([MACOS-ARM64.md](MACOS-ARM64.md#super-mario-eclipse)) with these tools, and [tools/tests/check_start.sh](../tools/tests/check_start.sh) checks that the game finds the mods' constructors (`SMS_CODE_MODS=0` reports `code mods linked in but switched off`), and that a build without Eclipse has none. The [launcher build workflow](../.github/workflows/launcher-build.yml) builds and checks it on Linux, Windows and macOS the way SMS Launcher does.
 
 ### Per platform
 
