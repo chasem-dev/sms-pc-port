@@ -17,9 +17,11 @@ A game address `x` (the 32-bit value the game sees, as on every other build) liv
 | Game addresses | Host addresses | What is there |
 | --- | --- | --- |
 | below `0x80000000` | `0x100000000 + x` (`PORT_GAME_LO`) | the executable (loaded at `0x100000000`), the boot and thread stacks, `port_low_alloc`'s pool at `0x110000000` |
-| from `0x80000000` | `0x700000000 + x` (`PORT_GAME_HI`) | MEM1 at `0x780000000`, the hardware register sink at `0x7CC000000` |
+| from `0x80000000` | `0x10000000000 + x` (`PORT_GAME_HI`, 1 TiB) | MEM1 at `0x10080000000`, the hardware register sink at `0x100CC000000` |
 
 Truncating any of these pointers to 32 bits gives the game address, so pointer-to-`u32` casts (all of them truncations) need nothing.
+
+`PORT_GAME_HI` was first `0x700000000` (MEM1 at `0x780000000`, just above the shared cache). On macOS 27 with an M5 that address was already taken when the game started, and MEM1 anywhere else cannot work: the game's code reaches it at `PORT_GAME_HI` only. Addresses just above the shared cache are where the system puts its own mappings (on macOS 15 with an M4, a hint at `0x1000000000` is placed at `0x7000000000`), so MEM1 is at 1 TiB, far above them. If it still cannot be mapped there, the game stops with a message and logs what holds the address, instead of falling back to a heap block as the other builds do.
 The way back is `tools/gameptr/GamePtrPass.cpp`, an LLVM pass plugin that CMake builds at configure time against the compiler's own LLVM (Homebrew's `llvm`, which also has `llvm-config` and the headers) and loads with `-fpass-plugin=` for the game and the platform layer:
 
 - **Every integer turned into a pointer** (each `inttoptr`, after the optimiser has run) gets the base of its half added when it is from 64 KiB up to 4 GiB, which on arm64 macOS is never a host address.

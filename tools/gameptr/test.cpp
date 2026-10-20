@@ -39,7 +39,7 @@ __attribute__((noinline)) short toS16(float f) { return (short)f; }
 static int g_static = 7;
 
 int main() {
-    char* mem1 = (char*)mmap((void*)0x780000000ull, 0x100000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
+    char* mem1 = (char*)mmap((void*)0x10080000000ull, 0x100000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
     char* low = (char*)mmap((void*)0x110000000ull, 0x100000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
     if (mem1 == MAP_FAILED || low == MAP_FAILED) {
         std::printf("FAIL cannot map the game window\n");
