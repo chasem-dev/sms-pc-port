@@ -252,6 +252,7 @@ The everyday options are in the [README](../README.md#options); this is the full
 | `SMS_HEADLESS=1` / `--headless` | no window (offscreen EGL; Linux only) |
 | `SMS_BINDINGS` | key bindings file (default `./bindings.txt`, then `../../bindings.txt` when started from `build/<os>-<arch>/`) |
 | `SMS_AUDIO=0` | no sound output; the game's audio (JAudio's thread and sequencer, the software DSP) still runs, paced as with no output device ([64-BIT.md](64-BIT.md), item 19) |
+| `SMS_AUDIO_OPEN_TIMEOUT=s` | seconds to wait for the sound output to open (default 5; 0 waits for ever); without an answer the game plays without sound and logs what it was waiting for (`platform/audio/ai.cpp`) |
 | `SMS_NO_AUDIO=1` | run with an empty JAudio configuration and an idle AI DMA; THP movies stall (their video waits for audio), so combine with `SMS_SKIP_MOVIES=1` |
 | `SMS_SKIP_MOVIES=1` | skip cutscenes; keep the plaza portals' looping movies |
 | `SMS_SKIP_INTRO=1` | start at the title: no Nintendo and Dolby logos, no opening movie (`zz-movie-skip-02`) |
