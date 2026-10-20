@@ -53,56 +53,73 @@ struct ConcreteViewObj : public JDrama::TViewObj {
 typedef JDrama::TFlagT<u16> FlagU16;
 
 // Constructors and destructors (complete and base-object forms alike: none
-// of these classes has virtual bases)
-SHIM(void, shim_JSUIosBase_ctor, "_ZN10JSUIosBaseC2Ev", JSUIosBase* self) { new (self) JSUIosBase; }
-SHIM(void, shim_JSUInputStream_ctor, "_ZN14JSUInputStreamC2Ev", JSUInputStream* self)
+// of these classes has virtual bases). Each returns this: on arm64 Apple
+// platforms a caller takes a constructor's or non-deleting destructor's
+// result as the object (BSE's new SettingsDirector() used what TNameRef's
+// returned), and elsewhere it is ignored.
+SHIM(JSUIosBase*, shim_JSUIosBase_ctor, "_ZN10JSUIosBaseC2Ev", JSUIosBase* self) { new (self) JSUIosBase; return self; }
+SHIM(JSUInputStream*, shim_JSUInputStream_ctor, "_ZN14JSUInputStreamC2Ev", JSUInputStream* self)
 {
 	new (self) ConcreteInputStream;
+	return self;
 }
-SHIM(void, shim_TNameRef_ctor, "_ZN6JDrama8TNameRefC2EPKc", JDrama::TNameRef* self, const char* name)
+SHIM(JDrama::TNameRef*, shim_TNameRef_ctor, "_ZN6JDrama8TNameRefC2EPKc", JDrama::TNameRef* self, const char* name)
 {
 	new (self) JDrama::TNameRef(name);
+	return self;
 }
-SHIM(void, shim_TActor_ctor, "_ZN6JDrama6TActorC2EPKc", JDrama::TActor* self, const char* name)
+SHIM(JDrama::TActor*, shim_TActor_ctor, "_ZN6JDrama6TActorC2EPKc", JDrama::TActor* self, const char* name)
 {
 	new (self) JDrama::TActor(name);
+	return self;
 }
-SHIM(void, shim_TViewObj_ctor, "_ZN6JDrama8TViewObjC2EPKc", JDrama::TViewObj* self, const char* name)
+SHIM(JDrama::TViewObj*, shim_TViewObj_ctor, "_ZN6JDrama8TViewObjC2EPKc", JDrama::TViewObj* self, const char* name)
 {
 	new (self) ConcreteViewObj(name);
+	return self;
 }
-SHIM(void, shim_TViewObj_dtor, "_ZN6JDrama8TViewObjD2Ev", JDrama::TViewObj* self)
+// A destructor here is the symbol it would call (its own name: the compiler
+// took that for endless recursion and made the shim a trap, hit as Eclipse's
+// nerves are destroyed when the game exits), so each does the work itself:
+// TViewObj's implicit destructor runs TNameRef's, TNerveBase's is empty.
+SHIM(JDrama::TViewObj*, shim_TViewObj_dtor, "_ZN6JDrama8TViewObjD2Ev", JDrama::TViewObj* self)
 {
-	self->JDrama::TViewObj::~TViewObj();
+	self->JDrama::TNameRef::~TNameRef();
+	return self;
 }
-SHIM(void, shim_TNerveBase_dtor, "_ZN10TNerveBaseI10TLiveActorED2Ev", TNerveBase<TLiveActor>* self)
+SHIM(TNerveBase<TLiveActor>*, shim_TNerveBase_dtor, "_ZN10TNerveBaseI10TLiveActorED2Ev", TNerveBase<TLiveActor>* self)
 {
-	self->TNerveBase<TLiveActor>::~TNerveBase();
+	return self;
 }
-SHIM(void, shim_TScenarioArchiveName_copy, "_ZN20TScenarioArchiveNameC1ERKS_", TScenarioArchiveName* self,
+SHIM(TScenarioArchiveName*, shim_TScenarioArchiveName_copy, "_ZN20TScenarioArchiveNameC1ERKS_", TScenarioArchiveName* self,
      const TScenarioArchiveName* other)
 {
 	new (self) TScenarioArchiveName(*other);
+	return self;
 }
-SHIM(void, shim_TFlagT_copy, "_ZN6JDrama6TFlagTItEC1ERKS1_", FlagU16* self, const FlagU16* other)
+SHIM(FlagU16*, shim_TFlagT_copy, "_ZN6JDrama6TFlagTItEC1ERKS1_", FlagU16* self, const FlagU16* other)
 {
 	new (self) FlagU16(*other);
+	return self;
 }
-SHIM(void, shim_JUTRect_ctor4, "_ZN7JUTRectC1Eiiii", JUTRect* self, int x1, int y1, int x2, int y2)
+SHIM(JUTRect*, shim_JUTRect_ctor4, "_ZN7JUTRectC1Eiiii", JUTRect* self, int x1, int y1, int x2, int y2)
 {
 	new (self) JUTRect(x1, y1, x2, y2);
+	return self;
 }
-SHIM(void, shim_JUTRect_ctor0, "_ZN7JUTRectC1Ev", JUTRect* self) { new (self) JUTRect; }
-SHIM(void, shim_JUTRect_copy, "_ZN7JUTRectC1ERKS_", JUTRect* self, const JUTRect* other)
+SHIM(JUTRect*, shim_JUTRect_ctor0, "_ZN7JUTRectC1Ev", JUTRect* self) { new (self) JUTRect; return self; }
+SHIM(JUTRect*, shim_JUTRect_copy, "_ZN7JUTRectC1ERKS_", JUTRect* self, const JUTRect* other)
 {
 	new (self) JUTRect(*other);
+	return self;
 }
-SHIM(void, shim_JUTPoint_ctor0, "_ZN8JUTPointC1Ev", JUTPoint* self) { new (self) JUTPoint; }
-SHIM(void, shim_TColor_ctor0, "_ZN8JUtility6TColorC1Ev", JUtility::TColor* self)
+SHIM(JUTPoint*, shim_JUTPoint_ctor0, "_ZN8JUTPointC1Ev", JUTPoint* self) { new (self) JUTPoint; return self; }
+SHIM(JUtility::TColor*, shim_TColor_ctor0, "_ZN8JUtility6TColorC1Ev", JUtility::TColor* self)
 {
 	new (self) JUtility::TColor;
+	return self;
 }
-SHIM(void, shim_TSpcSlice_ctor0, "_ZN9TSpcSliceC1Ev", TSpcSlice* self) { new (self) TSpcSlice; }
+SHIM(TSpcSlice*, shim_TSpcSlice_ctor0, "_ZN9TSpcSliceC1Ev", TSpcSlice* self) { new (self) TSpcSlice; return self; }
 
 // Member functions
 SHIM(void, shim_TColor_set, "_ZN8JUtility6TColor3setEhhhh", JUtility::TColor* self, u8 r, u8 g, u8 b,

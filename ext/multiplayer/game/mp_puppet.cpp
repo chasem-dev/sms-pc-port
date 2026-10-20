@@ -3,6 +3,7 @@
 #include "mp_mirror.hpp"
 #include "../mp_recolour.h"
 
+#include <JSystem/J3D/J3DGraphAnimator/J3DJoint.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DMaterialAnm.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
 #include <JSystem/J3D/J3DGraphBase/Components/J3DGXColorS10.hpp>
@@ -30,6 +31,7 @@
 #include <Player/MarioDirtyStrings.hpp>
 #include <Player/WaterGun.hpp>
 #include <Player/Yoshi.hpp>
+#include <System/EmitterViewObj.hpp>
 #include <System/MarDirector.hpp>
 #include <dolphin/gx.h>
 #include <dolphin/mtx.h>
@@ -176,8 +178,10 @@ void setShapes(J3DModelData* data, bool hidden)
 	}
 }
 
+} // namespace
+
 // Rotation matrix <-> quaternion (x, y, z, w), for turning smoothly.
-void toQuat(const f32 (*m)[4], f32 q[4])
+void MpMtxToQuat(const f32 (*m)[4], f32 q[4])
 {
 	const f32 tr = m[0][0] + m[1][1] + m[2][2];
 	if (tr > 0.0f) {
@@ -206,6 +210,10 @@ void toQuat(const f32 (*m)[4], f32 q[4])
 		q[2] = 0.25f * s;
 	}
 }
+
+namespace {
+
+void toQuat(const f32 (*m)[4], f32 q[4]) { MpMtxToQuat(m, q); }
 
 void fromQuat(const f32 q[4], f32 (*m)[4])
 {
@@ -271,7 +279,138 @@ f32 blendFrame(f32 a, f32 b, f32 t, f32 length)
 	return f >= length ? f - length : f;
 }
 
+// A 16-bit angle between two, the short way round.
+int16_t blendAngle(int16_t a, int16_t b, f32 t) { return (int16_t)(a + (int16_t)(b - a) * t); }
+
+// A joint's turn (MpgPose::headTurn) between two, the short way round.
+void blendTurn(const int16_t* a, const int16_t* b, f32 t, int16_t* out)
+{
+	const f32 sign = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] < 0 ? -1.0f : 1.0f;
+	f32 q[4], len = 0.0f;
+	for (int i = 0; i < 4; i++) {
+		q[i] = a[i] + (b[i] * sign - a[i]) * t;
+		len += q[i] * q[i];
+	}
+	len = sqrtf(len);
+	for (int i = 0; i < 4; i++)
+		out[i] = len > 1.0f ? (int16_t)(q[i] / len * 32767.0f) : (i == 3 ? 32767 : 0);
+}
+
+// The puppet whose models are being posed now (their joint callbacks read its pose).
+TMpPuppet* s_posing;
+
+// Turns the joint being calculated by a pose's turn (MpgPose::headTurn).
+void applyTurn(const int16_t* turn)
+{
+	if (turn[0] == 0 && turn[1] == 0 && turn[2] == 0)
+		return;
+	f32 q[4], len = 0.0f;
+	for (int i = 0; i < 4; i++) {
+		q[i] = turn[i] / 32767.0f;
+		len += q[i] * q[i];
+	}
+	len = sqrtf(len);
+	for (int i = 0; i < 4; i++)
+		q[i] /= len > 1e-6f ? len : 1.0f;
+	Mtx m;
+	MTXIdentity(m);
+	fromQuat(q, m);
+	MTXConcat(J3DSys::mCurrentMtx, m, J3DSys::mCurrentMtx);
+}
+
+// Turns the joint being calculated about its z axis (as TWaterGun's callbacks do).
+void rollJoint(f32 x, f32 z)
+{
+	Mtx m;
+	MsMtxSetRotRPH(m, x, 0.0f, z);
+	MTXConcat(J3DSys::mCurrentMtx, m, J3DSys::mCurrentMtx);
+}
+
+void hookJoint(J3DModelData* data, const char* name, J3DNodeCallBack ctrl)
+{
+	if (!data)
+		return;
+	const int joint = data->getJointName()->getIndex(name);
+	if (joint >= 0 && joint < data->getJointNum())
+		data->getJointNodePointer((u16)joint)->setCallBack(ctrl);
+}
+
 } // namespace
+
+// What Mario's joint callbacks do to his models (MarioDraw.cpp, WaterGun.cpp,
+// Yoshi.cpp), done to the puppet's from the pose: those read the game's own
+// Mario, these the player's pose.
+BOOL TMpPuppet::turnHead(J3DNode*, BOOL after)
+{
+	if (!after && s_posing)
+		applyTurn(s_posing->mPose.headTurn);
+	return TRUE;
+}
+
+BOOL TMpPuppet::turnWaist(J3DNode*, BOOL after)
+{
+	if (!after && s_posing)
+		applyTurn(s_posing->mPose.waistTurn);
+	return TRUE;
+}
+
+BOOL TMpPuppet::aimNozzle(J3DNode*, BOOL after)
+{
+	if (!after && s_posing && s_posing->mPose.gunAngle < 0)
+		rollJoint(0.0f, s_posing->mPose.gunAngle * (360.0f / 65536.0f));
+	return TRUE;
+}
+
+BOOL TMpPuppet::tiltHoverL(J3DNode*, BOOL after)
+{
+	if (!after && s_posing)
+		rollJoint(0.0f, (int16_t)-s_posing->mPose.hoverTiltL * (360.0f / 65536.0f));
+	return TRUE;
+}
+
+BOOL TMpPuppet::tiltHoverR(J3DNode*, BOOL after)
+{
+	if (!after && s_posing)
+		rollJoint(0.0f, (int16_t)-s_posing->mPose.hoverTiltR * (360.0f / 65536.0f));
+	return TRUE;
+}
+
+BOOL TMpPuppet::turnProp(J3DNode*, BOOL after)
+{
+	if (!after && s_posing)
+		rollJoint(s_posing->mPose.propAngle * (360.0f / 65536.0f), 0.0f);
+	return TRUE;
+}
+
+BOOL TMpPuppet::aimYoshi(J3DNode*, BOOL after)
+{
+	if (!after && s_posing)
+		rollJoint(0.0f, s_posing->mPose.gunAngle * (360.0f / 65536.0f));
+	return TRUE;
+}
+
+// Its own models' joints, turned from the pose as Mario's are by the game.
+void TMpPuppet::hookJoints()
+{
+	hookJoint(mBodyData, "jnt_head", &turnHead);
+	hookJoint(mBodyData, "chn_chest", &turnWaist);
+	// FLUDD's nozzles: only this puppet's own copies (shared ones keep Mario's)
+	if (mNozzlesOwn) {
+		if (mNozzles[TWaterGun::Spray])
+			hookJoint(mNozzles[TWaterGun::Spray]->getModel()->getModelData(), "chn_muzzle_1", &aimNozzle);
+		if (mNozzles[TWaterGun::Hover]) {
+			hookJoint(mNozzles[TWaterGun::Hover]->getModel()->getModelData(), "jnt_nozzle_L", &tiltHoverL);
+			hookJoint(mNozzles[TWaterGun::Hover]->getModel()->getModelData(), "jnt_nozzle_R", &tiltHoverR);
+		}
+		if (mNozzles[TWaterGun::Turbo]) {
+			hookJoint(mNozzles[TWaterGun::Turbo]->getModel()->getModelData(), "chn_back_nozzle_prop", &turnProp);
+			hookJoint(mNozzles[TWaterGun::Turbo]->getModel()->getModelData(), "jnt_back_nozzle_neck", &aimNozzle);
+		}
+	}
+	// the puppets' Yoshi (one model data for all of them): his head, as TYoshi's
+	if (mYoshi)
+		mYoshi->getModel()->getModelData()->getJointNodePointer(21)->setCallBack(&aimYoshi);
+}
 
 void TMpPuppet::blendPoses(const MpgPose& a, const MpgPose& b, f32 t, MpgPose* out)
 {
@@ -305,6 +444,12 @@ void TMpPuppet::blendPoses(const MpgPose& a, const MpgPose& b, f32 t, MpgPose* o
 		out->fluddFrame = a.fluddFrame + (b.fluddFrame - a.fluddFrame) * t;
 	if (a.yoshiBck == b.yoshiBck && b.yoshiFrame >= a.yoshiFrame)
 		out->yoshiFrame = a.yoshiFrame + (b.yoshiFrame - a.yoshiFrame) * t;
+	blendTurn(a.headTurn, b.headTurn, t, out->headTurn);
+	blendTurn(a.waistTurn, b.waistTurn, t, out->waistTurn);
+	out->gunAngle   = blendAngle(a.gunAngle, b.gunAngle, t);
+	out->hoverTiltL = blendAngle(a.hoverTiltL, b.hoverTiltL, t);
+	out->hoverTiltR = blendAngle(a.hoverTiltR, b.hoverTiltR, t);
+	out->propAngle  = blendAngle(a.propAngle, b.propAngle, t);
 }
 
 TMpPuppet::TMpPuppet(int slot, bool self)
@@ -323,14 +468,19 @@ TMpPuppet::TMpPuppet(int slot, bool self)
     , mFludd(nullptr)
     , mFluddData(nullptr)
     , mNozzleJoint(0)
+    , mNozzlesOwn(false)
     , mYoshi(nullptr)
     , mSurf(nullptr)
+    , mCoaster(nullptr)
     , mRide(nullptr)
     , mOpa(nullptr)
     , mXlu(nullptr)
     , mSwapped(false)
     , mDressedVersion(0xFFFFFFFFu)
     , mDrawn(false)
+    , mFxShotNext(0)
+    , mFxSeq(0)
+    , mFxSeen(false)
 {
 	memset(mView, 0, sizeof mView);
 	memset(mProjection, 0, sizeof mProjection);
@@ -475,14 +625,26 @@ bool TMpPuppet::buildFludd()
 	mFludd = new MActor(gun->mFluddModel->mAnmData);
 	mFludd->setModel(new J3DModel(packTexture ? mFluddData : gun->mFluddModel->getModel()->getModelData(), 0, 1), 0);
 	mNozzleJoint = gun->unk1CD8;
+	J3DModelData* marioFludd = gun->mFluddModel->getModel()->getModelData();
+	ResTIMG* marioPack       = marioFludd->getTexture() && marioFludd->getTexture()->getNum() > 1
+	                             ? marioFludd->getTexture()->getResTIMG(1)
+	                             : nullptr;
+	mNozzlesOwn              = true;
 	for (int i = 0; i < 6; i++) {
 		TNozzleBase* nozzle = gun->mNozzleList[i];
 		MActor* actor       = nozzle ? nozzle->getMActor() : nullptr;
 		if (!actor)
 			continue;
-		J3DModelData* data = packTexture ? loadCopy(nozzleBmdData.getBmdPath(i), flags) : nullptr;
-		if (data)
-			SMS_ChangeTextureAll(data, "H_watergun_main_dummy", *packTexture);
+		// its own copy (its joints turned from the pose, hookJoints), in the
+		// pack's texture: this puppet's own, else Mario's
+		J3DModelData* data = loadCopy(nozzleBmdData.getBmdPath(i), flags);
+		ResTIMG* nozzleTexture = packTexture ? packTexture : marioPack;
+		if (data && nozzleTexture)
+			SMS_ChangeTextureAll(data, "H_watergun_main_dummy", *nozzleTexture);
+		else if (data)
+			data = nullptr;
+		if (!data)
+			mNozzlesOwn = false;
 		mNozzles[i] = new MActor(actor->mAnmData);
 		mNozzles[i]->setModel(new J3DModel(data ? data : actor->getModel()->getModelData(), 0, 1), 0);
 	}
@@ -532,6 +694,19 @@ bool TMpPuppet::buildSurf()
 	return true;
 }
 
+// The coaster car a player rides through Mecha-Bowser's fight: Mario's own
+// (TMario::mTorocco, made in the stages that have one), drawn with him; each
+// puppet has its own, under its player.
+bool TMpPuppet::buildCoaster()
+{
+	MActor* car = gpMarioOriginal ? gpMarioOriginal->mTorocco : nullptr;
+	if (!car)
+		return false;
+	mCoaster = new MActor(car->mAnmData);
+	mCoaster->setModel(new J3DModel(car->getModel()->getModelData(), 0, 1), 0);
+	return true;
+}
+
 bool TMpPuppet::init()
 {
 	JKRHeap* heap = JKRHeap::getCurrentHeap();
@@ -543,6 +718,8 @@ bool TMpPuppet::init()
 	s32 free2 = heap->getTotalFreeSize();
 	buildYoshi();
 	buildSurf();
+	buildCoaster();
+	hookJoints();
 	s32 free3 = heap->getTotalFreeSize();
 	mOpa = new J3DDrawBuffer(0x20);
 	mXlu = new J3DDrawBuffer(0x20);
@@ -605,6 +782,16 @@ bool TMpPuppet::nameSpot(const f32* viewer, f32* x, f32* y, f32* alpha) const
 	return *x > -0.1f && *x < 1.1f && *y > -0.1f && *y < 1.1f;
 }
 
+MtxPtr TMpPuppet::jointMtx(const char* name, bool nozzle) const
+{
+	J3DModel* model = nozzle ? (mPose.nozzle < 6 && mNozzles[mPose.nozzle] ? mNozzles[mPose.nozzle]->getModel() : nullptr)
+	                         : (mModel ? mModel->getModel() : nullptr);
+	if (!model)
+		return nullptr;
+	const int joint = model->getModelData()->getJointName()->getIndex(name);
+	return joint >= 0 && joint < model->getModelData()->getJointNum() ? model->getAnmMtx((u16)joint) : nullptr;
+}
+
 void TMpPuppet::showHands(int hand)
 {
 	J3DModelData* body = mBodyData;
@@ -628,6 +815,7 @@ void TMpPuppet::applyPose(JDrama::TGraphics* graphics)
 	SomeModelMarioStruct* s = pm->unk24;
 	const MpgPose& p       = mPose;
 
+	s_posing = this;
 	u16 body = p.bodyBck < kMarioAnims ? p.bodyBck : 0x3e;
 	if (s[0].unk4[0] != body)
 		pm->changeMtxCalcSIAnmBQAnmTransform(0, 0, body);
@@ -736,11 +924,101 @@ void TMpPuppet::applyPose(JDrama::TGraphics* graphics)
 		mSurf->perform(CUE_CALC_ANIM, graphics);
 	}
 
+	if (mCoaster && (p.more & MPG_POSE2_COASTER)) {
+		// under them: the game sits Mario on its joint 2, turned by his own
+		// angle (TMario::calcBaseMtx), so the car's base is his root without those
+		J3DModel* car = mCoaster->getModel();
+		Mtx at, seat, turn, unturn, b, root;
+		MTXIdentity(at);
+		car->setBaseTRMtx(at);
+		mCoaster->calcAnm();
+		MTXInverse(car->getAnmMtx(2), seat);
+		MsMtxSetRotRPH(turn, 0.0f, p.coasterAngle * (360.0f / 65536.0f), 0.0f);
+		MTXInverse(turn, unturn);
+		// the unscaled pose (base may be scaled): MTXConcat takes no const Mtx
+		memcpy(root, p.mtx, sizeof root);
+		MTXConcat(root, unturn, b);
+		MTXConcat(b, seat, at);
+		car->setBaseTRMtx(at);
+		mCoaster->calcAnm();
+	}
+
 	// their own boat (each player has theirs): under them, as their game has it
 	const f32 root[3] = {base[0][3], base[1][3], base[2][3]};
 	mRide             = MpMirrorRide(mSlot, root);
 	if (mRide)
 		mRide->perform(CUE_CALC_ANIM, graphics);
+	s_posing = nullptr;
+}
+
+// Their effects, as their game asked for them (mp_game.cpp's particleEmit),
+// here at them: those going on every frame, and each new one asked for once.
+void TMpPuppet::showEffects(const MpgPose& p)
+{
+	if (!gpMarioParticleManager)
+		return;
+	for (int i = 0; i < p.fxCount && i < MPG_MAX_FX; i++)
+		showEffect(p.fx[i], i);
+	if (!mFxSeen) {
+		mFxSeen = true;
+		mFxSeq  = p.shotSeq;
+		return;
+	}
+	const int fresh = (int)(s8)(u8)(p.shotSeq - mFxSeq);
+	if (fresh <= 0)
+		return;
+	const int n = fresh < p.shotCount ? fresh : p.shotCount;
+	for (int i = p.shotCount - n; i < p.shotCount; i++)
+		showEffect(p.shots[i], -1);
+	mFxSeq = p.shotSeq;
+}
+
+void TMpPuppet::showEffect(const MpgFx& f, int ongoing)
+{
+	// the particle manager's own bounds for its every-frame effects (an
+	// effect's slot in TMarioParticleManager::unk10, unk368)
+	if (f.group > 3 || f.how > 5 || (f.group == 1 && (f.id < 253 || f.id >= 253 + 214))
+	    || (f.group == 3 && (f.id < 486 || f.id >= 486 + 19)))
+		return;
+	const int k              = ongoing >= 0 ? ongoing : (mFxShotNext++ & 15);
+	JGeometry::TVec3<f32>& v = ongoing >= 0 ? mFxPos[k] : mFxShotPos[k];
+	MtxPtr m                 = ongoing >= 0 ? mFxMtx[k] : mFxShotMtx[k];
+	v.set(mPosition.x + f.off[0], mPosition.y + f.off[1], mPosition.z + f.off[2]);
+	TMarioParticleManager* pm = gpMarioParticleManager;
+	if (f.how <= 2) {
+		MpCountEffect(mSlot, ongoing >= 0);
+		if (f.how == 0)
+			pm->emit(f.id, &v, f.group, this);
+		else if (f.how == 1)
+			pm->emitWithRotate(f.id, &v, (s16)(f.turn[0] << 8), (s16)(f.turn[1] << 8), (s16)(f.turn[2] << 8), f.group, this);
+		else
+			pm->emitAndBindToPosPtr(f.id, f.bind == MPG_FX_BIND_ROOT ? &mPosition : &v, f.group, this);
+		return;
+	}
+	MtxPtr at = nullptr;
+	if (f.bind == MPG_FX_BIND_BODY && mModel && f.joint < mModel->getModel()->getModelData()->getJointNum()) {
+		at = mModel->getModel()->getAnmMtx(f.joint);
+	} else if (f.bind == MPG_FX_BIND_FLUDD && mFludd && (mPose.flags & MPG_POSE_FLUDD)
+	           && f.joint < mFludd->getModel()->getModelData()->getJointNum()) {
+		at = mFludd->getModel()->getAnmMtx(f.joint);
+	} else if (f.bind == MPG_FX_BIND_NONE) {
+		f32 q[4]      = {f.turn[0] / 127.0f, f.turn[1] / 127.0f, f.turn[2] / 127.0f, f.turn[3] / 127.0f};
+		const f32 len = sqrtf(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+		for (int i = 0; i < 4; i++)
+			q[i] = len > 1e-3f ? q[i] / len : (i == 3 ? 1.0f : 0.0f);
+		fromQuat(q, m);
+		m[0][3] = v.x, m[1][3] = v.y, m[2][3] = v.z;
+		at = m;
+	}
+	if (!at)
+		return;
+	MpCountEffect(mSlot, ongoing >= 0);
+	if (f.how == 3)
+		pm->emitAndBindToMtxPtr(f.id, at, f.group, this);
+	else if (f.how == 4)
+		pm->emitAndBindToSRTMtxPtr(f.id, at, f.group, this);
+	else
+		pm->emitAndBindToMtx(f.id, at, f.group, this);
 }
 
 // Debug: how smoothly another player is drawn while they move. Each frame's
@@ -820,14 +1098,19 @@ void TMpPuppet::perform(u32 cue, JDrama::TGraphics* graphics)
 			else if (mSpawnFrames < 1000)
 				mSpawnFrames++;
 			mGoneFrames = 0;
-			if (pose.session != mLastSession)
+			if (pose.session != mLastSession || mSpawnFrames == 0) {
 				mHaveSmoothed = false;
+				mFxSeen       = false; // none from before shown now
+			}
 			mLastSession = pose.session;
 			mPose        = pose;
 			applyPose(graphics);
 			// their water (our own player's is the game's own)
 			if (!mSelf && (pose.flags & MPG_POSE_SPRAYING))
 				MpEmitWater(pose, &mWaterCarry);
+			// their effects (our own player's are the game's own)
+			if (!mSelf)
+				showEffects(pose);
 		}
 	}
 	if (!mActive && !mSwapped)
@@ -850,6 +1133,8 @@ void TMpPuppet::perform(u32 cue, JDrama::TGraphics* graphics)
 			mYoshi->perform(CUE_CALC_VIEW, graphics);
 		if (mSurf && (mPose.more & MPG_POSE2_SURF))
 			mSurf->perform(CUE_CALC_VIEW, graphics);
+		if (mCoaster && (mPose.more & MPG_POSE2_COASTER))
+			mCoaster->perform(CUE_CALC_VIEW, graphics);
 		if (mRide)
 			mRide->perform(CUE_CALC_VIEW, graphics);
 	}
@@ -896,6 +1181,8 @@ void TMpPuppet::perform(u32 cue, JDrama::TGraphics* graphics)
 			mRide->setLightData(nullptr, at);
 			mRide->perform(CUE_ENTRY, graphics);
 		}
+		if (mCoaster && (mPose.more & MPG_POSE2_COASTER))
+			mCoaster->perform(CUE_ENTRY, graphics);
 	}
 	if ((cue & CUE_UNK8000000) && mSwapped) {
 		j3dSys.mDrawBuffer[0] = mSaved[0];

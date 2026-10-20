@@ -110,10 +110,12 @@ extern "C" void port_ext_pad_read(void* status)
 	EACH(padRead) s_ext[i]->padRead(status);
 }
 
-extern "C" void port_ext_demo_camera(const char* name, const float* pos, int frames, float angle, int option,
-                                     int hasCallback, void* actor, unsigned flags)
+extern "C" int port_ext_demo_camera(const char* name, const float* pos, int frames, float angle, int option,
+                                    int hasCallback, void* actor, unsigned flags)
 {
-	EACH(demoCamera) s_ext[i]->demoCamera(name, pos, frames, angle, option, hasCallback, actor, flags);
+	int skip = 0;
+	EACH(demoCamera) skip |= s_ext[i]->demoCamera(name, pos, frames, angle, option, hasCallback, actor, flags);
+	return skip;
 }
 
 extern "C" void port_ext_pollution_clean(float x, float y, float z, float size)
@@ -124,6 +126,12 @@ extern "C" void port_ext_pollution_clean(float x, float y, float z, float size)
 extern "C" void port_ext_object_move(void* object, int after)
 {
 	EACH(objectMove) s_ext[i]->objectMove(object, after);
+}
+
+extern "C" void port_ext_particle_emit(int how, int id, const void* at, int rx, int ry, int rz, int group,
+                                       const void* owner)
+{
+	EACH(particleEmit) s_ext[i]->particleEmit(how, id, at, rx, ry, rz, group, owner);
 }
 
 extern "C" int port_ext_object_hit(void* object, void* sender, unsigned message)

@@ -66,7 +66,28 @@ enum {
 	MPG_POSE2_SURF      = 2,   // riding a Blooper (its colour: MPG_POSE2_SURF_TYPE)
 	MPG_POSE2_SURF_TYPE = 12,  // 0 red, 4 yellow, 8 green (TMario::mSurfGessoType << 2)
 	MPG_POSE2_PAUSED    = 16,  // the game is paused (the host's: the others' worlds run on their own)
+	MPG_POSE2_COASTER   = 32,  // riding Pinna Park's coaster car (Mecha-Bowser's fight: TMario::mTorocco)
 };
+// One of Mario's effects as his game asked for it (TMarioParticleManager's
+// emit and its kin: port_ext.h's particleEmit), for the others to show at
+// this player.
+enum {
+	MPG_FX_BIND_NONE  = 0, // where it was, from the player's root (a matrix: and its turn)
+	MPG_FX_BIND_ROOT  = 1, // follows the player (bound to Mario's position)
+	MPG_FX_BIND_BODY  = 2, // follows a joint of the body (`joint`)
+	MPG_FX_BIND_FLUDD = 3, // follows a joint of FLUDD (`joint`)
+};
+typedef struct MpgFx {
+	uint16_t id;
+	uint8_t how;      // particleEmit's: 0 emit, 1 with a turn, 2 bound to a position, 3-5 to a matrix
+	uint8_t group;    // the particle manager's: 0, 2 once; 1, 3 every frame while it goes on
+	uint8_t bind;     // MPG_FX_BIND_*
+	uint8_t joint;
+	int16_t off[3];   // from the player's root, world axes
+	int8_t turn[4];   // with a turn (how 1): rx, ry, rz in 256ths of a full turn; a matrix's: its quaternion (x 127)
+} MpgFx;
+#define MPG_MAX_FX 4
+
 typedef struct MpgPose {
 	uint32_t time;      // when the sender's game was like this, in its game time (ms; set by mpg_set_pose)
 	uint32_t session;   // the stage session the player is in (0: none)
@@ -83,6 +104,21 @@ typedef struct MpgPose {
 	uint8_t yoshiColor[3];
 	uint8_t more;       // MPG_POSE2_*
 	uint32_t hiddenShapes; // the body's shapes hidden (bit n: shape n): shirt, hands, hair
+	// what Mario's joint callbacks add to the animation (MarioDraw.cpp): the
+	// head's turn (looking, FLUDD's aim) and the waist's (FLUDD's aim, the
+	// lean while running), quaternions (x, y, z, w) in 16-bit fractions; and
+	// FLUDD's own (TWaterGun's): the nozzle's aim (TNozzleBase::getGunAngle,
+	// also Yoshi's head), the hover nozzles' tilts and the Turbo nozzle's
+	// propeller turn
+	int16_t headTurn[4], waistTurn[4];
+	int16_t gunAngle, hoverTiltL, hoverTiltR, propAngle;
+	int16_t coasterAngle; // how the rider turns on the coaster car (TMario::mToroccoAngle)
+	// their effects: those asked for every frame while they go on (a slide's
+	// spray), as of their last tick; and the newest asked for once (a
+	// landing's dust), the last of them numbered shotSeq, so each is shown once
+	uint8_t fxCount, shotCount, shotSeq;
+	MpgFx fx[MPG_MAX_FX];
+	MpgFx shots[MPG_MAX_FX];
 	// while spraying: where FLUDD's water leaves (up to two emitters, the
 	// hover nozzle has two), the speed it inherits, and the trigger's pressure
 	uint8_t emitters;
@@ -273,12 +309,16 @@ int mpg_pose(int slot, MpgPose* pose, float* age);
 int mpg_pose_pair(int slot, MpgPose* a, MpgPose* b, float* t);
 uint32_t mpg_session(void); // the session this game is playing in (0: none)
 
-// Text for the player: the next notice ("Bob joined as Luigi"), 0 when none;
+// Text for the player: the next notice ("Bob joined"), 0 when none;
 // and the list of players for the status panel.
 int mpg_take_notice(char* out, int size);
 void mpg_status(char* out, int size);
 // The name a player joined with ("" for none).
 void mpg_player_name(int slot, char* out, int size);
+// What the players are called on screen: the name they joined with, else
+// "Player N" (their characters' names are not shown). Valid until the next
+// call for the same slot.
+const char* mpg_display_name(int slot);
 
 // Players' colours (Customize Mario's): each player's own, which they send the
 // host and the host passes on. mpg_look gives `slot`'s ("hat=2fa846;...", 1),

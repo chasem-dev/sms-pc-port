@@ -67,6 +67,15 @@ static inline void* sms_mod_site_(unsigned int addr, void** cache, unsigned int*
 template <class R> struct sms_mod_res_ { typedef R type; };
 template <> struct sms_mod_res_<bool> { typedef unsigned char type; };
 #define SMS_MOD_RES_(R) typename sms_mod_res_<R>::type
+// An argument as a variadic call passes it: integers promoted, arrays as
+// pointers (unary +), and a float as a double. A mod's replacement for a
+// variadic C function (Eclipse's getGlobalPlayerBoneAnim for
+// TMario::initModel's snprintf) is called with these types, not through the
+// variadic function's: Apple's arm64 ABI passes variadic arguments on the
+// stack, where the mod's fixed parameters are not.
+template <class T> struct sms_mod_va_ { typedef T type; };
+template <> struct sms_mod_va_<float> { typedef double type; };
+#define SMS_MOD_VA_(arg) sms_mod_va_<__typeof__(+(arg))>::type
 template <class T> struct sms_mod_type_ { typedef T type; };
 template <class R, class C> SMS_MOD_RES_(R) (*sms_mod_as_free(R (C::*)()))(C*) { return 0; }
 template <class R, class C> SMS_MOD_RES_(R) (*sms_mod_as_free(R (C::*)() const))(const C*) { return 0; }

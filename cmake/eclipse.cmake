@@ -11,6 +11,12 @@
 # Their headers describe the GameCube's layout; platform/mods/eclipse/shi-layout.patch
 # (tools/mods/shi_layout) re-lays their classes out as the port lays out the
 # game's, on 32- and 64-bit hosts.
+if(SMS_MAC_ARM64)
+  # The game's own clang: the pass plugin (tools/gameptr) was built for its LLVM.
+  get_filename_component(_llvm_bin ${CMAKE_CXX_COMPILER} DIRECTORY)
+  set(SMS_CLANGXX ${_llvm_bin}/clang++ CACHE FILEPATH "clang++ for the Eclipse library")
+  set(SMS_CLANG ${_llvm_bin}/clang CACHE FILEPATH "clang for the Eclipse library")
+endif()
 find_program(SMS_CLANGXX NAMES clang++)
 find_program(SMS_CLANG NAMES clang)
 if(NOT SMS_CLANGXX OR NOT SMS_CLANG)
@@ -84,10 +90,15 @@ include(ExternalProject)
 set(_eclipse_lib "${CMAKE_BINARY_DIR}/eclipse-build/libsms_eclipse.a")
 # The library is its own CMake project: give it the game's objcopy (macOS has
 # only llvm-objcopy, which it would not find by itself) and, on macOS, the
-# game's architecture (x86_64 under Rosetta, not the host's arm64).
+# game's architecture (x86_64 under Rosetta, or native arm64).
 if(APPLE)
   set(_eclipse_platform_args -DCMAKE_OBJCOPY=${SMS_OBJCOPY} -DCMAKE_OSX_ARCHITECTURES=${CMAKE_OSX_ARCHITECTURES}
     -DCMAKE_OSX_SYSROOT=${CMAKE_OSX_SYSROOT})
+  if(SMS_MAC_ARM64)
+    # The mods reach game addresses as the game does (docs/MACOS-ARM64.md):
+    # through tools/gameptr's pass, rebased above PAGEZERO.
+    list(APPEND _eclipse_platform_args -DSMS_GAMEPTR_PLUGIN=${SMS_GAMEPTR_PLUGIN} -DSMS_GAMEPTR_HASH=${_gameptr_hash})
+  endif()
 else()
   set(_eclipse_platform_args -DCMAKE_OBJCOPY=${CMAKE_OBJCOPY})
 endif()
