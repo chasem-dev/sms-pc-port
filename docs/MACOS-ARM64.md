@@ -59,8 +59,25 @@ Frame rate (`tools/vulkan/bench.py --exe`, the plaza tour in a 1280x960 window, 
 - `tools/gameptr/test.sh` builds the plugin and checks what it rebases and converts.
 - `.github/workflows/macos-arm64.yml` runs that test and builds `SMS_ARCH=arm64` with Homebrew's LLVM on an Apple Silicon runner; `launcher-build.yml` builds it with the launcher's toolset (`SMS_SMOKE_ARCHES=64,arm64` on the Apple Silicon runner).
 - Every compile's arguments carry the plugin's hash (`PORT_GAMEPTR_HASH`), so a compiler cache does not reuse objects built with another plugin.
+- `.github/workflows/eclipse.yml` builds Eclipse with `SMS_ARCH=arm64` on the Apple Silicon runner too, and checks that the game finds the mods' constructors.
+
+## Super Mario Eclipse
+
+`SMS_ARCH=arm64 SMS_ECLIPSE=1 ./build.sh` builds Eclipse natively, into `build/macos-arm64-eclipse/` ([ECLIPSE.md](ECLIPSE.md)).
+The mods' library is its own CMake project ([lib/CMakeLists.txt](../platform/mods/eclipse/lib/CMakeLists.txt)): `cmake/eclipse.cmake` gives it the game's clang, the pass plugin and its hash, so the mods reach game addresses as the game does (BetterSunshineEngine's audio streamer reads the bus clock at `0x800000F8`), and builds it with `-ffp-contract=off`.
+Besides that, Apple's arm64 calling convention differs from x86-64's in two ways the mods' glue relied on:
+
+- **A constructor returns `this`**, as does a destructor other than the deleting one, and its caller goes on with the returned value as the object. The port's out-of-line constructors and destructors for the mods ([port_shims.cpp](../platform/mods/eclipse/port_shims.cpp)) returned nothing, so `new SettingsDirector()` in BetterSunshineEngine used the name hash `TNameRef`'s constructor left in `x0`. They return `self` (which the other builds ignore).
+- **Variadic arguments go on the stack**, while x86-64 passes them as it passes fixed ones. SunshineHeaderInterface's `raw_fn.hxx` calls every retail function through a `(...)` pointer, so on arm64 each trampoline ([gen_rawfn.py](../tools/mods/gen_rawfn.py)) is variadic too and reads its arguments with `va_arg`. The other way round, the game calls a mod's replacement for a variadic C function (Eclipse's `getGlobalPlayerBoneAnim` for `TMario::initModel`'s `snprintf`) through a fixed prototype of the arguments as the variadic call promotes them (`SMS_MOD_VA_` in `sms_modhook.h`, [gen_hooks.py](../tools/mods/gen_hooks.py)). C++ functions carry their `...` in their mangled names, so a mismatch there would not link.
+
+The mods' loader also showed a bug in the pass: a `getelementptr` on a pointer made from an integer was rebased from the low 32 bits of its result whatever that result was. A small struct returned in registers comes back as integers, so the node `unordered_map::operator[]` returned (`sms_mod_export`, platform/mods/modhooks.cpp) was a heap address moved into the game's window. Only results in or just past a game half are rebased now (`tools/gameptr/test.sh` checks a heap address); the plain arm64 build's captures of the title and the plaza are identical before and after.
+
+Compared with the x86_64 build (Apple M4, macOS 15.7, `tools/regress/regress.py --window --ecl32 build/macos-64-eclipse --ecl64 build/macos-arm64-eclipse ecl-firstboot ecl-tutorial ecl-petey ecl-zhine`, arm64 built with SMS Launcher's toolset, LLVM 21):
+
+- Every capture of all four runs identical, and the memory card `ecl-firstboot` saves (BetterSunshineEngine's first-boot settings) the same.
+- `ecl-tutorial` and `ecl-petey` are not deterministic in a window on macOS: two x86_64 runs can differ in five of the Tutorial's nine captures, and in Petey's from field 6600 (the camera a little further out). Earlier arm64 runs (built with Homebrew's LLVM 22) differed from an x86_64 run only in those captures, and no more than two x86_64 runs differ from each other; `ecl-firstboot` and `ecl-zhine` were identical every time.
 
 ## Not covered yet
 
-- Eclipse (`SMS_ECLIPSE=1`) has not been built for arm64; the launcher keeps it on x86_64.
 - The small difference above, and anything a scripted run does not reach.
+- Eclipse's `ecl-luigi` and `ecl-piantissimo` runs, which need gdb, and the Eclipse content no scripted run reaches.

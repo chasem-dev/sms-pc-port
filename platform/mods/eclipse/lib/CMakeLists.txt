@@ -54,6 +54,14 @@ if(WIN32)
   # shi-layout.patch was made for, as on Linux and macOS.
   list(APPEND _arch -fno-addrsig -mno-ms-bitfields)
 endif()
+# Native arm64 macOS (docs/MACOS-ARM64.md): game addresses live above
+# PAGEZERO, so the mods' integers turned into pointers (0x800000F8, the bus
+# clock BSE's audio streamer reads) are rebased by the game's pass plugin;
+# no fused multiply-adds, as the game is built.
+if(SMS_GAMEPTR_PLUGIN)
+  list(APPEND _arch -fpass-plugin=${SMS_GAMEPTR_PLUGIN} -DPORT_GAMEPTR_PLUGIN=1 -DPORT_GAMEPTR_HASH=${SMS_GAMEPTR_HASH}
+    -ffp-contract=off)
+endif()
 # -fnew-alignment=4: the game's operator new (JKRHeap) guarantees 4-byte
 # alignment, not the 16 clang would otherwise assume for aligned SSE stores;
 # -fno-aligned-new keeps every allocation on that operator (the game's heaps).

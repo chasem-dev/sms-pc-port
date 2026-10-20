@@ -21,9 +21,10 @@
 // on such a pointer is 32-bit arithmetic on the console, and relocations use
 // it with a file offset as the pointer: (u8*)info->mLayerInfos + (u32)info,
 // an offset rebased into the low half plus an address in MEM1. So each
-// getelementptr whose base is one of those casts is rebased again from the
-// low 32 bits of its result (no object spans the two halves, so this changes
-// nothing else).
+// getelementptr whose base is one of those casts, and whose result is in or
+// just past a game half, is rebased again from the low 32 bits of its result
+// (no object spans the two halves, so this changes nothing else; a host
+// pointer made from an integer, such as the heap's, keeps its address).
 //
 // It also gives float-to-integer conversions the results they have on x86
 // (and, for the cases the game relies on, on the console), where C leaves
@@ -185,7 +186,16 @@ struct GamePtr : PassInfoMixin<GamePtr> {
             IRBuilder<> b(g->getNextNode());
             Value* p = b.CreatePtrToInt(g, i64);
             Value* w = b.CreateAnd(p, ConstantInt::get(i64, 0xFFFFFFFFull));
-            Value* np = b.CreateIntToPtr(emitRebase(b, w), g->getType());
+            // Only a result in a game half, or just past one (32-bit sums of
+            // game addresses: 0x1xxxxxxxx-0x2xxxxxxxx, 0x100xxxxxxxx-0x101xxxxxxxx),
+            // comes back from its low 32 bits. A host pointer made from an
+            // integer (a small struct returned in registers, such as
+            // unordered_map's pair<iterator, bool>; the malloc heap is far
+            // above the game window) keeps its address.
+            Value* hi = b.CreateLShr(p, 32);
+            Value* inGame = b.CreateOr(b.CreateICmpULT(b.CreateSub(hi, ConstantInt::get(i64, kLo >> 32)), ConstantInt::get(i64, 2)),
+                                       b.CreateICmpULT(b.CreateSub(hi, ConstantInt::get(i64, kHi >> 32)), ConstantInt::get(i64, 2)));
+            Value* np = b.CreateIntToPtr(b.CreateSelect(inGame, emitRebase(b, w), p), g->getType());
             g->replaceUsesWithIf(np, [&](Use& u) { return u.getUser() != p; });
             changed = true;
         }

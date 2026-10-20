@@ -1,6 +1,7 @@
 name: Eclipse build
 # Builds the 64-bit game with and without Super Mario Eclipse on each platform
-# and starts it far enough to see whether the mods' constructors were linked in
+# (and Eclipse in the native Apple Silicon build, docs/MACOS-ARM64.md) and
+# starts it far enough to see whether the mods' constructors were linked in
 # where platform/mods/modhooks.cpp finds them. No disc image is used.
 on:
   push:
@@ -23,6 +24,7 @@ jobs:
       matrix:
         eclipse: ['1', '0']
         os: [ubuntu-24.04, macos-15, windows-2025]
+        arch: ['64']
         include:
           - os: ubuntu-24.04
             shell: bash
@@ -30,15 +32,20 @@ jobs:
             shell: bash
           - os: windows-2025
             shell: msys2 {0}
+          # macos-15 runners are Apple Silicon: Eclipse built natively too.
+          - os: macos-15
+            eclipse: '1'
+            arch: arm64
+            shell: bash
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     defaults:
       run:
         shell: ${{ matrix.shell }}
         working-directory: Eclipse CI with spaces/port
-    name: ${{ matrix.os }}${{ matrix.eclipse == '1' && ' Eclipse' || ' Sunshine' }}
+    name: ${{ matrix.os }}${{ matrix.arch == 'arm64' && ' arm64' || '' }}${{ matrix.eclipse == '1' && ' Eclipse' || ' Sunshine' }}
     env:
-      SMS_ARCH: '64'
+      SMS_ARCH: ${{ matrix.arch }}
       SMS_ECLIPSE: ${{ matrix.eclipse }}
     steps:
       - uses: actions/checkout@v4
@@ -96,8 +103,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/sccache
-          key: sccache-eclipse-${{ matrix.os }}-${{ matrix.eclipse }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: sccache-eclipse-${{ matrix.os }}-${{ matrix.eclipse }}-
+          key: sccache-eclipse-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.eclipse }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: sccache-eclipse-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.eclipse }}-
       - name: Test Windows cross compiler cache routing
         if: runner.os == 'Windows'
         run: python tools/tests/test_msys_cross_compile.py
@@ -113,7 +120,7 @@ jobs:
       - name: Check whether the mods are linked in
         run: |
           if [[ "$RUNNER_OS" == Linux ]]; then os=linux; elif [[ "$RUNNER_OS" == macOS ]]; then os=macos; else os=windows; fi
-          exe=build/$os-64$([[ "$SMS_ECLIPSE" != 1 ]] || echo -eclipse)/sms
+          exe=build/$os-$SMS_ARCH$([[ "$SMS_ECLIPSE" != 1 ]] || echo -eclipse)/sms
           [[ "$os" != windows ]] || exe+=.exe
           head -c 32 /dev/zero > invalid.iso
           set +e
@@ -147,7 +154,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ runner.temp }}/sccache
-          key: sccache-eclipse-${{ matrix.os }}-${{ matrix.eclipse }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: sccache-eclipse-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.eclipse }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Show the Windows executable's sections
         if: failure() && runner.os == 'Windows'
         run: |
