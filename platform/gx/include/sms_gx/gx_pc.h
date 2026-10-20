@@ -203,7 +203,9 @@ int GXPC_ReadXFB(const void* xfb, uint8_t* rgba, int* w, int* h);
 // Extensions' text in the window (gx_ext_overlay.cpp): `panel` is the notice
 // near the top or the status panel in the top right; lines split at '\n',
 // "" or NULL hides it. Any thread; only a window shows it, not SMS_SHOTS.
-enum { GXPC_EXT_OVERLAY_NOTICE, GXPC_EXT_OVERLAY_STATUS, GXPC_EXT_OVERLAY_PANELS };
+// The banner is big text in the middle of the window (a server mod's: a race's
+// countdown, its winner); a text starting "#rrggbb " is drawn in that colour.
+enum { GXPC_EXT_OVERLAY_NOTICE, GXPC_EXT_OVERLAY_STATUS, GXPC_EXT_OVERLAY_BANNER, GXPC_EXT_OVERLAY_PANELS };
 void GXPC_ExtOverlaySet(int panel, const char* text);
 
 // Names over other players (multiplayer, gx_ext_overlay.cpp): each label's

@@ -300,6 +300,7 @@ enum OverlaySlot {
     OVERLAY_STATE_TOAST,
     OVERLAY_EXT_NOTICE,  // extensions' text (gx_ext_overlay.cpp)
     OVERLAY_EXT_STATUS,
+    OVERLAY_EXT_BANNER,
     OVERLAY_EXT_LABEL,   // names over players: GXPC_MAX_LABELS slots from here
     OVERLAY_SLOTS = OVERLAY_EXT_LABEL + 8
 };
