@@ -1042,7 +1042,7 @@ int apiNetLoadStage(int area, int episode) { return mpg_server_load_stage(area, 
 void apiNetSetMode(const char* name) { mpg_server_mode(name); }
 void apiNetSetStatus(const char* text) { mpg_server_status(text); }
 
-const SmsNetApi s_net = {
+const SmsNetApi s_netTable = {
 	sizeof(SmsNetApi), apiNetRole, apiNetDedicated, apiNetLocalSlot, apiNetPlayers,  apiNetPlayer,
 	apiNetSession,     apiNetSend, apiNetLoadStage, apiNetSetMode,   apiNetSetStatus,
 };
@@ -1411,7 +1411,7 @@ namespace modhost {
 const SmsApi g_api = {
 	sizeof(SmsApi), SMS_MOD_API_MAJOR, SMS_MOD_API_MINOR, &s_core,   &s_game,  &s_player,
 	&s_camera,      &g_drawApi,        &s_input,          &s_config, &s_audio, &s_native,
-	&s_net,
+	&s_netTable,
 };
 
 void log(SmsMod* mod, int level, const char* fmt, ...)
