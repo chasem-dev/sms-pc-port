@@ -148,8 +148,9 @@ jobs:
           test -f build/macos-arm64/libMoltenVK.dylib
           lipo -archs build/macos-arm64/libMoltenVK.dylib | grep -qw arm64
           # and the backend itself (configure leaves it out when a dependency
-          # cannot be fetched, which would pass silently otherwise)
-          nm "$exe" | grep -q '__ZN4glvk7getProcEPKc'
+          # cannot be fetched, which would pass silently otherwise). Not
+          # grep -q: it stops reading at the match, and nm fails on the broken pipe.
+          nm "$exe" | grep '__ZN4glvk7getProcEPKc' > /dev/null
       - name: Build Eclipse
         env:
           SMS_ECLIPSE: '1'
