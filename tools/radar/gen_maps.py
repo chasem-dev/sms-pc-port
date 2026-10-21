@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Make top-down maps of every stage from a GMSE01 disc image.
+"""Make top-down maps of every stage from a GMSE01 disc image (or a mod's, below).
 
 usage: tools/radar/gen_maps.py --disc GAME.iso [--out assets/maps] [--only dolpic0,ricco0]
-                               [--style full|radar] [--quality 95]
+                               [--style full|radar] [--quality 95] [--except assets/maps/maps.txt]
 
 For every scene archive in /data/scene, the stage's world model (map/map/
 map.bmd, the sea or bath water, map/map/sea.bmd or water.bmd, over it, and
@@ -31,6 +31,11 @@ right and z down, so world (x, z) is pixel ((x - x0) * ppu, (z - z0) * ppu).
 The key (col_key) is a hash of the collision's values, which the game can
 compute from the loaded map.col to find the map of the stage it is in. Needs
 numpy, scipy and Pillow.
+
+A mod's disc (Super Mario Eclipse's, GMSE04) makes a pack for the game's
+mods/maps/<name> folder: --except assets/maps/maps.txt leaves out the stages
+the retail maps already have, by key, so the pack holds only the mod's own
+and those it changed. tools/mods/get.py installs Eclipse's.
 """
 import argparse
 import os
@@ -582,13 +587,20 @@ def main():
     ap.add_argument('--quality', type=int, default=95, help='JPEG quality (full-resolution colour)')
     ap.add_argument('--style', choices=('full', 'radar'), default='full',
                     help='full: the stage as it is; radar: scenery greyed and buildings as blocks')
+    ap.add_argument('--except', dest='skip', default='',
+                    help="a maps.txt whose stages (by key) are left out: the retail maps, for a mod's pack")
     a = ap.parse_args()
     disc = Disc(a.disc)
-    if disc.read(0, 6) != b'GMSE01':
-        sys.exit('not a GMSE01 disc image')
+    if disc.read(0, 6) not in (b'GMSE01', b'GMSE04'):  # retail; Super Mario Eclipse
+        sys.exit('not a GMSE01 (or Eclipse GMSE04) disc image')
     os.makedirs(a.out, exist_ok=True)
     only = set(x for x in a.only.split(',') if x)
     scenes = scene_files(disc)
+    skip = set()
+    if a.skip:
+        for line in open(a.skip):
+            if line.strip() and not line.startswith('#'):
+                skip.add(int(line.split()[0], 16))
     maps = {}  # col hash -> [file, x0, z0, density, w, h, [scenes]]
     manifest = os.path.join(a.out, 'maps.txt')
     if only and os.path.exists(manifest):  # add to the maps already made
@@ -608,6 +620,9 @@ def main():
             print('%-14s no map' % stem, flush=True)
             continue
         h = col_key(files['map/map.col'])
+        if h in skip:
+            print('%-14s in %s' % (stem, a.skip), flush=True)
+            continue
         if h in maps and stem in maps[h][6] and only:
             pass  # made again below
         elif h in maps:

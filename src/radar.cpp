@@ -5,9 +5,10 @@
 // blue coins are on it as the HUD's own sprites.
 //
 // The map is a picture of the stage from straight above (tools/radar/
-// gen_maps.py makes one per stage from the disc, assets/maps; sms_gx loads
-// it, platform/gx/src/gx_radar_maps.cpp), found by a hash of the stage's
-// loaded collision, so a stage without one (a mod's) has no radar. GX
+// gen_maps.py makes one per stage from the disc, assets/maps, and from a
+// mod's disc a pack in mods/maps, Super Mario Eclipse's installed with it;
+// sms_gx loads it, platform/gx/src/gx_radar_maps.cpp), found by a hash of the
+// stage's loaded collision, so a stage without one has no radar. GX
 // textures are at most 1024 square and the pictures are larger, so the map
 // is drawn here into a small round RGBA8 texture whenever Mario moves. Over
 // it go the blue coins and the Shines (a Shine got is the pale blue of the
@@ -60,6 +61,7 @@
 #include <string.h>
 
 #include "port_radar.h"
+#include "sms_modhook.h"
 
 extern "C" void* port_low_alloc(unsigned long size);
 extern "C" void GXPC_HudPaneBegin(float x1, float x2);
@@ -545,6 +547,16 @@ struct Marker {
 	bool got;
 };
 
+// How many Shines have flags: 120, or as many as a code mod gives the game
+// (Super Mario Eclipse's 240, through BetterSunshineEngine's limit in
+// TFlagManager::getShineFlag, retail 0x80294734's cmplwi; patch
+// modhook-31-FlagManager).
+u32 shineLimit()
+{
+	unsigned int w;
+	return sms_mod_word(0x80294734, &w) && (w >> 16) == 0x2800 ? (w & 0xFFFF) : 120;
+}
+
 // The stage's Shines and blue coins, in every manager the conductor has (a
 // placed Shine's is the "star" characters' manager, a boss's another), by
 // their actor types.
@@ -552,6 +564,7 @@ int scan(Marker* shines, int maxShines, Marker* coins, int maxCoins, int* nCoins
 {
 	int ns = 0, nc = 0;
 	TFlagManager* flags = TFlagManager::getInstance();
+	const u32 limit     = shineLimit();
 	if (gpConductor) {
 		for (JGadget::TList<TLiveManager*>::iterator it = gpConductor->unk10.begin();
 		     it != gpConductor->unk10.end(); ++it) {
@@ -575,8 +588,8 @@ int scan(Marker* shines, int maxShines, Marker* coins, int maxCoins, int* nCoins
 					// a Shine still to come (a boss's, a race's) is dead until it
 					// appears, so its flag says whether it is got
 					const u32 id   = static_cast<TMapObjBase*>(a)->getEventId();
-					const bool got = id < 120 && flags->getShineFlag(id);
-					if ((got || id < 120 || !a->checkLiveFlag(LIVE_FLAG_DEAD)) && ns < maxShines) {
+					const bool got = id < limit && id < 0x100 && flags->getShineFlag(id);
+					if ((got || id < limit || !a->checkLiveFlag(LIVE_FLAG_DEAD)) && ns < maxShines) {
 						shines[ns].x   = a->mPosition.x;
 						shines[ns].z   = a->mPosition.z;
 						shines[ns].got = got;
@@ -841,10 +854,13 @@ void drawFullMap(const JDrama::TRect& viewport, f32 mx, f32 mz)
 		text(others[i].name, ox[i], ny, nameH, ease);
 	}
 
-	// the area's name, as the pause menu names it
+	// the area's name, as the pause menu names it: one of the game's ten
+	// areas, or any a code mod names (BetterSunshineEngine's SMS_getShineStage,
+	// retail 0x802A8AC8, gives Super Mario Eclipse's areas past them, which
+	// its stagename.bmg names)
 	if (gpMarDirector) {
 		const u8 world = SMS_getShineStage(gpMarDirector->getCurrentMap());
-		if (world < 10)
+		if (world < 10 || (world != 0xFF && SMS_MOD_SITE(0x802A8AC8)))
 			if (const char* name = SMSGetMessageData(JKRFileLoader::getGlbResource("/common/2d/stagename.bmg"), world))
 				text(name, cx, top - 34.0f, 22.0f, ease);
 	}

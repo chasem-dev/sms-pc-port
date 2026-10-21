@@ -4,7 +4,9 @@
     python3 tools/mods/get.py textures    the Super Mario Sunshine UHD Texture Pack, and the extras
     python3 tools/mods/get.py extras      only the extras: HD textures the UHD pack lacks
                                           (--if-outdated: only if not the pinned release)
-    python3 tools/mods/get.py eclipse     Super Mario Eclipse (patched from your disc)
+    python3 tools/mods/get.py eclipse     Super Mario Eclipse (patched from your disc), and its maps
+    python3 tools/mods/get.py eclipse-maps  only the radar's maps of Eclipse's stages;
+                                          --if-outdated as for extras
     python3 tools/mods/get.py language fr the game's text in French (de, es, it, pl: German,
                                           Spanish, Italian, Polish); --if-outdated as for extras
     python3 tools/mods/get.py lua         the lua mod, which runs Lua script mods (native
@@ -78,6 +80,13 @@ with open(os.path.join(HERE, "language-packs.json"), encoding="utf-8") as f:
 # platform. Pinned in lua-mod.json, for SMS Launcher too.
 with open(os.path.join(HERE, "lua-mod.json"), encoding="utf-8") as f:
     LUA = dict(json.load(f), install=os.path.join(MODS, "lua"))
+# The radar's maps of Super Mario Eclipse's stages (src/radar.cpp), made from
+# its disc by tools/radar/gen_maps.py --except assets/maps/maps.txt: the
+# stages it added or changed. Installed with Eclipse, in mods/maps/eclipse,
+# where the game reads them beside assets/maps. Pinned in eclipse-maps.json,
+# for SMS Launcher too.
+with open(os.path.join(HERE, "eclipse-maps.json"), encoding="utf-8") as f:
+    ECLIPSE_MAPS = dict(json.load(f), install=os.path.join(MODS, "maps", "eclipse"))
 ECLIPSE = {
     "name": "Super Mario Eclipse v1.1.0 (Eclipse Team)",
     "page": "https://gamebanana.com/mods/536309",
@@ -425,6 +434,52 @@ def get_lua(keep, if_outdated=False):
         % (os.path.relpath(mod["install"], ROOT), ", ".join(platforms)))
 
 
+def eclipse_maps_current():
+    """Whether the installed Eclipse maps are the pinned release."""
+    try:
+        with open(os.path.join(ECLIPSE_MAPS["install"], EXTRAS_RECORD), encoding="utf-8") as f:
+            return json.load(f).get("md5") == ECLIPSE_MAPS["md5"]
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def get_eclipse_maps(keep, if_outdated=False):
+    mod = ECLIPSE_MAPS
+    if if_outdated and eclipse_maps_current():
+        say("The Eclipse maps are up to date (%s)." % mod["name"])
+        return
+    say("== Eclipse maps: %s" % mod["name"])
+    if os.path.isdir(mod["install"]):
+        say("Removing the previous install, %s" % os.path.relpath(mod["install"], ROOT))
+        remove(mod["install"])
+    need_space(MODS, 2 * mod["size"] + (16 << 20))
+    archive = fetch(mod)
+    tmp = mod["install"] + ".part"
+    remove(tmp)
+    try:
+        # the zip holds eclipse/ (maps.txt and the pictures), as mods/maps/eclipse/
+        with zipfile.ZipFile(archive) as z:
+            names = [n for n in z.namelist() if not n.endswith("/")]
+            if "eclipse/maps.txt" not in names or any(not n.startswith("eclipse/") or ".." in n.split("/")
+                                                       for n in names):
+                raise Failure("the archive is not laid out as expected (eclipse/maps.txt, ...)")
+            z.extractall(tmp)
+        os.makedirs(os.path.dirname(mod["install"]), exist_ok=True)
+        os.replace(os.path.join(tmp, "eclipse"), mod["install"])
+        count = sum(1 for n in os.listdir(mod["install"]) if n.endswith(".jpg"))
+        with open(os.path.join(mod["install"], EXTRAS_RECORD), "w", encoding="utf-8") as f:
+            json.dump({"name": mod["name"], "file": mod["file"], "md5": mod["md5"]}, f, indent=2)
+    except (OSError, zipfile.BadZipFile) as e:
+        remove(mod["install"])
+        raise Failure("could not unpack %s: %s" % (os.path.basename(archive), e))
+    finally:
+        remove(tmp)
+        if not keep:
+            remove(archive)
+    say("Installed %d maps in %s; the radar shows them in Eclipse's stages."
+        % (count, os.path.relpath(mod["install"], ROOT)))
+
+
 def get_eclipse(keep, iso_arg):
     mod = ECLIPSE
     say("== Eclipse: %s" % mod["name"])
@@ -485,13 +540,18 @@ def get_eclipse(keep, iso_arg):
     say("Installed %s." % os.path.relpath(out, ROOT))
     say("It is the same image Eclipse's own patcher makes, for Dolphin or a console. The port"
         " plays it with Eclipse's code built in: SMS_ECLIPSE=1 ./build.sh (docs/ECLIPSE.md).")
+    try:
+        get_eclipse_maps(keep)
+    except Failure as e:
+        say("warning: Eclipse is installed, but not the radar's maps of its stages (%s);"
+            " python3 tools/mods/get.py eclipse-maps tries again" % e)
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter,
                                  epilog="\n\n".join(__doc__.split("\n\n")[1:]))
-    ap.add_argument("what", choices=["textures", "extras", "eclipse", "language", "lua", "all"])
+    ap.add_argument("what", choices=["textures", "extras", "eclipse", "eclipse-maps", "language", "lua", "all"])
     ap.add_argument("language", nargs="?", help="with language: fr, de, es, it or pl")
     ap.add_argument("--iso")
     ap.add_argument("--keep-download", action="store_true")
@@ -514,6 +574,8 @@ def main():
             get_language(args.language, args.keep_download, args.if_outdated)
         if args.what == "lua":
             get_lua(args.keep_download, args.if_outdated)
+        if args.what == "eclipse-maps":
+            get_eclipse_maps(args.keep_download, args.if_outdated)
         if args.what in ("eclipse", "all"):
             get_eclipse(args.keep_download, args.iso)
     except Failure as e:
