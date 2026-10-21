@@ -590,8 +590,23 @@ SmsMod* byId(const std::string& id)
 void discover()
 {
 	std::vector<std::string> roots;
-	if (const char* d = getenv("SMS_NATIVE_MODS_DIR"))
-		roots = splitList(d);
+	if (const char* d = getenv("SMS_NATIVE_MODS_DIR")) {
+		// folders, split at ';' only: their paths may have spaces ("SMS Launcher")
+		std::string cur;
+		for (const char* c = d;; c++) {
+			if (*c == ';' || !*c) {
+				while (!cur.empty() && (cur.back() == ' ' || cur.back() == '\t'))
+					cur.pop_back();
+				if (!cur.empty())
+					roots.push_back(cur);
+				cur.clear();
+				if (!*c)
+					break;
+			} else if (!cur.empty() || (*c != ' ' && *c != '\t')) {
+				cur += *c;
+			}
+		}
+	}
 	else
 		for (const char* r : {"mods", "../../mods"})
 			if (isDir(r)) {
@@ -1054,6 +1069,43 @@ const SmsNetApi s_netTable = {
 	apiNetSession,     apiNetSend, apiNetLoadStage, apiNetSetMode,   apiNetSetStatus,
 };
 
+// ------------------------------------------------------------------ world (API 1.5)
+//
+// The vanilla game's map of its stages (the game half's tables). Eclipse
+// numbers its stages its own way: nothing there.
+
+bool vanilla() { return !(sms_mod_active && sms_mod_active()); }
+
+int apiWorldAreaKind(int area) { return vanilla() ? modg_world_area_kind(area) : SMS_AREA_NONE; }
+int apiWorldOf(int area) { return vanilla() ? modg_world_of(area) : -1; }
+int apiWorldEpisodeCount(int area) { return vanilla() ? modg_world_episode_count(area) : 0; }
+int apiWorldEpisodeShine(int area, int episode) { return vanilla() ? modg_world_episode_shine(area, episode) : -1; }
+int apiWorldEpisodeName(int area, int episode, char* out, int size)
+{
+	if (out && size > 0)
+		out[0] = 0;
+	return vanilla() ? modg_world_episode_name(area, episode, out, size) : 0;
+}
+int apiWorldNextEpisode(int area) { return vanilla() ? modg_world_next_episode(area) : -1; }
+int apiWorldShineEpisode(int shine, int* area)
+{
+	if (area)
+		*area = -1;
+	return vanilla() ? modg_world_shine_episode(shine, area) : -1;
+}
+int apiWorldHasCutscene(const char* name) { return modg_world_has_cutscene(name); }
+int apiWorldPlayCutscene(const char* name, const SmsVec3* focus, int frames)
+{
+	return modg_world_play_cutscene(name, focus, frames);
+}
+int apiWorldCutscenePlaying(void) { return modg_world_cutscene_playing(); }
+
+const SmsWorldApi s_world = {
+	sizeof(SmsWorldApi),  apiWorldAreaKind,     apiWorldOf,          apiWorldEpisodeCount,
+	apiWorldEpisodeShine, apiWorldEpisodeName,  apiWorldNextEpisode, apiWorldShineEpisode,
+	apiWorldHasCutscene,  apiWorldPlayCutscene, apiWorldCutscenePlaying,
+};
+
 // What the multiplayer game says happened, to every mod.
 void netEvents()
 {
@@ -1427,7 +1479,7 @@ namespace modhost {
 const SmsApi g_api = {
 	sizeof(SmsApi), SMS_MOD_API_MAJOR, SMS_MOD_API_MINOR, &s_core,   &s_game,  &s_player,
 	&s_camera,      &g_drawApi,        &s_input,          &s_config, &s_audio, &s_native,
-	&s_netTable,
+	&s_netTable,    &s_world,
 };
 
 void log(SmsMod* mod, int level, const char* fmt, ...)

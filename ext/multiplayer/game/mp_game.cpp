@@ -1385,8 +1385,15 @@ void playOthersShineGets()
 	}
 }
 
+// Whether the host left the stage of the Shine this game got (moveStage:
+// after its Shine this game goes where the host went, if it went already).
+bool hostWentOn(int area, int episode)
+{
+	return s_shineHoldFrames > 0 && (area != s_shineHoldArea || episode != s_shineHoldEpisode);
+}
+
 // A client's own Shine: no save prompt (its game plays the host's save, which
-// the host saves), and it waits in the plaza for the host.
+// the host saves), and the host is waited for (clientShineWait).
 void clientShineExit(TMarDirector* dir)
 {
 	if (!dir || !dir->checkFlag(TMarDirector::DIRECTOR_FLAG_SHINE_TAKEN))
@@ -1397,8 +1404,41 @@ void clientShineExit(TMarDirector* dir)
 		s_shineHoldArea    = area;
 		s_shineHoldEpisode = episode;
 		s_shineHoldFrames  = 60 * (port_active_frame_rate > 0 ? port_active_frame_rate : 30);
-		showNotice("Shine Get! The host saves it, then everyone meets in the plaza");
+		showNotice("Shine Get! The host saves it, then everyone goes on together");
 	}
+}
+
+// Once a client's Shine Get is over (its cutscene and banner), it would leave
+// at once (TMarDirector::updateGameMode, this tick's changeState): it waits a
+// few seconds for the host to save and set off instead, and then goes where
+// the host goes (moveStage): the plaza, or where a mod of the host's sends
+// everyone (the next episode). A host that takes longer is waited for in the
+// plaza. Each tick, after the movement and before changeState.
+int s_shineWaitTicks;
+
+void clientShineWait(TMarDirector* dir)
+{
+	if (!dir || !dir->checkFlag(TMarDirector::DIRECTOR_FLAG_SHINE_TAKEN)) {
+		s_shineWaitTicks = 0;
+		return;
+	}
+	if (dir->mState != TMarDirector::STATE_UNK4 || dir->unk124 != 0 || dir->unk126 != 0 || s_shineWaitTicks < 0)
+		return;
+	if (s_shineWaitTicks == 0 && !dir->checkFlag(TMarDirector::DIRECTOR_FLAG_STAGE_TRANSITION_PENDING))
+		return; // a Shine that does not end the stage: nothing to hold
+	int area, episode;
+	const bool known    = mpg_target(&area, &episode);
+	const bool hostGone = !known || hostWentOn(area, episode) || mpg_target_traveling();
+	if (!hostGone && s_shineWaitTicks < 5 * (port_active_frame_rate > 0 ? port_active_frame_rate : 30)) {
+		if (s_shineWaitTicks++ == 0)
+			fprintf(stderr, "[multiplayer] Shine Get over: waiting for the host to save and go on\n");
+		dir->offFlag(TMarDirector::DIRECTOR_FLAG_STAGE_TRANSITION_PENDING);
+		return;
+	}
+	fprintf(stderr, "[multiplayer] Shine Get over: off %s (waited %d ticks)\n", hostGone ? "with the host" : "to the plaza",
+	        s_shineWaitTicks);
+	s_shineWaitTicks = -1;
+	dir->onFlag(TMarDirector::DIRECTOR_FLAG_STAGE_TRANSITION_PENDING);
 }
 
 // ------------------------------------------------------------------- enemies
@@ -4617,6 +4657,7 @@ void afterMovement()
 	holdOthersShine();
 	if (s_role == MPG_ROLE_CLIENT) {
 		clientSkipBlueSave(director());
+		clientShineWait(director());
 		followHostEnemies();
 		reportOwnEnemies();
 		MpBossClientTick();
@@ -4790,9 +4831,10 @@ void moveStage()
 	// would play its movie again: the secret courses' FLUDD movie)
 	if (!miss || area != gpApplication.mCurrArea.getStage())
 		takeTravel(director());
-	// after its own Shine it goes to the plaza, as the host will once saved
+	// after its own Shine it goes to the plaza, as the host will once saved;
+	// unless the host went on already (clientShineExit waited for it)
 	TMarDirector* dir = director();
-	if (dir && dir->checkFlag(TMarDirector::DIRECTOR_FLAG_SHINE_TAKEN))
+	if (dir && dir->checkFlag(TMarDirector::DIRECTOR_FLAG_SHINE_TAKEN) && !hostWentOn(area, episode))
 		return;
 	// wherever this game meant to go, it goes where the host is; unless it
 	// leads the others there (they come after it)
