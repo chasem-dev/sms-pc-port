@@ -48,7 +48,7 @@
 
 extern "C" void GXPC_ExtOverlaySet(int panel, const char* text) __attribute__((weak));
 extern "C" void GXPC_ExtOverlayMarkers(const GXPCMarker* markers, int count) __attribute__((weak));
-extern "C" void GXPC_ExtOverlayScreen(u32 rgba) __attribute__((weak));
+extern "C" void GXPC_ExtOverlayScreen(uint32_t rgba) __attribute__((weak));
 void MpShowNotice(const char* text); // mp_game.cpp
 
 namespace {
