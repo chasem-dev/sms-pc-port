@@ -1224,7 +1224,7 @@ void GXPC_Present(const void* xfb) {
             extOverlayRender(w, h);
             captureWindow(s_frame, w, h);
             t1 = nowSeconds();
-            if (hdr) hdrFramePresent(s_vsync != 0);
+            if (hdr) hdrFrameEnd();  // unlock the picture (or copy it) for Direct3D, which presents it below
 #ifdef SMS_GX_HAVE_VULKAN
             else if (s_vulkan) glvk::present();
 #endif
