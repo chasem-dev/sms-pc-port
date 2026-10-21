@@ -5,6 +5,7 @@
 #include <MSound/MSound.hpp>
 #include <MSound/MSoundSE.hpp>
 #include <System/Application.hpp>
+#include <dolphin/mtx.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -22,6 +23,14 @@ static bool loadTexture(JUTTexture& tex, const char* name)
 		return false;
 	tex.storeTIMG(timg);
 	return true;
+}
+
+void wholeScreen(f32 width, f32 height)
+{
+	GXSetScissor(0, 0, (u32)width, (u32)height);
+	Mtx44 ortho;
+	C_MTXOrtho(ortho, 0.0f, height, 0.0f, width, -1.0f, 1.0f);
+	GXSetProjection(ortho, GX_ORTHOGRAPHIC);
 }
 
 bool loadArt(Art& a)
