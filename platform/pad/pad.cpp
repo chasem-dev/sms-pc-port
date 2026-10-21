@@ -94,6 +94,9 @@ __attribute__((weak)) int GXPC_RequestQuit(void);
 //   SMS_MOUSE_SENSITIVITY=%    mouse look speed, when the GX layer captures the mouse
 //   SMS_CLOSE_CAMERA_CSTICK=1  the C-stick turns (and aims FLUDD in) the Y close-up
 //                              camera too (decomp-patches/zzz-camera-04-close-camera-cstick.patch)
+//   SMS_CLOSE_CAMERA_MOUSE=0   mouse look leaves the Y close-up camera alone; by
+//                              default it turns it, and so aims FLUDD in it
+//                              (decomp-patches/zzz-camera-05-close-camera-mouse.patch)
 //   SMS_MOUSE_ORBIT=0          the mouse's up/down acts as the C-stick's again
 //                              (nearer and lower, or further and higher) instead
 //                              of tilting the camera around Mario
@@ -102,6 +105,7 @@ extern "C" {
 int port_free_camera      = 0;
 int port_camera_invert_y  = 0;
 int port_close_camera_cstick = 0;
+int port_close_camera_mouse  = 1;
 // Presses of MAP so far; the radar (src/radar.cpp) opens or closes its full
 // map on each.
 int port_radar_map_presses = 0;
@@ -150,9 +154,10 @@ const char* const kControlNames[C_COUNT] = {
 bool is_port_action(int c) { return c == C_SAVESTATE || c == C_LOADSTATE || c == C_MAP; }
 // L_SOFT / R_SOFT press L or R part of the way, analog only (no digital click):
 // a light press, as on a GameCube trigger before it clicks. How far, 0..255,
-// from SMS_SOFT_TRIGGER (percent, default 40). Unbound unless bindings.txt
-// gives them keys or buttons.
-int g_softTrigger = 102;
+// from SMS_SOFT_TRIGGER (percent, default 95: as far as a trigger goes without
+// the click). R_SOFT is the middle mouse button by default; L_SOFT is unbound
+// unless bindings.txt gives it a key.
+int g_softTrigger = 95 * 255 / 100;
 
 struct KeyName {
 	const char* name;
@@ -182,30 +187,35 @@ const KeyName kKeys[] = {
 	{ "MOUSE_X1", kMouseBase + 4 }, { "MOUSE_X2", kMouseBase + 5 },
 };
 
-// Default bindings (documented in README.md).
+// Default bindings (documented in README.md), laid out for keyboard and mouse
+// with mouse look: WASD moves, the mouse turns the camera, left click jumps (A),
+// right click dives (B), Q switches the nozzle (X), E is the close-up "Mario
+// cam" (Y), the middle button sprays FLUDD softly (R_SOFT) and Space sprays it
+// fully (R), Left Shift is L (ground pound, sidestep) and Tab the game's map (Z).
 const char* const kDefaultBindings =
-    "A = SPACE X\n"
-    "B = LSHIFT RSHIFT C\n"
-    "X = V\n"
-    "Y = F\n"
-    "Z = Z\n"
-    "L = Q\n"
-    "R = E\n"
+    "A = MOUSE_LEFT\n"
+    "B = MOUSE_RIGHT\n"
+    "X = Q\n"
+    "Y = E\n"
+    "Z = TAB\n"
+    "L = LSHIFT\n"
+    "R = SPACE\n"
     "START = ENTER\n"
     "DPAD_UP = 1 KP_8\n"
     "DPAD_DOWN = 2 KP_2\n"
     "DPAD_LEFT = 3 KP_4\n"
     "DPAD_RIGHT = 4 KP_6\n"
-    "STICK_UP = UP W\n"
-    "STICK_DOWN = DOWN S\n"
-    "STICK_LEFT = LEFT A\n"
-    "STICK_RIGHT = RIGHT D\n"
+    "STICK_UP = W UP\n"
+    "STICK_DOWN = S DOWN\n"
+    "STICK_LEFT = A LEFT\n"
+    "STICK_RIGHT = D RIGHT\n"
     "CSTICK_UP = I\n"
     "CSTICK_DOWN = K\n"
     "CSTICK_LEFT = J\n"
     "CSTICK_RIGHT = L\n"
     "HALF_TILT = LCTRL\n"
     "QUIT = ESCAPE\n"
+    "R_SOFT = MOUSE_MIDDLE\n"
     "SAVE_STATE = F5\n"
     "LOAD_STATE = F6\n"
     "MAP = M\n";
@@ -252,8 +262,9 @@ bool g_inited;
 // SMS_CAMERA_INVERT_X / SMS_CAMERA_INVERT_Y=1 flip the C-stick, which only
 // turns the camera.
 bool g_invert_cx, g_invert_cy;
-// SMS_CLOSE_CAMERA_CSTICK=1 (port_close_camera_cstick)
-bool g_closeCameraCStick;
+// SMS_CLOSE_CAMERA_CSTICK=1 (port_close_camera_cstick), SMS_CLOSE_CAMERA_MOUSE=0
+// (port_close_camera_mouse)
+bool g_closeCameraCStick, g_closeCameraMouse = true;
 // mouse look (see above): its speed, and the motion not yet given to the camera
 float g_mouseSens = 1.0f;
 int g_mouseDX, g_mouseDY;
@@ -630,6 +641,10 @@ void init()
 	g_closeCameraCStick = env_on("SMS_CLOSE_CAMERA_CSTICK");
 	if (g_closeCameraCStick)
 		port_log("[pad] the C-stick turns the close-up camera too\n");
+	if (const char* e = getenv("SMS_CLOSE_CAMERA_MOUSE"))
+		g_closeCameraMouse = !*e || env_on("SMS_CLOSE_CAMERA_MOUSE");
+	if (!g_closeCameraMouse)
+		port_log("[pad] mouse look leaves the close-up camera alone\n");
 	if (g_invert_cx || g_invert_cy)
 		port_log("[pad] camera inverted:%s%s\n", g_invert_cx ? " X" : "", g_invert_cy ? " Y" : "");
 	const char* path = getenv("SMS_BINDINGS");
@@ -884,11 +899,13 @@ extern "C" u32 PADRead(PADStatus* status)
 	if (port_trace_pad_read && port_trace_pad_read(status)) {
 		port_camera_invert_y     = 0;
 		port_close_camera_cstick = 0;
+		port_close_camera_mouse  = 0;
 		return PAD_CHAN0_BIT;
 	}
 	init();
 	port_camera_invert_y     = g_invert_cy;
 	port_close_camera_cstick = g_closeCameraCStick;
+	port_close_camera_mouse  = g_closeCameraMouse;
 	static bool autoInited;
 	if (!autoInited) {
 		autoInited = true;
@@ -1114,6 +1131,8 @@ int invert_x_get() { return g_invert_cx; }
 int invert_x_set(int v) { g_invert_cx = v != 0; return 1; }
 int invert_y_get() { return g_invert_cy; }
 int invert_y_set(int v) { g_invert_cy = v != 0; return 1; }
+int close_mouse_get() { return g_closeCameraMouse; }
+int close_mouse_set(int v) { g_closeCameraMouse = v != 0; return 1; }
 int free_camera_get() { return port_free_camera != 0; }
 int free_camera_set(int v) { port_free_camera = v != 0; return 1; }
 
@@ -1194,6 +1213,9 @@ const PortSetting kPadSettings[] = {
 	{ "cameraSpeed", PORT_SETTINGS_PAGE_GAMEPLAY, 70, "Camera Speed",
 	  "How fast the C-stick turns the camera. 100 is the original speed.", 0, NULL, camera_speed_count,
 	  camera_speed_name, camera_speed_get, camera_speed_set },
+	{ "closeCameraMouse", PORT_SETTINGS_PAGE_GAMEPLAY, 82, "Mouse Aim in Mario Cam",
+	  "With mouse look on, the mouse turns the close-up view Y opens, and aims FLUDD in it.", 0, NULL,
+	  off_on_count, off_on_name, close_mouse_get, close_mouse_set },
 	{ "mouseSensitivity", PORT_SETTINGS_PAGE_GAMEPLAY, 85, "Mouse Sensitivity",
 	  "How fast mouse look turns the camera, when mouse look is on. 100 is normal.", 0, NULL, mouse_sens_count,
 	  mouse_sens_name, mouse_sens_get, mouse_sens_set },
