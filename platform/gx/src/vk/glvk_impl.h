@@ -448,6 +448,7 @@ void samplerParameter(GLuint n, GLenum pname, GLint i, float f, bool isFloat);
 void destroySamplers();
 void destroyBlack();
 void renderbufferStorage(GLsizei samples, GLenum ifmt, GLsizei w, GLsizei h);
+void deleteRenderbuffer(GLuint n);
 Image* attachmentImage(const Attachment& a, uint32_t* level);
 Image* readImage(GLuint fbo, bool depth, uint32_t* level);
 GLenum checkFramebuffer(GLuint fbo);

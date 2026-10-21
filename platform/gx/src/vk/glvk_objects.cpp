@@ -688,6 +688,18 @@ void renderbufferStorage(GLsizei samples, GLenum ifmt, GLsizei w, GLsizei h) {
         if (f) f->version++;
 }
 
+void deleteRenderbuffer(GLuint n) {
+    Renderbuffer* r = g_renderbuffers.get(n);
+    if (!r) return;
+    if (r->img && r->img->lastMain >= currentSerial() && renderingActive()) endRendering();
+    destroyImageLater(r->img);
+    r->img = nullptr;
+    if (S.renderbuffer == n) S.renderbuffer = 0;
+    g_renderbuffers.remove(n);
+    for (Framebuffer* f : g_framebuffers.objs)
+        if (f) f->version++;
+}
+
 // ------------------------------------------------------------------ framebuffers
 // The image and level of an attachment (textures are made here if need be).
 Image* attachmentImage(const Attachment& a, uint32_t* level) {

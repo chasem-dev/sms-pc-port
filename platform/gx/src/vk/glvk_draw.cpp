@@ -1612,6 +1612,9 @@ GLAPI_FN(void, x_glPixelStorei)(GLenum pname, GLint v) {
 GLAPI_FN(void, x_glGenRenderbuffers)(GLsizei n, GLuint* out) {
     for (GLsizei i = 0; i < n; i++) out[i] = g_renderbuffers.gen();
 }
+GLAPI_FN(void, x_glDeleteRenderbuffers)(GLsizei n, const GLuint* names) {
+    for (GLsizei i = 0; i < n; i++) deleteRenderbuffer(names[i]);
+}
 GLAPI_FN(void, x_glBindRenderbuffer)(GLenum, GLuint r) { S.renderbuffer = r; }
 GLAPI_FN(void, x_glRenderbufferStorage)(GLenum, GLenum ifmt, GLsizei w, GLsizei h) { renderbufferStorage(0, ifmt, w, h); }
 GLAPI_FN(void, x_glRenderbufferStorageMultisample)(GLenum, GLsizei samples, GLenum ifmt, GLsizei w, GLsizei h) {
@@ -1658,7 +1661,7 @@ const ProcEntry kProcs[] = {
     P(glCompressedTexSubImage2D), P(glTexParameteri), P(glTexParameterf), P(glGenerateMipmap), P(glGenSamplers),
     P(glDeleteSamplers), P(glBindSampler), P(glSamplerParameteri), P(glSamplerParameterf), P(glGenFramebuffers),
     P(glDeleteFramebuffers), P(glBindFramebuffer), P(glFramebufferTexture2D), P(glFramebufferRenderbuffer),
-    P(glCheckFramebufferStatus), P(glBlitFramebuffer), P(glReadPixels), P(glPixelStorei), P(glGenRenderbuffers),
+    P(glCheckFramebufferStatus), P(glBlitFramebuffer), P(glReadPixels), P(glPixelStorei), P(glGenRenderbuffers), P(glDeleteRenderbuffers),
     P(glBindRenderbuffer), P(glRenderbufferStorage), P(glRenderbufferStorageMultisample), P(glGenQueries), P(glDeleteQueries),
     P(glBeginQuery), P(glEndQuery), P(glGetQueryObjectuiv), P(glFenceSync), P(glClientWaitSync), P(glDeleteSync),
 };
