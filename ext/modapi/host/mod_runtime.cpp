@@ -1069,7 +1069,7 @@ const SmsNetApi s_netTable = {
 	apiNetSession,     apiNetSend, apiNetLoadStage, apiNetSetMode,   apiNetSetStatus,
 };
 
-// ------------------------------------------------------------------ world (API 1.5)
+// ------------------------------------------------------------------ world (API 1.4)
 //
 // The vanilla game's map of its stages (the game half's tables). Eclipse
 // numbers its stages its own way: nothing there.
