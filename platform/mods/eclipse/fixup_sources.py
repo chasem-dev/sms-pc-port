@@ -294,6 +294,35 @@ ASPECT_RATIO_FIXES = [
      "BSE's aspect ratio setting is hidden"),
 ]
 
+# With the port's HUD at the screen edges (widescreen_hud = edges), the game's
+# HUD pieces go to the edge on their side (patch widescreen-03). The mods' own
+# HUD-side drawing goes with them, each as one piece (GXPC_HudPieceBegin,
+# sms_gx/gx_pc.h): Eclipse's pause menu Shine and blue coin counts and its
+# speedrun timer to the left edge, BSE's autosave icon to the right one.
+HUD_PIECE_DECL = ('extern "C" void GXPC_HudPieceBegin(float x1, float x2);\n'
+                  'extern "C" void GXPC_HudPieceEnd(void);\n\n')
+ECLIPSE_HUD_EDGE_FIXES = [
+    ("src/stage/tracker.cpp", r"(BETTER_SMS_FOR_CALLBACK void renderShineBlueTracker\()",
+     lambda m: HUD_PIECE_DECL + m.group(1), "Eclipse's pause menu counts go with the HUD's edges"),
+    ("src/stage/tracker.cpp", r"(\n([ \t]*)s16 adjust = BetterSMS::getScreenRatioAdjustX\(\);\n)",
+     r"\1\2GXPC_HudPieceBegin(20 - adjust, 220 - adjust);\n", "Eclipse's pause menu counts go with the HUD's edges"),
+    ("src/stage/tracker.cpp", r"(\n(\s*)s_blue_text_front->draw\(20 - adjust, 380\);\n)",
+     r"\1\2GXPC_HudPieceEnd();\n", "Eclipse's pause menu counts go with the HUD's edges"),
+    ("src/speedrun.cpp", r"(BETTER_SMS_FOR_CALLBACK void renderSpeedrunTimer\()",
+     lambda m: HUD_PIECE_DECL + m.group(1), "Eclipse's speedrun timer goes with the HUD's edges"),
+    ("src/speedrun.cpp", r"(\n([ \t]*)int x = 16 \+ -BetterSMS::getScreenRatioAdjustX\(\);\n)",
+     r"\1\2GXPC_HudPieceBegin(x, x + 200);\n", "Eclipse's speedrun timer goes with the HUD's edges"),
+    ("src/speedrun.cpp", r"(\n\s*sLoadTimerTextboxF->draw\(x \+ 94, 457\);\n([ \t]*)\}\n)",
+     r"\1\2GXPC_HudPieceEnd();\n", "Eclipse's speedrun timer goes with the HUD's edges"),
+]
+BSE_HUD_EDGE_FIXES = [
+    ("src/autosave.cpp", r"(BETTER_SMS_FOR_CALLBACK void drawAutoSaveIcon\()",
+     lambda m: HUD_PIECE_DECL + m.group(1), "BSE's autosave icon goes with the HUD's edges"),
+    ("src/autosave.cpp", r"\n([ \t]*)(sAutoSavePicture\.draw\(460 \+ screenAdjustX, 420, 32, 32, false, false, false\);)\n",
+     r"\n\1GXPC_HudPieceBegin(460 + screenAdjustX, 492 + screenAdjustX);\n\1\2\n\1GXPC_HudPieceEnd();\n",
+     "BSE's autosave icon goes with the HUD's edges"),
+]
+
 ECLIPSE_FIXES = optional(TEXTURE_FIXES) + CARD_IMAGE_FIXES + PARTICLE_FIXES + DEBS_FIXES + [RAWDATA_FIX, RAWDATA_REGION_FIX] + BOOL_RET_FIXES + ECLIPSE_BE_FIXES + ECLIPSE_PATCH_TYPE_FIXES + [
     # Six four-byte colours are six entries, not 24. Clamp's upper bound
     # is inclusive, so it must name the last colour rather than the count.
@@ -335,7 +364,7 @@ ECLIPSE_FIXES = optional(TEXTURE_FIXES) + CARD_IMAGE_FIXES + PARTICLE_FIXES + DE
      "Eclipse's settings group knows its module"),
     ("src/main.cpp", r"BetterSMS::registerModule\(sModuleInfo\);", r"BetterSMS::registerModule(moduleInfo());",
      "Eclipse's settings group knows its module"),
-]
+] + ECLIPSE_HUD_EDGE_FIXES
 BSE_FIXES = TEXTURE_FIXES + CARD_IMAGE_FIXES + optional([RAWADDR_FIX]) + [RAWDATA_FIX, RAWDATA_REGION_FIX] + BSE_BE_FIXES + PATCH_TYPE_FIXES + [
     # J2DTextBox owns and deletes its string. The setting label and shadow
     # cannot share a heap buffer; keep independent 100-byte allocations and
@@ -429,7 +458,7 @@ BSE_FIXES = TEXTURE_FIXES + CARD_IMAGE_FIXES + optional([RAWADDR_FIX]) + [RAWDAT
      "BSE's console log formats its arguments"),
     ("src/logging.cpp", r"\bOSReport\(msg, vargs\);", r"sms_mod_vreport(msg, vargs);",
      "BSE's console log formats its arguments"),
-] + FRAME_RATE_FIXES + ASPECT_RATIO_FIXES
+] + FRAME_RATE_FIXES + ASPECT_RATIO_FIXES + BSE_HUD_EDGE_FIXES
 MOVESET_FIXES = optional(TEXTURE_FIXES + [RAWADDR_FIX]) + CARD_IMAGE_FIXES
 SHI_FIXES = BOOL_RET_FIXES + SHI_WORD_FIXES + SHI_GAME_TYPES + [
     # The SDK's OSMessage is a void *, as the port's OS keeps it; declared u32,

@@ -3135,6 +3135,23 @@ void GXPC_HudPaneEnd(void) {
     hudReanchor();
 }
 
+// whether each open GXPC_HudPieceBegin found the HUD already being drawn
+static std::vector<bool> s_hudPieceInHud;
+
+void GXPC_HudPieceBegin(float x1, float x2) {
+    if (!s_hudEdges) return;
+    s_hudPieceInHud.push_back(s_hud);
+    GXPC_SetHud(1);
+    GXPC_HudPaneBegin(x1, x2);
+}
+
+void GXPC_HudPieceEnd(void) {
+    if (!s_hudEdges || s_hudPieceInHud.empty()) return;
+    GXPC_HudPaneEnd();
+    if (!s_hudPieceInHud.back()) GXPC_SetHud(0);
+    s_hudPieceInHud.pop_back();
+}
+
 void GXPC_SetStretch2D(int on) {
     if (s_efbW == EFB_W || s_stretch2D == (on != 0)) return;
     flushBatch();  // what was queued keeps its own mapping

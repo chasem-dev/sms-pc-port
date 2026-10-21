@@ -82,6 +82,13 @@ void GXPC_SetWide2D(int on);
 void GXPC_SetHud(int on);
 void GXPC_HudPaneBegin(float x1, float x2);
 void GXPC_HudPaneEnd(void);
+/* SMS_WIDESCREEN_HUD=edges: draw the following 2D as one HUD piece spanning
+ * game x x1 to x2, moved to the screen edge on its side as the gameplay HUD's
+ * pieces are, whether or not the HUD is being drawn (the port's and the mods'
+ * own additions to the HUD and the pause menu); pairs nest. Nothing without
+ * edges. */
+void GXPC_HudPieceBegin(float x1, float x2);
+void GXPC_HudPieceEnd(void);
 float GXPC_GetWidescreen(void);
 /* The settings menu's Screen Format only picks a width (platform/gx gx_settings_extra.cpp). The game
  * calls this where it sets its camera's aspect, as an area is made: the frame is rebuilt at the

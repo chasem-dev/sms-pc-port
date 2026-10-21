@@ -123,7 +123,7 @@ Options can be kept in [`settings.txt`](settings.txt) (`resolution = 2`, `textur
 | `SMS_FSR_MODE=quality` | with `fsr` or `nis`, render at a share of the picture's size on screen and upscale the rest: `native` (100%), `quality` (67%), `balanced` (59%), `performance` (50%) or `ultraperformance` (33%); it sets the internal resolution in place of `SMS_GX_SCALE` |
 | `SMS_WIDESCREEN=16:9` | widescreen (also `21:9`, `16:10`): a wider view, with the HUD and menus kept 4:3 in the middle; the map screen fills the whole width |
 | `SMS_FRAME_RATE=30`, `60`, or `120` | gameplay frame rate: 30 (GameCube native), 60 (port default), or 120 (optional); logos, menus and movies stay at 30 |
-| `SMS_WIDESCREEN_HUD=edges` | with widescreen, move the gameplay HUD's counters to the left edge and the water gauge to the right one |
+| `SMS_WIDESCREEN_HUD=edges` | with widescreen, move the gameplay HUD's counters to the left edge and the water gauge to the right one, and the pause menu's Shine tracker, save state hint and save state menu (and Eclipse's own HUD-side text) with them |
 
 Optional mods, such as HD texture packs, go in [`mods/`](mods/README.md); `python3 tools/mods/get.py textures` downloads and installs the UHD texture pack there.
 Native mods, programs and Lua scripts that hook into the game, draw over it and add settings to its Mods menu (F1), go there too; they are made with the [mod SDK](https://github.com/chasem-dev/sms-mod-sdk), and [sms-mod-templates](https://github.com/chasem-dev/sms-mod-templates) has templates and example mods to start from.

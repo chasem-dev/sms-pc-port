@@ -39,6 +39,11 @@
 #include "port_menu_draw.h"
 #include "port_savestate_menu.h"
 
+// sms_gx widescreen: with the HUD at the screen edges (SMS_WIDESCREEN_HUD=edges)
+// the list goes to the left edge and the pictures to the right one
+extern "C" void GXPC_HudPieceBegin(float x1, float x2);
+extern "C" void GXPC_HudPieceEnd(void);
+
 namespace {
 
 // layout, in the pause menu's 2D units (the viewport, 640 wide)
@@ -270,7 +275,8 @@ void SaveStateMenuDraw(const JDrama::TRect& screen)
 	// the paused game behind, its HUD and pause menu too, darker
 	fill(width / 2, height / 2, width, height, 0.0f, 0x000014C8, alpha);
 
-	// the heading, with the buttons that opened it
+	// the heading, with the buttons that opened it, over the list
+	GXPC_HudPieceBegin(kListX, kListX + kRowW);
 	f32 x = 28.0f + text("LOAD SAVE STATE", 28.0f, 14.0f, 22.0f, kWhite, LEFT, alpha) + 12.0f;
 	PortSaveStateHint hint;
 	port_savestate_hint(&hint);
@@ -286,6 +292,7 @@ void SaveStateMenuDraw(const JDrama::TRect& screen)
 	}
 
 	if (sCount == 0) {
+		GXPC_HudPieceEnd();
 		text("No save states yet", width / 2, 180.0f, 20.0f, kWhite, CENTRE, alpha);
 		text("Save one in a level with the buttons above", width / 2, 210.0f, 13.0f, kPale, CENTRE, alpha);
 		text("# Back", width / 2, height - 36.0f, 15.0f, kWhite, CENTRE, alpha);
@@ -302,8 +309,10 @@ void SaveStateMenuDraw(const JDrama::TRect& screen)
 			continue;
 		drawRow(i, y, alpha);
 	}
+	GXPC_HudPieceEnd();
 
 	const f32 kPictureX = width - kPictureFromRight;
+	GXPC_HudPieceBegin(kPictureX - kPictureW / 2, width - 28.0f);
 	// the pictures, scrolling as the list does: the selection in front, the
 	// states before and after it behind, above and below, where the stack
 	// has slid to (sShown); the farthest first
@@ -342,6 +351,7 @@ void SaveStateMenuDraw(const JDrama::TRect& screen)
 		snprintf(position, sizeof position, "%d of %d", sSelected + 1, sCount);
 		text(position, width - 28.0f, 20.0f, 12.0f, kPale, RIGHT, alpha);
 	}
+	GXPC_HudPieceEnd();
 
 	// a note, then the buttons (the font's button glyphs, as the game writes them)
 	const char* note = sNote;
