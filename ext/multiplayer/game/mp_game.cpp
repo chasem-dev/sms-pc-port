@@ -35,7 +35,10 @@
 #include <MSound/MSoundSE.hpp>
 #include <JSystem/JKernel/JKRHeap.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DJoint.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
 #include <JSystem/J3D/J3DGraphBase/J3DSys.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DTexture.hpp>
+#include <JSystem/JUtility/JUTNameTab.hpp>
 #include <M3DUtil/M3UModelMario.hpp>
 #include <M3DUtil/MActor.hpp>
 #include <Enemy/FruitsBoat.hpp>
@@ -643,11 +646,35 @@ static void captureJointTurn(TMario* m, u16 joint, J3DNodeCallBack ctrl, int16_t
 		out[i] = (int16_t)lroundf((q[i] < -1.0f ? -1.0f : q[i] > 1.0f ? 1.0f : q[i]) * 32767.0f);
 }
 
+// This player's controller as read, before a server holds it (MpgPose's pad;
+// testPadRead keeps it).
+static PADStatus s_padNow;
+
+extern "C" int mpg_local_pad(uint16_t* buttons, int8_t stick[4], uint8_t trigger[2])
+{
+	*buttons   = s_padNow.button;
+	stick[0]   = s_padNow.stickX;
+	stick[1]   = s_padNow.stickY;
+	stick[2]   = s_padNow.substickX;
+	stick[3]   = s_padNow.substickY;
+	trigger[0] = s_padNow.triggerLeft;
+	trigger[1] = s_padNow.triggerRight;
+	return 1;
+}
+
 void MpCapturePose(TMario* m, MpgPose* out)
 {
 	MpgPose& p = *out;
 	memset(&p, 0, sizeof p);
-	p.session = mpg_session();
+	p.session       = mpg_session();
+	p.hasPad        = 1;
+	p.padButtons    = s_padNow.button;
+	p.padStick[0]   = s_padNow.stickX;
+	p.padStick[1]   = s_padNow.stickY;
+	p.padStick[2]   = s_padNow.substickX;
+	p.padStick[3]   = s_padNow.substickY;
+	p.padTrigger[0] = s_padNow.triggerLeft;
+	p.padTrigger[1] = s_padNow.triggerRight;
 	if (!m || !m->getM3UModel())
 		return;
 	M3UModelMario* mm = m->getM3UModel();
@@ -2233,6 +2260,7 @@ int s_testAim;    // aim@N: frames left spraying in place (padRead: R down, the 
 
 void testPadRead(void* status)
 {
+	s_padNow = static_cast<PADStatus*>(status)[0];
 	MpServerPadRead(status); // held by the server (a race's start line), or watching
 	if (s_selectLocked) {
 		// the host's episode select: this player's controller does nothing
@@ -4269,6 +4297,40 @@ void landCarries()
 void takeTrips(TMarDirector* dir); // below
 unsigned g_moves; // debug: movement passes so far
 
+// Our own Mario (when we play Mario, no puppet draws us) in a look a server
+// mod gave us: painted as the puppets are; our own look again, the
+// launcher's texture pack (the paint undone). Again when looks change and as
+// each stage is set up (mpg_undress_all forgot the paint).
+uint32_t s_ownDressed = ~0u;
+void dressSelf()
+{
+	TMario* m = gpMarioOriginal;
+	if (!m || s_self || mpg_looks_version() == s_ownDressed)
+		return;
+	s_ownDressed       = mpg_looks_version();
+	const bool forced  = mpg_own_look_forced() != 0;
+	J3DModel* fludd    = m->mWaterGun && m->mWaterGun->mFluddModel ? m->mWaterGun->mFluddModel->getModel() : nullptr;
+	J3DModelData* const models[2] = {m->mBodyModelData, fludd ? fludd->getModelData() : nullptr};
+	for (J3DModelData* model : models) {
+		J3DTexture* textures = model ? model->getTexture() : nullptr;
+		JUTNameTab* names    = model ? model->getTextureName() : nullptr;
+		if (!textures || !names)
+			continue;
+		for (u16 i = 0; i < textures->getNum(); i++) {
+			ResTIMG* timg    = textures->getResTIMG(i);
+			const char* name = names->getName(i);
+			if (!timg || !name)
+				continue;
+			const void* data = (const u8*)timg + timg->imageDataOffset;
+			const u32 bytes  = GXGetTexBufferSize(timg->width, timg->height, timg->format, GX_FALSE, 0);
+			if (forced)
+				mpg_dress(mpg_slot(), MPG_CHAR_MARIO, name, data, bytes);
+			else
+				mpg_undress(data, bytes);
+		}
+	}
+}
+
 void frame()
 {
 	if (s_role < 0)
@@ -4276,6 +4338,7 @@ void frame()
 	if (!enabled())
 		return;
 	s_clock++;
+	dressSelf();
 	if (getenv("SMS_MULTIPLAYER_SPEEDLOG") && s_clock % 600 == 0) {
 		static unsigned lastMs, lastMoves;
 		const unsigned ms = mp_clock_ms_game();
@@ -4431,9 +4494,11 @@ void stageSetup()
 	s_winCollector    = -1;
 	s_winShine        = nullptr;
 	s_shineGetFrames  = 0;
+	MpSpawnStageSetup(); // the stage's records are in, multiplayer or not
 	if (!enabled())
 		return;
 	MpServerStageSetup();
+	s_ownDressed = ~0u; // a new Mario: painted again if he should be
 	s_readyDir = gpMarDirector;
 	s_arrivedHere = false;
 	s_stageNumber++;
@@ -4875,6 +4940,19 @@ void itemTaken(void* item, void*)
 
 int allowSaveStates() { return !enabled(); }
 
+// The camera shaken by the server (MPG_CMD_SHAKE).
+void cameraHook(void*, float* eye, float* at, float*)
+{
+	if (enabled())
+		MpServerCamera(eye, at);
+}
+
+// MPG_RULE_NO_DAMAGE: this game's player loses nothing (health, or air under water).
+int playerDamage(void* mario, int*)
+{
+	return enabled() && mario == gpMarioOriginal && MpServerNoDamage();
+}
+
 // Mario's own models make way for our character's (s_self draws them).
 int hidePlayerModel(void* mario)
 {
@@ -4886,7 +4964,7 @@ PortExtension s_extension = {
 	"multiplayer",   frame,           afterMovement,   stageSetup,     allowNextStage, moveStage,
 	missNextArea,    takeGameOver,    keepCoinsOnMiss, afterFileSelect, itemTaken,      allowSaveStates,
 	saveStatesOffReason, hidePlayerModel, testPadRead, demoCamera, pollutionClean, objectMove, objectHit,
-	particleEmit,
+	particleEmit,    cameraHook,      nullptr,         playerDamage,
 };
 
 struct Register {
