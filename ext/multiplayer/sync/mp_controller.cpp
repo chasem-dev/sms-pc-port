@@ -387,13 +387,16 @@ void sendCmd(int slot, const MpgCmd& c, uint32_t delayMs)
 }
 
 // What a sticky command replaces: one of its kind to the same players (for
-// actors, the same types; for a script, the same script).
+// actors, the same types; for a script, the same script; for an object, the
+// same object and what is done to it).
 uint64_t stickyKey(const MpgCmd& c, uint32_t to)
 {
 	uint64_t sub = 0;
-	if (c.type == MPG_CMD_ACTORS)
+	if (c.type == MPG_CMD_ACTORS || c.type == MPG_CMD_OBJECT)
 		sub = (uint64_t)(uint32_t)c.i[0] * 31 + (uint32_t)c.i[1];
-	else if (c.type == MPG_CMD_STOP_SCRIPT)
+	if (c.type == MPG_CMD_OBJECT) // shown and hidden are one: the last says which
+		sub = (sub * 131 + (uint32_t)c.i[2]) * 131 + (uint32_t)(c.i[3] == MPG_OBJECT_SHOW ? MPG_OBJECT_HIDE : c.i[3]);
+	if (c.type == MPG_CMD_STOP_SCRIPT || c.type == MPG_CMD_OBJECT)
 		for (const char* t = c.text; *t; t++)
 			sub = sub * 131 + (uint8_t)*t;
 	return ((uint64_t)c.type << 56) ^ ((uint64_t)to << 48) ^ (sub & 0xFFFFFFFFFFFFull);
@@ -1748,7 +1751,7 @@ extern "C" uint32_t mpg_server_send(uint32_t to, const MpgCmd* cmd)
 				g.sticky.erase(g.sticky.begin() + (long)k);
 				break;
 			}
-		if (g.sticky.size() >= 64)
+		if (g.sticky.size() >= 192) // room for a stage's objects, each with its own (MPG_CMD_OBJECT)
 			g.sticky.erase(g.sticky.begin());
 		g.sticky.push_back({key, to, kept});
 	}

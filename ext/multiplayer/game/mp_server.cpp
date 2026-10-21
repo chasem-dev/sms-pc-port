@@ -15,6 +15,7 @@
 #include "port_framerate.h"
 
 #include <Enemy/Conductor.hpp>
+#include <Enemy/Graph.hpp>
 #include <GC2D/ConsoleStr.hpp>
 #include <GC2D/GCConsole2.hpp>
 #include <JSystem/JDrama/JDRViewObjPtrList.hpp>
@@ -22,6 +23,7 @@
 #include <MSound/MSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 #include <MoveBG/Item.hpp>
+#include <MoveBG/MapObjRailBlock.hpp>
 #include <MoveBG/MapObjRicco.hpp>
 #include <Player/Mario.hpp>
 #include <Strategic/LiveManager.hpp>
@@ -44,6 +46,9 @@ namespace {
 const int kOverlayBanner = 2;     // GXPC_EXT_OVERLAY_BANNER: big, in the middle
 const int kMountTries    = 30;    // frames to keep trying to get on (held up landing, talking)
 const u32 kShineType     = 0x20000013;
+const int kMoveTicks     = 120;   // movement ticks a second (TMarDirector::direct's, at any frame rate)
+const float kMostPhase   = 60.0f; // seconds an object may be moved on at once
+const int kMostPaced     = 64;    // objects at a speed of their own
 
 TMarDirector* director()
 {
@@ -85,6 +90,34 @@ bool s_readyDue;
 int s_loadArea = -1, s_loadEpisode = -1;
 bool s_loading;
 int s_titleFrames;
+// objects at a speed of their own (MPG_OBJECT_SPEED): this stage's, until the next
+struct Paced {
+	TLiveActor* actor;
+	bool rail; // along a rail (else a spinner)
+	f32 times;
+	f32 base; // its own: a spinner's turn a tick; along a rail, as its rail last set it
+	f32 set;  // what we made it (a rail sets its own again at each point)
+};
+Paced s_paced[kMostPaced];
+int s_pacedCount;
+// how this stage's movers were as it loaded, for MPG_OBJECT_PHASE: every
+// game's copy then goes on from the same state
+struct Start {
+	TLiveActor* actor;
+	JGeometry::TVec3<f32> position, rotation;
+	f32 angle; // a spinner's
+	// on a rail: TRailMapObj's, its tracer's, and TNormalLift's waits
+	TGraphTracer tracer;
+	int step;
+	u32 railFlags;
+	f32 speed;
+	s8 recycle, drawn;
+	s16 recycleTimer;
+	u16 wait, hold;
+	s8 holding;
+};
+Start s_starts[kMostPaced];
+int s_startCount;
 
 void resetSession()
 {
@@ -246,6 +279,211 @@ void stopScript(TMarDirector* dir, const char* path)
 	fprintf(stderr, "[server] script %s %s\n", path, stopped ? "stopped" : "not running here");
 }
 
+// ------------------------------------------------------------------- one object
+
+// On a rail of the stage's (a lift, a moving platform), not a dummy one.
+TRailMapObj* onRail(TLiveActor* a)
+{
+	TRailMapObj* rail = dynamic_cast<TRailMapObj*>(a);
+	const TGraphWeb* graph = rail && rail->getTracer() ? rail->getTracer()->getGraph() : nullptr;
+	return graph && !graph->isDummy() ? rail : nullptr;
+}
+
+// The stage's movers as it loaded (stage setup, before it plays).
+struct TakeStart {
+	void operator()(TLiveActor* a)
+	{
+		TRollBlock* roll  = dynamic_cast<TRollBlock*>(a);
+		TRailMapObj* rail = roll ? nullptr : onRail(a);
+		if ((!roll && !rail) || s_startCount >= kMostPaced)
+			return;
+		Start& s   = s_starts[s_startCount++];
+		s.actor    = a;
+		s.position = a->mPosition;
+		s.rotation = a->mRotation;
+		s.angle    = roll ? roll->unk138 : 0.0f;
+		if (!rail)
+			return;
+		s.tracer       = *rail->getTracer();
+		s.step         = rail->unk13C;
+		s.railFlags    = rail->unk140;
+		s.speed        = rail->unk144;
+		s.recycle      = rail->unk148;
+		s.recycleTimer = rail->unk14A;
+		s.drawn        = rail->unk14C;
+		if (TNormalLift* lift = dynamic_cast<TNormalLift*>(a)) {
+			s.wait    = lift->unk150;
+			s.hold    = lift->unk152;
+			s.holding = lift->unk158;
+		}
+	}
+};
+
+Paced* pacedOf(TLiveActor* a)
+{
+	for (int k = 0; k < s_pacedCount; k++)
+		if (s_paced[k].actor == a)
+			return &s_paced[k];
+	return nullptr;
+}
+
+// Along a rail, our speed: again where the rail has set its own (at each
+// point), or now from `base` (own).
+void pace(Paced& p, bool own = false)
+{
+	TRailMapObj* rail = static_cast<TRailMapObj*>(p.actor);
+	if (!own) {
+		if (rail->unk144 == p.set)
+			return;
+		p.base = rail->unk144;
+	}
+	rail->unk144 = p.set = p.base * p.times;
+	rail->resetStep(rail->unk144);
+}
+
+bool setSpeed(TLiveActor* a, f32 times)
+{
+	TRollBlock* roll  = dynamic_cast<TRollBlock*>(a);
+	TRailMapObj* rail = roll ? nullptr : onRail(a);
+	if (!roll && !rail)
+		return false;
+	Paced* p = pacedOf(a);
+	if (!p) {
+		if (s_pacedCount >= kMostPaced)
+			return false;
+		p        = &s_paced[s_pacedCount++];
+		p->actor = a;
+		p->rail  = rail != nullptr;
+		p->base  = roll ? roll->unk13C : rail->unk144;
+	}
+	if (times > 20.0f || times < -20.0f)
+		times = times > 0 ? 20.0f : -20.0f;
+	if (roll) {
+		p->times     = times; // the other way round too
+		roll->unk13C = p->set = p->base * times;
+	} else {
+		p->times = times < 0 ? -times : times;
+		if (p->times < 0.05f)
+			p->times = 0.05f; // along a rail it must get somewhere
+		pace(*p, true);
+	}
+	return true;
+}
+
+// Back to how it was as the stage loaded, then `seconds` of its own movement
+// at once: the same place in every game, whenever it loaded the stage.
+bool setPhase(TLiveActor* a, f32 seconds)
+{
+	Start* s = nullptr;
+	for (int k = 0; k < s_startCount && !s; k++)
+		if (s_starts[k].actor == a)
+			s = &s_starts[k];
+	if (!s)
+		return false;
+	a->mPosition = s->position;
+	a->mRotation = s->rotation;
+	if (TRollBlock* roll = dynamic_cast<TRollBlock*>(a))
+		roll->unk138 = s->angle;
+	Paced* p = pacedOf(a);
+	if (TRailMapObj* rail = onRail(a)) {
+		*rail->unk138 = s->tracer;
+		rail->unk13C  = s->step;
+		rail->unk140  = s->railFlags;
+		rail->unk144  = s->speed;
+		rail->unk148  = s->recycle;
+		rail->unk14A  = s->recycleTimer;
+		rail->unk14C  = s->drawn;
+		if (TNormalLift* lift = dynamic_cast<TNormalLift*>(a)) {
+			lift->unk150 = s->wait;
+			lift->unk152 = s->hold;
+			lift->unk158 = s->holding;
+		}
+		if (p) {
+			p->base = s->speed;
+			pace(*p, true);
+		}
+	} else {
+		p = nullptr; // a spinner keeps the speed it was given: nothing to keep up
+	}
+	if (seconds > kMostPhase)
+		seconds = kMostPhase;
+	// its own movement (moveObject's, without the rest): its collision follows
+	// on the next movement tick, as the map's lists take one a tick
+	const int ticks = seconds > 0 ? (int)(seconds * kMoveTicks + 0.5f) : 0;
+	for (int k = 0; k < ticks; k++) {
+		a->mLinearVelocity.zero();
+		a->mAngularVelocity.zero();
+		a->control();
+		a->mPosition += a->mLinearVelocity;
+		a->mRotation += a->mAngularVelocity;
+		if (p)
+			pace(*p);
+	}
+	return true;
+}
+
+void object(TLiveActor* a, const MpgCmd& c)
+{
+	TMapObjBase* o = dynamic_cast<TMapObjBase*>(a);
+	switch (c.i[3]) {
+	case MPG_OBJECT_PLACE:
+		if (onRail(a))
+			break; // its rail says where it goes
+		a->mPosition.set(c.f[0], c.f[1], c.f[2]);
+		a->mRotation.y = c.f[3];
+		if (o) {
+			o->mInitialPosition   = a->mPosition;
+			o->mInitialRotation.y = c.f[3];
+			if (!o->checkLiveFlag(LIVE_FLAG_DEAD))
+				o->setUpCurrentMapCollision();
+		}
+		break;
+	case MPG_OBJECT_SPEED:
+		setSpeed(a, c.f[0]);
+		break;
+	case MPG_OBJECT_PHASE:
+		setPhase(a, c.f[0]);
+		break;
+	case MPG_OBJECT_SHOW:
+	case MPG_OBJECT_HIDE: {
+		const bool hide = c.i[3] == MPG_OBJECT_HIDE;
+		if (!o) {
+			SetActor set = {hide ? 1 : 0, 0};
+			set(a);
+		} else if (hide && !o->checkLiveFlag(LIVE_FLAG_DEAD)) {
+			o->makeObjDead(); // its collision too: nothing left to bump into
+		} else if (!hide && o->checkLiveFlag(LIVE_FLAG_DEAD)) {
+			o->makeObjAppeared();
+		}
+		break;
+	}
+	default:
+		break;
+	}
+}
+
+// The objects a command names: of its types and kind (its text, as the stage
+// names the object: "WoodBlockCone"; "" any), the i[2]th of them, or each (-1).
+struct EachObject {
+	const MpgCmd* c;
+	int seen;
+	int count;
+	JGeometry::TVec3<f32> was; // the first one's place before (for the log)
+	void operator()(TLiveActor* a)
+	{
+		if (c->text[0]) {
+			TMapObjBase* o = dynamic_cast<TMapObjBase*>(a);
+			if (!o || !o->unkF4 || strcmp(o->unkF4, c->text) != 0)
+				return;
+		}
+		if (c->i[2] >= 0 && seen++ != c->i[2])
+			return;
+		if (count++ == 0)
+			was = a->mPosition;
+		object(a, *c);
+	}
+};
+
 // ------------------------------------------------------------------- each command
 
 void run(TMarDirector* dir, const MpgCmd& c)
@@ -322,6 +560,19 @@ void run(TMarDirector* dir, const MpgCmd& c)
 	case MPG_CMD_STAY:
 		s_stay = c.i[0] != 0;
 		break;
+	case MPG_CMD_OBJECT: {
+		static const char* const kWhat[] = {"placed", "speed", "phase", "shown", "hidden"};
+		EachObject each;
+		each.c     = &c;
+		each.seen  = each.count = 0;
+		each.was.set(0.0f, 0.0f, 0.0f);
+		eachActor((u32)c.i[0], (u32)c.i[1], each);
+		fprintf(stderr, "[server] object %s %x-%x #%d: %d %s (%.2f %.2f %.2f %.2f), the first at %.0f %.0f %.0f\n",
+		        c.text[0] ? c.text : "*", (unsigned)c.i[0], (unsigned)c.i[1], (int)c.i[2], each.count,
+		        c.i[3] >= 0 && c.i[3] <= MPG_OBJECT_HIDE ? kWhat[c.i[3]] : "?", c.f[0], c.f[1], c.f[2], c.f[3],
+		        each.was.x, each.was.y, each.was.z);
+		break;
+	}
 	default:
 		break;
 	}
@@ -394,6 +645,10 @@ void MpServerStageSetup()
 	s_loading    = false;
 	s_watching   = false; // a new Mario
 	s_mountTries = 0;
+	s_pacedCount = 0;     // the new stage's objects
+	s_startCount = 0;
+	TakeStart start;
+	eachActor(0, 0xFFFFFFFFu, start);
 }
 
 void MpServerFrame(TMarDirector* dir, bool arrived, bool playing)
@@ -437,6 +692,9 @@ void MpServerFrame(TMarDirector* dir, bool arrived, bool playing)
 
 void MpServerTick()
 {
+	for (int k = 0; k < s_pacedCount; k++)
+		if (s_paced[k].rail)
+			pace(s_paced[k]);
 	TMario* m = gpMarioOriginal;
 	if (!m)
 		return;

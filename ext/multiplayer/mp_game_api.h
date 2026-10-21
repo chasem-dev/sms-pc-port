@@ -332,7 +332,16 @@ enum {
 	MPG_CMD_ACTORS,     // actor types i[0]..i[1]: i[2] 0 shown, 1 hidden, 2 killed
 	MPG_CMD_STOP_SCRIPT, // text: the stage's event script loaded from that resource
 	MPG_CMD_STAY,       // i[0]: the player's own ways out of the stage lead nowhere
-	MPG_CMD_LAST = MPG_CMD_STAY,
+	MPG_CMD_OBJECT,     // the i[2]th (-1 each) object of types i[0]..i[1] and kind text: i[3] MPG_OBJECT_*
+	MPG_CMD_LAST = MPG_CMD_OBJECT,
+};
+// MPG_CMD_OBJECT's i[3] (the mod SDK's SMS_OBJECT_*)
+enum {
+	MPG_OBJECT_PLACE = 0, // to f[0..2], turned f[3] degrees: where it goes back to too
+	MPG_OBJECT_SPEED,     // f[0] times its own speed (a spinner's turning, along its rail)
+	MPG_OBJECT_PHASE,     // back to its start, then f[0] seconds of its own movement at once
+	MPG_OBJECT_SHOW,
+	MPG_OBJECT_HIDE,      // out of the stage: unseen, nothing to touch or stand on
 };
 #define MPG_CMD_STICKY 1
 #define MPG_CMD_TEXT 160
