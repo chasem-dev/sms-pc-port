@@ -69,18 +69,20 @@ static float s_scale = 1;
 static int scaled(int v) { return int(lroundf(float(v) * s_scale)); }
 float efbScale() { return s_scale; }
 
-// Widescreen (GXPC_SetWidescreen): the EFB is s_efbW = 640 * s_wide wide
-// while the game keeps working in 640-wide coordinates, which each draw,
-// copy and peek maps into it (XMap: x' = a * x + b, clip x scaled by clip):
-//   stretched (a = s_wide): the game camera, which the widescreen patch
+// Widescreen (GXPC_SetWidescreen): the EFB is s_efbW = 640 * s_wide wide,
+// rounded up to an even width, while the game keeps working in 640-wide
+// coordinates, which each draw, copy and peek maps into it (XMap: x' = a * x
+// + b, clip x scaled by clip):
+//   stretched (a = s_stretch, s_efbW / 640, so the whole EFB and not a column
+//     short of it): the game camera, which the widescreen patch
 //     widens itself, 2D that spans the whole width (fades, screen copies
 //     drawn back), full-width copies and clears, peeks;
 //   centred (b = s_ox): 2D and 3D that cover part of the screen (the HUD).
 // A full-screen perspective draw whose projection the game did not widen
 // (title, file select, cutscene overlays) is stretched with its clip x
-// scaled by 1 / s_wide: its field of view widens, and what the game placed
+// scaled by 1 / s_stretch: its field of view widens, and what the game placed
 // at x lands on x + s_ox, beside the centred HUD.
-static float s_wide = 1.0f;
+static float s_wide = 1.0f, s_stretch = 1.0f;
 static int s_efbW = EFB_W, s_ox = 0;
 struct XMap {
     float a = 1, b = 0, clip = 1;
@@ -1186,6 +1188,7 @@ static void setWide(float wide) {
     s_wide = wide;
     s_efbW = efbWidthFor(wide);
     s_ox = (s_efbW - EFB_W) / 2;
+    s_stretch = float(s_efbW) / float(EFB_W);
     s_hudEdges = s_hudWanted && s_efbW != EFB_W;
     s_xmap = XMap();
     s_stretch2D = false;  // the game's faders set it again when they draw
@@ -2079,7 +2082,7 @@ static XMap drawXMap() {
     XMap m;
     if (s_efbW == EFB_W) return m;
     if (s_stretch2D && (g.xfReg[XFR_PROJ + 6] & 1)) {  // a fade or wipe: all of it across the frame
-        m.a = s_wide;
+        m.a = s_stretch;
         return m;
     }
     if (s_wide2D && (g.xfReg[XFR_PROJ + 6] & 1)) {  // laid out wide: the 4:3 scale, centred
@@ -2099,10 +2102,10 @@ static XMap drawXMap() {
             if (lo <= hi) m.b = centredOffset((lo + hi) / 2);
             return m;
         }
-        m.a = s_wide;
+        m.a = s_stretch;
         float p00 = xff(XFR_PROJ), p11 = xff(XFR_PROJ + 2);
         float aspect = p00 != 0.0f ? fabsf(p11 / p00) : 0.0f;
-        if (aspect < kCamAspect * sqrtf(s_wide)) m.clip = 1.0f / s_wide;  // not widened by the game
+        if (aspect < kCamAspect * sqrtf(s_wide)) m.clip = 1.0f / s_stretch;  // not widened by the game
         return m;
     }
     // 2D across the whole width: artwork (menus, the map, movies: colour
@@ -2126,7 +2129,7 @@ static XMap drawXMap() {
     float lo, hi;
     screenExtent(sx, cx, &lo, &hi);
     bool spans = lo <= 2.0f && hi >= float(EFB_W) - 2.0f;
-    if (spans && !artwork) m.a = s_wide;
+    if (spans && !artwork) m.a = s_stretch;
     else m.b = spans ? float(s_ox) : centredOffset((lo + hi) / 2);
     return m;
 }
@@ -2649,8 +2652,8 @@ static void copyEfb(uint32_t ctrl) {
         // those columns too. Taken to whole widened pixels, they went a column
         // past the quad the circle wipe's blur draws its centre cell back with,
         // which left a black line down the opening iris above 1x.
-        x0 = int(lroundf(float(x) * s_wide * s_scale));
-        x1 = int(lroundf(float(x + w) * s_wide * s_scale));
+        x0 = int(lroundf(float(x) * s_stretch * s_scale));
+        x1 = int(lroundf(float(x + w) * s_stretch * s_scale));
         fx = float(x0) / s_scale;
         fw = float(x1 - x0) / s_scale;
     }
@@ -2953,7 +2956,7 @@ static uint32_t peekRaw(int x, int y, bool depth) {
     // no renderer (SMS_GX_BACKEND=none, or no OpenGL at all): nothing was drawn,
     // so clear colour and the far plane
     if (!s_ready) return depth ? 0xFFFFFF00u : 0;
-    if (s_efbW != EFB_W && x >= 0) x = int((float(x) + 0.5f) * s_wide);  // the game camera's coordinates: stretched
+    if (s_efbW != EFB_W && x >= 0) x = int((float(x) + 0.5f) * s_stretch);  // the game camera's coordinates: stretched
     flushBatch();
     glcInvalidate();
     GxTimer tp(&s_peekSeconds);

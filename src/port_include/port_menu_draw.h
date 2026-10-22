@@ -26,6 +26,11 @@ struct Art {
 // Loads the art; false when game_6 is not there (a menu then stays closed).
 bool loadArt(Art& art);
 
+// After a J2DOrthoGraph's setPort over the whole screen (width x height): its
+// scissor and projection out to the last row, which the game's 2D port leaves
+// out (its scissor is moved up a row, and its projection is half a row taller
+// than the screen), so a backdrop over the frame covers all of it.
+void wholeScreen(f32 width, f32 height);
 void colourOf(u32 colour, u8 alpha, GXColor* out);
 void setupTextured();
 void quad(f32 cx, f32 cy, f32 w, f32 h, f32 degrees, u32 colour, u8 alpha, bool textured);

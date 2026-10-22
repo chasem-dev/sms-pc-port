@@ -878,6 +878,7 @@ static const struct {
 	{ "mouse_camera", "SMS_MOUSE_CAMERA" },           // mouse look
 	{ "mouse_sensitivity", "SMS_MOUSE_SENSITIVITY" }, // percent
 	{ "mouse_orbit", "SMS_MOUSE_ORBIT" },             // mouse up/down tilts the camera around Mario
+	{ "close_camera_mouse", "SMS_CLOSE_CAMERA_MOUSE" }, // mouse look turns (and aims in) the Y close-up camera
 	{ "background_input", "SMS_BACKGROUND_INPUT" },   // keep input while another window has focus
 	{ "rumble", "SMS_RUMBLE" },                       // controller rumble, on by default
 	{ "rumble_strength", "SMS_RUMBLE_STRENGTH" },     // percent

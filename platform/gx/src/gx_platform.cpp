@@ -176,9 +176,10 @@ void waitSimulatedRefresh() {
         if (next - now > 0.002) SDL_Delay(Uint32((next - now) * 1000) - 1);
 }
 
-// SMS_MOUSE_CAMERA=1: mouse look. The mouse is captured (relative mode) while
-// the window has focus; F10 releases it, a click in the window takes it back,
-// and losing focus always frees it.
+// SMS_MOUSE_CAMERA: mouse look, on unless 0 (the default keys are laid out
+// for it). The mouse is captured (relative mode) while the window has focus;
+// F10 releases it, a click in the window takes it back, and losing focus
+// always frees it.
 bool s_mouseCamera = false, s_mouseCaptured = false, s_mouseReleased = false;
 
 void captureMouse(bool on) {
@@ -683,7 +684,7 @@ bool openWindow(float scale, bool vulkan) {
         logmsg("window %dx%d centered on display %d (%s), internal resolution scale %g, %s ready",
                layout.w, layout.h, display, s_videoDriver, scale, vulkan ? "Vulkan device" : "OpenGL context");
     s_windowFailure = WF_NONE;
-    s_mouseCamera = envTrue("SMS_MOUSE_CAMERA");
+    s_mouseCamera = !getenv("SMS_MOUSE_CAMERA") || !*getenv("SMS_MOUSE_CAMERA") || envTrue("SMS_MOUSE_CAMERA");
     if (s_mouseCamera) {
         logmsg("mouse look on (F10 releases the mouse)");
         captureMouse((SDL_GetWindowFlags(s_window) & SDL_WINDOW_INPUT_FOCUS) != 0);
@@ -1395,11 +1396,13 @@ void sms_gx_pump_events(void) {
             if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_FOCUS_LOST) captureMouse(false);
             if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_FOCUS_GAINED && !s_mouseReleased)
                 captureMouse(true);
+            // The click that takes the mouse back presses nothing; where the mouse
+            // cannot be taken it is a click like any other (left click jumps).
             if (ev.type == SDL_MOUSEBUTTONDOWN && !s_mouseCaptured) {
                 s_mouseReleased = false;
                 captureMouse(true);
                 showReleasedCursor();
-                continue;
+                if (s_mouseCaptured) continue;
             }
             if (ev.type == SDL_KEYDOWN && ev.key.keysym.scancode == SDL_SCANCODE_F10) {
                 if (!ev.key.repeat) {

@@ -143,24 +143,27 @@ frame_rate = 60
 # Master volume, 0 (silent) to 100 (full).
 # volume = 100
 # How far the L_SOFT / R_SOFT bindings press L or R, in percent (5 to 95), as a
-# light trigger press without the click.
-# soft_trigger = 40
+# light trigger press without the click (R_SOFT is the middle mouse button).
+# soft_trigger = 95
 # Open the debug overlay (frame rate, where the time goes) at start.
 # overlay = off
 
 # Camera: invert either axis (C-stick, camera keys and mouse), a free camera
 # that stays where you point it (L recentres it), rotation speed in percent,
-# and mouse look (F10 releases the mouse) with its sensitivity in percent.
-# With mouse look, moving the mouse up and down tilts the camera around Mario
-# (mouse_orbit = off makes it act as the C-stick's up and down instead), and
-# the mouse wheel zooms: down moves the camera out, up brings it in.
+# and mouse look (on by default; F10 releases the mouse) with its sensitivity
+# in percent. With mouse look, moving the mouse up and down tilts the camera
+# around Mario (mouse_orbit = off makes it act as the C-stick's up and down
+# instead), the mouse wheel zooms: down moves the camera out, up brings it in,
+# and the mouse turns the close-up view Y opens, aiming FLUDD in it
+# (close_camera_mouse = off leaves that view to the stick).
 # camera_invert_x = off
 # camera_invert_y = off
 # free_camera = off
 # camera_speed = 100
-# mouse_camera = off
+# mouse_camera = on
 # mouse_sensitivity = 100
 # mouse_orbit = on
+# close_camera_mouse = on
 
 # Keep reading the keyboard and controllers while another window has focus
 # (normally the game ignores them until it has focus again).

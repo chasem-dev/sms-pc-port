@@ -296,6 +296,7 @@ void SettingsMenuDraw(const JDrama::TRect& screen)
 	J2DOrthoGraph graph(screen);
 	graph.setPort();
 	graph.setup2D();
+	wholeScreen(width, height);
 
 	// the paused game behind, its HUD and pause menu too, darker
 	fill(width / 2, height / 2, width, height, 0.0f, 0x000014A8, alpha);
@@ -333,6 +334,6 @@ void SettingsMenuDraw(const JDrama::TRect& screen)
 		port_gfx_describe(described, sizeof described);
 		text(described, width / 2, height - 76.0f, 12.0f, kDim, CENTRE, alpha);
 	}
-	text(onPages() ? "@ Open     Hold X Preview     # Back" : "@ Change     Hold X Preview     # Back", width / 2,
+	text(onPages() ? "@ Open     Hold + Preview     # Back" : "@ Change     Hold + Preview     # Back", width / 2,
 	     height - 36.0f, 15.0f, kWhite, CENTRE, alpha);
 }
