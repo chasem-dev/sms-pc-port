@@ -184,3 +184,126 @@ extern "C" int port_ext_save_prompt(int kind)
 	EACH(savePrompt) if (s_ext[i]->savePrompt(kind)) return 1;
 	return 0;
 }
+
+extern "C" void port_ext_player_status_changed(void* mario, unsigned from, unsigned to, unsigned arg)
+{
+	EACH(playerStatusChanged) s_ext[i]->playerStatusChanged(mario, from, to, arg);
+}
+
+extern "C" int port_ext_player_heal(void* mario, int* amount, int air)
+{
+	EACH(playerHeal) if (s_ext[i]->playerHeal(mario, amount, air)) return 1;
+	return 0;
+}
+
+extern "C" void port_ext_player_death(void* mario, int cause)
+{
+	EACH(playerDeath) s_ext[i]->playerDeath(mario, cause);
+}
+
+extern "C" void port_ext_player_spawn(float* pos, float* yaw, int* hasPos, int kind)
+{
+	EACH(playerSpawn) s_ext[i]->playerSpawn(pos, yaw, hasPos, kind);
+}
+
+extern "C" int port_ext_player_message(void* mario, void* sender, unsigned message)
+{
+	EACH(playerMessage) if (s_ext[i]->playerMessage(mario, sender, message)) return 1;
+	return 0;
+}
+
+extern "C" void port_ext_player_mount(void* mario, int mount, int on, void* object)
+{
+	EACH(playerMount) s_ext[i]->playerMount(mario, mount, on, object);
+}
+
+extern "C" void port_ext_player_water(void* mario, int entered, float surfaceY)
+{
+	EACH(playerWater) s_ext[i]->playerWater(mario, entered, surfaceY);
+}
+
+extern "C" void port_ext_yoshi(void* yoshi, int what, unsigned fruit)
+{
+	EACH(yoshi) s_ext[i]->yoshi(yoshi, what, fruit);
+}
+
+extern "C" void port_ext_actor_spawn(void* actor)
+{
+	EACH(actorSpawn) s_ext[i]->actorSpawn(actor);
+}
+
+extern "C" void port_ext_object_hit_done(void* object, void* sender, unsigned message, int result)
+{
+	EACH(objectHitDone) s_ext[i]->objectHitDone(object, sender, message, result);
+}
+
+extern "C" void port_ext_actor_death(void* actor, int forced)
+{
+	EACH(actorDeath) s_ext[i]->actorDeath(actor, forced);
+}
+
+extern "C" void port_ext_shine(void* shine, int what)
+{
+	EACH(shine) s_ext[i]->shine(shine, what);
+}
+
+extern "C" int port_ext_flag_change(unsigned flag, int old, int* value)
+{
+	const int asked = *value;
+	EACH(flagChange) if (s_ext[i]->flagChange(flag, old, value)) {
+		*value = asked;
+		return 1;
+	}
+	return 0;
+}
+
+extern "C" int port_ext_sound(unsigned* id, const float* pos, int system)
+{
+	EACH(sound) if (s_ext[i]->sound(id, pos, system)) return 1;
+	return 0;
+}
+
+extern "C" int port_ext_music(unsigned* id, int start)
+{
+	EACH(music) if (s_ext[i]->music(id, start)) return 1;
+	return 0;
+}
+
+extern "C" void port_ext_talk(int what, void* npc, unsigned* message, unsigned flags)
+{
+	EACH(talk) s_ext[i]->talk(what, npc, message, flags);
+}
+
+extern "C" void port_ext_demo_camera_end(const char* name, void* actor, int forced)
+{
+	EACH(demoCameraEnd) s_ext[i]->demoCameraEnd(name, actor, forced);
+}
+
+extern "C" void port_ext_game_saved(int slot)
+{
+	EACH(gameSaved) s_ext[i]->gameSaved(slot);
+}
+
+extern "C" void port_ext_timer(int what, int time)
+{
+	EACH(timer) s_ext[i]->timer(what, time);
+}
+
+extern "C" void port_ext_script_call(const char* name, void* owner, int argc)
+{
+	EACH(scriptCall) s_ext[i]->scriptCall(name, owner, argc);
+}
+
+extern "C" void port_ext_map_event(void* event)
+{
+	EACH(mapEvent) s_ext[i]->mapEvent(event);
+}
+
+extern "C" int port_ext_object_stomp(void* object, void* mario)
+{
+	EACH(objectStomp) if (s_ext[i]->objectStomp(object, mario)) return 1;
+	return 0;
+}
+
+void* port_ext_damage_source; // C linkage: declared so in port_ext.h
+int port_ext_death_cause;      // C linkage: declared so in port_ext.h

@@ -43,6 +43,28 @@ An extension fills in a `PortExtension` with the hooks it needs, leaving the res
 | `shineCollected` | `TFlagManager::setShineFlag` sets a Shine's flag for the first time | note it |
 | `savePrompt` | the stage is about to ask the player to save, after a Shine, a blue coin, a nozzle's box or Yoshi (not a game over's) | return 1 to leave the prompt out (auto save saves instead) |
 | `chooseNextStage` | `TMarDirector::moveStage` is about to leave, before any extension's `moveStage` | change the destination, which every `moveStage` then sees (multiplayer's host sends the players where its mods chose) |
+| `playerStatusChanged` | `TMario::changePlayerStatus` took a new status (after the game's own rewrites), or a spin jump started in the air (`considerJumpRotate`) | note it |
+| `playerHeal` | `TMario::incHP`, or a pickup that fills Mario's health at once (a 1-up, a Shine, his cap) | change the amount, or return 1 to stop it |
+| `playerDeath` | a `TMario` lost his life (`TMario::loserExec`, the bottomless pit in `thinkSituation`), once, with its cause (`PORT_DEATH_*`; `port_ext_death_cause` set by a caller that knows it) | note it |
+| `playerSpawn` | `TMarDirector::setMario` is about to put the player at the stage's start | change the place and turn, or give one to a stage that has none |
+| `playerMessage` | `TMario::receiveMessage`: something touched or hit Mario (an enemy's attack, an item) | return 1 and he ignores it |
+| `playerMount` | Mario gets on or off Yoshi (`TYoshi::ride`, `TMario::getOffYoshi`) or on a Blooper (`TMario::getGesso`) | note it |
+| `playerWater` | Mario goes into the water or comes out of it (`TMario::thinkWaterSurface`) | note it |
+| `yoshi` | Yoshi hatches (`TYoshi::appearFromEgg`) or eats a fruit (`TYoshi::doEat`) | note it |
+| `actorSpawn` | an enemy is placed by its manager or generator (`TSpineEnemy::resetToPosition`, `resetSRTV`), an item made to appear (`TMapObjBaseManager::makeObjAppear*`) | note it |
+| `objectHitDone` | a hit `objectHit` or `objectStomp` let through has reached the object, with what its `receiveMessage` returned | note it (the mod API tells of an enemy's health lost) |
+| `actorDeath` | an enemy is defeated (`TSmallEnemy::genRandomItem`, the bosses' defeat nerves), or killed by the stage | note it |
+| `shine` | a Shine appears during play (`TShine::appearWithTime`, `appearSimple`), or the player takes one (`TMarDirector::fireGetStar`) | note it |
+| `flagChange` | `TFlagManager::setFlag` or `incFlag` is about to change a save-file flag | change the value, or return 1 to leave it |
+| `sound` | a sound effect is about to start (`MSoundSE::startSoundActorInner`, every one the game plays) | change it, or return 1 to leave it out |
+| `music` | `MSBgm::startBGM` is about to start a piece, or `stopTrackBGM` to stop one | change the piece, or return 1 to leave it out |
+| `talk` | a talk with an NPC starts or ends (`TMarDirector::updateGameMode`), or shows a message (`TTalk2D2::setMessageID`) | change the message |
+| `demoCameraEnd` | a camera cutscene the director queued is over | note it |
+| `gameSaved` | the save file is written (`TCardSave`'s pause menu save and prompt, auto save) | note it |
+| `timer` | the HUD's timer starts, stops (`TGCConsole2::startMoveTimer`, `stopMoveTimer`) or a countdown runs out (`setTimer`) | note it |
+| `scriptCall` | a stage's event script calls one of the game's functions (`TSpcInterp::dispatchBuiltin*`) | note it |
+| `mapEvent` | one of the stage's map events is set off (`TMapEvent::perform`: its goop cleaned) | note it |
+| `objectStomp` | the player stomps an object (`TMario::trampleExec`; `objectHit` is not asked for stomps) | return 1 to stop it |
 
 Every hook runs on the game thread inside the game's own steps, so an extension uses the game's globals (`gpApplication`, `gpMarDirector`, `gpMarioOriginal`, `TFlagManager`) as the game does there.
 With no extension switched on, each hook is a loop over nothing.

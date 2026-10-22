@@ -133,6 +133,7 @@ int advance()
 				return 0;
 			}
 			TFlagManager::getInstance()->saveSuccess();
+			port_ext_game_saved(s_slot); // other extensions hear of it
 			{
 				JSUMemoryOutputStream stream;
 				gpCardManager->getOptionWriteStream(&stream);

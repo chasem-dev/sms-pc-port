@@ -120,7 +120,126 @@ typedef struct PortExtension {
 	// FLUDD has no nozzle for is not taken), or return 1 to refuse it (a box
 	// is then not in the stage).
 	int (*playerNozzle)(void* mario, void* box, int* nozzle, int animate, int reason);
+	// TMario::changePlayerStatus on any TMario took a new status: `from` is
+	// the one he had, `to` the one he has now (after the game's own rewrite,
+	// a jump on a bouncy floor, say), with its argument. Also when a spin
+	// jump starts in the air (TMario::considerJumpRotate).
+	void (*playerStatusChanged)(void* mario, unsigned from, unsigned to, unsigned arg);
+	// TMario::incHP(*amount) on any TMario, or a pickup that fills his health
+	// at once (a 1-up, a Shine, his cap): the hook may change the amount, or
+	// return 1 to stop it. `air`: under water, air is gained, not health.
+	int (*playerHeal)(void* mario, int* amount, int air);
+	// A TMario has just lost his life (TMario::loserExec, or the stage's
+	// bottomless pit), for `cause` (PORT_DEATH_*), once per death.
+	void (*playerDeath)(void* mario, int cause);
+	// TMarDirector::setMario is about to put the player at the stage's start:
+	// `pos` (float[3]) and `yaw` (degrees), which the hook may change;
+	// `*hasPos` 0 when the stage puts him where its scene file does (the
+	// hook may set 1 to place him), `kind` the stage's way in (0 waiting, 1
+	// rolling, 2 returning, 4 the Pinna Park coaster).
+	void (*playerSpawn)(float* pos, float* yaw, int* hasPos, int kind);
+	// TMario::receiveMessage on any TMario: `sender` touched or hit him with
+	// `message` (HIT_MESSAGE_*: an enemy's attack, fire, an item taken...).
+	// Return 1 and he ignores it (receiveMessage returns false).
+	int (*playerMessage)(void* mario, void* sender, unsigned message);
+	// A TMario got on (on 1) or off (on 0) what he rides: PORT_MOUNT_YOSHI
+	// (`object` the TYoshi) or PORT_MOUNT_BLOOPER (the surf Blooper; null
+	// when getting off).
+	void (*playerMount)(void* mario, int mount, int on, void* object);
+	// A TMario went into the water (entered 1) or came out of it (0)
+	// (TMario::thinkWaterSurface), at the water's surface `surfaceY`.
+	void (*playerWater)(void* mario, int entered, float surfaceY);
+	// Yoshi (`yoshi`, a TYoshi): PORT_YOSHI_HATCH out of his egg (`fruit` the
+	// fruit's actor type that hatched him, or 0), PORT_YOSHI_EAT a fruit
+	// (`fruit` its actor type).
+	void (*yoshi)(void* yoshi, int what, unsigned fruit);
+	// An actor came into the stage while it is played: an enemy (re)placed
+	// by its manager or generator (TSpineEnemy::resetToPosition, resetSRTV),
+	// or an item made to appear (TMapObjBaseManager::makeObjAppear*), as a
+	// THitActor.
+	void (*actorSpawn)(void* actor);
+	// The hit objectHit (or objectStomp) let through has reached the object:
+	// `result` is what its receiveMessage returned. Each objectHit or
+	// objectStomp that returned 0 has one.
+	void (*objectHitDone)(void* object, void* sender, unsigned message, int result);
+	// An enemy was defeated (`forced` 0: its defeat's end, as it leaves its
+	// coins; a boss as it falls) or killed by the stage (`forced` 1: a pit,
+	// the death plane). `actor` is a THitActor.
+	void (*actorDeath)(void* actor, int forced);
+	// A TShine: PORT_SHINE_APPEAR it appears during play (an event's, a
+	// boss's, the red coins'), PORT_SHINE_GET the player took it (every
+	// time, a Shine the file has too). `shine` is a THitActor.
+	void (*shine)(void* shine, int what);
+	// TFlagManager::setFlag / incFlag is about to change save-file flag
+	// `flag` from `old` to `*value`, which the hook may change, or return 1
+	// to leave the flag as it is. Not for the loads and resets of the whole
+	// table (a file loaded, a stage's flags reset).
+	int (*flagChange)(unsigned flag, int old, int* value);
+	// A sound effect is about to start (MSoundSE::startSoundActorInner, every
+	// sound effect the game plays): `*id` (MSD_SE_*), which the hook may
+	// change, where (`pos` a float[3], or null), and whether it is a system
+	// sound (no place). Return 1 to leave it out. Many a frame.
+	int (*sound)(unsigned* id, const float* pos, int system);
+	// Music: MSBgm::startBGM(*id) is about to start a piece (start 1: the
+	// hook may change `*id`, or return 1 to leave it out), or
+	// MSBgm::stopTrackBGM is about to stop one (start 0).
+	int (*music)(unsigned* id, int start);
+	// A talk with an NPC (PORT_TALK_*): it starts (`npc` the TBaseNPC), a
+	// message is shown (`*message` its id, which the hook may change;
+	// `flags` bit 0 the talk's last), or it ends.
+	void (*talk)(int what, void* npc, unsigned* message, unsigned flags);
+	// A camera cutscene the director queued (fireStartDemoCamera) is over:
+	// its camera's name (null for an actor's), the actor, and whether it
+	// was cut short.
+	void (*demoCameraEnd)(const char* name, void* actor, int forced);
+	// The game was saved to file `slot` (the memory card's write is done:
+	// the pause menu's save, the save prompt, auto save).
+	void (*gameSaved)(int slot);
+	// The HUD's timer (PORT_TIMER_*): started (`time` the limit, hundredths
+	// of a second), stopped (`time` where it stopped), or a countdown ran
+	// out.
+	void (*timer)(int what, int time);
+	// A stage's event script calls one of the game's functions (`name`,
+	// "startTimer", "setNextStage"...; TSpcInterp::dispatchBuiltinDefault)
+	// with `argc` arguments, from `owner` (its TEventWatcher, or an actor:
+	// a JDrama::TNameRef).
+	// Many a frame: scripts poll.
+	void (*scriptCall)(const char* name, void* owner, int argc);
+	// One of the stage's map events is set off (TMapEvent::perform): its goop
+	// was cleaned and a building rises, a gate opens. `event` is the
+	// TMapEvent, as a JDrama::TNameRef.
+	void (*mapEvent)(void* event);
+	// The player stomps `object` (a THitActor; TMario::trampleExec, with
+	// HIT_MESSAGE_TRAMPLE from `mario`, as a THitActor). objectHit is not asked for stomps
+	// (multiplayer shares them its own way). Return 1 to stop it.
+	int (*objectStomp)(void* object, void* mario);
 } PortExtension;
+
+// playerDeath's causes (the mod API's SMS_DEATH_*)
+enum {
+	PORT_DEATH_OTHER,    // a script (a timed event failed), the coaster
+	PORT_DEATH_HEALTH,   // no health left
+	PORT_DEATH_DROWN,    // no air left
+	PORT_DEATH_PIT,      // a bottomless pit, the death plane
+	PORT_DEATH_GOOP,     // sinking goop, deadly goop
+	PORT_DEATH_ELECTRIC, // electric goop
+	PORT_DEATH_CRASH     // a Blooper crashed into a wall
+};
+
+// playerMount's mounts
+enum { PORT_MOUNT_YOSHI, PORT_MOUNT_BLOOPER };
+
+// yoshi's what
+enum { PORT_YOSHI_HATCH, PORT_YOSHI_EAT };
+
+// shine's what
+enum { PORT_SHINE_APPEAR, PORT_SHINE_GET };
+
+// talk's what
+enum { PORT_TALK_START, PORT_TALK_MESSAGE, PORT_TALK_END };
+
+// timer's what
+enum { PORT_TIMER_START, PORT_TIMER_STOP, PORT_TIMER_OUT };
 
 // playerNozzle's reasons (the mod API's SMS_NOZZLE_*)
 enum {
@@ -165,6 +284,35 @@ int port_ext_player_nozzle(void* mario, void* box, int* nozzle, int animate, int
 // While set, TWaterGun::changeNozzle does not ask playerNozzle: its caller
 // asked already (a stage's start), or it is a step of a swap that was asked.
 extern int port_ext_nozzle_asked;
+void port_ext_player_status_changed(void* mario, unsigned from, unsigned to, unsigned arg);
+int port_ext_player_heal(void* mario, int* amount, int air);
+void port_ext_player_death(void* mario, int cause);
+void port_ext_player_spawn(float* pos, float* yaw, int* hasPos, int kind);
+int port_ext_player_message(void* mario, void* sender, unsigned message);
+void port_ext_player_mount(void* mario, int mount, int on, void* object);
+void port_ext_player_water(void* mario, int entered, float surfaceY);
+void port_ext_yoshi(void* yoshi, int what, unsigned fruit);
+void port_ext_actor_spawn(void* actor);
+void port_ext_object_hit_done(void* object, void* sender, unsigned message, int result);
+void port_ext_actor_death(void* actor, int forced);
+void port_ext_shine(void* shine, int what);
+int port_ext_flag_change(unsigned flag, int old, int* value);
+int port_ext_sound(unsigned* id, const float* pos, int system);
+int port_ext_music(unsigned* id, int start);
+void port_ext_talk(int what, void* npc, unsigned* message, unsigned flags);
+void port_ext_demo_camera_end(const char* name, void* actor, int forced);
+void port_ext_game_saved(int slot);
+void port_ext_timer(int what, int time);
+void port_ext_script_call(const char* name, void* owner, int argc);
+void port_ext_map_event(void* event);
+int port_ext_object_stomp(void* object, void* mario);
+// What hurts the player as TMario::damageExec takes his health (the enemy,
+// or his own floor actor for the ground's damage), while it does; else null.
+extern void* port_ext_damage_source;
+// The cause the next playerDeath gives (PORT_DEATH_*), set just before
+// TMario::loserExec by a caller that knows it (sinking goop); OTHER: worked
+// out from Mario as he dies.
+extern int port_ext_death_cause;
 
 #ifdef __cplusplus
 }

@@ -41,6 +41,8 @@ SmsObject modg_find_object(const char* name);
 const char* modg_object_name(SmsObject obj);
 int modg_object_position(SmsObject obj, SmsVec3* out);
 int modg_object_set_position(SmsObject obj, const SmsVec3* pos);
+uint32_t modg_object_type(SmsObject obj);
+int modg_object_health(SmsObject obj, int* max);
 
 int modg_player_get(SmsPlayer* out);
 int modg_player_set_position(const SmsVec3* pos);

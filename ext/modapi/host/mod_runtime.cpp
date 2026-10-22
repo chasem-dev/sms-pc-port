@@ -352,6 +352,12 @@ bool cancellable(uint32_t type)
 	case SMS_EV_PLAYER_STATUS:
 	case SMS_EV_PLAYER_DAMAGE:
 	case SMS_EV_PLAYER_NOZZLE:
+	case SMS_EV_PLAYER_HEAL:
+	case SMS_EV_PLAYER_HIT:
+	case SMS_EV_FLAG_CHANGED:
+	case SMS_EV_SOUND:
+	case SMS_EV_MUSIC:
+	case SMS_EV_SAVE_PROMPT:
 		return true;
 	default:
 		return type >= SMS_EV_CUSTOM_BASE;
@@ -946,6 +952,7 @@ const SmsGameApi s_game = {
 	apiLives,           apiShines,       apiBlueCoins,        apiHasShine,           modg_warp,
 	modg_find_object,   modg_object_name, modg_object_position, modg_object_set_position, apiAreaName,
 	modg_cube_count,    apiInCube,       apiObjectCount,      apiObjectInfo,         apiGround,
+	modg_object_type,   modg_object_health,
 };
 
 int apiPlayerGet(SmsPlayer* out)

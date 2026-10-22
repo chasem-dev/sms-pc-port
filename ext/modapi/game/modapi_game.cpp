@@ -24,6 +24,8 @@
 #include <Map/Map.hpp>
 #include <MoveBG/Item.hpp>
 #include <MoveBG/ItemManager.hpp>
+#include <NPC/NpcBase.hpp>
+#include <Enemy/Enemy.hpp>
 #include <Player/Mario.hpp>
 #include <Player/MarioCap.hpp>
 #include <Player/WaterGun.hpp>
@@ -86,6 +88,7 @@ void setVec(SmsVec3* v, f32 x, f32 y, f32 z)
 // ------------------------------------------------------------------ hooks
 
 void stageStart();
+void watchModeAndPause();
 
 void frame()
 {
@@ -93,6 +96,7 @@ void frame()
 	if (gameMode() != SMS_MODE_STAGE)
 		s_stageReady = false;
 	stageStart();
+	watchModeAndPause();
 	modh_frame(s_frame++, gameMode());
 }
 
@@ -333,8 +337,11 @@ void objectMove(void* object, int after)
 	modh_dispatch(SMS_EV_OBJECT_MOVE, &ev, sizeof ev);
 }
 
+int objectHitNote(void* object, void* sender, unsigned message);
+
 int objectHit(void* object, void* sender, unsigned message)
 {
+	objectHitNote(object, sender, message);
 	if (!modh_wants(SMS_EV_OBJECT_HIT))
 		return 0;
 	SmsEvHit ev;
@@ -343,6 +350,9 @@ int objectHit(void* object, void* sender, unsigned message)
 	ev.message = message;
 	return modh_dispatch(SMS_EV_OBJECT_HIT, &ev, sizeof ev);
 }
+
+// A stomp: as any other of the player's hits, for mods (port_ext.h).
+int objectStomp(void* object, void* m) { return objectHit(object, m, HIT_MESSAGE_TRAMPLE); }
 
 // The field of view a mod gave the camera last tick, and the camera's own: the
 // camera's mFovy takes the mod's (the culling and the screen effects read it
@@ -424,17 +434,39 @@ int playerNozzle(void* m, void* box, int* nozzle, int animate, int reason)
 	return 0;
 }
 
+// What took the player's health last (for SMS_EV_PLAYER_DEATH), and when.
+SmsObject s_lastHurt;
+uint32_t s_lastHurtTick;
+
+SmsObject damageSource(TMario* p)
+{
+	THitActor* a = (THitActor*)port_ext_damage_source;
+	return a && a != p->getFloorHitActor() ? obj(a) : 0;
+}
+
 int playerDamage(void* m, int* amount)
 {
-	if (m != (void*)mario() || !modh_wants(SMS_EV_PLAYER_DAMAGE))
+	if (m != (void*)mario())
 		return 0;
 	TMario* p = (TMario*)m;
+	if (p->checkFlag(MARIO_FLAG_GAME_OVER))
+		return 0; // he has lost his life: the game goes on taking what is left
+	if (!modh_wants(SMS_EV_PLAYER_DAMAGE)) {
+		s_lastHurt     = damageSource(p);
+		s_lastHurtTick = s_tick;
+		return 0;
+	}
 	SmsEvDamage ev;
 	ev.amount     = *amount;
 	ev.underwater = p->isUnderWater() || p->checkFlag(MARIO_FLAG_HELMET_FLW_CAMERA);
+	ev.source     = ev.underwater ? 0 : damageSource(p);
 	if (modh_dispatch(SMS_EV_PLAYER_DAMAGE, &ev, sizeof ev))
 		return 1;
 	*amount = ev.amount;
+	if (ev.amount > 0 && !ev.underwater) {
+		s_lastHurt     = ev.source;
+		s_lastHurtTick = s_tick;
+	}
 	return 0;
 }
 
@@ -445,6 +477,455 @@ void shineCollected(int shine, int total)
 	ev.shine = shine;
 	ev.total = total;
 	modh_dispatch(SMS_EV_SHINE_COLLECTED, &ev, sizeof ev);
+}
+
+// ------------------------------------------------------------------ API 1.5 beta 2
+
+// An object the hooks hand over as a THitActor (port_ext.h), as mods get it.
+SmsObject hitObj(void* p) { return p ? obj((THitActor*)p) : 0; }
+
+void vecOf(SmsVec3* v, const JGeometry::TVec3<f32>& p) { setVec(v, p.x, p.y, p.z); }
+
+// The game mode and the pause, as they change (SMS_EV_MODE_CHANGED,
+// SMS_EV_PAUSE), from the top of each frame.
+int s_lastMode = -1, s_pauseKind = -1;
+
+int pauseKind()
+{
+	if (!paused())
+		return -1;
+	switch (gpMarDirector->mState) {
+	case TMarDirector::STATE_PAUSE_MENU:
+		return SMS_PAUSE_MENU;
+	case TMarDirector::STATE_GUIDE:
+		return SMS_PAUSE_MAP;
+	default:
+		return SMS_PAUSE_SAVE;
+	}
+}
+
+void watchModeAndPause()
+{
+	const int mode = gameMode();
+	if (mode != s_lastMode) {
+		if (s_lastMode >= 0 && modh_wants(SMS_EV_MODE_CHANGED)) {
+			SmsEvMode ev;
+			ev.from = s_lastMode;
+			ev.to   = mode;
+			modh_dispatch(SMS_EV_MODE_CHANGED, &ev, sizeof ev);
+		}
+		s_lastMode = mode;
+	}
+	const int kind = pauseKind();
+	if (kind != s_pauseKind) {
+		// a close first, then what opened (the pause menu to its save screen)
+		if (s_pauseKind >= 0) {
+			SmsEvPause ev;
+			ev.paused = 0;
+			ev.kind   = s_pauseKind;
+			modh_dispatch(SMS_EV_PAUSE, &ev, sizeof ev);
+		}
+		if (kind >= 0) {
+			SmsEvPause ev;
+			ev.paused = 1;
+			ev.kind   = kind;
+			modh_dispatch(SMS_EV_PAUSE, &ev, sizeof ev);
+		}
+		s_pauseKind = kind;
+	}
+}
+
+// The jumps SMS_EV_PLAYER_JUMP tells of (MarioStatus.hpp): a status Mario
+// leaves the ground with, not the ones he goes on with in the air.
+bool isJump(u32 status)
+{
+	switch (status) {
+	case 0x02000880: // jump
+	case 0x02000881: // second jump
+	case 0x00000882: // triple jump
+	case 0x00000883: // back flip
+	case 0x00000884: // bounced off a springy floor
+	case 0x02000886: // wall jump
+	case 0x00000887: // side flip
+	case 0x00000888: // long jump
+	case 0x02000889: // spinning long jump
+	case 0x0080088A: // dive (out of a run)
+	case 0x0000088B: // rocket
+	case 0x02000890: // a stomp's bounce
+	case 0x00000891: // dive
+	case 0x00000892: // off a wire
+	case 0x00000893: // off a wire, spinning
+	case 0x00000894: // pulled up
+	case 0x00000895: // spin jump
+	case 0x00000896: // spin jump
+	case 0x0000089C: // off Yoshi, flying
+	case 0x0281089A: // a Blooper's jump
+		return true;
+	default:
+		return false;
+	}
+}
+
+// MARIO_STATUS_LANDING, MARIO_STATUS_ROCKET_LANDING: on the ground, landing
+bool isLanding(u32 status) { return status == 0x88C || status == 0x88D; }
+
+void playerStatusChanged(void* m, unsigned from, unsigned to, unsigned arg)
+{
+	if (m != (void*)mario())
+		return;
+	TMario* p = (TMario*)m;
+	if (modh_wants(SMS_EV_PLAYER_STATUS_CHANGED)) {
+		SmsEvPlayerStatus ev;
+		ev.from   = from;
+		ev.to     = to;
+		ev.arg    = arg;
+		ev.forced = 0;
+		modh_dispatch(SMS_EV_PLAYER_STATUS_CHANGED, &ev, sizeof ev);
+	}
+	if (isJump(to) && to != from && modh_wants(SMS_EV_PLAYER_JUMP)) {
+		SmsEvPlayerJump ev;
+		ev.status = to;
+		ev.from   = from;
+		vecOf(&ev.position, p->mPosition);
+		vecOf(&ev.velocity, p->mVel);
+		modh_dispatch(SMS_EV_PLAYER_JUMP, &ev, sizeof ev);
+	}
+	// out of the air onto the ground (not into the water: SMS_EV_PLAYER_WATER);
+	// a landing's own statuses (0x88C, 0x88D) are on the ground already
+	if ((from & 0x800) && !isLanding(from) && (!(to & 0x800) || isLanding(to)) && !(to & 0x2000)
+	    && !p->checkFlag(MARIO_FLAG_GAME_OVER) && modh_wants(SMS_EV_PLAYER_LAND)) {
+		SmsEvPlayerLand ev;
+		ev.status = to;
+		ev.from   = from;
+		ev.fall   = p->unk104 - p->mPosition.y;
+		if (ev.fall < 0.0f)
+			ev.fall = 0.0f;
+		ev.speed = p->unkBC < 0.0f ? -p->unkBC : 0.0f;
+		vecOf(&ev.position, p->mPosition);
+		modh_dispatch(SMS_EV_PLAYER_LAND, &ev, sizeof ev);
+	}
+	// off a Blooper: the status leaves its riding ones (bit 0x10000)
+	if ((from & 0x10000) && !(to & 0x10000) && modh_wants(SMS_EV_PLAYER_MOUNT)) {
+		SmsEvPlayerMount ev;
+		ev.mount  = SMS_MOUNT_BLOOPER;
+		ev.on     = 0;
+		ev.object = 0;
+		ev.color  = -1;
+		modh_dispatch(SMS_EV_PLAYER_MOUNT, &ev, sizeof ev);
+	}
+}
+
+int playerHeal(void* m, int* amount, int air)
+{
+	if (m != (void*)mario() || !modh_wants(SMS_EV_PLAYER_HEAL))
+		return 0;
+	SmsEvDamage ev;
+	ev.amount     = *amount;
+	ev.underwater = air;
+	ev.source     = 0;
+	if (modh_dispatch(SMS_EV_PLAYER_HEAL, &ev, sizeof ev))
+		return 1;
+	*amount = ev.amount;
+	return 0;
+}
+
+void playerDeath(void* m, int cause)
+{
+	if (m != (void*)mario())
+		return;
+	TMario* p = (TMario*)m;
+	SmsEvPlayerDeath ev;
+	ev.cause = cause;
+	vecOf(&ev.position, p->mPosition);
+	ev.source = cause == SMS_DEATH_HEALTH && s_lastHurtTick + 2 >= s_tick ? s_lastHurt : 0;
+	modh_dispatch(SMS_EV_PLAYER_DEATH, &ev, sizeof ev);
+}
+
+void playerSpawn(float* pos, float* yaw, int* hasPos, int kind)
+{
+	if (!modh_wants(SMS_EV_PLAYER_SPAWN))
+		return;
+	SmsEvPlayerSpawn ev;
+	setVec(&ev.position, pos[0], pos[1], pos[2]);
+	ev.yaw          = *yaw;
+	ev.has_position = *hasPos;
+	ev.kind         = kind;
+	modh_dispatch(SMS_EV_PLAYER_SPAWN, &ev, sizeof ev);
+	if (kind == SMS_START_COASTER)
+		return;
+	pos[0]  = ev.position.x;
+	pos[1]  = ev.position.y;
+	pos[2]  = ev.position.z;
+	*yaw    = ev.yaw;
+	*hasPos = ev.has_position ? 1 : 0;
+}
+
+int playerMessage(void* m, void* sender, unsigned message)
+{
+	if (m != (void*)mario() || !sender || !modh_wants(SMS_EV_PLAYER_HIT))
+		return 0;
+	SmsEvHit ev;
+	ev.object  = obj((TMario*)m);
+	ev.sender  = obj((THitActor*)sender);
+	ev.message = message;
+	return modh_dispatch(SMS_EV_PLAYER_HIT, &ev, sizeof ev);
+}
+
+void playerMount(void* m, int mount, int on, void* object)
+{
+	if (m != (void*)mario() || !modh_wants(SMS_EV_PLAYER_MOUNT))
+		return;
+	TMario* p = (TMario*)m;
+	SmsEvPlayerMount ev;
+	ev.mount  = mount == PORT_MOUNT_YOSHI ? SMS_MOUNT_YOSHI : SMS_MOUNT_BLOOPER;
+	ev.on     = on;
+	ev.object = mount == PORT_MOUNT_BLOOPER ? hitObj(object) : 0;
+	ev.color  = !on                         ? -1
+	            : mount == PORT_MOUNT_YOSHI ? (object ? ((TYoshi*)object)->mType : -1)
+	                                        : (int)p->mSurfGessoType;
+	modh_dispatch(SMS_EV_PLAYER_MOUNT, &ev, sizeof ev);
+}
+
+void playerWater(void* m, int entered, float surfaceY)
+{
+	if (m != (void*)mario() || !modh_wants(SMS_EV_PLAYER_WATER))
+		return;
+	SmsEvPlayerWater ev;
+	ev.entered   = entered;
+	ev.surface_y = surfaceY;
+	vecOf(&ev.position, ((TMario*)m)->mPosition);
+	modh_dispatch(SMS_EV_PLAYER_WATER, &ev, sizeof ev);
+}
+
+void yoshi(void* y, int what, unsigned fruit)
+{
+	const uint32_t type = what == PORT_YOSHI_HATCH ? SMS_EV_YOSHI_HATCH : SMS_EV_YOSHI_EAT;
+	if (!y || !modh_wants(type))
+		return;
+	TYoshi* yo = (TYoshi*)y;
+	SmsEvYoshi ev;
+	ev.fruit = fruit;
+	ev.color = yo->mType;
+	vecOf(&ev.position, yo->mTranslation);
+	modh_dispatch(type, &ev, sizeof ev);
+}
+
+void actorSpawn(void* a)
+{
+	if (!a || !modh_wants(SMS_EV_ACTOR_SPAWN))
+		return;
+	THitActor* h = (THitActor*)a;
+	SmsEvActor ev;
+	ev.object     = obj(h);
+	ev.actor_type = h->getActorType();
+	vecOf(&ev.position, h->mPosition);
+	ev.other  = 0;
+	ev.forced = 0;
+	modh_dispatch(SMS_EV_ACTOR_SPAWN, &ev, sizeof ev);
+}
+
+// The player's hits: an enemy's health before each (SMS_EV_ACTOR_DAMAGE), and
+// the last hit on each enemy (SMS_EV_ACTOR_DEATH's `other`), a few of each.
+struct HitNote {
+	THitActor* object;
+	THitActor* sender;
+	int health;
+};
+enum { kHitNotes = 16 };
+HitNote s_hits[kHitNotes];
+int s_nextHit;
+
+HitNote* hitNote(THitActor* o)
+{
+	for (int i = 0; i < kHitNotes; i++)
+		if (s_hits[i].object == o)
+			return &s_hits[i];
+	return 0;
+}
+
+int objectHitNote(void* object, void* sender, unsigned)
+{
+	if (!object || !(modh_wants(SMS_EV_ACTOR_DAMAGE) || modh_wants(SMS_EV_ACTOR_DEATH)))
+		return 0;
+	THitActor* h   = (THitActor*)object;
+	TSpineEnemy* e = dynamic_cast<TSpineEnemy*>(h);
+	if (!e)
+		return 0;
+	HitNote* n = hitNote(h);
+	if (!n) {
+		n = &s_hits[s_nextHit];
+		s_nextHit = (s_nextHit + 1) % kHitNotes;
+	}
+	n->object = h;
+	n->sender = (THitActor*)sender;
+	n->health = e->getHitPoints();
+	return 0; // only noted: modapi's objectHit sends SMS_EV_OBJECT_HIT
+}
+
+void objectHitDone(void* object, void* sender, unsigned message, int)
+{
+	if (!object || !modh_wants(SMS_EV_ACTOR_DAMAGE))
+		return;
+	THitActor* h   = (THitActor*)object;
+	HitNote* n     = hitNote(h);
+	TSpineEnemy* e = n ? dynamic_cast<TSpineEnemy*>(h) : 0;
+	if (!e || e->getHitPoints() >= n->health)
+		return;
+	SmsEvActorDamage ev;
+	ev.object        = obj(h);
+	ev.attacker      = sender ? obj((THitActor*)sender) : 0;
+	ev.actor_type    = h->getActorType();
+	ev.message       = message;
+	ev.health_before = n->health;
+	ev.health        = e->getHitPoints();
+	ev.max_health    = e->getSaveParam() ? (int)e->getSaveParam()->mSLHitPointMax.get() : ev.health_before;
+	vecOf(&ev.position, h->mPosition);
+	n->health = ev.health;
+	modh_dispatch(SMS_EV_ACTOR_DAMAGE, &ev, sizeof ev);
+}
+
+void actorDeath(void* a, int forced)
+{
+	if (!a)
+		return;
+	THitActor* h = (THitActor*)a;
+	HitNote* n   = hitNote(h);
+	if (modh_wants(SMS_EV_ACTOR_DEATH)) {
+		SmsEvActor ev;
+		ev.object     = obj(h);
+		ev.actor_type = h->getActorType();
+		vecOf(&ev.position, h->mPosition);
+		ev.other  = n && n->sender ? obj(n->sender) : 0;
+		ev.forced = forced;
+		modh_dispatch(SMS_EV_ACTOR_DEATH, &ev, sizeof ev);
+	}
+	if (n)
+		n->object = 0;
+}
+
+void shine(void* p, int what)
+{
+	const uint32_t type = what == PORT_SHINE_APPEAR ? SMS_EV_SHINE_APPEAR : SMS_EV_SHINE_GET;
+	if (!p || !modh_wants(type))
+		return;
+	TShine* sh = (TShine*)(THitActor*)p;
+	SmsEvShineActor ev;
+	ev.object = obj(sh);
+	ev.shine  = (int)sh->getEventId();
+	ev.had    = TFlagManager::getInstance()->getShineFlag((u8)ev.shine) ? 1 : 0;
+	vecOf(&ev.position, sh->mPosition);
+	modh_dispatch(type, &ev, sizeof ev);
+}
+
+int flagChange(unsigned flag, int old, int* value)
+{
+	if (!modh_wants(SMS_EV_FLAG_CHANGED))
+		return 0;
+	SmsEvFlag ev;
+	ev.id    = flag;
+	ev.old   = old;
+	ev.value = *value;
+	if (modh_dispatch(SMS_EV_FLAG_CHANGED, &ev, sizeof ev))
+		return 1;
+	*value = ev.value;
+	return 0;
+}
+
+int sound(unsigned* id, const float* pos, int system)
+{
+	if (!modh_wants(SMS_EV_SOUND))
+		return 0;
+	SmsEvSound ev;
+	ev.id           = *id;
+	ev.system       = system;
+	ev.has_position = pos != 0;
+	if (pos)
+		setVec(&ev.position, pos[0], pos[1], pos[2]);
+	else
+		setVec(&ev.position, 0, 0, 0);
+	if (modh_dispatch(SMS_EV_SOUND, &ev, sizeof ev))
+		return 1;
+	*id = ev.id;
+	return 0;
+}
+
+int music(unsigned* id, int start)
+{
+	if (!modh_wants(SMS_EV_MUSIC))
+		return 0;
+	SmsEvMusic ev;
+	ev.id    = *id;
+	ev.start = start;
+	if (modh_dispatch(SMS_EV_MUSIC, &ev, sizeof ev) && start)
+		return 1;
+	if (start)
+		*id = ev.id;
+	return 0;
+}
+
+void talk(int what, void* npc, unsigned* message, unsigned flags)
+{
+	if (!modh_wants(SMS_EV_TALK))
+		return;
+	SmsEvTalk ev;
+	ev.what    = what == PORT_TALK_START ? SMS_TALK_START : what == PORT_TALK_MESSAGE ? SMS_TALK_MESSAGE : SMS_TALK_END;
+	ev.npc     = npc ? obj((TBaseNPC*)npc) : 0;
+	ev.message = message ? *message : 0;
+	ev.last    = what == PORT_TALK_MESSAGE && (flags & 1) ? 1 : 0;
+	modh_dispatch(SMS_EV_TALK, &ev, sizeof ev);
+	if (message)
+		*message = ev.message;
+}
+
+void demoCameraEnd(const char* name, void* actor, int forced)
+{
+	if (!modh_wants(SMS_EV_CUTSCENE_END))
+		return;
+	SmsEvCutsceneEnd ev;
+	ev.name   = name ? name : "";
+	ev.actor  = actor ? obj((JDrama::TActor*)actor) : 0;
+	ev.forced = forced;
+	modh_dispatch(SMS_EV_CUTSCENE_END, &ev, sizeof ev);
+}
+
+void gameSaved(int slot)
+{
+	SmsEvGameSaved ev;
+	ev.file = slot;
+	modh_dispatch(SMS_EV_GAME_SAVED, &ev, sizeof ev);
+}
+
+void timer(int what, int time)
+{
+	SmsEvTimer ev;
+	ev.what = what == PORT_TIMER_START ? SMS_TIMER_STARTED : what == PORT_TIMER_STOP ? SMS_TIMER_STOPPED : SMS_TIMER_OUT;
+	ev.time = time;
+	modh_dispatch(SMS_EV_TIMER, &ev, sizeof ev);
+}
+
+void scriptCall(const char* name, void* owner, int argc)
+{
+	if (!modh_wants(SMS_EV_SCRIPT_CALL))
+		return;
+	SmsEvScriptCall ev;
+	ev.name  = name ? name : "";
+	ev.owner = owner ? obj((JDrama::TNameRef*)owner) : 0;
+	ev.argc  = argc;
+	modh_dispatch(SMS_EV_SCRIPT_CALL, &ev, sizeof ev);
+}
+
+void mapEvent(void* event)
+{
+	SmsEvObject ev;
+	ev.object = event ? obj((JDrama::TNameRef*)event) : 0;
+	modh_dispatch(SMS_EV_MAP_EVENT, &ev, sizeof ev);
+}
+
+int savePrompt(int kind)
+{
+	SmsEvSavePrompt ev;
+	ev.kind = kind;
+	return modh_dispatch(SMS_EV_SAVE_PROMPT, &ev, sizeof ev);
 }
 
 // Filled by name, so a hook added to PortExtension anywhere (main's
@@ -481,6 +962,29 @@ struct Register {
 		e.playerDamage        = playerDamage;
 		e.playerNozzle        = playerNozzle;
 		e.shineCollected      = shineCollected;
+		e.playerStatusChanged = playerStatusChanged;
+		e.playerHeal          = playerHeal;
+		e.playerDeath         = playerDeath;
+		e.playerSpawn         = playerSpawn;
+		e.playerMessage       = playerMessage;
+		e.playerMount         = playerMount;
+		e.playerWater         = playerWater;
+		e.yoshi               = yoshi;
+		e.actorSpawn          = actorSpawn;
+		e.objectHitDone       = objectHitDone;
+		e.actorDeath          = actorDeath;
+		e.shine               = shine;
+		e.flagChange          = flagChange;
+		e.sound               = sound;
+		e.music               = music;
+		e.talk                = talk;
+		e.demoCameraEnd       = demoCameraEnd;
+		e.gameSaved           = gameSaved;
+		e.timer               = timer;
+		e.scriptCall          = scriptCall;
+		e.mapEvent            = mapEvent;
+		e.savePrompt          = savePrompt;
+		e.objectStomp         = objectStomp;
 		port_ext_register(&s_extension);
 	}
 } s_register;
@@ -576,6 +1080,22 @@ extern "C" int modg_object_position(SmsObject o, SmsVec3* out)
 		return 0;
 	setVec(out, p->mPosition.x, p->mPosition.y, p->mPosition.z);
 	return 1;
+}
+
+extern "C" uint32_t modg_object_type(SmsObject o)
+{
+	THitActor* h = o ? dynamic_cast<THitActor*>(ref(o)) : 0;
+	return h ? h->getActorType() : 0;
+}
+
+extern "C" int modg_object_health(SmsObject o, int* max)
+{
+	TSpineEnemy* e = o ? dynamic_cast<TSpineEnemy*>(ref(o)) : 0;
+	if (!e)
+		return -1;
+	if (max)
+		*max = e->getSaveParam() ? (int)e->getSaveParam()->mSLHitPointMax.get() : e->getHitPoints();
+	return e->getHitPoints();
 }
 
 extern "C" int modg_object_set_position(SmsObject o, const SmsVec3* pos)
