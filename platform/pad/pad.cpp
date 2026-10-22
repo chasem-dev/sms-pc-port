@@ -100,6 +100,11 @@ __attribute__((weak)) int GXPC_RequestQuit(void);
 //   SMS_MOUSE_ORBIT=0          the mouse's up/down acts as the C-stick's again
 //                              (nearer and lower, or further and higher) instead
 //                              of tilting the camera around Mario
+//   SMS_CSTICK_ORBIT=1         the C-stick's up/down tilts the camera around Mario
+//                              as the mouse's does, instead of moving it nearer or
+//                              further; holding CAMERA_ZOOM (the right stick's
+//                              press) moves it nearer or further again
+//                              (decomp-patches/zzz-camera-06-cstick-orbit.patch)
 // and the mouse wheel zooms the camera in and out (decomp-patches/zzz-camera-02).
 extern "C" {
 int port_free_camera      = 0;
@@ -115,6 +120,9 @@ f32 port_camera_speed_y   = 1.0f;
 // and the tilt so far in s16 angle units (the camera keeps it in range).
 int port_mouse_orbit         = 1;
 f32 port_camera_mouse_pitch  = 0.0f;
+// C-stick orbit (zzz-camera-06): whether the C-stick's up/down tilts the camera
+// this frame (the setting, unless CAMERA_ZOOM is held). The tilt is the mouse's.
+int port_cstick_orbit        = 0;
 // The camera's distance from Mario as a share of the game's own, which the
 // mouse wheel sets: it eases toward the wheel's choice.
 f32 port_camera_zoom         = 1.0f;
@@ -136,14 +144,14 @@ enum Control {
 	C_DUP, C_DDOWN, C_DLEFT, C_DRIGHT,
 	C_UP, C_DOWN, C_LEFT, C_RIGHT,
 	C_CUP, C_CDOWN, C_CLEFT, C_CRIGHT,
-	C_HALF, C_QUIT, C_LSOFT, C_RSOFT, C_SAVESTATE, C_LOADSTATE, C_MAP, C_COUNT
+	C_HALF, C_QUIT, C_LSOFT, C_RSOFT, C_SAVESTATE, C_LOADSTATE, C_MAP, C_CZOOM, C_COUNT
 };
 const char* const kControlNames[C_COUNT] = {
 	"A", "B", "X", "Y", "Z", "L", "R", "START",
 	"DPAD_UP", "DPAD_DOWN", "DPAD_LEFT", "DPAD_RIGHT",
 	"STICK_UP", "STICK_DOWN", "STICK_LEFT", "STICK_RIGHT",
 	"CSTICK_UP", "CSTICK_DOWN", "CSTICK_LEFT", "CSTICK_RIGHT",
-	"HALF_TILT", "QUIT", "L_SOFT", "R_SOFT", "SAVE_STATE", "LOAD_STATE", "MAP",
+	"HALF_TILT", "QUIT", "L_SOFT", "R_SOFT", "SAVE_STATE", "LOAD_STATE", "MAP", "CAMERA_ZOOM",
 };
 // SAVE_STATE / LOAD_STATE are the port's, not the GameCube's: a press saves a
 // save state, or loads the newest (port_savestate.h). Their bindings are often
@@ -152,6 +160,10 @@ const char* const kControlNames[C_COUNT] = {
 // MAP is the port's too: a press opens or closes the radar's full map
 // (src/radar.cpp), counted in port_radar_map_presses.
 bool is_port_action(int c) { return c == C_SAVESTATE || c == C_LOADSTATE || c == C_MAP; }
+// CAMERA_ZOOM is the port's as well, and no button of the game's: with C-stick
+// orbit on (SMS_CSTICK_ORBIT), holding it gives the C-stick's up and down back
+// its own job of moving the camera nearer or further. The right stick's press
+// (PAD_RSTICK) by default; no key, as the mouse wheel zooms.
 // L_SOFT / R_SOFT press L or R part of the way, analog only (no digital click):
 // a light press, as on a GameCube trigger before it clicks. How far, 0..255,
 // from SMS_SOFT_TRIGGER (percent, default 95: as far as a trigger goes without
@@ -257,6 +269,7 @@ const struct { int control, source; } kDefaultPad[] = {
 	{ C_START, 6 }, { C_DUP, 11 }, { C_DDOWN, 12 }, { C_DLEFT, 13 }, { C_DRIGHT, 14 },
 	{ C_SAVESTATE, combo(9, 10) }, // L1 + R1 (LB + RB)
 	{ C_MAP, 4 },                  // Back (View, Select, Share)
+	{ C_CZOOM, 8 },                // the right stick's press
 };
 bool g_inited;
 // SMS_CAMERA_INVERT_X / SMS_CAMERA_INVERT_Y=1 flip the C-stick, which only
@@ -265,6 +278,8 @@ bool g_invert_cx, g_invert_cy;
 // SMS_CLOSE_CAMERA_CSTICK=1 (port_close_camera_cstick), SMS_CLOSE_CAMERA_MOUSE=0
 // (port_close_camera_mouse)
 bool g_closeCameraCStick, g_closeCameraMouse = true;
+// SMS_CSTICK_ORBIT=1 (port_cstick_orbit, while CAMERA_ZOOM is not held)
+bool g_cstickOrbit;
 // mouse look (see above): its speed, and the motion not yet given to the camera
 float g_mouseSens = 1.0f;
 int g_mouseDX, g_mouseDY;
@@ -645,6 +660,9 @@ void init()
 		g_closeCameraMouse = !*e || env_on("SMS_CLOSE_CAMERA_MOUSE");
 	if (!g_closeCameraMouse)
 		port_log("[pad] mouse look leaves the close-up camera alone\n");
+	g_cstickOrbit = env_on("SMS_CSTICK_ORBIT");
+	if (g_cstickOrbit)
+		port_log("[pad] the C-stick's up and down tilts the camera (CAMERA_ZOOM held: nearer or further)\n");
 	if (g_invert_cx || g_invert_cy)
 		port_log("[pad] camera inverted:%s%s\n", g_invert_cx ? " X" : "", g_invert_cy ? " Y" : "");
 	const char* path = getenv("SMS_BINDINGS");
@@ -900,6 +918,7 @@ extern "C" u32 PADRead(PADStatus* status)
 		port_camera_invert_y     = 0;
 		port_close_camera_cstick = 0;
 		port_close_camera_mouse  = 0;
+		port_cstick_orbit        = 0;
 		return PAD_CHAN0_BIT;
 	}
 	init();
@@ -919,6 +938,7 @@ extern "C" u32 PADRead(PADStatus* status)
 		status[i].err = i == 0 ? PAD_ERR_NONE : PAD_ERR_NO_CONTROLLER;
 	}
 	combo_masks();
+	port_cstick_orbit = g_cstickOrbit && !held(C_CZOOM);
 	if (port_camera_mouse_busy > 0)
 		port_camera_mouse_busy--;
 	const bool blocked = GXPC_GameInputBlocked && GXPC_GameInputBlocked();
@@ -1135,6 +1155,8 @@ int close_mouse_get() { return g_closeCameraMouse; }
 int close_mouse_set(int v) { g_closeCameraMouse = v != 0; return 1; }
 int free_camera_get() { return port_free_camera != 0; }
 int free_camera_set(int v) { port_free_camera = v != 0; return 1; }
+int cstick_orbit_get() { return g_cstickOrbit; }
+int cstick_orbit_set(int v) { g_cstickOrbit = v != 0; return 1; }
 
 int camera_speed_count() { return camera_speed_list().n; }
 const char* camera_speed_name(int i) { return percent_name(camera_speed_list(), i); }
@@ -1210,6 +1232,9 @@ const PortSetting kPadSettings[] = {
 	{ "freeCamera", PORT_SETTINGS_PAGE_GAMEPLAY, 60, "Free Camera",
 	  "The camera stays where you put it instead of swinging back behind Mario.", 0, NULL, off_on_count,
 	  off_on_name, free_camera_get, free_camera_set },
+	{ "cstickOrbit", PORT_SETTINGS_PAGE_GAMEPLAY, 65, "C-Stick Tilts Camera",
+	  "Up and down tilts the camera, as the mouse does. Hold the stick in to zoom.", 0, NULL, off_on_count,
+	  off_on_name, cstick_orbit_get, cstick_orbit_set },
 	{ "cameraSpeed", PORT_SETTINGS_PAGE_GAMEPLAY, 70, "Camera Speed",
 	  "How fast the C-stick turns the camera. 100 is the original speed.", 0, NULL, camera_speed_count,
 	  camera_speed_name, camera_speed_get, camera_speed_set },

@@ -820,6 +820,7 @@ static const struct {
 	{ "texture_pack_upload_mb", "SMS_TEXTURE_PACK_UPLOAD_MB" },
 	{ "shader_warmup", "SMS_GX_SHADER_WARMUP" },
 	{ "hd_cutscenes", "SMS_HD_CUTSCENES" }, // follows HD textures; 0 disables
+	{ "eclipse_sunshine_movies", "SMS_ECLIPSE_SUNSHINE_MOVIES" }, // Sunshine disc for Eclipse's movies; 0 for none
 	{ "widescreen", "SMS_WIDESCREEN" },
 	{ "widescreen_hud", "SMS_WIDESCREEN_HUD" }, // centre or edges
 	{ "frame_rate", "SMS_FRAME_RATE" },         // 30, 60 (default), or 120
@@ -879,6 +880,8 @@ static const struct {
 	{ "mouse_sensitivity", "SMS_MOUSE_SENSITIVITY" }, // percent
 	{ "mouse_orbit", "SMS_MOUSE_ORBIT" },             // mouse up/down tilts the camera around Mario
 	{ "close_camera_mouse", "SMS_CLOSE_CAMERA_MOUSE" }, // mouse look turns (and aims in) the Y close-up camera
+	{ "raw_mouse", "SMS_MOUSE_RAW" },                 // raw mouse input; off follows the system's pointer speed
+	{ "cstick_orbit", "SMS_CSTICK_ORBIT" },           // C-stick up/down tilts the camera around Mario
 	{ "background_input", "SMS_BACKGROUND_INPUT" },   // keep input while another window has focus
 	{ "rumble", "SMS_RUMBLE" },                       // controller rumble, on by default
 	{ "rumble_strength", "SMS_RUMBLE_STRENGTH" },     // percent
@@ -1014,6 +1017,7 @@ extern "C" void port_init(int argc, char** argv)
 	port_os_init();
 	port_dvd_init();
 	port_window_icon_init();
+	port_window_title_init();
 	port_noaudio_init();
 	port_vi_init();
 	port_log("[port] platform ready\n");

@@ -5,6 +5,8 @@
 #           CSTICK_UP CSTICK_DOWN CSTICK_LEFT CSTICK_RIGHT HALF_TILT QUIT
 #           SAVE_STATE LOAD_STATE (save a save state, load the newest)
 #           MAP (open or close the radar's full map)
+#           CAMERA_ZOOM (held, with cstick_orbit on: the C-stick's up and
+#           down zoom as on the GameCube; PAD_RSTICK by default)
 #           L_SOFT R_SOFT (a light L or R press, no click; SMS_SOFT_TRIGGER
 #           sets how far, default 95%)
 # Keys: letters, digits, ENTER ESC SPACE TAB BACKSPACE UP DOWN LEFT RIGHT
@@ -20,7 +22,8 @@
 # control's keys and its buttons replace its controller buttons, so
 # "A = PAD_Y" keeps the left click. The controller defaults: A B X Y = PAD_A
 # PAD_B PAD_X PAD_Y, Z = PAD_RB, L R = PAD_LT PAD_RT (analog), START =
-# PAD_START, DPAD_* = PAD_DP*, SAVE_STATE = PAD_LB+PAD_RB, MAP = PAD_BACK.
+# PAD_START, DPAD_* = PAD_DP*, SAVE_STATE = PAD_LB+PAD_RB, MAP = PAD_BACK,
+# CAMERA_ZOOM = PAD_RSTICK.
 # The sticks always move the sticks. FIRST+SECOND (PAD_LB+PAD_RB, LCTRL+S) is
 # two keys or two buttons held together.
 # Loaded from ./bindings.txt (run.sh starts the game in this folder; or

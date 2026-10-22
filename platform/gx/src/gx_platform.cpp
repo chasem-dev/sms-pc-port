@@ -85,8 +85,9 @@ int s_vsync = 0;
 std::atomic<int> s_fullscreenRequest{-1};  // the settings menu's: 1 fullscreen, 0 window, -1 none; the event pump applies it
 // The same, for the rest of what the settings menu changes in the window: the fullscreen type (1 exclusive,
 // 0 borderless), the exclusive size (width << 16 | height, 0 for the desktop's), the display to be on, and
-// mouse look (1 on, 0 off); -1 for none. The event pump applies them.
-std::atomic<int> s_exclusiveRequest{-1}, s_sizeRequest{-1}, s_displayRequest{-1}, s_mouseLookRequest{-1};
+// mouse look and raw mouse input (1 on, 0 off); -1 for none. The event pump applies them.
+std::atomic<int> s_exclusiveRequest{-1}, s_sizeRequest{-1}, s_displayRequest{-1}, s_mouseLookRequest{-1},
+    s_rawMouseRequest{-1};
 std::atomic<bool> s_settingsMenuOpen{false};  // GXPC_SettingsMenuOpen: the game's settings menu is up
 uint32_t s_frame = 0;
 // SMS_GX_BACKEND=vulkan (or --vulkan): the renderer's GL calls go to glvk
@@ -150,6 +151,7 @@ std::mutex& s_padLock = *new std::mutex;  // held while a controller is rumbled 
 #endif
 std::vector<uint8_t> s_icon;  // GXPC_SetWindowIcon, RGBA8
 int s_iconW = 0, s_iconH = 0;
+std::string s_title = "Super Mario Sunshine";  // GXPC_SetWindowTitle
 
 double nowSeconds() { return gx::monoSeconds(); }
 
@@ -182,10 +184,47 @@ void waitSimulatedRefresh() {
 // always frees it.
 bool s_mouseCamera = false, s_mouseCaptured = false, s_mouseReleased = false;
 
+// SMS_MOUSE_RAW: raw mouse input, on unless 0. Off, mouse look follows the
+// system's pointer speed and acceleration, as the desktop's cursor does, which
+// some laptops' touchpads and mice need to feel right. SDL2 decides how
+// relative mode reads the mouse when it is turned on (captureMouse), from hints:
+// - Windows: raw input either way; off, SDL scales it with the system's pointer
+//   speed and Enhance pointer precision curve (SDL_MOUSE_RELATIVE_SYSTEM_SCALE,
+//   SDL 2.26 and later; SDL3 under sdl2-compat reads the same hint).
+// - X11: on, XInput2's raw motion; off, the cursor's own motion, kept in the
+//   window by moving it back to the middle (SDL_MOUSE_RELATIVE_MODE_WARP).
+// Elsewhere it changes nothing: SDL2's Wayland backend only takes the
+// compositor's unaccelerated motion, and macOS's motion is the cursor's anyway.
+// A hint set in the environment wins (SDL_SetHint does not override it).
+bool s_rawMouse = true;
+bool rawMouseMatters();  // below, with the video driver
+
+void setMouseHints() {
+#ifdef _WIN32
+#ifdef SDL_HINT_MOUSE_RELATIVE_SYSTEM_SCALE
+    SDL_SetHint(SDL_HINT_MOUSE_RELATIVE_SYSTEM_SCALE, s_rawMouse ? "0" : "1");
+#endif
+#else
+    if (rawMouseMatters()) SDL_SetHint(SDL_HINT_MOUSE_RELATIVE_MODE_WARP, s_rawMouse ? "0" : "1");
+#endif
+}
+
 void captureMouse(bool on) {
     if (!s_mouseCamera) on = false;
     if (on == s_mouseCaptured) return;
+    if (on) setMouseHints();
     if (SDL_SetRelativeMouseMode(on ? SDL_TRUE : SDL_FALSE) == 0) s_mouseCaptured = on;
+}
+
+// Raw mouse input on or off while the game runs (the settings menu's): a captured mouse is let go and
+// taken again, as relative mode reads the hints only when it starts.
+void applyRawMouse(bool on) {
+    if (on == s_rawMouse) return;
+    s_rawMouse = on;
+    logmsg("raw mouse input %s%s", on ? "on" : "off", rawMouseMatters() ? "" : " (no difference with this video driver)");
+    if (!s_mouseCaptured) return;
+    captureMouse(false);
+    captureMouse(true);
 }
 
 // SMS_FULLSCREEN: 1 or desktop (borderless, at the desktop's resolution), or
@@ -380,6 +419,7 @@ void applyWindowRequests() {
     const int size = s_sizeRequest.exchange(-1);
     const int display = s_displayRequest.exchange(-1);
     const int look = s_mouseLookRequest.exchange(-1);
+    const int raw = s_rawMouseRequest.exchange(-1);
     bool restyle = false;
     if (exclusive >= 0 && (exclusive != 0) != s_exclusive) {
         s_exclusive = exclusive != 0;
@@ -399,6 +439,7 @@ void applyWindowRequests() {
     if (want != s_isFullscreen) setFullscreen(want);
     syncMenuInput();
     if (look >= 0) applyMouseLook(look != 0);
+    if (raw >= 0) applyRawMouse(raw != 0);
 }
 
 void applyIcon() {
@@ -416,6 +457,15 @@ enum WindowFailure { WF_NONE, WF_NO_DISPLAY, WF_WINDOW };
 WindowFailure s_windowFailure = WF_NONE;
 char s_videoDriver[32];     // the SDL video driver of the last attempt ("x11", "wayland", ...)
 char s_windowError[256];    // and its SDL error
+
+// Whether raw mouse input (s_rawMouse) changes anything with this video driver.
+bool rawMouseMatters() {
+#ifdef _WIN32
+    return true;
+#else
+    return !strcmp(s_videoDriver, "x11");
+#endif
+}
 
 // SMS_FSR_MODE (with SMS_PRESENT_FILTER=fsr or nis) sets the internal resolution
 // from the picture's width on screen (outW x outH pixels): native renders it
@@ -535,7 +585,7 @@ bool openWindow(float scale, bool vulkan) {
     if (vulkan && glvk::libraryPath() && SDL_Vulkan_LoadLibrary(glvk::libraryPath()) != 0)
         logmsg("SDL could not load %s: %s", glvk::libraryPath(), SDL_GetError());
 #endif
-    s_window = SDL_CreateWindow("Super Mario Sunshine", layout.x, layout.y, layout.w, layout.h,
+    s_window = SDL_CreateWindow(s_title.c_str(), layout.x, layout.y, layout.w, layout.h,
                                 (vulkan ? SDL_WINDOW_VULKAN : SDL_WINDOW_OPENGL) | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI |
                                 SDL_WINDOW_HIDDEN);
     if (!s_window) {
@@ -685,6 +735,10 @@ bool openWindow(float scale, bool vulkan) {
                layout.w, layout.h, display, s_videoDriver, scale, vulkan ? "Vulkan device" : "OpenGL context");
     s_windowFailure = WF_NONE;
     s_mouseCamera = !getenv("SMS_MOUSE_CAMERA") || !*getenv("SMS_MOUSE_CAMERA") || envTrue("SMS_MOUSE_CAMERA");
+    s_rawMouse = !getenv("SMS_MOUSE_RAW") || !*getenv("SMS_MOUSE_RAW") || envTrue("SMS_MOUSE_RAW");
+    if (!s_rawMouse)
+        logmsg("raw mouse input off: mouse look follows the system's pointer speed%s",
+               rawMouseMatters() ? "" : " (no difference with this video driver)");
     if (s_mouseCamera) {
         logmsg("mouse look on (F10 releases the mouse)");
         captureMouse((SDL_GetWindowFlags(s_window) & SDL_WINDOW_INPUT_FOCUS) != 0);
@@ -1027,6 +1081,24 @@ bool platformMouseLook() {
 }
 void platformRequestMouseLook(bool on) { s_mouseLookRequest = on ? 1 : 0; }
 
+// Raw mouse input (SMS_MOUSE_RAW), and whether it makes a difference here (Windows, X11).
+bool platformRawMouse() {
+#ifdef SMS_GX_HAVE_SDL2
+    const int asked = s_rawMouseRequest;
+    return asked >= 0 ? asked != 0 : s_rawMouse;
+#else
+    return true;
+#endif
+}
+bool platformRawMouseMatters() {
+#ifdef SMS_GX_HAVE_SDL2
+    return s_window && rawMouseMatters();
+#else
+    return false;
+#endif
+}
+void platformRequestRawMouse(bool on) { s_rawMouseRequest = on ? 1 : 0; }
+
 // FSR 1 and NIS modes (see fsrScale): the one SMS_FSR_MODE named, or -1; and the internal resolution a mode
 // makes for the picture as it is on screen now, 0 where there is no window to measure.
 int platformFsrModeAtStart() {
@@ -1091,6 +1163,14 @@ void GXPC_SetWindowIcon(const uint8_t* rgba, int w, int h) {
     applyIcon();
 #endif
 }
+void GXPC_SetWindowTitle(const char* title) {
+    if (!title || !*title) return;
+    s_title = title;
+#ifdef SMS_GX_HAVE_SDL2
+    if (s_window) SDL_SetWindowTitle(s_window, s_title.c_str());
+#endif
+}
+const char* GXPC_WindowTitle(void) { return s_title.c_str(); }
 void GXPC_SetAutoPresent(int enable) { s_autoPresent = enable != 0; }
 void GXPC_SkipNextPresent(int skip) { s_skipPresent = skip != 0; }
 double GXPC_LastPresentSeconds(void) { return s_lastPresent; }

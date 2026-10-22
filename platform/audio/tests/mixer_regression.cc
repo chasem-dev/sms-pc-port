@@ -233,6 +233,72 @@ int main()
 	assert(port_dspmix_class_gain(PORT_DSPMIX_CLASS_MUSIC) == 32768);
 	port_dspmix_set_class_percent(PORT_DSPMIX_CLASS_SFX, 250); // clamped
 	assert(port_dspmix_class_percent(PORT_DSPMIX_CLASS_SFX) == 100);
+	// Voice filters (Dolphin's Zelda HLE): the biquad runs on the resampled samples before the
+	// sends, y[n] = (b1 x[n-1] + b2 x[n-2] + a1 y[n-1] + a2 y[n-2]) >> 15, saturated to s16,
+	// only with filterMode bit 5 and coefficients other than the identity 0x7FFF, 0, 0, 0.
+	port_dspmix_set_class_percent(PORT_DSPMIX_CLASS_SFX, 100);
+	reset();
+	voice(false);
+	render(); // let the SFX gain finish its ramp back to 100 percent
+	reset();
+	voice(false);
+	put<int16_t>(voices, 0x148, 0x7FFF);
+	put<uint16_t>(voices, 0x108, 0x20);
+	render(); // identity: untouched
+	for (int i = 0; i < 80; i++)
+		assert(left[i] == 16383);
+	reset();
+	voice(false);
+	const int16_t coefs[4] = { 0x1591, 0x09AC, 0x4284, 0x366C }; // CUTOFF_TO_IIR_TABLE[7], the under-water row
+	for (int i = 0; i < 4; i++)
+		put<int16_t>(voices, 0x148 + 2 * i, coefs[i]);
+	render(); // bit 5 clear: off
+	for (int i = 0; i < 80; i++)
+		assert(left[i] == 16383);
+	reset();
+	voice(false);
+	for (int i = 0; i < 4; i++)
+		put<int16_t>(voices, 0x148 + 2 * i, coefs[i]);
+	put<uint16_t>(voices, 0x108, 0x20);
+	{
+		int32_t x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+		for (int f = 0; f < 4; f++) {
+			render(); // the history carries across subframes
+			for (int i = 0; i < 80; i++) {
+				int64_t acc = (int64_t)coefs[0] * x1 + (int64_t)coefs[1] * x2 + (int64_t)coefs[2] * y1
+				            + (int64_t)coefs[3] * y2;
+				int32_t y = (int32_t)(acc >> 15);
+				y = y > 32767 ? 32767 : y < -32768 ? -32768 : y;
+				x2 = x1, x1 = 16383, y2 = y1, y1 = y;
+				assert(left[i] == y); // slot volume 1.0 (Q14)
+			}
+		}
+		assert(left[0] > 16383 && left[79] == 32767); // this row's bass boost saturates a DC input
+		assert(get<int16_t>(voices, 0xA8) == 16383 && get<int16_t>(voices, 0xAC) == 32767);
+	}
+	put<uint16_t>(voices, 0x108, 0); // and back off mid-voice
+	render();
+	for (int i = 0; i < 80; i++)
+		assert(left[i] == 16383);
+	// The distance low-pass: y[n] = y[n-1] + ((x[n] - x[n-1]) * c >> 7), history cleared on restart.
+	reset();
+	voice(false);
+	put<uint16_t>(voices, 0x150, 0x40);
+	render();
+	for (int i = 0; i < 80; i++)
+		assert(left[i] == 8191);
+	assert(get<int16_t>(voices, 0xD0) == 8191 && get<int16_t>(voices, 0xD2) == 16383);
+	put<uint16_t>(voices, 0x8, 1);
+	render();
+	assert(left[0] == 8191); // reset: from zero history again, not 8191 + 0
+	setenv("SMS_AUDIO_FILTERS", "0", 1); // the debug bypass
+	reset();
+	voice(false);
+	put<uint16_t>(voices, 0x150, 0x40);
+	render();
+	assert(left[79] == 16383);
+	unsetenv("SMS_AUDIO_FILTERS");
 	puts("PASS: Q15 returns, filter modes/history, RAM clears, cross-bus feedback, "
-	     "Q16 footstep sends, unchanged dry levels, smooth release and silence, oscillators, music/SFX class gains");
+	     "Q16 footstep sends, unchanged dry levels, smooth release and silence, oscillators, music/SFX class gains, "
+	     "voice biquad and low-pass filters");
 }

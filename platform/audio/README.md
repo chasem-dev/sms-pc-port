@@ -6,7 +6,7 @@ This module replaces the hardware it talks to: the DSP microcode that mixes voic
 
 | File | Owner | What |
 | --- | --- | --- |
-| `dsp_mixer.{h,cpp}` | audio | The mixer: ADPCM4/ADPCM2/PCM8/PCM16 from ARAM, DirectPCM stream rings from main memory, 4-tap polyphase resampling with the game's `DSPRES_FILTER`, per-send Q15 volume ramps, the auto mixer, the four FX lines, the master level, the per-class (music, SFX) gains. No game headers. |
+| `dsp_mixer.{h,cpp}` | audio | The mixer: ADPCM4/ADPCM2/PCM8/PCM16 from ARAM, DirectPCM stream rings from main memory, 4-tap polyphase resampling with the game's `DSPRES_FILTER`, the per-voice biquad and low-pass filters, per-send Q15 volume ramps, the auto mixer, the four FX lines, the master level, the per-class (music, SFX) gains. No game headers. |
 | `dsp_hle.cpp` | audio | The DSP task's side of the mail protocol: setup (0x81), sync frame (0x82), release-halt → render one subframe → `0xF355FF00` through `__DSPHandler`. The SDK-named `DSP*` functions are built only with `SMS_AUDIO_DSP_HLE` (see Integration). |
 | `ai.cpp` | audio | `AI*`: DMA latch/callback emulation, SDL2 output (loaded with `dlopen`), host-clock pacing without a device, WAV recording, and the settings menu's Volume, Music Volume and SFX Volume rows. |
 | `dtk.cpp` | audio | DVD audio streaming (DTK): the `AIS*` stream registers and trigger interrupt, the DTK ADPCM decoder, and the mix of the stream (scaled by the music volume) into each AI DMA block (48 kHz resampled to 32 kHz). Retail SMS never streams; Super Mario Eclipse's music does (BetterSunshineEngine's `AudioStreamer`). The DVD side is `../dvd/dvd.cpp`. |
@@ -57,8 +57,9 @@ It boots, and the logo, UI sounds, sequences and voice clips play; see Status.
 | `SMS_NO_AUDIO=1` | an empty sound configuration (`noaudio.cpp`); the AI DMA stays idle |
 | `SMS_AUDIO_OUT=sdl\|null` | output device; the default is SDL, or `null` when headless. `null` paces DMA from the host clock |
 | `SMS_AUDIO_WAV=file.wav` | record everything played (32 kHz stereo) |
-| `SMS_AUDIO_TRACE=1` | log each voice start and the voice counts every 5 s |
+| `SMS_AUDIO_TRACE=1` | log each voice start, each change of a voice's filters, and the voice counts every 5 s |
 | `SMS_AUDIO_FX=0` | bypass the FX (echo) lines |
+| `SMS_AUDIO_FILTERS=0` | bypass the per-voice biquad and low-pass filters (the under-water muffle; PROTOCOL.md, Voice filters) |
 | `SMS_AUDIO_SWAP=0` | keep DMA pair order (the default swaps the (right, left) DMA pairs for SDL) |
 | `SMS_AUDIO_MASTER_SHIFT=n` | fixed point of the DSP master level (default 15, measured) |
 | `SMS_AUDIO_SLOT_SHIFT=n` | fixed point of `mixChannels` volumes (default 14, measured) |
@@ -108,7 +109,7 @@ Compared against retail running under Dolphin with DSP LLE (the game's own micro
 - Slow frames: blocks are mixed on the emulated CPU, so when the game's thread holds it for longer than the output queue lasts (a load, a shader compile, a slow frame; three blocks, 52 ms), the output runs dry and clicks.
   The queue then grows (up to eight blocks, 140 ms; one block back after each 30 s without) and the log says so.
   While the output catches up, a block starts only after the audio thread has handled the one before; catching up used to replay DAC buffers and drop others, which a steady low frame rate made lasting distortion.
-- Untested against retail: stream voices (not used in this segment), surround mode, FX lines (no fx sends in this segment), oscillator voices, per-voice filters (retail's IIR coefficients were identity here).
+- Untested against retail: stream voices (not used in this segment), surround mode, FX lines (no fx sends in this segment), oscillator voices, per-voice filters (retail's IIR coefficients were identity here; the biquad and low-pass follow Dolphin's HLE, see PROTOCOL.md, Voice filters).
 
 Debug aids: `SMS_AUDIO_TRACE=1` (voice starts, ends with reason and lifetime, counts every 5 s) and `SMS_AUDIO_ARAM_DUMP=file[,subframe]` (writes the ARAM image once, for replaying traced voice blocks offline).
 

@@ -54,15 +54,15 @@ struct Voice {
 	uint32_t remaining;        // 0x074
 	int16_t resampleHist[4];   // 0x078
 	uint16_t firHist[20];      // 0x080
-	int16_t iirHist[4];        // 0x0A8
+	int16_t iirHist[4];        // 0x0A8 biquad history: x[n-1], x[n-2], y[n-1], y[n-2] (playStart clears it)
 	uint16_t afcSamples[16];   // 0x0B0
-	int16_t lpHist[2];         // 0x0D0
+	int16_t lpHist[2];         // 0x0D0 low-pass history: y[n-1], x[n-1] (the DSP clears it on resetVpb)
 	uint8_t pad0D4[0x2C];      // 0x0D4
 	uint16_t sourceType;       // 0x100 9 ADPCM4, 5 ADPCM2, 8 PCM8, 16 PCM16, else oscillator (kOsc*)
 	uint16_t looping;          // 0x102
 	int16_t loopYN1;           // 0x104
 	int16_t loopYN2;           // 0x106
-	int16_t filterMode;        // 0x108
+	int16_t filterMode;        // 0x108 bit 5: biquad on; low 5 bits: FIR8 length (not applied)
 	uint16_t endRequested;     // 0x10A
 	uint32_t cpuTicks;         // 0x10C (CPU-owned age counter)
 	uint32_t loopStart;        // 0x110 sample index (stored through an s16*)
@@ -70,8 +70,8 @@ struct Voice {
 	uint32_t base;             // 0x118 ARAM byte address of the wave
 	int32_t sampleCount;       // 0x11C
 	int16_t fir[20];           // 0x120
-	int16_t iir[4];            // 0x148
-	int16_t lowPass;           // 0x150
+	int16_t iir[4];            // 0x148 biquad: b1, b2, a1, a2 (Q15; 0x7FFF, 0, 0, 0 = off)
+	int16_t lowPass;           // 0x150 distance low-pass coefficient (0 = off)
 	uint8_t pad152[0x2E];      // 0x152
 };
 static_assert(sizeof(Voice) == 0x180, "DSPBuffer is 0x180 bytes");
@@ -159,6 +159,7 @@ struct Decoder {
 	int16_t win[4];   // x[n-1], x[n], x[n+1], x[n+2]
 	uint32_t frac;    // Q16 position between win[1] and win[2]
 	uint32_t phase;   // oscillators: Q22 position in the period
+	uint64_t filterSig; // trace: the filter settings last logged
 };
 
 struct State {
@@ -183,6 +184,8 @@ struct State {
 	int masterShift; // master level fixed point: Q15 (measured against retail, PROTOCOL.md)
 	int slotShift;   // mixChannels volume fixed point: Q14
 	bool fxOff;
+	bool filtersOff;
+	bool warnedFir;
 	bool trace;
 	uint32_t traceTick;
 	bool warnedSource;
@@ -440,6 +443,87 @@ int resample(Decoder& d, const Voice& v, int32_t* out, int n)
 	return k;
 }
 
+// The voice filters the microcode runs on a voice's resampled samples before
+// any send, in its order: the one-pole distance low-pass, then the biquad.
+// Both follow Dolphin's Zelda HLE (ApplyLowPassFilter, ApplyBiquadFilter),
+// sample for sample, including the s16 saturation of every output. JAudio
+// writes them from a track's IIR parameters (JASChannel.cpp __UpdateJcToDSP:
+// setIIRFilterParam, setFilterMode, setDistFilter); sequences pick a row of
+// Player::CUTOFF_TO_IIR_TABLE with the IIR cutoff command. Sunshine's sound
+// effects do that from MSSeCallBack::setParameterSeqSync (sync 12 and 13),
+// which answers 0x7F minus MSSeCallBack::smWaterFilter: 0x78 while the camera
+// is under water (TMap, setWaterCameraFir), so effects are muffled there.
+// The variable FIR8 (filterMode's low bits) is not applied: Dolphin does not
+// implement it either.
+void low_pass(Voice& v, bool reset, int32_t* src, int n)
+{
+	int32_t yn1 = reset ? 0 : v.lpHist[0], xn1 = reset ? 0 : v.lpHist[1];
+	const int32_t coeff = (uint16_t)v.lowPass; // 9.7
+	for (int k = 0; k < n; k++) {
+		const int32_t xn0 = sat16(src[k]);
+		const int32_t yn0 = (int32_t)sat16((int32_t)((((int64_t)(xn0 - xn1) * coeff) >> 7) + yn1));
+		src[k]            = yn0;
+		yn1               = yn0;
+		xn1               = xn0;
+	}
+	v.lpHist[0] = (int16_t)yn1;
+	v.lpHist[1] = (int16_t)xn1;
+}
+
+bool biquad_on(const Voice& v)
+{
+	return (v.filterMode & 0x20)
+	    && (v.iir[0] != 0x7FFF || v.iir[1] != 0 || v.iir[2] != 0 || v.iir[3] != 0);
+}
+
+void biquad(Voice& v, int32_t* src, int n)
+{
+	int32_t xn1 = v.iirHist[0], xn2 = v.iirHist[1], yn1 = v.iirHist[2], yn2 = v.iirHist[3];
+	const int32_t b1 = v.iir[0], b2 = v.iir[1], a1 = v.iir[2], a2 = v.iir[3];
+	for (int k = 0; k < n; k++) {
+		const int32_t xn0 = sat16(src[k]);
+		const int64_t acc = (int64_t)b1 * xn1 + (int64_t)b2 * xn2 + (int64_t)a1 * yn1 + (int64_t)a2 * yn2;
+		const int64_t q   = acc >> 15;
+		const int32_t yn0 = q < -32768 ? -32768 : q > 32767 ? 32767 : (int32_t)q;
+		src[k]            = yn0;
+		xn2               = xn1;
+		xn1               = xn0;
+		yn2               = yn1;
+		yn1               = yn0;
+	}
+	v.iirHist[0] = (int16_t)xn1;
+	v.iirHist[1] = (int16_t)xn2;
+	v.iirHist[2] = (int16_t)yn1;
+	v.iirHist[3] = (int16_t)yn2;
+}
+
+void apply_filters(int vi, Voice& v, Decoder& d, bool reset, int32_t* src, int n)
+{
+	const bool on = v.lowPass != 0 || biquad_on(v) || (v.filterMode & 0x1F);
+	if (g.trace) {
+		// Logged when a voice's filters change, and once when they turn off.
+		uint64_t sig = on ? (uint64_t)(uint16_t)v.filterMode << 48 | (uint64_t)(uint16_t)v.lowPass << 32
+		                        | (uint64_t)(uint16_t)v.iir[0] << 16 | (uint16_t)v.iir[2]
+		                  : 0;
+		if (sig != d.filterSig) {
+			d.filterSig = sig;
+			fprintf(stderr, "[audio] voice %2d filter: mode 0x%02x iir %04x %04x %04x %04x lowpass %04x %s\n", vi,
+			        (uint16_t)v.filterMode, (uint16_t)v.iir[0], (uint16_t)v.iir[1], (uint16_t)v.iir[2],
+			        (uint16_t)v.iir[3], (uint16_t)v.lowPass, voice_class(v) == PORT_DSPMIX_CLASS_MUSIC ? "music" : "sfx");
+		}
+	}
+	if (!on || g.filtersOff)
+		return;
+	if ((v.filterMode & 0x1F) && !g.warnedFir) {
+		g.warnedFir = true;
+		fprintf(stderr, "[audio] FIR8 voice filter (length %d) is not applied\n", v.filterMode & 0x1F);
+	}
+	if (v.lowPass != 0)
+		low_pass(v, reset, src, n);
+	if (biquad_on(v))
+		biquad(v, src, n);
+}
+
 // `shift` is the volume's fixed point: 14 for mixChannels sends (JAudio caps
 // them at MAX_MIXERLEVEL = gain x 16384), 15 for the auto mixer
 // (volume x 32767.5). Both measured against retail (PROTOCOL.md, Levels).
@@ -457,6 +541,7 @@ void render_voice(int vi, int n)
 {
 	Voice& v   = g.voices[vi];
 	Decoder& d = g.dec[vi];
+	const bool reset = v.resetVpb != 0;
 	if (v.resetVpb) {
 		v.resetVpb = 0;
 		d.active   = false;
@@ -498,6 +583,7 @@ void render_voice(int vi, int n)
 	} else {
 		got = resample(d, v, src, n);
 	}
+	apply_filters(vi, v, d, reset, src, n);
 	apply_class_gain(v, src, n);
 	g.active++;
 
@@ -669,6 +755,8 @@ extern "C" void port_dspmix_setup(uint32_t nvoices, void* voices, const uint32_t
 	g.masterShift = e && *e ? atoi(e) : 15;
 	e             = getenv("SMS_AUDIO_SLOT_SHIFT");
 	g.slotShift   = e && *e ? atoi(e) : 14;
+	e             = getenv("SMS_AUDIO_FILTERS");
+	g.filtersOff  = e && strcmp(e, "0") == 0;
 	e             = getenv("SMS_AUDIO_TRACE");
 	g.trace       = e && *e && strcmp(e, "0") != 0;
 }
