@@ -24,24 +24,64 @@ int frame_count;
 // addr2line runs from a thread made at start-up: creating a process needs the
 // heap and the loader, which the crashed thread may hold. The report waits a
 // bounded time for it and goes on.
-HANDLE symbolise_request, symbolise_done, inheritable_error;
+//
+// It must not outlive the game. One left running keeps its files open: the
+// executable it reads, and any handle it inherits, such as the disc (a C
+// runtime fopen handle is inheritable). Players saw old game versions that
+// could not be deleted, held by addr2line.exe from crashes long before. So it
+// inherits only the error handle, is stopped when it overruns, and runs in a
+// job that ends it when the game's process ends, however that happens.
+HANDLE symbolise_request, symbolise_done, inheritable_error, symboliser_job;
+LPPROC_THREAD_ATTRIBUTE_LIST inherit_only_error;
 char executable[MAX_PATH];
 char addr2line[MAX_PATH] = "addr2line.exe";
 char command[4096];
 uintptr_t exe_base, exe_preferred_base;
 
+// Made at start-up, with the heap still usable: the job, and the attribute
+// list naming the one handle addr2line may inherit. Without them addr2line
+// still runs, and the timeout still stops it.
+void prepare_symboliser()
+{
+	symboliser_job = CreateJobObjectA(NULL, NULL);
+	JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {};
+	limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+	if (symboliser_job && !SetInformationJobObject(symboliser_job, JobObjectExtendedLimitInformation, &limits, sizeof limits)) {
+		CloseHandle(symboliser_job);
+		symboliser_job = NULL;
+	}
+	SIZE_T size = 0;
+	InitializeProcThreadAttributeList(NULL, 1, 0, &size);
+	LPPROC_THREAD_ATTRIBUTE_LIST list = size ? (LPPROC_THREAD_ATTRIBUTE_LIST)HeapAlloc(GetProcessHeap(), 0, size) : NULL;
+	if (!list) return;
+	if (InitializeProcThreadAttributeList(list, 1, 0, &size)) {
+		if (UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, &inheritable_error, sizeof inheritable_error, NULL, NULL)) {
+			inherit_only_error = list;
+			return;
+		}
+		DeleteProcThreadAttributeList(list);
+	}
+	HeapFree(GetProcessHeap(), 0, list);
+}
+
 DWORD WINAPI symboliser(void*)
 {
 	for (;;) {
 		WaitForSingleObject(symbolise_request, INFINITE);
-		STARTUPINFOA startup = {};
-		startup.cb = sizeof startup;
-		startup.dwFlags = STARTF_USESTDHANDLES;
-		startup.hStdInput = NULL;
-		startup.hStdOutput = startup.hStdError = inheritable_error;
+		STARTUPINFOEXA startup = {};
+		startup.StartupInfo.cb = inherit_only_error ? sizeof startup : sizeof startup.StartupInfo;
+		startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+		startup.StartupInfo.hStdInput = NULL;
+		startup.StartupInfo.hStdOutput = startup.StartupInfo.hStdError = inheritable_error;
+		startup.lpAttributeList = inherit_only_error;
+		// Suspended until it is in the job, so it can't start a process of its own outside it.
+		DWORD flags = CREATE_NO_WINDOW | CREATE_SUSPENDED | (inherit_only_error ? EXTENDED_STARTUPINFO_PRESENT : 0);
 		PROCESS_INFORMATION process;
-		if (CreateProcessA(NULL, command, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &startup, &process)) {
-			WaitForSingleObject(process.hProcess, 8000);
+		if (CreateProcessA(NULL, command, NULL, NULL, TRUE, flags, NULL, NULL, &startup.StartupInfo, &process)) {
+			if (symboliser_job) AssignProcessToJobObject(symboliser_job, process.hProcess);
+			ResumeThread(process.hThread);
+			if (WaitForSingleObject(process.hProcess, 8000) != WAIT_OBJECT_0)
+				TerminateProcess(process.hProcess, 1);
 			CloseHandle(process.hThread);
 			CloseHandle(process.hProcess);
 		} else {
@@ -395,6 +435,7 @@ void port_install_windows_exception_logger()
 	HANDLE error = GetStdHandle(STD_ERROR_HANDLE);
 	if (error && error != INVALID_HANDLE_VALUE &&
 	    DuplicateHandle(GetCurrentProcess(), error, GetCurrentProcess(), &inheritable_error, 0, TRUE, DUPLICATE_SAME_ACCESS)) {
+		prepare_symboliser();
 		symbolise_request = CreateEventA(NULL, FALSE, FALSE, NULL);
 		symbolise_done = CreateEventA(NULL, TRUE, FALSE, NULL);
 		HANDLE thread = symbolise_request && symbolise_done ? CreateThread(NULL, 64 * 1024, symboliser, NULL, 0, NULL) : NULL;

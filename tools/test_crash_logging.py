@@ -11,10 +11,12 @@ import os
 import pathlib
 import re
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
 import tempfile
+import time
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("probe", nargs="?")
@@ -76,5 +78,34 @@ for mode, expected in cases:
         assert re.search(r"pc 0x[1-9A-F][0-9A-F]*", run.stderr), (mode, run.stderr)
     assert re.search(r"exception module .* offset 0x[0-9a-fA-F]+", run.stderr), (mode, run.stderr)
     print("%s: correct status and crash address/module diagnostics" % mode)
+if os.name == "nt":
+    # A stuck addr2line (a copy of the probe) must not outlive the crash report,
+    # nor get the files the game has open: players had old game versions that
+    # could not be deleted because addr2line.exe from old crashes held them.
+    # A symboliser left running would also hold the output pipe, so the run
+    # would time out instead of returning.
+    def removed(*files):
+        deadline = time.monotonic() + 5
+        while True:
+            try:
+                for file in files:
+                    if os.path.exists(file):
+                        os.remove(file)
+                return True
+            except PermissionError:
+                if time.monotonic() > deadline:
+                    return False
+                time.sleep(0.2)
+    with tempfile.TemporaryDirectory(prefix="sms-symboliser-") as folder:
+        fake = os.path.join(folder, "stuck-addr2line.exe")
+        held = os.path.join(folder, "held.iso")
+        for ending, expected in (("crash", 0xC0000005), ("exit", 3)):
+            shutil.copy(args.probe, fake)
+            run = subprocess.run([args.probe, "held", held, ending], capture_output=True, text=True, timeout=40,
+                                 env={**os.environ, "SMS_ADDR2LINE": fake})
+            assert run.returncode & 0xFFFFFFFF == expected, (ending, run.returncode, run.stderr)
+            assert "[probe] symboliser holds no game file" in run.stderr, (ending, run.stderr)
+            assert removed(fake, held), (ending, "the symboliser outlived the probe", run.stderr)
+            print("symboliser on %s: inherits no game file and does not outlive the probe" % ending)
 if temporary:
     temporary.cleanup()

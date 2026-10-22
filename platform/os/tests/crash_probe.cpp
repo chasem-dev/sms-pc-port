@@ -7,6 +7,8 @@
 #include <signal.h>
 #ifdef _WIN32
 #include <windows.h>
+#include <io.h>
+#include <stdlib.h>
 #include "port_win64_stack.h"
 #else
 #include <pthread.h>
@@ -40,9 +42,35 @@ static void* overflow(void*)
 }
 #endif
 
+#ifdef _WIN32
+// The handle "held" leaves open, as the game leaves its disc open.
+static HANDLE held_file;
+
+static DWORD WINAPI end_probe(void*)
+{
+	Sleep(2000);
+	TerminateProcess(GetCurrentProcess(), 3);
+	return 0;
+}
+#endif
+
 int main(int argc, char** argv)
 {
 #ifdef _WIN32
+	// A copy of the probe named by SMS_ADDR2LINE stands in for a stuck addr2line
+	// (the crash report runs it with -f): it says whether it got the probe's
+	// open file, then never finishes.
+	if (argc > 1 && !strcmp(argv[1], "-f")) {
+		const char* held = getenv("SMS_PROBE_HELD");
+		char path[MAX_PATH];
+		DWORD flags;
+		HANDLE handle = held ? (HANDLE)(uintptr_t)strtoull(held, NULL, 16) : NULL;
+		bool inherited = handle && GetHandleInformation(handle, &flags) && GetFileType(handle) == FILE_TYPE_DISK &&
+			GetFinalPathNameByHandleA(handle, path, sizeof path, 0) && strstr(path, "held");
+		fprintf(stderr, inherited ? "[probe] symboliser inherited the held file\n" : "[probe] symboliser holds no game file\n");
+		fflush(stderr);
+		Sleep(INFINITE);
+	}
 	port_install_windows_exception_logger();
 	SetErrorMode(SEM_NOGPFAULTERRORBOX);
 #else
@@ -55,6 +83,18 @@ int main(int argc, char** argv)
 	// What Windows raises when an unwind cannot follow the stack; the logger
 	// once skipped it, so the Eclipse stage-exit crash printed nothing.
 	if (!strcmp(argv[1], "unwind")) RaiseException(0xC00000FF, EXCEPTION_NONCONTINUABLE, 0, NULL);
+	// Crash with a file open, as the game has its disc. "exit" ends the probe
+	// while the report waits for addr2line, as closing a crashed game does.
+	if (!strcmp(argv[1], "held") && argc > 3) {
+		FILE* file = fopen(argv[2], "wb");
+		if (!file) return 3;
+		held_file = (HANDLE)_get_osfhandle(_fileno(file));
+		char value[32];
+		snprintf(value, sizeof value, "%llx", (unsigned long long)(uintptr_t)held_file);
+		SetEnvironmentVariableA("SMS_PROBE_HELD", value);
+		if (!strcmp(argv[3], "exit")) CloseHandle(CreateThread(NULL, 0, end_probe, NULL, 0, NULL));
+		fault(NULL);
+	}
 	// The report abort() gets, without ending the probe.
 	if (!strcmp(argv[1], "report")) {
 		port_windows_report_current("probe report");
