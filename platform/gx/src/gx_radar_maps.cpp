@@ -5,6 +5,10 @@
 // the working directory, as the game runs from build/<os>-<arch>/) holds
 // maps.txt, one line per map:
 //     <col key> <file> <x0> <z0> <pixels per unit> <width> <height> <scenes>
+// Each folder in mods/maps (beside or two folders above, the same way) is a
+// pack of maps for a mod's stages in the same form, made from that mod's disc
+// (Super Mario Eclipse's: tools/mods/get.py eclipse installs it in
+// mods/maps/eclipse); the keys tell the stages apart, so all are read.
 // The game hashes the stage's loaded collision (/scene/map/map.col) and asks
 // for that map; the picture is decoded on a thread of its own, so a stage
 // never waits for it, and only the last one asked for is kept, with an
@@ -13,6 +17,7 @@
 #include "gx_internal.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <mutex>
 #include <stdint.h>
 #include <stdio.h>
@@ -42,12 +47,11 @@ namespace {
 
 struct Entry {
     unsigned long long key;
-    std::string file;
+    std::string path;  // the picture
     float x0, z0, density;
 };
 
 std::once_flag s_once;
-std::string s_dir;
 std::vector<Entry> s_entries;
 
 std::mutex s_lock;
@@ -67,22 +71,13 @@ bool readable(const std::string& path) {
     return f != nullptr;
 }
 
-void init() {
-    const char* env = getenv("SMS_RADAR_DIR");
-    const char* dirs[] = {env, "assets/maps", "../../assets/maps"};
-    for (const char* d : dirs) {
-        if (d && *d && readable(std::string(d) + "/maps.txt")) {
-            s_dir = d;
-            break;
-        }
-    }
-    if (s_dir.empty()) {
-        gx::logmsg("radar: no stage maps (assets/maps/maps.txt; SMS_RADAR_DIR sets the folder)");
-        return;
-    }
-    FILE* f = fopen((s_dir + "/maps.txt").c_str(), "r");
+// The maps listed in dir/maps.txt; how many.
+size_t readManifest(const std::string& dir) {
+    FILE* f = fopen((dir + "/maps.txt").c_str(), "r");
+    if (!f) return 0;
+    size_t n = 0;
     char line[1024];
-    while (f && fgets(line, sizeof line, f)) {
+    while (fgets(line, sizeof line, f)) {
         if (line[0] == '#') continue;
         char file[256];
         unsigned long long key;
@@ -90,11 +85,41 @@ void init() {
         Entry e;
         if (sscanf(line, "%llx %255s %f %f %f %d %d", &key, file, &e.x0, &e.z0, &e.density, &w, &h) != 7) continue;
         e.key = key;
-        e.file = file;
+        e.path = dir + "/" + file;
         s_entries.push_back(e);
+        n++;
     }
-    if (f) fclose(f);
-    gx::logmsg("radar: %zu stage maps in %s", s_entries.size(), s_dir.c_str());
+    fclose(f);
+    return n;
+}
+
+void init() {
+    const char* env = getenv("SMS_RADAR_DIR");
+    const char* dirs[] = {env, "assets/maps", "../../assets/maps"};
+    bool found = false;
+    for (const char* d : dirs) {
+        if (d && *d && readable(std::string(d) + "/maps.txt")) {
+            gx::logmsg("radar: %zu stage maps in %s", readManifest(d), d);
+            found = true;
+            break;
+        }
+    }
+    if (!found) gx::logmsg("radar: no stage maps (assets/maps/maps.txt; SMS_RADAR_DIR sets the folder)");
+    // the mods' packs, from the first mods/maps there is
+    namespace fs = std::filesystem;
+    for (const char* base : {"mods/maps", "../../mods/maps"}) {
+        std::error_code ec;
+        if (!fs::is_directory(base, ec)) continue;
+        std::vector<std::string> packs;
+        for (fs::directory_iterator it(base, ec), end; !ec && it != end; it.increment(ec))
+            if (it->is_directory(ec)) packs.push_back(it->path().filename().string());
+        std::sort(packs.begin(), packs.end());
+        for (const std::string& p : packs) {
+            const std::string dir = std::string(base) + "/" + p;
+            if (const size_t n = readManifest(dir)) gx::logmsg("radar: %zu stage maps in %s", n, dir.c_str());
+        }
+        break;
+    }
 }
 
 const Entry* find(unsigned long long key) {
@@ -105,7 +130,7 @@ const Entry* find(unsigned long long key) {
 
 void load(const Entry* e) {
     int w = 0, h = 0, n = 0;
-    uint8_t* px = stbi_load((s_dir + "/" + e->file).c_str(), &w, &h, &n, 4);
+    uint8_t* px = stbi_load(e->path.c_str(), &w, &h, &n, 4);
     std::lock_guard<std::mutex> g(s_lock);
     s_loading = false;
     if (s_want != e->key) {  // another stage by now: that one starts on the next ask
@@ -114,7 +139,7 @@ void load(const Entry* e) {
     }
     s_have = e->key;
     if (!px) {
-        gx::logmsg("radar: cannot read %s/%s", s_dir.c_str(), e->file.c_str());
+        gx::logmsg("radar: cannot read %s", e->path.c_str());
         s_haveEntry = nullptr;
         return;
     }
