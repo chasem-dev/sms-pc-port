@@ -59,6 +59,9 @@ bool MpMirrorTestClaimNpc();
 bool MpMirrorTestRollMelon(int frame);
 // Test aid: drops this game's Mario onto the first sand block.
 bool MpMirrorTestSandBlock();
+// Test aid (manhole@N[:1]): this game's Mario ground pounds into the nearest
+// manhole lid (:1 stands beside it); `frame` counts from 0, true once done.
+bool MpMirrorTestManhole(int frame, bool watch);
 // Test aid: stands this game's Mario before the first NPC, facing it; true once a talk is on.
 bool MpMirrorTestNearNpc();
 

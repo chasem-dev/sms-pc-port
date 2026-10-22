@@ -38,6 +38,8 @@
 #include <M3DUtil/M3UModelMario.hpp>
 #include <M3DUtil/MActorUtil.hpp>
 #include <M3DUtil/SDLModel.hpp>
+#include <MSound/MSound.hpp>
+#include <MSound/SoundEffects.hpp>
 #include <Map/Map.hpp>
 #include <Map/MapData.hpp>
 #include <MoveBG/Item.hpp>
@@ -56,6 +58,7 @@
 #include <MoveBG/MapObjRicco.hpp>
 #include <MoveBG/MapObjTurn.hpp>
 #include <MoveBG/MapObjSirena.hpp>
+#include <MoveBG/MapObjTown.hpp>
 #include <MoveBG/MapObjWave.hpp>
 #include <NPC/NpcBase.hpp>
 #include <Player/Mario.hpp>
@@ -384,6 +387,66 @@ void takeTurboDoor(TLiveActor* a, const u8* in, int size, int, int* scratch)
 	}
 	if (getenv("SMS_MULTIPLAYER_DEBUG"))
 		fprintf(stderr, "[multiplayer] the Turbo nozzle door at %.0f %.0f %.0f was broken down in another game: here too\n",
+		        a->mPosition.x, a->mPosition.y, a->mPosition.z);
+}
+
+// The plaza's manhole lids (to the tunnels under it): a player who ground
+// pounds into one (or jumps up into it from below) flips it open, in their
+// game only (TManhole::touchPlayer). Each game counts the flips it knows of
+// (`scratch`: the count, and whether the lid moved last tick and whether a
+// flip from another game moved it); one its own player starts counts one more,
+// and is sent. A count ahead of this game's flips the lid here as a ground
+// pound would, its sound included; a player's first count from the host is
+// taken as it is (flips from before they came are no news).
+const int kLidCount = 0xFF, kLidMoving = 0x100, kLidTaken = 0x200, kLidKnown = 0x400;
+bool isManhole(TLiveActor* a) { return dynamic_cast<TManhole*>(a) != nullptr; }
+J3DFrameCtrl* lidAnim(TLiveActor* a)
+{
+	MActor* m = a->getMActor();
+	return m ? m->getFrameCtrl(ANM_TYPE_BCK) : nullptr;
+}
+// Once a tick: a flip begun here by this game's player counts one more.
+// True when it did.
+bool lidTick(TLiveActor* a, int* scratch)
+{
+	const J3DFrameCtrl* fc = lidAnim(a);
+	const bool moving = fc && fc->getRate() != 0.0f;
+	bool flipped = false;
+	if (moving && !(*scratch & (kLidMoving | kLidTaken))) {
+		*scratch = (*scratch & ~kLidCount) | ((*scratch + 1) & kLidCount);
+		flipped  = true;
+	}
+	*scratch = moving ? *scratch | kLidMoving : *scratch & ~(kLidMoving | kLidTaken);
+	return flipped;
+}
+int saveManhole(TLiveActor*, u8* out)
+{
+	out[0] = 0; // (MpMirrorTick fills in the count, which `scratch` holds)
+	return 1;
+}
+void takeManhole(TLiveActor* a, const u8* in, int size, int, int* scratch)
+{
+	if (size < 1)
+		return;
+	const int count = in[0];
+	// (the host's count is everyone's from the start)
+	const bool known = (*scratch & kLidKnown) != 0 || mpg_role() == MPG_ROLE_HOST;
+	const int ahead  = (int)(s8)(u8)(count - (*scratch & kLidCount));
+	*scratch         = (*scratch & ~kLidCount) | count | kLidKnown;
+	if (!known || ahead <= 0)
+		return;
+	TManhole* h      = static_cast<TManhole*>(a);
+	J3DFrameCtrl* fc = lidAnim(a);
+	if (!fc || fc->getRate() != 0.0f)
+		return; // flipping already (this game's player is at it too)
+	// as TManhole::touchPlayer starts it for a ground pound
+	fc->setRate(SMSGetAnmFrameRate());
+	fc->setFrame(fc->getFrame() + SMSGetAnmFrameRate());
+	h->offMapObjFlag(TMapObjBase::MAP_OBJ_FLAG_UNK100);
+	SMSGetMSound()->startSoundActor(MSD_SE_OBJ_MANHOLE_OPEN, &h->mPosition);
+	*scratch |= kLidTaken | kLidMoving;
+	if (getenv("SMS_MULTIPLAYER_DEBUG"))
+		fprintf(stderr, "[multiplayer] the manhole lid at %.0f %.0f %.0f flipped open in another game: here too\n",
 		        a->mPosition.x, a->mPosition.y, a->mPosition.z);
 }
 
@@ -1249,6 +1312,7 @@ const Kind kKinds[] = {
 	{"fish with a coin", isCarryingSchool, saveSchool, takeSchool, OWN_HOST, 3, false, 0, 0},
 	{"watermelon", isWatermelon, saveWatermelon, takeWatermelon, OWN_USER, 2, false, 0, 0},
 	{"Turbo nozzle door", isTurboDoor, saveTurboDoor, takeTurboDoor, OWN_USER, 3, false, 0, 0},
+	{"manhole lid", isManhole, saveManhole, takeManhole, OWN_USER, 3, false, 0, 0},
 };
 const int kKindCount = sizeof kKinds / sizeof kKinds[0];
 
@@ -1483,6 +1547,9 @@ bool ownedHere(Mirrored& m)
 		if (!open)
 			return false;
 	}
+	// a manhole lid this game's player flipped: ours to say so
+	if (m.actor && m.kind->match == isManhole && lidTick(m.actor, &m.scratch))
+		m.usedAt = s_clock;
 	// used here lately: ours (two seconds after; riding, while on it)
 	if (m.kind->owner != OWN_HOST && s_clock - m.usedAt < 2 * fps())
 		return true;
@@ -1818,6 +1885,8 @@ void MpMirrorTick()
 				continue;
 			u8 out[48];
 			const int n = m.actor ? m.kind->save(m.actor, out) : (gpMapObjWave ? saveWaves(out) : 0);
+			if (m.actor && m.kind->match == isManhole)
+				out[0] = (u8)(m.scratch & kLidCount); // the flips known here
 			// unchanged: once a second from the host, so a newcomer has it; a
 			// few times a second from a player using it, so the host (which
 			// takes it back once it hears nothing for a second) keeps letting them
@@ -2049,6 +2118,39 @@ bool MpMirrorTestSandBlock()
 	fprintf(stderr, "[multiplayer] test: onto the nearest sand block, at %.0f %.0f %.0f (%.0f away; state %d, scale %.2f, floor %.0f of %s)\n", b.x,
 	        b.y, b.z, sqrtf(nearest), (int)static_cast<TMapObjBase*>(best)->mState, best->mScaling.y, top,
 	        floor && floor->getActor() ? typeid(*floor->getActor()).name() : "the map");
+	return true;
+}
+
+// Test aid: this game's Mario over the nearest manhole lid, ground pounding
+// into it (`watch`: standing 6 m from it instead); `frame` counts from 0. True
+// once done.
+bool MpMirrorTestManhole(int frame, bool watch)
+{
+	TMario* me = gpMarioOriginal;
+	TLiveActor* best = nullptr;
+	f32 nearest      = 0.0f;
+	for (int k = 0; me && k < s_count; k++)
+		if (s_mirrors[k].actor && s_mirrors[k].kind->match == isManhole) {
+			const JGeometry::TVec3<f32>& b = s_mirrors[k].actor->mPosition;
+			const f32 d = (b.x - me->mPosition.x) * (b.x - me->mPosition.x) + (b.z - me->mPosition.z) * (b.z - me->mPosition.z);
+			if (!best || d < nearest)
+				best = s_mirrors[k].actor, nearest = d;
+		}
+	if (!best)
+		return true;
+	const JGeometry::TVec3<f32>& b = best->mPosition;
+	if (frame == 0) {
+		if (watch)
+			me->warpRequest(JGeometry::TVec3<f32>(b.x, b.y + 50.0f, b.z - 600.0f), 0.0f);
+		else
+			me->warpRequest(JGeometry::TVec3<f32>(b.x, b.y + 500.0f, b.z), 0.0f);
+		fprintf(stderr, "[multiplayer] test: %s the manhole lid at %.0f %.0f %.0f\n", watch ? "beside" : "over", b.x, b.y, b.z);
+		return watch;
+	}
+	if (frame < 8)
+		return false;
+	me->changePlayerStatus(MARIO_STATUS_HIP_DROP, 0, false);
+	fprintf(stderr, "[multiplayer] test: ground pound at %.0f %.0f %.0f\n", me->mPosition.x, me->mPosition.y, me->mPosition.z);
 	return true;
 }
 

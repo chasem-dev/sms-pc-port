@@ -2277,6 +2277,8 @@ struct TestPlan {
 	bool onBoat;
 	int sandAt;                 // sandblock@N: this player drops onto the first sand block
 	bool onSand;
+	int manholeAt, manholeWatch; // manhole@N[:1]: ground pounds into the nearest manhole lid (:1 stands beside it)
+	bool manholeDone;
 	int nearAt;              // stands before an NPC (presses of B talk to it), up to 1800 frames
 	bool talked;
 	bool tookAgain;
@@ -2356,6 +2358,7 @@ void runTests(TMarDirector* dir, bool arrived)
 		s_test.parsed = true;
 		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.gateAt = s_test.flAt = s_test.demoAt = s_test.enemyAt = s_test.tearAt = s_test.blueAt = s_test.cornerAt = s_test.voidAt = s_test.aimAt = s_test.graffitiAt = s_test.graffitiCoinAt = s_test.shineOutAt = s_test.surfAt = s_test.routeAt = s_test.boatAt = s_test.sandAt = s_test.rideAt = s_test.titleQuitAt = s_test.quitAt = s_test.doorAt = s_test.mantaAt = -1;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
+		s_test.manholeAt = -1;
 		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = s_test.bossHitAt = s_test.setFlagAt = -1;
 		s_test.bossSprayAt = s_test.shadowSprayAt = s_test.shadowRunAt = s_test.npcSprayAt = s_test.carryAt = s_test.fruitAt = s_test.slotSprayAt = s_test.melonAt = -1;
 		s_test.dieLives = -1;
@@ -2425,6 +2428,8 @@ void runTests(TMarDirector* dir, bool arrived)
 					s_test.rideSeconds = 10;
 			if (const char* sb = strstr(plan, "sandblock@"))
 				sscanf(sb, "sandblock@%d", &s_test.sandAt);
+			if (const char* mh = strstr(plan, "manhole@"))
+				sscanf(mh, "manhole@%d:%d", &s_test.manholeAt, &s_test.manholeWatch);
 			if (const char* rt = strstr(plan, "pickred@"))
 				sscanf(rt, "pickred@%d:%d", &s_test.redTakeAt, &s_test.redTakeCount);
 			if (const char* rd = strstr(plan, "redswitch@"))
@@ -2566,6 +2571,8 @@ void runTests(TMarDirector* dir, bool arrived)
 	}
 	if (s_test.sandAt >= 0 && !s_test.onSand && s_test.frames >= s_test.sandAt)
 		s_test.onSand = MpMirrorTestSandBlock();
+	if (s_test.manholeAt >= 0 && !s_test.manholeDone && s_test.frames >= s_test.manholeAt)
+		s_test.manholeDone = MpMirrorTestManhole(s_test.frames - s_test.manholeAt, s_test.manholeWatch != 0);
 	if (s_test.tearAt >= 0 && !s_test.tore && s_test.frames >= s_test.tearAt)
 		s_test.tore = MpBossTestTear() != 0;
 	if (s_test.graffitiAt >= 0 && s_test.frames >= s_test.graffitiAt && s_test.frames < s_test.graffitiAt + 600)
