@@ -271,6 +271,7 @@ void SaveStateMenuDraw(const JDrama::TRect& screen)
 	J2DOrthoGraph graph(screen);
 	graph.setPort();
 	graph.setup2D();
+	wholeScreen(width, height);
 
 	// the paused game behind, its HUD and pause menu too, darker
 	fill(width / 2, height / 2, width, height, 0.0f, 0x000014C8, alpha);
