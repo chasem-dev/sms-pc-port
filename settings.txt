@@ -156,7 +156,11 @@ frame_rate = 60
 # around Mario (mouse_orbit = off makes it act as the C-stick's up and down
 # instead), the mouse wheel zooms: down moves the camera out, up brings it in,
 # and the mouse turns the close-up view Y opens, aiming FLUDD in it
-# (close_camera_mouse = off leaves that view to the stick).
+# (close_camera_mouse = off leaves that view to the stick). raw_mouse = off
+# makes mouse look follow the system's pointer speed and acceleration (Windows
+# and X11). cstick_orbit = on makes the C-stick's up and down tilt the camera
+# as the mouse does; holding CAMERA_ZOOM (the right stick's press) then moves
+# it nearer or further, as on the GameCube.
 # camera_invert_x = off
 # camera_invert_y = off
 # free_camera = off
@@ -165,6 +169,8 @@ frame_rate = 60
 # mouse_sensitivity = 100
 # mouse_orbit = on
 # close_camera_mouse = on
+# raw_mouse = on
+# cstick_orbit = off
 
 # Keep reading the keyboard and controllers while another window has focus
 # (normally the game ignores them until it has focus again).

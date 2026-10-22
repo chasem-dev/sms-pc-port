@@ -196,6 +196,9 @@ int platformDisplay();
 void platformRequestDisplay(int index);
 bool platformMouseLook();
 void platformRequestMouseLook(bool on);
+bool platformRawMouse();
+bool platformRawMouseMatters();
+void platformRequestRawMouse(bool on);
 // FSR 1 and NIS modes (0 native, 1 quality, 2 balanced, 3 performance, 4 ultra performance): the one
 // SMS_FSR_MODE named or -1, and the internal resolution a mode makes for the picture as it is on screen
 // now (0 without a window).

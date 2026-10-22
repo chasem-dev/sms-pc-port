@@ -110,6 +110,9 @@ gdb -q -batch -nx -ex 'set debuginfod enabled off' \
 
 Auto save ([ext/autosave](../ext/autosave/README.md)) has `tools/regress/autosave.py`, run under gdb on regular Sunshine with `SMS_AUTO_SAVE=1` and the same environment as the nozzle check (a fresh card, `SMS_WARP=2,7,1`, the file-select presses, which create file A).
 It opens a Turbo box for good, raises a blue coin's prompt, then makes a Shine in the stage appear and puts Mario on it. Each must save (the save count and last save time move on, and the saved copy of the flags is taken) without the director opening the prompt, and the Shine must still leave the stage.
+
+C-stick orbit (`SMS_CSTICK_ORBIT=1`, `decomp-patches/zzz-camera-06-cstick-orbit.patch`) has `tools/regress/cstick_orbit.py`, run under gdb on regular Sunshine with `SMS_CSTICK_ORBIT=1` and the same environment as the nozzle check.
+Once Mario can move it holds the C-stick's up or down through the pad layer's key state for 20 frames at a time and checks what moved: with the setting on the tilt moves (up lowers the camera, down raises it, Invert camera Y the other way) and the distance ratio does not; with `CAMERA_ZOOM` held (the right stick's press) or the setting off, the distance ratio moves and the tilt does not.
 `AUTOSAVE_PART=shine` runs only the Shine. `AUTOSAVE_PART=fallback` makes the slot look saved over by another game, and the prompt must then open.
 
 ## Platform layer

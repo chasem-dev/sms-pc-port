@@ -37,6 +37,7 @@ enum Id {
     VSYNC,
     OVERLAY,
     MOUSE_LOOK,
+    RAW_MOUSE,
     OPTION_COUNT
 };
 
@@ -198,6 +199,7 @@ void build() {
     listNames(VSYNC, {"Off", "On", "Adaptive"});
     listNames(OVERLAY, {"Off", "On"});
     listNames(MOUSE_LOOK, {"Off", "On"});
+    listNames(RAW_MOUSE, {"Off", "On"});
 }
 
 // The values of an option, with the lists that follow the window or the picture brought up to date.
@@ -238,6 +240,7 @@ int available(int id) {
     case VSYNC:
     case OVERLAY:
     case MOUSE_LOOK: return platformHasWindow();
+    case RAW_MOUSE: return platformHasWindow() && platformRawMouseMatters();  // Windows and X11
     default: return 1;
     }
 }
@@ -272,6 +275,7 @@ int get(int id) {
     case VSYNC: return platformVsync() < 0 ? 2 : std::min(platformVsync(), 1);
     case OVERLAY: return GXPC_OverlayVisible() ? 1 : 0;
     case MOUSE_LOOK: return platformMouseLook() ? 1 : 0;
+    case RAW_MOUSE: return platformRawMouse() ? 1 : 0;
     }
     return 0;
 }
@@ -288,6 +292,7 @@ int set(int id, int value) {
     case FULLSCREEN_SIZE: platformRequestFullscreenSize(choice.w, choice.h); return 1;
     case MONITOR: platformRequestDisplay(int(v + 0.5f)); return 1;
     case MOUSE_LOOK: platformRequestMouseLook(v >= 0.5f); return 1;
+    case RAW_MOUSE: platformRequestRawMouse(v >= 0.5f); return 1;
     case FSR_MODE: {
         const float scale = platformFsrScale(value);
         if (scale <= 0.0f) return 0;
@@ -402,6 +407,8 @@ const PortSetting* gx_port_settings(int* count) {
                      "Shows the frame rate and where the time goes. The backtick key does this too."),
         row<MOUSE_LOOK>("mouseCamera", PORT_SETTINGS_PAGE_GAMEPLAY, 80, "Mouse Look",
                         "Turns the camera with the mouse. F10 frees it, a click takes it back."),
+        row<RAW_MOUSE>("rawMouse", PORT_SETTINGS_PAGE_GAMEPLAY, 87, "Raw Mouse Input",
+                       "Off follows the system's pointer speed, if mouse look feels slow."),
     };
     *count = int(sizeof kTable / sizeof kTable[0]);
     return kTable;
