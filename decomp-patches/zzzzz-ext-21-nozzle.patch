@@ -1,0 +1,68 @@
+Reason: port: FLUDD hook for extensions and native mods (port_ext.h playerNozzle, SMS_EV_PLAYER_NOZZLE): a nozzle switch, the swap with the second nozzle, and a nozzle's box being set up can be changed or refused, so a mod decides which nozzles Mario has
+--- a/src/Player/WaterGun.cpp
++++ b/src/Player/WaterGun.cpp
+@@ -1677,8 +1677,21 @@
+ 	return n;
+ }
+ 
++#ifdef TARGET_PC
++#include "port_ext.h"
++#endif
++
+ void TWaterGun::changeNozzle(TNozzleType nozzleType, bool animate)
+ {
++#ifdef TARGET_PC
++	{
++		// extensions may change or refuse the nozzle (port_ext.h)
++		int to = nozzleType;
++		if (port_ext_player_nozzle(mMario, &to, animate, 0))
++			return;
++		nozzleType = (TNozzleType)to;
++	}
++#endif
+ 	f32 usedWater = (f32)mCurrentWater
+ 	                / WaterGunCurNozzle2(this)->mEmitParams.mAmountMax.get();
+ 	if (nozzleType == Spray) {
+@@ -2195,6 +2208,14 @@
+ 
+ void TWaterGun::changeBackup()
+ {
++#ifdef TARGET_PC
++	{
++		// extensions may refuse the swap, told which nozzle it is to (port_ext.h)
++		int to = WaterGunSwitchToSecondNozzleProgress(this) == 0.0f ? (int)mSecondNozzle : (int)Spray;
++		if (port_ext_player_nozzle(mMario, &to, 1, 1))
++			return;
++	}
++#endif
+ 	// TODO: Missing stack space
+ 	// volatile u32 unused2[5];
+ 	if (WaterGunSwitchToSecondNozzleProgress(this) == 0.0f) {
+--- a/src/MoveBG/Item.cpp
++++ b/src/MoveBG/Item.cpp
+@@ -1694,9 +1694,25 @@
+ 		unk166 = false;
+ }
+ 
++#ifdef TARGET_PC
++#include <Player/Mario.hpp>
++#endif
++
+ void TNozzleBox::loadAfter()
+ {
+ 	TMapObjGeneral::loadAfter();
++#ifdef TARGET_PC
++	{
++		// extensions may leave the box out (port_ext.h)
++		int nozzle = mContainedNozzleType;
++		if (port_ext_player_nozzle(gpMarioOriginal, &nozzle, 0, 2)) {
++			mContainedNozzleItem = (TItemNozzle*)TMapObjBaseManager::newAndRegisterObj(mContainedNozzleName);
++			mContainedNozzleItem->setContainer(this);
++			makeModelInvalid();
++			return;
++		}
++	}
++#endif
+ 	mContainedNozzleItem = (TItemNozzle*)TMapObjBaseManager::newAndRegisterObj(
+ 	    mContainedNozzleName);
+ 	mContainedNozzleItem->setContainer(this);

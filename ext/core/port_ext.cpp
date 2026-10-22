@@ -152,6 +152,12 @@ extern "C" int port_ext_player_status(void* mario, unsigned* status, unsigned* a
 	return 0;
 }
 
+extern "C" int port_ext_player_nozzle(void* mario, int* nozzle, int animate, int reason)
+{
+	EACH(playerNozzle) if (s_ext[i]->playerNozzle(mario, nozzle, animate, reason)) return 1;
+	return 0;
+}
+
 extern "C" int port_ext_player_damage(void* mario, int* amount)
 {
 	EACH(playerDamage) if (s_ext[i]->playerDamage(mario, amount)) return 1;

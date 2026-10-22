@@ -26,6 +26,7 @@
 #include <MoveBG/ItemManager.hpp>
 #include <Player/Mario.hpp>
 #include <Player/WaterGun.hpp>
+#include <Player/MarioCap.hpp>
 #include <Player/Yoshi.hpp>
 #include <Strategic/HitActor.hpp>
 #include <System/Application.hpp>
@@ -400,6 +401,20 @@ int playerStatus(void* m, unsigned* status, unsigned* arg, int force)
 	return 0;
 }
 
+int playerNozzle(void* m, int* nozzle, int animate, int reason)
+{
+	if (m != (void*)mario() || !modh_wants(SMS_EV_PLAYER_NOZZLE))
+		return 0;
+	SmsEvPlayerNozzle ev;
+	ev.nozzle  = *nozzle;
+	ev.animate = animate;
+	ev.reason  = reason;
+	if (modh_dispatch(SMS_EV_PLAYER_NOZZLE, &ev, sizeof ev))
+		return 1;
+	*nozzle = ev.nozzle;
+	return 0;
+}
+
 int playerDamage(void* m, int* amount)
 {
 	if (m != (void*)mario() || !modh_wants(SMS_EV_PLAYER_DAMAGE))
@@ -455,6 +470,7 @@ struct Register {
 		e.camera              = camera;
 		e.playerStatus        = playerStatus;
 		e.playerDamage        = playerDamage;
+		e.playerNozzle        = playerNozzle;
 		e.shineCollected      = shineCollected;
 		port_ext_register(&s_extension);
 	}
@@ -650,6 +666,49 @@ extern "C" int modg_player_set_status(uint32_t status, uint32_t arg)
 {
 	TMario* m = mario();
 	return m ? m->changePlayerStatus(status, arg, false) != 0 : 0;
+}
+
+extern "C" int modg_player_set_nozzle(int nozzle, int animate)
+{
+	TMario* m = mario();
+	if (!m || !m->mWaterGun || !m->checkFlag(MARIO_FLAG_HAS_FLUDD) || nozzle < 0 || nozzle > TWaterGun::DivingHelmet)
+		return 0;
+	m->mWaterGun->changeNozzle((TWaterGun::TNozzleType)nozzle, animate != 0); // the hook may refuse it
+	return m->mWaterGun->getCurrentNozzleIndex() == nozzle;
+}
+
+extern "C" int modg_player_set_fludd(int has)
+{
+	TMario* m = mario();
+	if (!m)
+		return 0;
+	if (has)
+		m->onFlag(MARIO_FLAG_HAS_FLUDD);
+	else
+		m->offFlag(MARIO_FLAG_HAS_FLUDD);
+	return 1;
+}
+
+extern "C" int modg_player_set_outfit(int shirt, int sunglasses, int helmet)
+{
+	TMario* m = mario();
+	if (!m)
+		return 0;
+	if (shirt)
+		m->onFlag(MARIO_FLAG_HAS_SHIRT);
+	else
+		m->offFlag(MARIO_FLAG_HAS_SHIRT);
+	if (m->mCap) {
+		if (sunglasses)
+			m->mCap->setModelActive(TMarioCap::E_CAP_MODEL_SUNGLASSES);
+		else
+			m->mCap->setModelInactive(TMarioCap::E_CAP_MODEL_SUNGLASSES);
+		if (helmet)
+			m->mCap->setModelActive(TMarioCap::E_CAP_MODEL_HELMET);
+		else
+			m->mCap->setModelInactive(TMarioCap::E_CAP_MODEL_HELMET);
+	}
+	return 1;
 }
 
 extern "C" int modg_camera_get(SmsCamera* out)

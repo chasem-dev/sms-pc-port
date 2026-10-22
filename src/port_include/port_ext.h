@@ -112,6 +112,13 @@ typedef struct PortExtension {
 	// which the hook may change: every extension's chooseNextStage runs
 	// before any extension's moveStage, so those see where the game goes.
 	void (*chooseNextStage)(void);
+	// FLUDD of any TMario (the player's, or Shadow Mario's) is about to
+	// switch nozzle (TWaterGun::changeNozzle, reason 0), swap with its second
+	// nozzle (changeBackup, reason 1: `*nozzle` is the one swapped to), or a
+	// nozzle's box is set up (TNozzleBox::loadAfter, reason 2: `*nozzle` is
+	// the box's). The hook may change `*nozzle`, or return 1 to refuse it (a
+	// box is then left out).
+	int (*playerNozzle)(void* mario, int* nozzle, int animate, int reason);
 } PortExtension;
 
 // Adds an extension; call from a static constructor or before the first frame.
@@ -145,6 +152,7 @@ int port_ext_player_status(void* mario, unsigned* status, unsigned* arg, int for
 int port_ext_player_damage(void* mario, int* amount);
 void port_ext_shine_collected(int shine, int total);
 int port_ext_save_prompt(int kind);
+int port_ext_player_nozzle(void* mario, int* nozzle, int animate, int reason);
 
 #ifdef __cplusplus
 }
