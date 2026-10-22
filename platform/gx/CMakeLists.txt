@@ -94,7 +94,8 @@ if(APPLE)
     # SDL.h includes <SDL2/SDL_main.h>, which resolves through -F.
     target_include_directories(SDL2::SDL2 INTERFACE "${_sms_sdl2_fw}/Headers")
     target_compile_options(SDL2::SDL2 INTERFACE "-F${_sms_sdl2_fw_dir}")
-    target_link_options(SDL2::SDL2 INTERFACE "LINKER:-F${_sms_sdl2_fw_dir}" "LINKER:-framework,SDL2")
+    # clang hands -F to the linker too; "LINKER:-F" would split the path at commas.
+    target_link_options(SDL2::SDL2 INTERFACE "-F${_sms_sdl2_fw_dir}" "LINKER:-framework,SDL2")
     message(STATUS "sms_gx: using SDL2.framework at ${_sms_sdl2_fw}")
     set(SMS_SDL2_FRAMEWORK_DIR "${_sms_sdl2_fw_dir}" PARENT_SCOPE)
   endif()

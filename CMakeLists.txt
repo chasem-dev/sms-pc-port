@@ -477,12 +477,22 @@ elseif(APPLE)
     target_link_options(sms PRIVATE "LINKER:-no_pie")
   endif()
 endif()
+# Passes linker arguments that hold a path. "LINKER:" and -Wl, split at every
+# comma, so a game installed under "Nintendo, SEGA" handed the linker half a
+# path; -Xlinker passes each argument whole.
+function(sms_link_paths target)
+  set(_args "SHELL:")
+  foreach(_arg IN LISTS ARGN)
+    string(APPEND _args " -Xlinker \"${_arg}\"")
+  endforeach()
+  target_link_options(${target} PRIVATE "${_args}")
+endfunction()
 # Save states copy the game's own global variables: the link map says where
 # they are, and tools/savestate_ranges.py writes that into the executable.
 if(APPLE)
-  target_link_options(sms PRIVATE "LINKER:-map,${CMAKE_BINARY_DIR}/sms.map")
+  sms_link_paths(sms -map "${CMAKE_BINARY_DIR}/sms.map")
 else()
-  target_link_options(sms PRIVATE "LINKER:-Map=${CMAKE_BINARY_DIR}/sms.map")
+  sms_link_paths(sms "-Map=${CMAKE_BINARY_DIR}/sms.map")
 endif()
 add_custom_command(TARGET sms POST_BUILD
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/savestate_ranges.py
