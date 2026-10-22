@@ -39,6 +39,7 @@ An extension fills in a `PortExtension` with the hooks it needs, leaving the res
 | `camera` | the game camera is about to make this tick's view (`CPolarSubCamera::perform`) | change the eye, the point looked at, the field of view |
 | `playerStatus` | `TMario::changePlayerStatus` | change the status, or return 1 to refuse it |
 | `playerDamage` | `TMario::decHP` | change the amount, or return 1 to stop it |
+| `playerNozzle` | FLUDD is about to change nozzle (`TWaterGun::changeNozzle`; the nozzle button's `changeBackup`; a stage's start giving the file's nozzle, in `TMarDirector::setMario`), or a nozzle's box is set up (`TNozzleBox::loadAfter`) | change the nozzle, or return 1 to refuse it (a box is then not in the stage) |
 | `shineCollected` | `TFlagManager::setShineFlag` sets a Shine's flag for the first time | note it |
 | `savePrompt` | the stage is about to ask the player to save, after a Shine, a blue coin, a nozzle's box or Yoshi (not a game over's) | return 1 to leave the prompt out (auto save saves instead) |
 | `chooseNextStage` | `TMarDirector::moveStage` is about to leave, before any extension's `moveStage` | change the destination, which every `moveStage` then sees (multiplayer's host sends the players where its mods chose) |

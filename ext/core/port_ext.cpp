@@ -152,6 +152,22 @@ extern "C" int port_ext_player_status(void* mario, unsigned* status, unsigned* a
 	return 0;
 }
 
+int port_ext_nozzle_asked; // C linkage: declared so in port_ext.h
+
+extern "C" int port_ext_player_nozzle(void* mario, void* box, int* nozzle, int animate, int reason)
+{
+	const int asked = *nozzle;
+	EACH(playerNozzle) if (s_ext[i]->playerNozzle(mario, box, nozzle, animate, reason)) {
+		*nozzle = asked;
+		return 1;
+	}
+	// A nozzle FLUDD has (TWaterGun::mNozzleList holds 0 to 5); Yoshi's (3)
+	// only for getting on him, and nothing else then.
+	if (*nozzle != asked && (*nozzle < 0 || *nozzle > 5 || (*nozzle == 3) != (asked == 3)))
+		*nozzle = asked;
+	return 0;
+}
+
 extern "C" int port_ext_player_damage(void* mario, int* amount)
 {
 	EACH(playerDamage) if (s_ext[i]->playerDamage(mario, amount)) return 1;

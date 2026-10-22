@@ -49,6 +49,9 @@ int modg_player_set_forward_speed(float speed);
 int modg_player_set_health(int health);
 int modg_player_set_water(int water);
 int modg_player_set_status(uint32_t status, uint32_t arg);
+int modg_player_set_nozzle(int nozzle, int animate);
+int modg_player_set_fludd(int has);
+int modg_player_set_outfit(int shirt, int sunglasses, int helmet);
 
 int modg_camera_get(SmsCamera* out);
 

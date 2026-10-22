@@ -351,6 +351,7 @@ bool cancellable(uint32_t type)
 	case SMS_EV_SAVE_STATE_REQUEST:
 	case SMS_EV_PLAYER_STATUS:
 	case SMS_EV_PLAYER_DAMAGE:
+	case SMS_EV_PLAYER_NOZZLE:
 		return true;
 	default:
 		return type >= SMS_EV_CUSTOM_BASE;
@@ -950,6 +951,7 @@ int apiPlayerGet(SmsPlayer* out)
 const SmsPlayerApi s_player = {
 	sizeof(SmsPlayerApi),          apiPlayerGet,          modg_player_set_position, modg_player_set_velocity,
 	modg_player_set_forward_speed, modg_player_set_health, modg_player_set_water,   modg_player_set_status,
+	modg_player_set_nozzle,        modg_player_set_fludd,  modg_player_set_outfit,
 };
 
 // This frame's camera, read once a frame for the projections.

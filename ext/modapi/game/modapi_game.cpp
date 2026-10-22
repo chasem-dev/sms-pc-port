@@ -25,6 +25,7 @@
 #include <MoveBG/Item.hpp>
 #include <MoveBG/ItemManager.hpp>
 #include <Player/Mario.hpp>
+#include <Player/MarioCap.hpp>
 #include <Player/WaterGun.hpp>
 #include <Player/Yoshi.hpp>
 #include <Strategic/HitActor.hpp>
@@ -400,6 +401,29 @@ int playerStatus(void* m, unsigned* status, unsigned* arg, int force)
 	return 0;
 }
 
+int playerNozzle(void* m, void* box, int* nozzle, int animate, int reason)
+{
+	// The player's Mario; a box comes as the stage loads, before mario() is
+	// there, and a stage's nozzle once the director has placed him.
+	if (reason == PORT_NOZZLE_BOX ? !box
+	    : reason == PORT_NOZZLE_STAGE_START ? !m || m != (void*)gpMarioOriginal
+	                                        : m != (void*)mario())
+		return 0;
+	if (!modh_wants(SMS_EV_PLAYER_NOZZLE))
+		return 0;
+	TWaterGun* gun = m ? ((TMario*)m)->mWaterGun : 0;
+	SmsEvPlayerNozzle ev;
+	ev.from    = reason == PORT_NOZZLE_BOX || !gun ? -1 : gun->getCurrentNozzleIndex();
+	ev.to      = *nozzle;
+	ev.animate = animate;
+	ev.reason  = reason;
+	ev.box     = box ? obj((JDrama::TNameRef*)box) : 0;
+	if (modh_dispatch(SMS_EV_PLAYER_NOZZLE, &ev, sizeof ev))
+		return 1;
+	*nozzle = ev.to; // port_ext_player_nozzle keeps only a nozzle FLUDD has
+	return 0;
+}
+
 int playerDamage(void* m, int* amount)
 {
 	if (m != (void*)mario() || !modh_wants(SMS_EV_PLAYER_DAMAGE))
@@ -455,6 +479,7 @@ struct Register {
 		e.camera              = camera;
 		e.playerStatus        = playerStatus;
 		e.playerDamage        = playerDamage;
+		e.playerNozzle        = playerNozzle;
 		e.shineCollected      = shineCollected;
 		port_ext_register(&s_extension);
 	}
@@ -584,6 +609,7 @@ extern "C" int modg_player_get(SmsPlayer* out)
 			s.water     = m->mWaterGun->getCurrentWater();
 			s.max_water = m->mWaterGun->getMaxWater();
 			s.nozzle    = m->mWaterGun->mSecondNozzle;
+			s.current_nozzle = m->mWaterGun->getCurrentNozzleIndex();
 		}
 		s.status       = m->mStatus;
 		s.status_timer = m->mStatusTimer;
@@ -592,6 +618,11 @@ extern "C" int modg_player_get(SmsPlayer* out)
 		s.on_yoshi     = m->onYoshi() ? 1 : 0;
 		setVec(&s.floor, m->mFloorPosition.x, m->mFloorPosition.y, m->mFloorPosition.z);
 		s.object = obj(m);
+		s.shirt  = m->checkFlag(MARIO_FLAG_HAS_SHIRT) ? 1 : 0;
+		if (m->mCap) {
+			s.sunglasses = m->mCap->isModelActive(TMarioCap::E_CAP_MODEL_SUNGLASSES) ? 1 : 0;
+			s.helmet     = m->mCap->isModelActive(TMarioCap::E_CAP_MODEL_HELMET) ? 1 : 0;
+		}
 	}
 	const uint32_t n = out->size && out->size < sizeof s ? out->size : (uint32_t)sizeof s;
 	memcpy(out, &s, n);
@@ -650,6 +681,52 @@ extern "C" int modg_player_set_status(uint32_t status, uint32_t arg)
 {
 	TMario* m = mario();
 	return m ? m->changePlayerStatus(status, arg, false) != 0 : 0;
+}
+
+extern "C" int modg_player_set_nozzle(int nozzle, int animate)
+{
+	TMario* m = mario();
+	// a nozzle FLUDD has (0 to 5), but Yoshi's: that one comes with him
+	if (!m || !m->mWaterGun || !m->checkFlag(MARIO_FLAG_HAS_FLUDD) || m->onYoshi() || nozzle < TWaterGun::Spray
+	    || nozzle > TWaterGun::Turbo || nozzle == TWaterGun::Yoshi)
+		return 0;
+	m->mWaterGun->changeNozzle((TWaterGun::TNozzleType)nozzle, animate != 0); // SMS_EV_PLAYER_NOZZLE may refuse it
+	return m->mWaterGun->getCurrentNozzleIndex() == nozzle;
+}
+
+extern "C" int modg_player_set_fludd(int has)
+{
+	TMario* m = mario();
+	if (!m)
+		return 0;
+	if (has)
+		m->onFlag(MARIO_FLAG_HAS_FLUDD);
+	else
+		m->offFlag(MARIO_FLAG_HAS_FLUDD);
+	return 1;
+}
+
+extern "C" int modg_player_set_outfit(int shirt, int sunglasses, int helmet)
+{
+	TMario* m = mario();
+	if (!m)
+		return 0;
+	// each: 1 on, 0 off, -1 as it is
+	if (shirt == 1)
+		m->onFlag(MARIO_FLAG_HAS_SHIRT);
+	else if (shirt == 0)
+		m->offFlag(MARIO_FLAG_HAS_SHIRT);
+	if (TMarioCap* cap = m->mCap) {
+		if (sunglasses == 1)
+			cap->setModelActive(TMarioCap::E_CAP_MODEL_SUNGLASSES);
+		else if (sunglasses == 0)
+			cap->setModelInactive(TMarioCap::E_CAP_MODEL_SUNGLASSES);
+		if (helmet == 1)
+			cap->setModelActive(TMarioCap::E_CAP_MODEL_HELMET);
+		else if (helmet == 0)
+			cap->setModelInactive(TMarioCap::E_CAP_MODEL_HELMET);
+	}
+	return 1;
 }
 
 extern "C" int modg_camera_get(SmsCamera* out)

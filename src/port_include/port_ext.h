@@ -112,7 +112,23 @@ typedef struct PortExtension {
 	// which the hook may change: every extension's chooseNextStage runs
 	// before any extension's moveStage, so those see where the game goes.
 	void (*chooseNextStage)(void);
+	// FLUDD of a TMario (the player's, or Shadow Mario's) is about to change
+	// nozzle, for `reason` (PORT_NOZZLE_*), or a nozzle's box is set up as
+	// the stage loads (PORT_NOZZLE_BOX: `mario` null, `box` the TNozzleBox).
+	// `*nozzle` is the one asked for (TWaterGun::TNozzleType), which the hook
+	// may change (not for a box, nor the swap back to the spray; a number
+	// FLUDD has no nozzle for is not taken), or return 1 to refuse it (a box
+	// is then not in the stage).
+	int (*playerNozzle)(void* mario, void* box, int* nozzle, int animate, int reason);
 } PortExtension;
+
+// playerNozzle's reasons (the mod API's SMS_NOZZLE_*)
+enum {
+	PORT_NOZZLE_SWITCH,     // TWaterGun::changeNozzle: a pickup, Yoshi, the game's own
+	PORT_NOZZLE_SWAP,       // TWaterGun::changeBackup: the nozzle button
+	PORT_NOZZLE_BOX,        // TNozzleBox::loadAfter
+	PORT_NOZZLE_STAGE_START // TMarDirector::setMario: the file's second nozzle
+};
 
 // Adds an extension; call from a static constructor or before the first frame.
 void port_ext_register(const PortExtension* ext);
@@ -145,6 +161,10 @@ int port_ext_player_status(void* mario, unsigned* status, unsigned* arg, int for
 int port_ext_player_damage(void* mario, int* amount);
 void port_ext_shine_collected(int shine, int total);
 int port_ext_save_prompt(int kind);
+int port_ext_player_nozzle(void* mario, void* box, int* nozzle, int animate, int reason);
+// While set, TWaterGun::changeNozzle does not ask playerNozzle: its caller
+// asked already (a stage's start), or it is a step of a swap that was asked.
+extern int port_ext_nozzle_asked;
 
 #ifdef __cplusplus
 }
