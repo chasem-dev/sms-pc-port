@@ -403,6 +403,7 @@ int playerStatus(void* m, unsigned* status, unsigned* arg, int force)
 
 int playerNozzle(void* m, int* nozzle, int animate, int reason)
 {
+#if SMS_MOD_API_MINOR >= 5
 	if (m != (void*)mario() || !modh_wants(SMS_EV_PLAYER_NOZZLE))
 		return 0;
 	SmsEvPlayerNozzle ev;
@@ -412,6 +413,13 @@ int playerNozzle(void* m, int* nozzle, int animate, int reason)
 	if (modh_dispatch(SMS_EV_PLAYER_NOZZLE, &ev, sizeof ev))
 		return 1;
 	*nozzle = ev.nozzle;
+#else
+	// the SDK before API 1.5 has no SMS_EV_PLAYER_NOZZLE
+	(void)m;
+	(void)nozzle;
+	(void)animate;
+	(void)reason;
+#endif
 	return 0;
 }
 
