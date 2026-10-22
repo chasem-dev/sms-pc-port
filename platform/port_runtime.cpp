@@ -820,6 +820,7 @@ static const struct {
 	{ "texture_pack_upload_mb", "SMS_TEXTURE_PACK_UPLOAD_MB" },
 	{ "shader_warmup", "SMS_GX_SHADER_WARMUP" },
 	{ "hd_cutscenes", "SMS_HD_CUTSCENES" }, // follows HD textures; 0 disables
+	{ "eclipse_sunshine_movies", "SMS_ECLIPSE_SUNSHINE_MOVIES" }, // Sunshine disc for Eclipse's movies; 0 for none
 	{ "widescreen", "SMS_WIDESCREEN" },
 	{ "widescreen_hud", "SMS_WIDESCREEN_HUD" }, // centre or edges
 	{ "frame_rate", "SMS_FRAME_RATE" },         // 30, 60 (default), or 120

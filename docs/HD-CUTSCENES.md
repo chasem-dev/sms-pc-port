@@ -13,7 +13,7 @@ Existing HD texture users also receive the cutscenes when finishing setup.
 The game loads a complete installed movie pack automatically while HD textures are enabled.
 Turning HD textures off disables the automatic movie replacement.
 Your disc and saves stay intact, and the pack carries over across game updates.
-Eclipse uses its own movie assets; the Sunshine patches are installed for Sunshine mode.
+Eclipse uses its own movie assets; the Sunshine patches are installed for Sunshine mode. Super Mario Eclipse plays the pack's versions of the ten movies it kept from Sunshine unchanged, and of the portal movie (see [ECLIPSE.md](ECLIPSE.md), Movies); its own and its darkened movies stay.
 
 For a source installation, build this revision of the port (see [build instructions](../BUILD.md)), then run the same installer used by the launcher:
 

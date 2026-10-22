@@ -90,6 +90,10 @@ frame_rate = 60
 # Start at the title: no Nintendo and Dolby logos or opening movie (A skips
 # each of them anyway).
 # skip_intro = off
+# Super Mario Eclipse: the Super Mario Sunshine disc that the movies Eclipse
+# kept from Sunshine play from, at Sunshine's quality instead of Eclipse's
+# copies (by default the one in rom/; 0 plays Eclipse's).
+# eclipse_sunshine_movies = /path/to/GMSE01.iso
 # The heat-wave shimmer that distorts the picture in sunny areas.
 # heat_haze = on
 # The pause menu's tracker: an area's Shine Sprites and blue coins, got out of

@@ -40,6 +40,8 @@ struct Entry {
 	int fd;
 	const u8* mem;    // in-memory replacement (port_dvd_override)
 	bool from_host = false; // read from `host` even with a disc image (a mod's file)
+	GCDisc* other  = nullptr; // read from another disc's file instead (Eclipse's Sunshine movies)
+	u32 other_entry = 0;
 };
 
 std::vector<Entry> g_fst;
@@ -245,6 +247,11 @@ s32 do_read_raw(DVDFileInfo* fi, void* addr, s32 length, s32 offset)
 	u32 entry = fi->startAddr;
 	if (entry >= g_fst.size() || g_fst[entry].dir)
 		return DVD_RESULT_FATAL_ERROR;
+	if (GCDisc* other = g_fst[entry].other) {
+		u32 n = gcdisc_read_file(other, g_fst[entry].other_entry, (u32)offset, addr, (u32)length);
+		fi->cb.transferredSize = n;
+		return (s32)n;
+	}
 	if (g_disc && !g_fst[entry].mem && !g_fst[entry].from_host) {
 		u32 n = gcdisc_read_file(g_disc, entry, (u32)offset, addr, (u32)length);
 		fi->cb.transferredSize = n;
@@ -623,6 +630,7 @@ static void overlay_dir(const std::string& host, const std::string& rel, int* re
 			d.fd        = -1;
 			d.mem       = NULL;
 			d.from_host = true;
+			d.other     = nullptr;
 			(*replaced)++;
 		} else {
 			add_entry(r, false, h, (u32)st.st_size);
@@ -663,9 +671,137 @@ static void apply_user_mods()
 	}
 }
 
+// Super Mario Eclipse v1.1.0 (disc GMSE04) re-encoded these Sunshine movies
+// at a lower bitrate without changing them: the same frames, picture levels
+// and audio, only blurrier and with the sound drifting up to a tenth of a
+// second late. Its other movies are its own, or Sunshine's darkened (openingA,
+// openingBA, demogeso, NozuruA/B, Pakkun), and stay. So, by its file's length on
+// that disc, each of these plays Sunshine's own: from the HD cutscene pack
+// when it is on, or else from the Sunshine disc that SMS_ECLIPSE_SUNSHINE_MOVIES
+// names (settings.txt eclipse_sunshine_movies; by default the one in rom/,
+// 0 for none), when its file there is the North American disc's.
+struct SunshineMovie {
+	const char* eclipse; // path on Eclipse's disc
+	u32 eclipse_length;
+	const char* sunshine; // the same movie on Sunshine's disc and in the HD pack
+	u32 sunshine_length;
+};
+static const SunshineMovie k_sunshine_movies[] = {
+	{ "/data/bath.thp", 7296000, "/data/bath.thp", 12299104 },
+	{ "/data/Entrance.thp", 70858400, "/data/Entrance.thp", 112892704 },
+	{ "/data/kagemario.thp", 7661536, "/data/kagemario.thp", 13849952 },
+	{ "/data/KuppaJr.thp", 49981056, "/data/KuppaJr.thp", 83407648 },
+	{ "/data/MechaKuppa.thp", 27242304, "/data/MechaKuppa.thp", 43290912 },
+	{ "/data/omakeA.thp", 3327648, "/data/omakeA.thp", 5900320 },
+	{ "/data/openingBB.thp", 22735424, "/data/openingBB.thp", 47529120 },
+	{ "/data/openingBC.thp", 7301056, "/data/openingBC.thp", 11937024 },
+	{ "/data/staffroll.thp", 67383456, "/data/staffroll.thp", 96534464 },
+	{ "/data/stolenpeach.thp", 11823200, "/data/stolenpeach.thp", 19040832 },
+	// The portal movie, and Eclipse's copy of it under another name: the
+	// same file as Sunshine's, so only the HD pack's changes anything.
+	{ "/data/EX128x144_q0.thp", 858256, "/data/EX128x144_q0.thp", 858256 },
+	{ "/data/yery.thp", 858256, "/data/EX128x144_q0.thp", 858256 },
+};
+
+static bool is_eclipse_disc()
+{
+	return !memcmp(g_disk_id.gameName, "GMSE", 4) && !memcmp(g_disk_id.company, "04", 2);
+}
+
+static GCDisc* open_sunshine_disc(const char* path)
+{
+	GCDisc* d = gcdisc_open(path, 0);
+	if (d && !strcmp(gcdisc_game_id(d), "GMSE01"))
+		return d;
+	if (d)
+		gcdisc_close(d);
+	return nullptr;
+}
+
+// SMS_ECLIPSE_SUNSHINE_MOVIES, or the one Sunshine disc in rom/ (as ./run.sh
+// finds it), from the game's folder or two levels up from build/<os>-<arch>/.
+static GCDisc* sunshine_disc(std::string* name)
+{
+	const char* set = getenv("SMS_ECLIPSE_SUNSHINE_MOVIES");
+	if (set && (!*set || !strcmp(set, "0") || !strcmp(set, "off")))
+		return nullptr;
+	if (set) {
+		*name = set;
+		GCDisc* d = open_sunshine_disc(set);
+		if (!d)
+			port_log("[dvd] Eclipse: %s is not a North American Super Mario Sunshine disc;"
+			         " its movies play as Eclipse has them\n", set);
+		return d;
+	}
+	for (const char* rom : { "rom", "../../rom" }) {
+		DIR* dp = opendir(rom);
+		if (!dp)
+			continue;
+		std::vector<std::string> images;
+		while (dirent* e = readdir(dp)) {
+			std::string n = e->d_name;
+			std::string ext = n.size() > 4 ? n.substr(n.size() - 4) : std::string();
+			for (char& c : ext)
+				c = (char)tolower((unsigned char)c);
+			if (ext == ".iso" || ext == ".gcm" || (n.size() > 5 && !strcasecmp(n.c_str() + n.size() - 5, ".ciso")))
+				images.push_back(std::string(rom) + "/" + n);
+		}
+		closedir(dp);
+		for (const std::string& image : images)
+			if (GCDisc* d = open_sunshine_disc(image.c_str())) {
+				*name = image;
+				return d;
+			}
+	}
+	return nullptr;
+}
+
+static void apply_sunshine_movies(const char* pack)
+{
+	std::string disc_name;
+	GCDisc* disc = sunshine_disc(&disc_name);
+	int hd = 0, sunshine = 0;
+	for (const SunshineMovie& m : k_sunshine_movies) {
+		s32 e = lookup_disc(m.eclipse);
+		if (e < 0 || g_fst[e].dir || g_fst[e].from_host || g_fst[e].length != m.eclipse_length)
+			continue; // not Eclipse v1.1.0's copy
+		Entry& d = g_fst[e];
+		struct stat st;
+		std::string h = pack ? std::string(pack) + "/files" + m.sunshine : std::string();
+		if (pack && stat(h.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
+			d.host      = h;
+			d.length    = (u32)st.st_size;
+			d.fd        = -1;
+			d.from_host = true;
+			hd++;
+			continue;
+		}
+		s32 s = disc ? gcdisc_lookup(disc, m.sunshine) : -1;
+		GCDiscEntry se;
+		if (s < 0 || !gcdisc_entry(disc, (u32)s, &se) || se.is_dir || se.size != m.sunshine_length)
+			continue;
+		if (se.size == m.eclipse_length)
+			continue; // the same file
+		d.other       = disc;
+		d.other_entry = (u32)s;
+		d.length      = se.size;
+		sunshine++;
+	}
+	if (hd)
+		port_log("[dvd] Eclipse: %d of its movies are Sunshine's, played from the HD cutscenes (%s)\n", hd, pack);
+	if (sunshine)
+		port_log("[dvd] Eclipse: %d of its movies are Sunshine's, played from your Sunshine disc (%s)\n",
+		         sunshine, disc_name.c_str());
+	if (disc && !sunshine)
+		gcdisc_close(disc); // else open for as long as the game runs
+}
+
 static void apply_mods()
 {
-	if (const char* pack = port_hd_cutscene_directory()) {
+	if (is_eclipse_disc()) {
+		// Not every movie on Eclipse's disc is the one the pack is made of.
+		apply_sunshine_movies(port_hd_cutscene_directory());
+	} else if (const char* pack = port_hd_cutscene_directory()) {
 		int replaced = 0, added = 0, inside = 0;
 		std::string files = std::string(pack) + "/files";
 		overlay_dir(files, std::string(), &replaced, &added, &inside);
