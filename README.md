@@ -150,6 +150,8 @@ The debug overlay (backtick) shows where each frame's time goes:
 If the overlay's `GL` line says `llvmpipe`, `softpipe` or `Software`, the game is rendering on the CPU and cannot hold 30 fps.
 On Linux this is usually the 32-bit build without the GPU driver's 32-bit libraries; build 64-bit (`SMS_ARCH=64 ./build.sh`) or see [BUILD.md](BUILD.md#troubleshooting).
 
+The window's title, and the overlay's line under `GL`, name the game's version and the commit it was built from, such as `Super Mario Sunshine 2026.10.21 (f5b6846)`, with `+ Super Mario Eclipse` when Eclipse is built in. The version is the launcher's name for the game when the launcher passes it (`SMS_GAME_VERSION`), else the date of that commit.
+
 ## Controls
 
 Controller 1 reads the keyboard and any game controller SDL recognises (A/B/X/Y, Start, right shoulder = Z, triggers = L/R, sticks, d-pad).

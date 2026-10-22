@@ -51,6 +51,10 @@ uint32_t GXPC_FrameCount(void);              /* display copies so far */
 /* Window (taskbar / Dock) icon: w x h RGBA8 pixels, copied. Applied to the
  * SDL window now, or when it opens; ignored without a window. */
 void GXPC_SetWindowIcon(const uint8_t* rgba, int w, int h);
+/* Window title (UTF-8, copied; "Super Mario Sunshine" until set): applied to
+ * the SDL window now, or when it opens, and shown in the debug overlay. */
+void GXPC_SetWindowTitle(const char* title);
+const char* GXPC_WindowTitle(void);
 /* 1 while the window holds the mouse for mouse look (SMS_MOUSE_CAMERA). */
 int GXPC_MouseCaptured(void);
 /* 1 while the cheat menu (F9) is open: the PAD layer reports an idle controller. */

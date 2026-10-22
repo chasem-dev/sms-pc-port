@@ -150,6 +150,7 @@ std::mutex& s_padLock = *new std::mutex;  // held while a controller is rumbled 
 #endif
 std::vector<uint8_t> s_icon;  // GXPC_SetWindowIcon, RGBA8
 int s_iconW = 0, s_iconH = 0;
+std::string s_title = "Super Mario Sunshine";  // GXPC_SetWindowTitle
 
 double nowSeconds() { return gx::monoSeconds(); }
 
@@ -535,7 +536,7 @@ bool openWindow(float scale, bool vulkan) {
     if (vulkan && glvk::libraryPath() && SDL_Vulkan_LoadLibrary(glvk::libraryPath()) != 0)
         logmsg("SDL could not load %s: %s", glvk::libraryPath(), SDL_GetError());
 #endif
-    s_window = SDL_CreateWindow("Super Mario Sunshine", layout.x, layout.y, layout.w, layout.h,
+    s_window = SDL_CreateWindow(s_title.c_str(), layout.x, layout.y, layout.w, layout.h,
                                 (vulkan ? SDL_WINDOW_VULKAN : SDL_WINDOW_OPENGL) | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI |
                                 SDL_WINDOW_HIDDEN);
     if (!s_window) {
@@ -1091,6 +1092,14 @@ void GXPC_SetWindowIcon(const uint8_t* rgba, int w, int h) {
     applyIcon();
 #endif
 }
+void GXPC_SetWindowTitle(const char* title) {
+    if (!title || !*title) return;
+    s_title = title;
+#ifdef SMS_GX_HAVE_SDL2
+    if (s_window) SDL_SetWindowTitle(s_window, s_title.c_str());
+#endif
+}
+const char* GXPC_WindowTitle(void) { return s_title.c_str(); }
 void GXPC_SetAutoPresent(int enable) { s_autoPresent = enable != 0; }
 void GXPC_SkipNextPresent(int skip) { s_skipPresent = skip != 0; }
 double GXPC_LastPresentSeconds(void) { return s_lastPresent; }
