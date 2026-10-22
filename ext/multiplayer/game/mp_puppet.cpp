@@ -12,6 +12,9 @@
 #include <JSystem/J3D/J3DGraphBase/J3DDrawBuffer.hpp>
 #include <JSystem/J3D/J3DGraphBase/J3DSys.hpp>
 #include <JSystem/J3D/J3DGraphLoader/J3DModelLoader.hpp>
+#include <JSystem/JAudio/JAInterface/JAIBasic.hpp>
+#include <JSystem/JAudio/JAInterface/JAIConst.hpp>
+#include <JSystem/JAudio/JAInterface/JAISound.hpp>
 #include <JSystem/JKernel/JKRFileLoader.hpp>
 #include <JSystem/JKernel/JKRHeap.hpp>
 #include <JSystem/JUtility/JUTNameTab.hpp>
@@ -20,6 +23,7 @@
 #include <M3DUtil/MActor.hpp>
 #include <M3DUtil/MActorData.hpp>
 #include <M3DUtil/MActorUtil.hpp>
+#include <MSound/MSound.hpp>
 #include <MarioUtil/DrawUtil.hpp>
 #include <MarioUtil/LightUtil.hpp>
 #include <MarioUtil/MathUtil.hpp>
@@ -35,6 +39,7 @@
 #include <System/MarDirector.hpp>
 #include <dolphin/gx.h>
 #include <dolphin/mtx.h>
+#include <dolphin/vi.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -481,6 +486,8 @@ TMpPuppet::TMpPuppet(int slot, bool self)
     , mFxShotNext(0)
     , mFxSeq(0)
     , mFxSeen(false)
+    , mSoundSeq(0)
+    , mSoundSeen(false)
 {
 	memset(mView, 0, sizeof mView);
 	memset(mProjection, 0, sizeof mProjection);
@@ -973,6 +980,71 @@ void TMpPuppet::showEffects(const MpgPose& p)
 	mFxSeq = p.shotSeq;
 }
 
+// How loud the other players are: a little under the player's own Mario, who
+// stays in front; and only near ours, full inside kSoundNear and fading out to
+// nothing at kSoundFar (the sound system's own fall-off stops at a floor: Mario's
+// sounds are made to be heard at the camera, wherever he is).
+const f32 kOthersVolume = 0.7f;
+const f32 kSoundNear = 500.0f, kSoundFar = 2500.0f;
+
+// Their sounds, as their game started them (mp_game.cpp's soundHook), here
+// at them: each new one once, its place following them while it plays (the
+// sound system reads it each frame, so it is kept for the slot, outliving the
+// stage), heard only near ours (kSoundFar). Their voice is one line at a
+// time, as Mario's is (the sound system cuts the last short, unless it
+// matters more).
+void TMpPuppet::playSounds(const MpgPose& p)
+{
+	static Vec s_at[MPG_MAX_PLAYERS];
+	static JAISound* s_voice[MPG_MAX_PLAYERS];
+	Vec& at = s_at[mSlot];
+	at.x    = mPosition.x;
+	at.y    = mPosition.y;
+	at.z    = mPosition.z;
+	if (!mSoundSeen) {
+		mSoundSeen = true;
+		mSoundSeq  = p.soundSeq;
+		return;
+	}
+	const int fresh = (int)(s8)(u8)(p.soundSeq - mSoundSeq);
+	if (fresh <= 0)
+		return;
+	mSoundSeq = p.soundSeq;
+	if (!MSGBasic || (p.more & MPG_POSE2_PAUSED))
+		return;
+	f32 volume = kOthersVolume, d = 0.0f;
+	if (const TMario* m = gpMarioOriginal) {
+		const f32 dx = at.x - m->mPosition.x, dy = at.y - m->mPosition.y, dz = at.z - m->mPosition.z;
+		d = sqrtf(dx * dx + dy * dy + dz * dz);
+		if (d >= kSoundFar)
+			return;
+		if (d > kSoundNear)
+			volume *= (kSoundFar - d) / (kSoundFar - kSoundNear);
+	}
+	const int n = fresh < p.soundCount ? fresh : p.soundCount;
+	for (int i = p.soundCount - n; i < p.soundCount; i++) {
+		const u32 id = p.sounds[i];
+		if (!(id & 0x800))
+			continue; // only those started once (mp_game.cpp's soundHook)
+		JAIActor actor(&at, &at, &at, 0);
+		JAISound* sound;
+		if ((id >> 12 & 0xF) == 7) {
+			MSGBasic->startSoundActor(id, &s_voice[mSlot], &actor, 0, 4);
+			sound = s_voice[mSlot];
+		} else {
+			sound = MSGBasic->startSoundActorReturnHandle(id, &actor, 0, 4);
+		}
+		// (a volume step the game leaves alone: the sound's seven multiply)
+		if (sound)
+			sound->setVolume(volume, 0, 6);
+		MpCountSound(mSlot);
+		static const bool trace = getenv("SMS_MULTIPLAYER_TRACE") != nullptr;
+		if (trace)
+			fprintf(stderr, "[mptrace] %d sound %04x %.0f away, volume %.2f, retrace %u\n", mSlot, (unsigned)id, d, volume,
+			        (unsigned)VIGetRetraceCount());
+	}
+}
+
 void TMpPuppet::showEffect(const MpgFx& f, int ongoing)
 {
 	// the particle manager's own bounds for its every-frame effects (an
@@ -1101,6 +1173,7 @@ void TMpPuppet::perform(u32 cue, JDrama::TGraphics* graphics)
 			if (pose.session != mLastSession || mSpawnFrames == 0) {
 				mHaveSmoothed = false;
 				mFxSeen       = false; // none from before shown now
+				mSoundSeen    = false; // nor heard
 			}
 			mLastSession = pose.session;
 			mPose        = pose;
@@ -1111,6 +1184,9 @@ void TMpPuppet::perform(u32 cue, JDrama::TGraphics* graphics)
 			// their effects (our own player's are the game's own)
 			if (!mSelf)
 				showEffects(pose);
+			// their sounds (our own player's are the game's own)
+			if (!mSelf)
+				playSounds(pose);
 		}
 	}
 	if (!mActive && !mSwapped)

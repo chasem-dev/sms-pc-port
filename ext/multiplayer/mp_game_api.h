@@ -87,6 +87,10 @@ typedef struct MpgFx {
 	int8_t turn[4];   // with a turn (how 1): rx, ry, rz in 256ths of a full turn; a matrix's: its quaternion (x 127)
 } MpgFx;
 #define MPG_MAX_FX 4
+// The newest sounds of the player's own (their steps, jumps, landings, FLUDD's
+// clicks and their voice: those the game starts once, not every frame) go
+// with each pose, for the others to hear at them.
+#define MPG_MAX_SOUNDS 6
 
 typedef struct MpgPose {
 	uint32_t time;      // when the sender's game was like this, in its game time (ms; set by mpg_set_pose)
@@ -131,6 +135,11 @@ typedef struct MpgPose {
 	uint16_t padButtons;
 	int8_t padStick[4];   // the stick's x, y, the C-stick's x, y
 	uint8_t padTrigger[2];
+	// their sounds (MPG_MAX_SOUNDS), as the effects asked for once: the
+	// newest, the last of them numbered soundSeq; after the pad, so older
+	// games stop before them
+	uint8_t soundCount, soundSeq;
+	uint16_t sounds[MPG_MAX_SOUNDS];
 } MpgPose;
 
 // An enemy as the host's game has it, named by its manager's place in the

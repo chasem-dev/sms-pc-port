@@ -1459,10 +1459,13 @@ void packPose(const MpgPose& p, std::vector<uint8_t>& out)
 	}
 	// the effects going on first (they show for as long as they are sent),
 	// then the newest of those asked for once (each is in a few poses)
+	// (room is kept for the sounds, which are small)
+	const int sounds = std::min<int>(p.soundCount, MPG_MAX_SOUNDS);
+	const size_t tail = kPadBytes + 2 + sounds * 2;
 	int fx = std::min<int>(p.fxCount, MPG_MAX_FX), shots = std::min<int>(p.shotCount, MPG_MAX_FX);
-	while (fx > 0 && w.len + 3 + fx * kFxBytes + kPadBytes > kPoseSize)
+	while (fx > 0 && w.len + 3 + fx * kFxBytes + tail > kPoseSize)
 		fx--;
-	while (shots > 0 && w.len + 3 + fx * kFxBytes + shots * kFxBytes + kPadBytes > kPoseSize)
+	while (shots > 0 && w.len + 3 + fx * kFxBytes + shots * kFxBytes + tail > kPoseSize)
 		shots--;
 	w.u8((uint8_t)fx);
 	for (int i = 0; i < fx; i++)
@@ -1477,6 +1480,11 @@ void packPose(const MpgPose& p, std::vector<uint8_t>& out)
 		w.u8((uint8_t)p.padStick[i]);
 	w.u8(p.padTrigger[0]);
 	w.u8(p.padTrigger[1]);
+	// their sounds, after it: older games stop before them too
+	w.u8((uint8_t)sounds);
+	w.u8(p.soundSeq);
+	for (int i = 0; i < sounds; i++)
+		w.u16(p.sounds[i]);
 	out.resize(w.len);
 }
 
@@ -1551,6 +1559,14 @@ bool unpackPose(const uint8_t* d, size_t n, MpgPose& p)
 			p.padStick[i] = (int8_t)r.u8();
 		p.padTrigger[0] = r.u8();
 		p.padTrigger[1] = r.u8();
+	}
+	if (p.hasPad && r.left() >= 2) {
+		p.soundCount = r.u8();
+		p.soundSeq   = r.u8();
+		if (p.soundCount > MPG_MAX_SOUNDS)
+			return false;
+		for (int i = 0; i < p.soundCount; i++)
+			p.sounds[i] = r.u16();
 	}
 	return r.ok;
 }

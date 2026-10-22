@@ -72,6 +72,7 @@ private:
 	void hookJoints();
 	void showEffects(const MpgPose& pose);
 	void showEffect(const MpgFx& fx, int ongoing);
+	void playSounds(const MpgPose& pose);
 	static BOOL turnHead(J3DNode* node, BOOL after);
 	static BOOL turnWaist(J3DNode* node, BOOL after);
 	static BOOL aimNozzle(J3DNode* node, BOOL after);
@@ -123,10 +124,14 @@ private:
 	int mFxShotNext;
 	u8 mFxSeq;               // the newest effect shown once
 	bool mFxSeen;            // mFxSeq is known (none from before replayed)
+	u8 mSoundSeq;            // their newest sound heard (as mFxSeq)
+	bool mSoundSeen;
 };
 
 // Debug: an effect of `slot`'s shown here (`ongoing`: one going on every frame).
 void MpCountEffect(int slot, bool ongoing);
+// Debug: a sound of `slot`'s heard here.
+void MpCountSound(int slot);
 
 // Debug: how smoothly a player moves as drawn here (their own game's player too,
 // to hold the others' against).

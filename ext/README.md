@@ -56,7 +56,7 @@ An extension fills in a `PortExtension` with the hooks it needs, leaving the res
 | `actorDeath` | an enemy is defeated (`TSmallEnemy::genRandomItem`, the bosses' defeat nerves), or killed by the stage | note it |
 | `shine` | a Shine appears during play (`TShine::appearWithTime`, `appearSimple`), or the player takes one (`TMarDirector::fireGetStar`) | note it |
 | `flagChange` | `TFlagManager::setFlag` or `incFlag` is about to change a save-file flag | change the value, or return 1 to leave it |
-| `sound` | a sound effect is about to start (`MSoundSE::startSoundActorInner`, every one the game plays) | change it, or return 1 to leave it out |
+| `sound` | a sound effect is about to start (`MSoundSE::startSoundActorInner`, every one the game plays) | change it, or return 1 to leave it out (multiplayer notes the player's own and plays them at them in the other games) |
 | `music` | `MSBgm::startBGM` is about to start a piece, or `stopTrackBGM` to stop one | change the piece, or return 1 to leave it out |
 | `talk` | a talk with an NPC starts or ends (`TMarDirector::updateGameMode`), or shows a message (`TTalk2D2::setMessageID`) | change the message |
 | `demoCameraEnd` | a camera cutscene the director queued is over | note it |

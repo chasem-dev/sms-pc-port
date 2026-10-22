@@ -106,6 +106,7 @@ int s_itemCount;
 uint8_t s_itemLive[kMaxItems]; // every item, alive last frame
 int s_takenAtSeen;             // the session's taken-at list, looked at so far
 int s_fxSent[2], s_fxShown[MPG_MAX_PLAYERS][2]; // debug: effects sent and shown lately
+int s_soundSent, s_soundHeard[MPG_MAX_PLAYERS];    // debug: sounds sent and heard lately
 int s_lastCoins = -1;          // the coin count after the last sync (the 100-coin Shine)
 TMpPuppet* s_puppets[MPG_MAX_PLAYERS];
 int s_clock; // frames since the game started
@@ -787,6 +788,12 @@ void MpCountEffect(int slot, bool ongoing)
 		s_fxShown[slot][ongoing]++;
 }
 
+void MpCountSound(int slot)
+{
+	if (slot >= 0 && slot < MPG_MAX_PLAYERS)
+		s_soundHeard[slot]++;
+}
+
 void MpEmitWater(const MpgPose& p, f32* carry)
 {
 	TMario* m = gpMarioOriginal;
@@ -839,6 +846,10 @@ int s_fxOngoingCount;
 MpgFx s_fxShots[MPG_MAX_FX];        // the newest asked for once, oldest first
 int s_fxShotCount;
 uint8_t s_fxShotSeq;
+// The player's sounds so far (soundHook, below): the newest, oldest first.
+uint16_t s_sounds[MPG_MAX_SOUNDS];
+int s_soundCount;
+uint8_t s_soundSeq;
 
 void sendPose()
 {
@@ -856,6 +867,9 @@ void sendPose()
 	p.shotCount = (uint8_t)s_fxShotCount;
 	p.shotSeq   = s_fxShotSeq;
 	memcpy(p.shots, s_fxShots, sizeof p.shots);
+	p.soundCount = (uint8_t)s_soundCount;
+	p.soundSeq   = s_soundSeq;
+	memcpy(p.sounds, s_sounds, sizeof p.sounds);
 	mpg_set_pose(&p);
 }
 
@@ -3583,7 +3597,39 @@ void particleEmit(int how, int id, const void* at, int rx, int ry, int rz, int g
 	s_fxShotSeq++;
 }
 
-// Debug: effects sent and shown, every 10 seconds.
+// ------------------------------------------------------------------- sounds
+
+// The player's own sounds, as their move starts them (their steps, jumps,
+// landings, a ground pound, FLUDD's clicks, their voice), numbered as the
+// effects asked for once are, the newest few with every pose, for the others
+// to hear at them (TMpPuppet::playSounds). Only those the game starts once
+// (0x800 in the id): those it starts every frame while they go on (a slide's
+// scrape) would only be heard as their start.
+int soundHook(unsigned* idp, const float* at, int)
+{
+	TMario* m         = gpMarioOriginal;
+	const unsigned id = *idp;
+	if (s_fxMoving <= 0 || !m || !at || !enabled() || !inStage() || id > 0xFFFF || !(id & 0x800))
+		return 0;
+	// FLUDD's (0), Mario's and Yoshi's (1), the voices (7): not what he sets
+	// off in something else (a coin, an enemy: its own game sounds it)
+	const unsigned category = id >> 12 & 0xF;
+	if (category != 0 && category != 1 && category != 7)
+		return 0;
+	const f32 d[3] = {at[0] - m->mPosition.x, at[1] - m->mPosition.y, at[2] - m->mPosition.z};
+	if (d[0] * d[0] + d[1] * d[1] + d[2] * d[2] > 1000.0f * 1000.0f)
+		return 0; // not at him
+	if (s_soundCount == MPG_MAX_SOUNDS) {
+		memmove(s_sounds, s_sounds + 1, sizeof s_sounds[0] * (MPG_MAX_SOUNDS - 1));
+		s_soundCount--;
+	}
+	s_sounds[s_soundCount++] = (uint16_t)id;
+	s_soundSeq++;
+	s_soundSent++;
+	return 0; // played here as ever
+}
+
+// Debug: effects sent and shown, and sounds sent and heard, every 10 seconds.
 
 void fxDebug()
 {
@@ -3597,8 +3643,15 @@ void fxDebug()
 		if (s_fxShown[slot][0] || s_fxShown[slot][1])
 			fprintf(stderr, " %s's shown %d once, %d going on;", mpg_display_name(slot), s_fxShown[slot][0], s_fxShown[slot][1]);
 	fprintf(stderr, "\n");
+	fprintf(stderr, "[multiplayer] sounds: sent %d;", s_soundSent);
+	for (int slot = 0; slot < MPG_MAX_PLAYERS; slot++)
+		if (s_soundHeard[slot])
+			fprintf(stderr, " %s's heard %d;", mpg_display_name(slot), s_soundHeard[slot]);
+	fprintf(stderr, "\n");
 	memset(s_fxSent, 0, sizeof s_fxSent);
 	memset(s_fxShown, 0, sizeof s_fxShown);
+	s_soundSent = 0;
+	memset(s_soundHeard, 0, sizeof s_soundHeard);
 }
 
 // Mario's move begins (0) or ends (1): what it asks for is the player's.
@@ -5010,7 +5063,11 @@ PortExtension s_extension = {
 };
 
 struct Register {
-	Register() { port_ext_register(&s_extension); }
+	Register()
+	{
+		s_extension.sound = soundHook;
+		port_ext_register(&s_extension);
+	}
 } s_register;
 
 } // namespace
