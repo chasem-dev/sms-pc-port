@@ -66,14 +66,14 @@ Fields the DSP writes back are marked ←.
 | 0x100 | `samplesSourceType` | 9 = ADPCM4, 5 = ADPCM2, 8 = PCM8, 16 = PCM16 (from `setWaveInfo`'s `COMP_BLOCKBYTES`), 0x21 = direct PCM (streams); other values are oscillators (`setOscInfo`, below) |
 | 0x102 | `isLooping` | |
 | 0x104/0x106 | `loopYN1`/`loopYN2` | ADPCM history for the loop |
-| 0x108 | `filterMode` | bit 5: IIR on, low 5 bits: FIR8 length (**filters not applied yet**) |
+| 0x108 | `filterMode` | bit 5: biquad (IIR) on, low 5 bits: FIR8 length (the FIR8 is **not applied**) |
 | 0x10A | `endRequested` | `TDSPChannel::forceStop`: halve current volumes each subframe until zero, then `done` |
 | 0x10C | `unk10C` | CPU-owned age counter (voice stealing) |
 | 0x110 | `loopAddress` | loop start, a **sample index** (stored through an `s16*`); streams: ring start |
 | 0x114 | `endPosition` | loop end, or sample count; streams: ring length << 16 |
 | 0x118 | `baseAddress` | ARAM byte address of the wave; streams: main-memory `s16*` ring |
 | 0x11C | `sampleCount` | |
-| 0x120, 0x148, 0x150 | FIR8, IIR (biquad), distance low-pass coefficients | **not applied yet** |
+| 0x120, 0x148, 0x150 | FIR8, IIR (biquad), distance low-pass coefficients | biquad and low-pass applied (Voice filters, below); FIR8 **not applied** |
 
 Bus addresses (`setBusConnect`'s `connect_table`, index = the mix config's high byte): 1 = 0x0D00, 2 = 0x0D60, 3 = 0x0DC0, 4 = 0x0E20, 5 = 0x0E80, 6 = 0x0EE0, 7 = 0x0CA0, 8 = 0x0F40, 9 = 0x0FA0, 10 = 0x0B00, 11 = 0x09A0.
 The default mix config (`JASChannelMgr`: 0x150, 0x210, 0x352, 0x412) sends vol·sin(1−pan) to bus 1, vol·sin(pan) to bus 2, and the same times fxmix to buses 3 and 4.
@@ -106,6 +106,39 @@ and [Dolphin's Zelda DSP implementation](https://github.com/dolphin-emu/dolphin/
 `tests/mixer_regression.cc` checks impulse gain, both filter modes, history,
 RAM clears, cross-bus returns, Q16 wet gain/routing, unchanged dry levels, and release
 through complete silence without using disc assets.
+
+## Voice filters
+
+The microcode filters a voice's resampled samples before any send: first the
+one-pole distance low-pass (`lowPassCoeff`, 0x150, applied when non-zero), then
+the biquad (`biquadFilterCoeffs`, 0x148, when `filterMode` bit 5 is set and the
+coefficients are not the identity `0x7FFF, 0, 0, 0` that `initFilter` writes).
+Both follow Dolphin's Zelda HLE sample for sample:
+
+- low-pass: `y[n] = y[n-1] + ((x[n] - x[n-1]) * c >> 7)`, history (y, x) at 0x0D0, cleared on `resetVpb`;
+- biquad: `y[n] = (b1 x[n-1] + b2 x[n-2] + a1 y[n-1] + a2 y[n-2]) >> 15`, history (x1, x2, y1, y2) at 0x0A8, which `playStart` clears;
+- every output saturates to s16.
+
+JAudio fills them from a track's four IIR parameters (`__UpdateJcToDSP`:
+`setIIRFilterParam`, `setFilterMode`, `setDistFilter`). A sequence picks a row
+of `Player::CUTOFF_TO_IIR_TABLE` (128 rows from a resonant low-pass at 0 to the
+identity at 127) with its IIR cutoff command. Sunshine's sound effects ask
+`MSSeCallBack::setParameterSeqSync` (sync 12 and 13) for that row, which
+answers `0x7F` minus `MSSeCallBack::smWaterFilter`. `TMap` sets the filter to
+0x78 while the camera is below the water surface (`setWaterCameraFir`), so
+effects then play through row 7: about +12 dB at 50 Hz, -1 dB at 1 kHz,
+-13 dB at 4 kHz, -18 dB at 8 kHz. That is the under-water muffle; before the
+port applied these filters, it was missing. Case 12 steps the level by 0x14
+per call, and the sequence turns that into rows 8, 28, ... 108 on the way in
+and 28, ... 108, 128 on the way out, so the muffle fades in and out. Row 128
+is one past the table; the console reads the next `.data` (`s_key_table`)
+there, and `decomp-patches/bounds-08` gives the host those bytes. They leave
+a mild low-pass on the sounds that were playing as the camera left the water,
+until they end; sounds started after that get row 127 (sync 13).
+`SMS_AUDIO_FILTERS=0` bypasses both filters (A/B checks), and `SMS_AUDIO_TRACE=1`
+logs each change of a voice's filter settings.
+The FIR8 (`filterMode` bits 0–4, coefficients at 0x120) is still not applied;
+Dolphin does not implement it either, and a voice that asks for it logs once.
 
 ## Levels (measured against retail)
 
@@ -190,7 +223,7 @@ Without the game's table (the WAV test) a Catmull-Rom table is built instead.
 ## Not implemented
 
 - Oscillator type 10's modulated step (played as plain pattern 0).
-- Per-voice FIR8/IIR/low-pass filters and the surround delay bytes.
+- The per-voice FIR8 filter and the surround delay bytes.
 - Buses 5–11 other than as FX inputs (Dolby surround output mode).
 - DVD audio streaming (DTK `AISetStreamPlayState`, `JASHardStream`): SMS's streams go through DirectPCM voices instead (the retail dump's DTK track was silent throughout).
 - Stream voices (DirectPCM, source 0x21) are not exercised by boot/title/file select: `title.afc` is not the title music (correlation ≤ 0.2 against the decoded file), so they remain untested against retail.
