@@ -1014,6 +1014,7 @@ extern "C" void port_init(int argc, char** argv)
 	port_os_init();
 	port_dvd_init();
 	port_window_icon_init();
+	port_window_title_init();
 	port_noaudio_init();
 	port_vi_init();
 	port_log("[port] platform ready\n");

@@ -13,6 +13,8 @@ extern int port_disc_explicit;
 void* port_dvd_read_file(const char* path, size_t* size);
 // Gives the window the game's memory-card icon (platform/misc/window_icon.cpp).
 void port_window_icon_init(void);
+// Names the game and its version in the window's title (platform/misc/window_title.cpp).
+void port_window_title_init(void);
 // Memory the game can hold as a 32-bit address (below 2 GiB where the host
 // allows it): 64-bit builds put every stack game code runs on here, since
 // the game keeps pointers in u32 slots. Returns NULL on failure.

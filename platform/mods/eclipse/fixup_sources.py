@@ -364,6 +364,14 @@ ECLIPSE_FIXES = optional(TEXTURE_FIXES) + CARD_IMAGE_FIXES + PARTICLE_FIXES + DE
      "Eclipse's settings group knows its module"),
     ("src/main.cpp", r"BetterSMS::registerModule\(sModuleInfo\);", r"BetterSMS::registerModule(moduleInfo());",
      "Eclipse's settings group knows its module"),
+    # The speedrun timer's overclock readout (speedrun.cpp) times 10000 nops
+    # with OSGetTime each stage frame and calls the console's CPU overclocked
+    # when they take under 1660 ticks. On a PC they take next to none, so it
+    # was always shown, as "Overclock: -2147483648" (1668.1 / 0 as an s32),
+    # and Dolphin's overclock setting it looks for has no meaning here. Not
+    # measured, it is never shown; the timer itself is unchanged.
+    ("src/main.cpp", r"\n[ \t]*Stage::addUpdateCallback\(checkForCPUOverclock\);\n", "\n",
+     "Eclipse's speedrun timer has no overclock readout"),
 ] + ECLIPSE_HUD_EDGE_FIXES
 BSE_FIXES = TEXTURE_FIXES + CARD_IMAGE_FIXES + optional([RAWADDR_FIX]) + [RAWDATA_FIX, RAWDATA_REGION_FIX] + BSE_BE_FIXES + PATCH_TYPE_FIXES + [
     # J2DTextBox owns and deletes its string. The setting label and shadow

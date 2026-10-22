@@ -1,5 +1,6 @@
 // Debug overlay: backtick (`) in the window toggles a panel with frame rate,
-// frame times, sms_gx counters, the GL renderer and the default key bindings.
+// frame times, sms_gx counters, the GL renderer, the game's version (its
+// window title) and the default key bindings.
 // Text is rasterised on the CPU with stb_easy_font and blended on top of the
 // presented frame (GXPC_DrawOverlay), so it touches no game-visible GL state.
 #include "gx_internal.h"
@@ -180,6 +181,7 @@ void GXPC_OverlayDraw(int winW, int winH) {
                  "frames %u   up %d:%02d\n"
                  "window %dx%d\n"
                  "GL %s\n"
+                 "%s\n"
                  "\n"
                  "KEYS (defaults, see bindings.txt)\n"
                  "Stick: WASD or arrows (hold LCtrl for half)\n"
@@ -196,7 +198,7 @@ void GXPC_OverlayDraw(int winW, int winH) {
                  s_clock.per.present, s_clock.per.swap, s_clock.per.idle, s_clock.per.vertices, s_clock.per.draws,
                  s_clock.per.textures, s_clock.per.copies, s_clock.per.peeks, s_clock.per.gpuWait, st.draws, st.vertices, st.efbCopies,
                  st.textureUploads, st.shaderCompiles, s_clock.total, int(up) / 60, int(up) % 60, winW, winH,
-                 s_renderer.c_str());
+                 s_renderer.c_str(), GXPC_WindowTitle());
 
         const int pad = 4;
         w = stb_easy_font_width(text) + pad * 2;
