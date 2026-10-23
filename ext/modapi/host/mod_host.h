@@ -41,6 +41,7 @@ struct SmsMod {
 	bool settingsRead = false, settingsDirty = false;
 	std::map<std::string, std::string> settings;
 	std::vector<ModOption> options;
+	uint32_t hudHidden = 0; // game->set_hud_hidden: the HUD's parts this mod hides (SMS_HUD_*)
 };
 
 namespace modhost {

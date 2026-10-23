@@ -1106,6 +1106,18 @@ extern "C" int modg_object_health(SmsObject o, int* max)
 	return e->getHitPoints();
 }
 
+// The HUD's parts mods hide (game->set_hud_hidden: every mod's ORed by the
+// host half): the game leaves them out of the HUD's draw (port_hud_draw).
+extern "C" void modg_set_hud_hidden(uint32_t mask)
+{
+	port_hud_set_hidden(PORT_HUD_BY_MODS, mask);
+}
+
+extern "C" uint32_t modg_hud_hidden(void)
+{
+	return port_hud_hidden();
+}
+
 extern "C" int modg_object_set_position(SmsObject o, const SmsVec3* pos)
 {
 	JDrama::TPlacement* p = o ? dynamic_cast<JDrama::TPlacement*>(ref(o)) : 0;

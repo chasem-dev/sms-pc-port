@@ -702,6 +702,16 @@ void order()
 
 // ------------------------------------------------------------------ dropping what a mod registered
 
+// The game hides the HUD's parts any loaded mod hides: each mod's bits ORed.
+void applyHudHidden()
+{
+	uint32_t mask = 0;
+	for (SmsMod* m : g_mods)
+		if (m != nullptr)
+			mask |= m->hudHidden;
+	modg_set_hud_hidden(mask);
+}
+
 void dropRegistrations(SmsMod* m)
 {
 	for (auto& e : s_subs)
@@ -720,6 +730,10 @@ void dropRegistrations(SmsMod* m)
 		it = it->second.mod == m ? s_bindings.erase(it) : std::next(it);
 	if (s_captor == m)
 		s_captor = nullptr;
+	if (m->hudHidden) {
+		m->hudHidden = 0; // what it hid is shown again (unless another mod hides it)
+		applyHudHidden();
+	}
 	m->options.clear();
 	drawDropMod(m);
 }
@@ -947,12 +961,22 @@ int apiGround(const SmsVec3* p, SmsGround* out)
 	return 1;
 }
 
+void apiSetHudHidden(SmsMod* mod, uint32_t mask)
+{
+	if (!mod)
+		return;
+	mod->hudHidden = mask & SMS_HUD_ALL;
+	applyHudHidden();
+}
+
+uint32_t apiHudHidden(void) { return modg_hud_hidden(); }
+
 const SmsGameApi s_game = {
 	sizeof(SmsGameApi), apiState,        modg_flag_get,       modg_flag_set,         apiCoins,
 	apiLives,           apiShines,       apiBlueCoins,        apiHasShine,           modg_warp,
 	modg_find_object,   modg_object_name, modg_object_position, modg_object_set_position, apiAreaName,
 	modg_cube_count,    apiInCube,       apiObjectCount,      apiObjectInfo,         apiGround,
-	modg_object_type,   modg_object_health,
+	modg_object_type,   modg_object_health, apiSetHudHidden,     apiHudHidden,
 };
 
 int apiPlayerGet(SmsPlayer* out)

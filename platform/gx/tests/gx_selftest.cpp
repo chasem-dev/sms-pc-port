@@ -33,6 +33,7 @@ std::string hiresName(const uint8_t* data, uint32_t fmt, uint32_t w, uint32_t h,
                       uint32_t tlutBytes, bool onlyIfPresent);
 bool rendererResize(float scale, int msaa);
 bool rendererSetWide(float wide);
+unsigned efbCopyLookup(const void* addr, int* w, int* h);
 }
 
 // The OS layer normally provides these.
@@ -178,7 +179,10 @@ static void encodeI8(const u8* img, int w, int h, u8* out) {
 // TEfbCtrlTex), then reads that texture on the CPU (TPollutionLayer::isPolluted).
 // That loop must give back what it was given at any internal resolution and
 // width: returns how many texels differ from the start after `rounds` of it.
-static int goopRoundTrips(float scale, float wide, int rounds) {
+// `native` registers the texture as the game does (GXPC_SetNativeCopy), and
+// copyW x copyH is then the size of the copy the texture's draws sample.
+static int goopRoundTrips(float scale, float wide, int rounds, bool native = false, int* copyW = nullptr,
+                          int* copyH = nullptr) {
     enum { W = 64, H = 64 };
     static u8 img[W * H], start[W * H];
     static u8 tex[W * H] __attribute__((aligned(32)));
@@ -187,6 +191,7 @@ static int goopRoundTrips(float scale, float wide, int rounds) {
     encodeI8(img, W, H, start);
     memcpy(tex, start, sizeof tex);
     DCFlushRange(tex, sizeof tex);
+    if (native) GXPC_SetNativeCopy(tex, W, H);
     gx::rendererSetWide(wide);
     gx::rendererResize(scale, 0);
     GXSetViewport(0, 0, W, H, 0, 1);
@@ -222,6 +227,8 @@ static int goopRoundTrips(float scale, float wide, int rounds) {
     GXPixModeSync();
     int differ = 0;
     for (int i = 0; i < W * H; i++) differ += tex[i] != start[i];
+    if (copyW && copyH && !gx::efbCopyLookup(tex, copyW, copyH)) *copyW = *copyH = 0;
+    if (native) GXPC_SetNativeCopy(tex, 0, 0);
     gx::rendererResize(1, 0);
     gx::rendererSetWide(1);
     GXSetViewport(0, 0, 640, 480, 0, 1);
@@ -868,6 +875,18 @@ int main(int argc, char** argv) {
             snprintf(what, sizeof what, "goop copy loop at %gx, %s: %d of 4096 texels moved", double(c.scale),
                      c.wide > 1 ? "16:9" : "4:3", differ);
             expect(what, differ == 0);
+        }
+        // Registered as the game registers its goop layers, the copy stays
+        // 64 x 64 above 1x: a scaled one held each texel as a hard square,
+        // and the goop's filtered edges came out as a staircase.
+        const struct { float scale, wide; } natives[] = {{2, 1}, {3, wide}, {1.5f, wide}, {1.46f, 1}};
+        for (const auto& c : natives) {
+            int cw = 0, ch = 0;
+            const int differ = goopRoundTrips(c.scale, c.wide, 20, true, &cw, &ch);
+            char what[128];
+            snprintf(what, sizeof what, "native goop copy at %gx, %s: %dx%d copy, %d of 4096 texels moved",
+                     double(c.scale), c.wide > 1 ? "16:9" : "4:3", cw, ch, differ);
+            expect(what, differ == 0 && cw == 64 && ch == 64);
         }
     }
 

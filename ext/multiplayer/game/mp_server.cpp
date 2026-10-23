@@ -12,6 +12,7 @@
 
 #include "../mp_game_api.h"
 #include "mp_puppet.hpp"
+#include "port_ext.h"
 #include "port_framerate.h"
 
 #include <Camera/Camera.hpp>
@@ -740,40 +741,12 @@ void pickupsTick()
 
 // ------------------------------------------------------------------- the HUD
 
-// The HUD's parts hidden (s_hudHidden), each frame, as the game shows them
-// again of its own; shown once when no longer hidden.
-J2DPane* hudPane(TGCConsole2* c, u32 bit)
+// The HUD's parts the server hides (s_hudHidden): the game leaves them out of
+// the HUD's draw (port_hud_draw), so the HUD's own logic never sees them
+// hidden. Said every frame, and none once out of play.
+void hudFrame(bool playing)
 {
-	switch (bit) {
-	case MPG_HUD_COINS: return c->unk108 ? c->unk108->getPane() : nullptr;
-	case MPG_HUD_SHINES: return c->unk140 ? c->unk140->getPane() : nullptr;
-	case MPG_HUD_BLUE_COINS: return c->unk160 ? c->unk160->getPane() : nullptr;
-	case MPG_HUD_HEALTH: return c->unk1C4 ? c->unk1C4->getPane() : nullptr;
-	case MPG_HUD_WATER: return c->unk2F8 ? c->unk2F8->getPane() : nullptr;
-	case MPG_HUD_LIVES: return c->unk3A8 ? c->unk3A8->getPane() : nullptr;
-	case MPG_HUD_RED_COINS: return c->unk428 ? c->unk428->getPane() : nullptr;
-	default: return nullptr;
-	}
-}
-
-void hudFrame(TMarDirector* dir)
-{
-	static u32 s_hiddenWas;
-	TGCConsole2* console = dir ? dir->getConsole() : nullptr;
-	if (!console)
-		return;
-	for (u32 bit = 1; bit <= MPG_HUD_RED_COINS; bit <<= 1) {
-		J2DPane* pane = hudPane(console, bit);
-		if (!pane)
-			continue;
-		if (s_hudHidden & bit)
-			pane->hide();
-		else if (s_hiddenWas & bit)
-			pane->show(); // the game's own animations take it from here
-	}
-	if (s_hudHidden & MPG_HUD_WATER)
-		console->unk45 = console->unk46 = 0; // the gauge's back, drawn apart from its pane
-	s_hiddenWas = s_hudHidden;
+	port_hud_set_hidden(PORT_HUD_BY_MULTIPLAYER, playing ? s_hudHidden : 0);
 }
 
 // ------------------------------------------------------------------- markers, the board, the screen
@@ -1123,11 +1096,11 @@ void MpServerFrame(TMarDirector* dir, bool arrived, bool playing)
 			readyGo(dir);
 		}
 		updateTimer(dir);
-		hudFrame(dir);
 		markersFrame();
 		if (s_mountTries > 0 && s_mountTries < kMountTries && !surfing(gpMarioOriginal))
 			s_mountTries = mount(s_mount) ? 0 : s_mountTries + 1;
 	}
+	hudFrame(playing && dir);
 	screenFrame();
 	const char* banner = playing || s_banner[0] == 0 ? s_banner : "";
 	if (strcmp(banner, s_bannerShown) != 0) {

@@ -43,6 +43,9 @@ int modg_object_position(SmsObject obj, SmsVec3* out);
 int modg_object_set_position(SmsObject obj, const SmsVec3* pos);
 uint32_t modg_object_type(SmsObject obj);
 int modg_object_health(SmsObject obj, int* max);
+/* the HUD's parts every mod hides (SMS_HUD_* bits ORed); the parts hidden now (any owner's) */
+void modg_set_hud_hidden(uint32_t mask);
+uint32_t modg_hud_hidden(void);
 
 int modg_player_get(SmsPlayer* out);
 int modg_player_set_position(const SmsVec3* pos);
