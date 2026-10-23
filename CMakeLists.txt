@@ -300,6 +300,9 @@ target_sources(sms_game PRIVATE
 # The pause menu's Shine and blue coin tracker, drawn the same way
 # (port_pause_tracker.h).
 target_sources(sms_game PRIVATE ${SMS_PORT_SRC}/pause_tracker.cpp)
+# The pause menu's QUIT GAME item, its picture made from the game's letters
+# (port_pause_quit.h).
+target_sources(sms_game PRIVATE ${SMS_PORT_SRC}/pause_quit.cpp)
 # The radar, drawn by the HUD the same way (port_radar.h); its stage maps are
 # loaded by sms_gx (gx_radar_maps.cpp).
 target_sources(sms_game PRIVATE ${SMS_PORT_SRC}/radar.cpp)

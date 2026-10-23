@@ -88,6 +88,11 @@ const void* port_savestate_picture(int index, int slot, int* w, int* h);
 // GX RGBA8 texture below 4 GiB, *w x *h (multiples of four, the lettering's
 // own width in *artW); null when the disc has neither.
 const void* port_savestate_world_art(int world, int banner, int* w, int* h, int* artW);
+// A file in one of the disc's archives ("/data/option.szs"), found by its name
+// anywhere in it and read through the DVD layer, as the lettering is (so a
+// language pack's archive counts): a malloc'ed copy for the caller to free, or
+// null.
+void* port_disc_archive_file(const char* archive, const char* name, unsigned* size);
 
 // The game's side, once a frame, between frames.
 enum {
