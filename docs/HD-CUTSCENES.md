@@ -5,13 +5,13 @@ The disc stays intact; movies without a replacement play normally.
 The complete pack enhances all 21 original THP movies at 3× resolution: most become 1920×960, taller movies become 1920×1344, and the in-world portal animation becomes 384×432.
 Download the patches from the [HD cutscene release](https://github.com/chasem-dev/sms-pc-port/releases/tag/hd-cutscenes-ai-v1), or let the launcher install them.
 
-## Play with HD textures
+## Play in the launcher
 
-In the updated SMS Launcher, enable **HD textures** in Settings and choose **Finish HD setup** or **Play**.
-The launcher downloads the texture pack and movie patches, then prepares the movies using your own North American Sunshine disc image (GMSE01).
-Existing HD texture users also receive the cutscenes when finishing setup.
-The game loads a complete installed movie pack automatically while HD textures are enabled.
-Turning HD textures off disables the automatic movie replacement.
+In the updated SMS Launcher, enable **HD cutscenes** in Settings and choose **Finish HD setup** or **Play**.
+The launcher downloads the movie patches, then prepares the movies using your own North American Sunshine disc image (GMSE01).
+HD cutscenes and HD textures are separate settings: either can be on without the other.
+The launcher names the pack in `SMS_HD_CUTSCENES`, and a pack named there plays whether or not HD textures are on.
+From a source installation, a complete pack in `mods/hd-cutscenes` loads automatically while HD textures are enabled; turning HD textures off (`SMS_TEXTURE_PACKS=0`) leaves that automatic pack out.
 Your disc and saves stay intact, and the pack carries over across game updates.
 Eclipse uses its own movie assets; the Sunshine patches are installed for Sunshine mode. Super Mario Eclipse plays the pack's versions of the ten movies it kept from Sunshine unchanged, and of the portal movie (see [ECLIPSE.md](ECLIPSE.md), Movies); its own and its darkened movies stay.
 
