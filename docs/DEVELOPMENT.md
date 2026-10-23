@@ -115,6 +115,9 @@ C-stick orbit (`SMS_CSTICK_ORBIT=1`, `decomp-patches/zzz-camera-06-cstick-orbit.
 Once Mario can move it holds the C-stick's up or down through the pad layer's key state for 20 frames at a time and checks what moved: with the setting on the tilt moves (up lowers the camera, down raises it, Invert camera Y the other way) and the distance ratio does not; with `CAMERA_ZOOM` held (the right stick's press) or the setting off, the distance ratio moves and the tilt does not.
 `AUTOSAVE_PART=shine` runs only the Shine. `AUTOSAVE_PART=fallback` makes the slot look saved over by another game, and the prompt must then open.
 
+Water with a NaN speed in an Eclipse stage ([ECLIPSE.md](ECLIPSE.md), the Tramplin' Stu crash) has `tools/regress/eclipse_nan_water.py`, run under gdb on an Eclipse build with the Eclipse disc, a copy of the card `regress.py`'s `ecl-firstboot` run saves, `SMS_WARP=66,1` (Hotel Lacrima's basement) and `regress.py`'s `ECL_WARP_AP` as `SMS_AUTOPRESS`.
+Once the Tramplin' Stu moves it emits 50 water particles with a NaN speed above Mario (the water manager drops particles far from him) and checks that the game runs `NAN_SECONDS` (default 20) more; without the fix the 64-bit build faults in BetterSunshineEngine's `checkWallsExotic_` within a frame.
+
 ## Platform layer
 
 

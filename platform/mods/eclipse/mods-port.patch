@@ -245,6 +245,32 @@
      }
  
      void getValueName(char *dst) const override { snprintf(dst, 100, "%.1f", mGammaValue); }
+--- a/bse/src/patches/collision/search.cpp
++++ b/bse/src/patches/collision/search.cpp
+@@ -244,11 +244,19 @@
+     if (maxZ < -boundsZ || minZ >= boundsZ)
+         return 0;
+ 
+-    const int cellMinX = Max(0, gridFraction * (minX + boundsX));
+-    const int cellMaxX = Min(collision->mBlockXCount - 1, gridFraction * (maxX + boundsX));
++    // The port: a NaN position or radius (a water particle sent off with a
++    // NaN speed) passes the tests above, and its cell number converts to
++    // 0x80000000. On a console the cell's address then wraps around 32 bits
++    // to cell 0 on that axis, which is read; on a 64-bit host it points
++    // gigabytes away and the game crashed. Read the cell the console reads.
++    const bool nanX = minX != minX || maxX != maxX;
++    const bool nanZ = minZ != minZ || maxZ != maxZ;
+ 
+-    const int cellMinZ = Max(0, gridFraction * (minZ + boundsZ));
+-    const int cellMaxZ = Min(collision->mBlockZCount - 1, gridFraction * (maxZ + boundsZ));
++    const int cellMinX = nanX ? 0 : Max(0, gridFraction * (minX + boundsX));
++    const int cellMaxX = nanX ? 0 : Min(collision->mBlockXCount - 1, gridFraction * (maxX + boundsX));
++
++    const int cellMinZ = nanZ ? 0 : Max(0, gridFraction * (minZ + boundsZ));
++    const int cellMaxZ = nanZ ? 0 : Min(collision->mBlockZCount - 1, gridFraction * (maxZ + boundsZ));
+ 
+     size_t wallsFound = 0;
+ 
 --- a/bse/src/patches/emario.cpp
 +++ b/bse/src/patches/emario.cpp
 @@ -20,7 +20,7 @@
