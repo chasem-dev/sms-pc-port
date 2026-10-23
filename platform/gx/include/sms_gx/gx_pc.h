@@ -64,6 +64,12 @@ int GXPC_SettingsMenuIsOpen(void);
 /* The quit key: opens the "are you sure" prompt, whose Quit button exits.
  * 0 without a window (headless), where the caller exits straight away. */
 int GXPC_RequestQuit(void);
+/* Texture packs and one of the game's textures (its image data, GX format and size; not
+ * mipmapped, no palette): whether the packs, when on, replace it, and that replacement as RGBA8,
+ * *outW x *outH, malloc'ed for the caller to free (null when they are off or have none). The pause
+ * menu's QUIT GAME is made from the pack's letters (src/pause_quit.cpp). */
+int GXPC_TexturePackHas(const void* data, unsigned fmt, unsigned w, unsigned h);
+unsigned char* GXPC_TexturePackImage(const void* data, unsigned fmt, unsigned w, unsigned h, int* outW, int* outH);
 /* The game's settings menu (src/settings_menu.cpp) is open (1) or closed (0). Like the cheat and
  * warp menus it frees the mouse mouse look holds, and mouse look takes it back when the menu
  * closes; the game keeps reading the pad. Call it on open and on close. */

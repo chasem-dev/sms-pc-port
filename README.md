@@ -201,9 +201,10 @@ The default keys are laid out for keyboard and mouse, with mouse look on:
 | Load the newest save state | F6 |
 | Radar's full map, open / close (`radar = on`) | M, or a controller's Back/Select button |
 | Radar's zoom, next step (`radar = on`) | D-pad up (1) |
-| Quit (asks first: Y, or Enter on Quit, quits; Esc, N or B stays) | Esc |
+| Quit (asks first: Y, or Enter on Quit, quits; Esc, N or B stays) | Esc, or the pause menu's Quit Game |
 
 Esc asks before quitting, so a stray press does not lose unsaved progress: Cancel is picked to begin with, Left/Right (or the d-pad) moves between Quit and Cancel, and the mouse works too; the game keeps running behind the prompt but reads no input. Closing the window still quits straight away.
+The pause menu's last item, **Quit Game** (under Exit Area, or under Save where there is no Exit Area), opens the same prompt, so a controller can quit too; with a language pack it is that language's "Quit" from the file select.
 
 The warp menu lists every stage on the disc (Eclipse's too) and, under each, its episodes and secret courses with their names and scene files; picking one warps there straight away, as a pipe or the pause menu's Exit Area would, without the Shines that would unlock it.
 It warps while a stage is playing (not during a cutscene, dialogue or the pause menu); the game keeps running behind it but reads no input.

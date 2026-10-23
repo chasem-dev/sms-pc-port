@@ -988,3 +988,16 @@ extern "C" const void* port_savestate_world_art(int world, int banner, int* w, i
 	return a->tex;
 }
 
+extern "C" void* port_disc_archive_file(const char* archive, const char* name, unsigned* size)
+{
+	const std::vector<u8> file = rarc_file(yaz0(read_disc(archive)), name);
+	if (file.empty())
+		return nullptr;
+	void* out = malloc(file.size());
+	if (!out)
+		return nullptr;
+	memcpy(out, file.data(), file.size());
+	*size = (unsigned)file.size();
+	return out;
+}
+

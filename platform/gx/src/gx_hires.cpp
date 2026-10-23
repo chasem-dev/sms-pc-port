@@ -423,7 +423,8 @@ static std::vector<uint8_t> decodeBlocks(int fmt, const uint8_t* src, int lw, in
     return px;
 }
 
-static bool decodeDds(const std::string& path, Loaded* L) {
+// `cpu`: always as RGBA8 (hiresImage), never kept compressed for GL.
+static bool decodeDds(const std::string& path, Loaded* L, bool cpu = false) {
     std::vector<uint8_t> file;
     if (!readFile(path, file) || file.size() < 128 || memcmp(file.data(), "DDS ", 4) != 0) return false;
     const uint8_t* d = file.data();
@@ -454,7 +455,7 @@ static bool decodeDds(const std::string& path, Loaded* L) {
     for (int m = std::max(w, h); m > 1; m >>= 1) full++;
     // Supported blocks stay compressed whatever levels the file has: the
     // missing ones are encoded in the same format (completeChain).
-    bool gpu = (fmt <= DDS_BC3 && s_s3tc) || (fmt == DDS_BC7 && s_bptc);
+    bool gpu = !cpu && ((fmt <= DDS_BC3 && s_s3tc) || (fmt == DDS_BC7 && s_bptc));
     static const GLenum kGl[] = {0, 0x83F1, 0x83F2, 0x83F3, 0x8E8C};  // S3TC DXT1/3/5 RGBA, BPTC UNORM
     L->w = w;
     L->h = h;
@@ -1702,6 +1703,35 @@ uint32_t hiresUploadedCount() { return s_uploaded; }
 // The settings menu (gx_settings_extra.cpp). Active is whether the pack's replacements are shown;
 // the pack is found at the start (a game started with textures off has none: hiresEnabled is false).
 bool hiresActive() { return !s_off; }
+
+// The packs are indexed and on (never starts the scan, which needs the GL thread).
+bool hiresEnabledNoScan() { return s_state == 1 && !s_off; }
+
+// The replacement the packs have for a texture of the game's (not mipmapped, no palette), its level 0
+// as RGBA8, decoded here; false when the packs are off or have none. Read once the packs are indexed
+// (the game has drawn), from any thread.
+bool hiresImage(const uint8_t* data, uint32_t fmt, uint32_t w, uint32_t h, std::vector<uint8_t>& rgba, int* outW,
+                int* outH) {
+    if (!hiresEnabledNoScan()) return false;
+    const std::string name = hiresName(data, fmt, w, h, false, nullptr, 0, true);
+    if (name.empty()) return false;
+    const PackFile& f = s_index.at(name);
+    if (f.look) return false;  // Mario's look only
+    Loaded L;
+    if (endsWith(f.path, ".dds") || endsWith(f.path, ".DDS")) {
+        if (!decodeDds(f.path, &L, true)) return false;
+        rgba = std::move(L.levels.front());
+    } else {
+        int n = 0;
+        uint8_t* px = stbi_load(f.path.c_str(), &L.w, &L.h, &n, 4);
+        if (!px) return false;
+        rgba.assign(px, px + size_t(L.w) * L.h * 4);
+        stbi_image_free(px);
+    }
+    *outW = L.w;
+    *outH = L.h;
+    return true;
+}
 bool hiresHasPack() { return hiresEnabled() && s_packFiles > 0; }
 void hiresSetActive(bool on) { s_off = !on; }
 
@@ -1731,3 +1761,20 @@ HiresStats hiresStats() {
 }
 
 }  // namespace gx
+
+// For game code (gx_pc.h): whether the packs (on) replace a texture, without reading the replacement.
+extern "C" int GXPC_TexturePackHas(const void* data, unsigned fmt, unsigned w, unsigned h) {
+    using namespace gx;
+    if (!hiresEnabledNoScan()) return 0;
+    return !hiresName((const uint8_t*)data, fmt, w, h, false, nullptr, 0, true).empty();
+}
+
+// For game code (gx_pc.h): hiresImage's pixels in a malloc'ed buffer, or null.
+extern "C" unsigned char* GXPC_TexturePackImage(const void* data, unsigned fmt, unsigned w, unsigned h, int* outW,
+                                                int* outH) {
+    std::vector<uint8_t> rgba;
+    if (!gx::hiresImage((const uint8_t*)data, fmt, w, h, rgba, outW, outH)) return nullptr;
+    unsigned char* out = (unsigned char*)malloc(rgba.size());
+    if (out) memcpy(out, rgba.data(), rgba.size());
+    return out;
+}
