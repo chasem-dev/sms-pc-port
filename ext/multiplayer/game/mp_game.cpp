@@ -4914,6 +4914,16 @@ void takeTrips(TMarDirector* dir)
 	}
 }
 
+// The host's session flags as they are (mpg_host_going's).
+uint32_t sessionFlags()
+{
+	uint32_t flags = 0;
+	for (int i = 0; i < kSessionFlags; i++)
+		if (TFlagManager::getInstance()->getBool(0x30000 + i))
+			flags |= 1u << i;
+	return flags;
+}
+
 void moveStage()
 {
 	int area, episode;
@@ -4921,10 +4931,7 @@ void moveStage()
 		// on its way (any way out: the pause menu's, a Shine's, an event's),
 		// with what shapes the arrival: the others go too, and arrive alike
 		const TGameSequence& next = gpApplication.mNextArea;
-		uint32_t flags = 0;
-		for (int i = 0; i < kSessionFlags; i++)
-			if (TFlagManager::getInstance()->getBool(0x30000 + i))
-				flags |= 1u << i;
+		const uint32_t flags      = sessionFlags();
 		TMarDirector* dir = director();
 		const int movie   = dir && dir->checkUnk4CFlag(TMarDirector::DIRECTOR_FLAG_MOVIE_PENDING)
 		                        ? (int)gpApplication.getMovie() : -1;
@@ -4971,6 +4978,40 @@ void moveStage()
 		if (episode != 0xFF)
 			TFlagManager::getInstance()->setFlag(0x40003, episode);
 	}
+}
+
+// A stage about to load, its episode chosen (port_ext.h's stageLoading;
+// `area`, `episode` the one the game chose). On the host, another stage a mod
+// chose then (SMS_EV_STAGE_LOADING) is everyone's: the others set off for it,
+// as for the host's moveStage. A client on its way with the host loads the
+// stage the host goes to, when it has heard of it, instead of its own (after
+// the host's episode select, the host's mod may load another); one that has
+// not goes there after (followHost).
+void stageLoading(int area, int episode)
+{
+	if (!enabled())
+		return;
+	const TGameSequence& cur = gpApplication.mCurrArea;
+	if (s_role == MPG_ROLE_HOST) {
+		if (cur.getStage() == area && cur.getScenario() == episode)
+			return;
+		fprintf(stderr, "[multiplayer] the host loads area %d, episode %d instead of area %d, episode %d: everyone goes\n",
+		        cur.getStage(), cur.getScenario(), area, episode);
+		mpg_host_going(cur.getStage(), cur.getScenario(), sessionFlags(), -1);
+		return;
+	}
+	int hostArea, hostEpisode;
+	if (s_role != MPG_ROLE_CLIENT || !mpg_target(&hostArea, &hostEpisode) || !mpg_target_traveling()
+	    || hostEpisode == 0xFF || leading(cur.getStage()))
+		return;
+	if (cur.getStage() == hostArea && cur.getScenario() == hostEpisode)
+		return;
+	const int wasArea = cur.getStage(), wasEpisode = cur.getScenario();
+	if (!port_ext_load_instead(hostArea, hostEpisode))
+		return;
+	takeTravel(nullptr); // the host's session flags, as it went
+	fprintf(stderr, "[multiplayer] loading the host's area %d, episode %d instead of area %d, episode %d\n", hostArea,
+	        hostEpisode, wasArea, wasEpisode);
 }
 
 void missNextArea()
@@ -5072,7 +5113,8 @@ PortExtension s_extension = {
 struct Register {
 	Register()
 	{
-		s_extension.sound = soundHook;
+		s_extension.sound        = soundHook;
+		s_extension.stageLoading = stageLoading;
 		port_ext_register(&s_extension);
 	}
 } s_register;

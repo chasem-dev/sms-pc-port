@@ -68,6 +68,12 @@ extern "C" void port_ext_move_stage(void)
 	EACH(moveStage) s_ext[i]->moveStage();
 }
 
+extern "C" void port_ext_choose_stage_load(int area, int episode)
+{
+	EACH(chooseStageLoad) s_ext[i]->chooseStageLoad();
+	EACH(stageLoading) s_ext[i]->stageLoading(area, episode);
+}
+
 extern "C" void port_ext_miss_next_area(void)
 {
 	EACH(missNextArea) s_ext[i]->missNextArea();
