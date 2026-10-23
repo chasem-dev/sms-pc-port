@@ -51,7 +51,7 @@ python3 tools/vulkan/bench.py --disc /path/GMSE01.iso --rounds 2 --scale 1
 | 1x, `frame_rate = 60` | 3.01 ms (332 fps) | 2.77 ms (361 fps), 8.5% faster |
 
 Headless, the plaza takes 4.8 ms a frame with Vulkan and 5.0 with OpenGL.
-The renderer's own timers (`SMS_GX_STATS=n`) also log, with Vulkan, the submits, GPU waits, render passes, pipelines made and the memory heaps every n frames.
+The renderer's own timers (`SMS_GX_STATS=n`) also log, with Vulkan, the submits, GPU waits, render passes, pipelines made, the occlusion queries in use and the memory heaps every n frames.
 
 Memory: about 70 MiB more than OpenGL (glslang is in the executable), and less video memory.
 
@@ -65,7 +65,7 @@ Smoothness: shaders compile on threads of their own (`GL_KHR_parallel_shader_com
 - GLSL is compiled by glslang in its "Vulkan rules relaxed" mode, made for this (loose uniforms become one std140 block); the SPIR-V's bindings are patched to one descriptor set layout every program shares (push descriptors), and its vertex inputs to `glBindAttribLocation`'s locations. Program binaries (the port's shader cache) are the SPIR-V and its reflection, in their own file (`gx-programs-vk-*.bin`); pipelines are kept in `vk-pipelines-*.bin` beside it.
 - Pipelines are made per program and state (blend, colour mask, vertex layout, topology, formats); cull, depth and blend constants are dynamic. With graphics pipeline libraries they are linked from four parts: the vertex input, the program's pre-rasterisation and fragment shaders (made on its compile thread), and the fragment output; without, each is made whole.
 - GL's clip-space depth is kept with `VK_EXT_depth_clip_control` (else the vertex shaders map it). GL's window coordinates and Vulkan's framebuffer ones are the same rows in memory, so nothing is flipped except at present; GL's front faces are Vulkan's clockwise ones.
-- Masked clears are drawn (`vkCmdClearAttachments` ignores the colour mask). GL queries are runs of Vulkan occlusion queries, one per render pass they span.
+- Masked clears are drawn (`vkCmdClearAttachments` ignores the colour mask). GL queries are runs of Vulkan occlusion queries, one per render pass they span. Before another pool of them is made, the finished queries nobody read have their results kept and their slots taken back, a query left running sums its finished pieces as it goes, and if they still run out a draw goes uncounted (the query reports it visible) instead of the game stopping.
 - With MSAA, colour resolves with `vkCmdResolveImage` and depth through an empty render pass that resolves sample 0.
 
 ## Variables

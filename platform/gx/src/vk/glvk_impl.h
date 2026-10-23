@@ -323,10 +323,16 @@ struct Program {
 };
 
 struct Query {
-    std::vector<uint32_t> slots;  // the Vulkan queries of this GL query, summed
-    uint64_t serial = 0;          // the segment that ended it
+    struct Piece {
+        uint32_t slot;    // a Vulkan query of this GL query, summed
+        uint64_t serial;  // the segment it was recorded in
+    };
+    std::vector<Piece> pieces;
+    uint64_t partial = 0;    // the pieces already summed and given back
+    uint64_t serial = 0;     // the segment that ended it
     bool active = false;
-    bool haveResult = false;      // read (and its slots given back)
+    bool haveResult = false; // read (and its slots given back)
+    bool lost = false;       // a piece found no free slot and was not counted
     uint64_t result = 0;
 };
 
@@ -463,6 +469,12 @@ void endQuery();
 GLuint queryResult(GLuint id, bool available);
 void deleteQuery(GLuint id);
 void queriesSegmentStart();
+struct QueryUsage {
+    uint32_t held = 0;     // Vulkan queries GL queries hold
+    uint32_t retired = 0;  // given back, waiting for their segment to finish
+    uint32_t pools = 0;
+};
+QueryUsage queryUsage();  // for SMS_GX_STATS
 void destroyQueryPools();
 GLsync fenceSync();
 GLenum clientWaitSync(GLsync s, GLbitfield flags, GLuint64 timeout);
