@@ -1,4 +1,4 @@
-Reason: port: code-mod hooks (sms_modhook.h): episode test in TNerveHino2GraphWander (Eclipse)
+Reason: port: code-mod hooks (sms_modhook.h): episode test in TNerveHino2GraphWander and FLUDD spray on the level-2 mask (Eclipse)
 --- a/src/Enemy/hinokuri2.cpp
 +++ b/src/Enemy/hinokuri2.cpp
 @@ -29,6 +29,9 @@
@@ -11,7 +11,24 @@ Reason: port: code-mod hooks (sms_modhook.h): episode test in TNerveHino2GraphWa
  
  // NOTE: rodata ordering says this has to go here
  
-@@ -1264,7 +1267,14 @@
+@@ -947,8 +950,16 @@
+ 		int dmgAmount
+ 		    = gpModelWaterManager->getParticleAttack((TWaterHitActor*)sender);
+ 
++#ifdef TARGET_PC
++		// Eclipse (its nop at retail 0x8005B54C marks its changed Stu): FLUDD's
++		// spray, attack 1, cracks the mask too, as it does in Eclipse on a
++		// console, where it takes three hits like stronger water.
++		if (dmgAmount <= (SMS_MOD_WORD(0x8005B54C, 0) == 0x60000000 ? 0 : 1))
++			return true;
++#else
+ 		if (dmgAmount <= 1)
+ 			return true;
++#endif
+ 
+ 		unk190 += 1;
+ 		Hino2Mask(this)->unkC += 1;
+@@ -1245,7 +1256,14 @@
  		}
  	}
  
