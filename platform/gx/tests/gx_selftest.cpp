@@ -56,6 +56,13 @@ static void APIENTRY countOverlaySubImage(GLenum target, GLint level, GLint x, G
     s_realSubImage(target, level, x, y, w, h, format, type, pixels);
 }
 
+static int s_queryBegins = 0;
+static PFNGLBEGINQUERYPROC s_realBeginQuery;
+static void APIENTRY countBeginQuery(GLenum target, GLuint id) {
+    s_queryBegins++;
+    s_realBeginQuery(target, id);
+}
+
 static bool near(int a, int b, int tol) { return a >= b - tol && a <= b + tol; }
 
 static void expectPixel(const char* what, int x, int y, int r, int g, int b, int tol = 2) {
@@ -609,6 +616,52 @@ int main(int argc, char** argv) {
         }
         GXSetZMode(GX_FALSE, GX_ALWAYS, GX_FALSE);
         GXSetAlphaCompare(GX_ALWAYS, 0, GX_AOP_AND, GX_ALWAYS, 0);
+    }
+
+    // After a read the pixel metric counts on until the frame is shown, then
+    // stops: a count the game no longer clears (a stage without goop after
+    // one with it) must not keep a query running through every later frame,
+    // gathering one per copy (the Vulkan backend ran out of queries after
+    // about 20 minutes). A read after it stopped gives what it had counted.
+    {
+        using namespace gx::gl;
+        colorSetup();
+        setOrtho();
+        GXSetZMode(GX_FALSE, GX_ALWAYS, GX_FALSE);
+        u32 d = 0, first = 0, shown = 0, later = 0;
+        GXClearPixMetric();
+        colorQuad(100, 100, 140, 140, 255, 255, 255, 255);
+        GXReadPixMetric(&d, &d, &d, &d, &first, &d);
+        colorQuad(200, 100, 240, 140, 255, 255, 255, 255);  // counted: before the frame is shown
+        GXCopyDisp(xfb, GX_TRUE);
+        GXReadPixMetric(&d, &d, &d, &d, &shown, &d);
+        expect("pixel metric counts on after a read until the frame is shown", first > 8 && shown > first);
+        s_realBeginQuery = gx_glBeginQuery;
+        gx_glBeginQuery = countBeginQuery;
+        s_queryBegins = 0;
+        static u8 copyBuf[64 * 64 * 4] __attribute__((aligned(32)));
+        for (int frame = 0; frame < 50; frame++) {
+            colorQuad(300, 100, 340, 140, 255, 255, 255, 255);
+            GXSetTexCopySrc(0, 0, 64, 64);
+            GXSetTexCopyDst(64, 64, GX_TF_RGBA8, GX_FALSE);
+            GXCopyTex(copyBuf, GX_FALSE);
+            GXCopyDisp(xfb, GX_TRUE);
+        }
+        gx_glBeginQuery = s_realBeginQuery;
+        GXReadPixMetric(&d, &d, &d, &d, &later, &d);
+        printf("     pixel metric queries begun over 50 frames without a clear: %d\n", s_queryBegins);
+        expect("an uncleared pixel metric stops counting once the frame is shown", s_queryBegins == 0 && later == shown);
+        // cleared and never read: it runs through one whole frame at most
+        GXClearPixMetric();
+        gx_glBeginQuery = countBeginQuery;
+        s_queryBegins = 0;
+        for (int frame = 0; frame < 50; frame++) {
+            colorQuad(300, 100, 340, 140, 255, 255, 255, 255);
+            GXCopyTex(copyBuf, GX_FALSE);
+            GXCopyDisp(xfb, GX_TRUE);
+        }
+        gx_glBeginQuery = s_realBeginQuery;
+        expect("an unread pixel metric stops counting after a frame", s_queryBegins <= 4);
     }
 
     // Copy clears must preserve disabled channels and alpha in RGB8. The

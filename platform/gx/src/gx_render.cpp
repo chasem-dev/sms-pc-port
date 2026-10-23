@@ -1887,7 +1887,12 @@ static bool asyncReads() {
 // the read. Each clear/read pair of a frame is a slot; a slot that drew the
 // same number of triangles one frame earlier, in one query, is answered from
 // that frame's query, otherwise the queries are waited for.
-enum { kMetricSlots = 32 };
+// After a read the count goes on (as the counter does) until the frame is
+// shown; then it stops, so that a count the game no longer clears or reads
+// (a stage without goop after one with it) does not keep a query running
+// and gather the queries of every copy after it. A count cleared but not
+// read also stops once it has run through a whole frame.
+enum { kMetricSlots = 32, kMaxPooledQueries = 64 };
 static GLuint s_mq[2][kMetricSlots];
 static uint32_t s_mqTris[2][kMetricSlots], s_mqFrame[2][kMetricSlots];
 // With the GL thread, the results of a frame's queries are read once it is
@@ -1908,6 +1913,9 @@ static bool s_mqUsed[2][kMetricSlots];
 static int s_mqSlot = -1;
 static uint32_t s_mqSlotFrame = ~0u;
 static bool s_pixActive = false, s_pixTaint = false;
+static bool s_pixStopped = false;   // the count has stopped: s_pixSamples plus the pending queries
+static bool s_pixReadSince = false; // read since the clear
+static uint32_t s_pixClearFrame = 0;
 static uint32_t s_pixTris = 0;
 static uint64_t s_pixSamples = 0;  // counted before the pending queries
 static GLuint s_pixCur = 0;
@@ -1925,9 +1933,13 @@ static GLuint poolQuery() {
     s_queryPool.pop_back();
     return q;
 }
+static void releaseQuery(GLuint q) {
+    if (s_queryPool.size() < kMaxPooledQueries) s_queryPool.push_back(q);
+    else glDeleteQueries(1, &q);
+}
 static void pixReleasePending() {
     for (auto& q : s_pixPending)
-        if (q.second) s_queryPool.push_back(q.first);
+        if (q.second) releaseQuery(q.first);
     s_pixPending.clear();
 }
 static uint64_t queryResult(GLuint q) {
@@ -1942,9 +1954,12 @@ void pixMetricClear() {
     if (!s_ready) return;
     if (s_pixActive) {
         glEndQuery(GL_SAMPLES_PASSED);
-        if (s_pixCurPooled) s_queryPool.push_back(s_pixCur);
+        if (s_pixCurPooled) releaseQuery(s_pixCur);
     }
     pixReleasePending();
+    s_pixStopped = false;
+    s_pixReadSince = false;
+    s_pixClearFrame = s_frameNo;
     if (s_mqSlotFrame != s_frameNo) {
         s_mqSlotFrame = s_frameNo;
         s_mqSlot = -1;
@@ -1969,7 +1984,16 @@ void pixMetricClear() {
 
 uint32_t pixMetricRead() {
     flushBatch();
-    if (!s_ready || !s_pixActive) return 0;
+    if (!s_ready || (!s_pixActive && !s_pixStopped)) return 0;
+    if (s_pixStopped) {  // read again after the count stopped: what it had counted
+        s_syncReads++;
+        uint64_t samples = s_pixSamples;
+        for (auto& q : s_pixPending) samples += queryResult(q.first);
+        pixReleasePending();
+        s_pixSamples = samples;
+        uint64_t v = uint64_t(double(samples) / (double(s_scale) * double(s_scale))) + uint64_t(s_pixTris) * 4;
+        return v > 0xFFFFFFFFu ? 0xFFFFFFFFu : uint32_t(v);
+    }
     glEndQuery(GL_SAMPLES_PASSED);
     uint64_t samples = 0;
     int cur = s_frameNo & 1, slot = s_mqSlot;
@@ -1990,11 +2014,12 @@ uint32_t pixMetricRead() {
         for (auto& q : s_pixPending) samples += queryResult(q.first);
     }
     pixReleasePending();
-    if (s_pixCurPooled) s_queryPool.push_back(s_pixCur);
+    if (s_pixCurPooled) releaseQuery(s_pixCur);
     // reading does not reset the hardware counter: keep counting (a second
-    // read before the next clear waits for its queries)
+    // read before the next clear waits for its queries), until the frame is shown
     s_pixSamples = samples;
     s_pixTaint = true;
+    s_pixReadSince = true;
     s_pixCur = poolQuery();
     s_pixCurPooled = true;
     glBeginQuery(GL_SAMPLES_PASSED, s_pixCur);
@@ -2026,6 +2051,14 @@ static void pixMetricPause() {
         glEndQuery(GL_SAMPLES_PASSED);
         s_pixPending.emplace_back(s_pixCur, s_pixCurPooled);
         s_pixTaint = true;  // this count now spans several queries
+    }
+}
+// The frame is being shown (its copy has paused the count): a count read
+// since its clear, or running since before the previous frame, stops.
+static void pixMetricFrameShown() {
+    if (s_pixActive && (s_pixReadSince || s_frameNo - s_pixClearFrame >= 2)) {
+        s_pixActive = false;
+        s_pixStopped = true;
     }
 }
 static void pixMetricResume() {
@@ -2753,6 +2786,7 @@ void executeCopy(uint32_t ctrl) {
     const void* dest = g.copyDest;
     bool disp = (ctrl >> 14) & 1;
     copyEfb(ctrl);
+    if (disp) pixMetricFrameShown();
     // presenting (the hook) is timed apart from sms_gx: GXPC_GetTimes
     if (disp && g_displayCopyHook) g_displayCopyHook(dest);
     if (disp && glt::active()) {  // the frame is shown: the GL thread reads its results (see gx_glthread.h)

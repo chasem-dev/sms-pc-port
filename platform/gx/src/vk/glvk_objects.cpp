@@ -940,8 +940,16 @@ void blitFramebuffer(GLint sx0, GLint sy0, GLint sx1, GLint sy1, GLint dx0, GLin
 // instance it spans (a Vulkan query cannot outlive one), summed at the read.
 // Their slots come from pools of 4096, made as needed, and go back once the
 // result has been read (or the GL query restarts or goes away).
+// A GL query that is never read would keep its slots, and one left running
+// would take a slot per render pass for as long as it runs: before another
+// pool is made, ended queries whose segments have finished have their
+// results read into the query (as a read would) and their slots taken back,
+// and a running query folds its finished pieces into a partial sum every
+// kFoldPieces pieces. If the slots still run out, the piece is not counted
+// and the query reports at least one sample (visible) rather than stopping
+// the game.
 namespace {
-const uint32_t kPerPool = 4096, kMaxPools = 64;
+const uint32_t kPerPool = 4096, kMaxPools = 64, kFoldPieces = 64;
 std::vector<VkQueryPool> s_pools;
 std::vector<uint32_t> s_freeSlots;
 struct Retired {
@@ -951,12 +959,55 @@ struct Retired {
 std::vector<Retired> s_retired;  // slots to reuse once their segment has finished
 uint32_t s_nextSlot = 0;
 int s_openSlot = -1;  // the Vulkan query recording now
+bool s_warnedOut = false;
+const uint32_t kNoSlot = ~0u;
 
 VkQueryPool poolOf(uint32_t slot) { return s_pools[slot / kPerPool]; }
 
 void retire(Query* q, uint64_t serial) {
-    for (uint32_t s : q->slots) s_retired.push_back(Retired{serial, s});
-    q->slots.clear();
+    for (const Query::Piece& p : q->pieces) s_retired.push_back(Retired{std::max(serial, p.serial), p.slot});
+    q->pieces.clear();
+}
+
+uint64_t pieceResult(uint32_t slot) {
+    uint64_t v = 0;
+    vkGetQueryPoolResults(D.dev, poolOf(slot), slot % kPerPool, 1, sizeof v, &v, sizeof v,
+                          VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+    return v;
+}
+
+// Adds the query's pieces whose segments have finished to its partial sum
+// and retires their slots (none of them is the piece recording now).
+void fold(Query* q) {
+    size_t keep = 0;
+    for (const Query::Piece& p : q->pieces) {
+        if (int(p.slot) != s_openSlot && serialDone(p.serial)) {
+            q->partial += pieceResult(p.slot);
+            s_retired.push_back(Retired{p.serial, p.slot});
+        } else {
+            q->pieces[keep++] = p;
+        }
+    }
+    q->pieces.resize(keep);
+}
+
+// Every ended, unread query whose segment has finished: its result is
+// read now (kept for the read) and its slots taken back.
+void harvest() {
+    pollCompleted();
+    for (size_t i = 1; i < g_queries.objs.size(); i++) {
+        Query* q = g_queries.objs[i];
+        if (!q || q->pieces.empty()) continue;
+        if (q->active) {
+            fold(q);
+        } else if (!q->haveResult && serialDone(q->serial)) {
+            fold(q);
+            if (q->pieces.empty()) {
+                q->result = q->partial;
+                q->haveResult = true;
+            }
+        }
+    }
 }
 
 void recycle() {
@@ -975,15 +1026,20 @@ void recycle() {
 
 uint32_t allocSlot() {
     if (s_freeSlots.empty() && s_nextSlot >= s_pools.size() * kPerPool) recycle();
+    if (s_freeSlots.empty() && s_nextSlot >= s_pools.size() * kPerPool && !s_pools.empty()) {
+        harvest();  // before another pool: the slots of finished, unread queries
+        recycle();
+    }
     if (s_freeSlots.empty()) {
         if (s_nextSlot >= s_pools.size() * kPerPool && s_pools.size() < kMaxPools) {
             VkQueryPoolCreateInfo ci{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
             ci.queryType = VK_QUERY_TYPE_OCCLUSION;
             ci.queryCount = kPerPool;
             VkQueryPool pool = VK_NULL_HANDLE;
-            vkCreateQueryPool(D.dev, &ci, nullptr, &pool);
-            D.resetQueryPool(D.dev, pool, 0, kPerPool);
-            s_pools.push_back(pool);
+            if (vkCreateQueryPool(D.dev, &ci, nullptr, &pool) == VK_SUCCESS) {
+                D.resetQueryPool(D.dev, pool, 0, kPerPool);
+                s_pools.push_back(pool);
+            }
         }
         if (s_nextSlot < s_pools.size() * kPerPool) return s_nextSlot++;
         while (s_freeSlots.empty() && !s_retired.empty()) {  // all in use: wait for the oldest retired ones
@@ -991,8 +1047,9 @@ uint32_t allocSlot() {
             recycle();
         }
         if (s_freeSlots.empty()) {
-            logmsg("glvk: out of occlusion queries (%u in use)", kPerPool * kMaxPools);
-            abort();
+            if (!s_warnedOut) logmsg("glvk: out of occlusion queries (%u in use): not counting some draws", s_nextSlot);
+            s_warnedOut = true;
+            return kNoSlot;
         }
     }
     uint32_t s = s_freeSlots.back();
@@ -1004,10 +1061,15 @@ uint32_t allocSlot() {
 void beginQueryPiece() {
     Query* q = g_queries.get(S.query);
     if (!q || s_openSlot >= 0) return;
+    if (q->pieces.size() >= kFoldPieces) fold(q);  // a query left running: its finished pieces
     const uint32_t slot = allocSlot();
+    if (slot == kNoSlot) {
+        q->lost = true;
+        return;
+    }
     vkCmdBeginQuery(mainCmd(), poolOf(slot), slot % kPerPool,
                     D.features.occlusionQueryPrecise ? VK_QUERY_CONTROL_PRECISE_BIT : 0);
-    q->slots.push_back(slot);
+    q->pieces.push_back(Query::Piece{slot, currentSerial()});
     s_openSlot = int(slot);
 }
 
@@ -1023,6 +1085,8 @@ void beginQuery(GLuint id) {
     retire(q, std::max(q->serial, currentSerial()));
     q->active = true;
     q->haveResult = false;
+    q->lost = false;
+    q->partial = 0;
     S.query = id;
     if (renderingActive()) beginQueryPiece();
 }
@@ -1043,18 +1107,15 @@ GLuint queryResult(GLuint id, bool available) {
     if (available) return q->haveResult || serialDone(q->serial) ? 1 : 0;
     if (!q->haveResult) {
         waitSerial(q->serial);
-        uint64_t sum = 0;
-        for (uint32_t s : q->slots) {
-            uint64_t v = 0;
-            vkGetQueryPoolResults(D.dev, poolOf(s), s % kPerPool, 1, sizeof v, &v, sizeof v,
-                                  VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
-            sum += v;
-        }
+        uint64_t sum = q->partial;
+        for (const Query::Piece& p : q->pieces) sum += pieceResult(p.slot);
         q->result = sum;
         q->haveResult = true;
         retire(q, q->serial);  // read: the slots can go back
     }
-    return q->result > 0xFFFFFFFFull ? 0xFFFFFFFFu : GLuint(q->result);
+    // pieces that found no slot were not counted: say it was visible
+    const uint64_t r = q->lost ? std::max<uint64_t>(q->result, 1) : q->result;
+    return r > 0xFFFFFFFFull ? 0xFFFFFFFFu : GLuint(r);
 }
 
 void deleteQuery(GLuint id) {
@@ -1074,6 +1135,14 @@ void destroyQueryPools() {
 }
 
 void queriesSegmentStart() { s_openSlot = -1; }
+
+QueryUsage queryUsage() {
+    QueryUsage u;
+    u.pools = uint32_t(s_pools.size());
+    u.retired = uint32_t(s_retired.size());
+    u.held = s_nextSlot - uint32_t(s_freeSlots.size()) - u.retired;
+    return u;
+}
 
 void destroyAllObjects() {
     for (size_t i = 1; i < g_buffers.objs.size(); i++)
