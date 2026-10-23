@@ -597,8 +597,11 @@ int port_savestate_can_load_exact(const char* path)
 	       && threads_match(chunks);
 }
 
+extern "C" int port_play_unchecked;
+
 int port_savestate_load_exact(const char* path, PortSaveStatePortable* portable, int* hasPortable)
 {
+	++port_play_unchecked; // a loaded state's play doesn't earn achievements (ext/achievements)
 	if (hasPortable)
 		*hasPortable = 0;
 	std::vector<Chunk> chunks;

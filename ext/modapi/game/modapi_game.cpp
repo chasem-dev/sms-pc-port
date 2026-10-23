@@ -1014,13 +1014,21 @@ extern "C" void modg_state(SmsGameState* out)
 
 extern "C" int32_t modg_flag_get(uint32_t id) { return TFlagManager::getInstance()->getFlag(id); }
 
-extern "C" void modg_flag_set(uint32_t id, int32_t value) { TFlagManager::getInstance()->setFlag(id, value); }
+// A mod that sets the save file's flags or warps the player: play after it doesn't earn achievements (ext/achievements).
+extern "C" int port_play_unchecked;
+
+extern "C" void modg_flag_set(uint32_t id, int32_t value)
+{
+	++port_play_unchecked;
+	TFlagManager::getInstance()->setFlag(id, value);
+}
 
 extern "C" int modg_warp(int area, int episode)
 {
 	if (!s_stageReady || !gpMarDirector || area < 0 || area > 254 || episode < 0 || episode > 255)
 		return 0;
 	s_warpAsked = true;
+	++port_play_unchecked;
 	gpMarDirector->setNextStage((u16)(((area + 1) << 8) | episode), 0);
 	return 1;
 }

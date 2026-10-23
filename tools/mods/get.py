@@ -7,6 +7,7 @@
     python3 tools/mods/get.py eclipse     Super Mario Eclipse (patched from your disc), and its maps
     python3 tools/mods/get.py eclipse-maps  only the radar's maps of Eclipse's stages;
                                           --if-outdated as for extras
+    python3 tools/mods/get.py achievement-icons  the achievements' icons, into assets/achievements/
     python3 tools/mods/get.py language fr the game's text in French (de, es, it, pl: German,
                                           Spanish, Italian, Polish); --if-outdated as for extras
     python3 tools/mods/get.py lua         the lua mod, which runs Lua script mods (native
@@ -547,11 +548,64 @@ def get_eclipse(keep, iso_arg):
             " python3 tools/mods/get.py eclipse-maps tries again" % e)
 
 
+# The achievements' icons (ext/achievements): published with the texture
+# extras, pinned in achievement-icons.json, installed in assets/achievements/
+# (1.png to 148.png) whatever the texture settings, with the release recorded
+# in its .release file as for the extras.
+ACHIEVEMENT_ICONS = None
+if os.path.exists(os.path.join(HERE, "achievement-icons.json")):
+    with open(os.path.join(HERE, "achievement-icons.json"), encoding="utf-8") as f:
+        ACHIEVEMENT_ICONS = dict(json.load(f), install=os.path.join(ROOT, "assets", "achievements"))
+
+
+def achievement_icons_current():
+    """Whether the installed achievement icons are the pinned release."""
+    try:
+        with open(os.path.join(ACHIEVEMENT_ICONS["install"], EXTRAS_RECORD), encoding="utf-8") as f:
+            return json.load(f).get("md5") == ACHIEVEMENT_ICONS["md5"]
+    except (OSError, ValueError, AttributeError, TypeError):
+        return False
+
+
+def get_achievement_icons(keep, if_outdated=False):
+    mod = ACHIEVEMENT_ICONS
+    if not mod:
+        raise Failure("this version of the game has no achievement icons to install")
+    if if_outdated and achievement_icons_current():
+        say("The achievement icons are up to date (%s)." % mod["name"])
+        return
+    say("== Achievement icons: %s" % mod["name"])
+    need_space(MODS, 2 * mod["size"] + (16 << 20))
+    archive = fetch(mod)
+    tmp = mod["install"] + ".part"
+    remove(tmp)
+    try:
+        # the zip holds achievements/ (1.png to 148.png), as assets/achievements/
+        with zipfile.ZipFile(archive) as z:
+            names = [n for n in z.namelist() if not n.endswith("/")]
+            icons = [n for n in names if n.endswith(".png")]
+            if len(icons) != 148 or any(not n.startswith("achievements/") or ".." in n.split("/") for n in names):
+                raise Failure("the archive is not laid out as expected (achievements/1.png to 148.png)")
+            z.extractall(tmp)
+        if os.path.isdir(mod["install"]):
+            remove(mod["install"])
+        os.replace(os.path.join(tmp, "achievements"), mod["install"])
+        with open(os.path.join(mod["install"], EXTRAS_RECORD), "w", encoding="utf-8") as f:
+            json.dump({"name": mod["name"], "file": mod["file"], "md5": mod["md5"]}, f, indent=2)
+    except (OSError, zipfile.BadZipFile) as e:
+        raise Failure("could not unpack %s: %s" % (os.path.basename(archive), e))
+    finally:
+        remove(tmp)
+        if not keep:
+            remove(archive)
+    say("Installed the achievement icons in %s." % os.path.relpath(mod["install"], ROOT))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter,
                                  epilog="\n\n".join(__doc__.split("\n\n")[1:]))
-    ap.add_argument("what", choices=["textures", "extras", "eclipse", "eclipse-maps", "language", "lua", "all"])
+    ap.add_argument("what", choices=["textures", "extras", "eclipse", "eclipse-maps", "achievement-icons", "language", "lua", "all"])
     ap.add_argument("language", nargs="?", help="with language: fr, de, es, it or pl")
     ap.add_argument("--iso")
     ap.add_argument("--keep-download", action="store_true")
@@ -576,6 +630,8 @@ def main():
             get_lua(args.keep_download, args.if_outdated)
         if args.what == "eclipse-maps":
             get_eclipse_maps(args.keep_download, args.if_outdated)
+        if args.what == "achievement-icons":
+            get_achievement_icons(args.keep_download, args.if_outdated)
         if args.what in ("eclipse", "all"):
             get_eclipse(args.keep_download, args.iso)
     except Failure as e:
