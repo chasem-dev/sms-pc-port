@@ -40,7 +40,9 @@ extern "C" __attribute__((weak)) unsigned char* GXPC_TexturePackImage(const void
 namespace {
 
 // The menu's words are IA4 pictures 26 pixels high: white letters in a black
-// outline about 3.5 pixels wide, anti-aliased, that the item's tint colours.
+// outline, anti-aliased, that the item's tint colours. The outline's width is
+// EXIT AREA's, measured (outlineWidth): 3.5 pixels on the disc, the UHD
+// pack's 2 (16 of its 8x pixels); kOutline when it cannot be.
 // Sizes here are the disc's; a pack's pictures are `scale` times as large.
 const int kH = 26, kMaxW = 256;
 const float kOutline = 3.5f;
@@ -54,10 +56,10 @@ const float kNarrowX = 11.0f / 14.5f, kNarrowY = 15.0f / 16.0f, kMiddleRow = 13.
 const int kMaxScale = 8;
 
 // How white each pixel of a picture is, 0 to 1: its letters' insides, the
-// outline and any drop shadow (black) left out.
+// outline and any drop shadow (black) left out; and its alpha.
 struct Ink {
 	int w, h;
-	float* v;
+	float *v, *a;
 	float at(int x, int y) const { return x >= 0 && x < w && y >= 0 && y < h ? v[y * w + x] : 0.0f; }
 	float& operator()(int x, int y) { return v[y * w + x]; }
 };
@@ -67,13 +69,15 @@ bool inkNew(Ink& ink, int w, int h)
 	ink.w = w;
 	ink.h = h;
 	ink.v = (float*)calloc((size_t)w * h, sizeof(float));
-	return ink.v != nullptr;
+	ink.a = (float*)calloc((size_t)w * h, sizeof(float));
+	return ink.v && ink.a;
 }
 
 void inkFree(Ink& ink)
 {
 	free(ink.v);
-	ink.v = nullptr;
+	free(ink.a);
+	ink.v = ink.a = nullptr;
 }
 
 struct Source {
@@ -101,8 +105,10 @@ bool decodeIA4(const Source& s, Ink& ink)
 		for (int bx = 0; bx < s.w; bx += 8)
 			for (int y = 0; y < 4; y++)
 				for (int x = 0; x < 8; x++, p++)
-					if (bx + x < s.w && by + y < s.h)
-						ink(bx + x, by + y) = (*p & 15) * (*p >> 4) / 225.0f; // intensity x alpha
+					if (bx + x < s.w && by + y < s.h) {
+						ink(bx + x, by + y)               = (*p & 15) * (*p >> 4) / 225.0f; // intensity x alpha
+						ink.a[(by + y) * s.w + bx + x] = (*p >> 4) / 15.0f;
+					}
 	return true;
 }
 
@@ -115,6 +121,7 @@ bool decodePack(const Source& s, int scale, Ink& ink)
 	for (int i = 0; ok && i < w * h; i++) {
 		const u8* c = rgba + i * 4;
 		ink.v[i] = (c[0] + c[1] + c[2]) / (3.0f * 255.0f) * (c[3] / 255.0f);
+		ink.a[i] = c[3] / 255.0f;
 	}
 	free(rgba);
 	return ok;
@@ -327,10 +334,32 @@ float* distances(const Ink& word)
 	return d;
 }
 
+// A picture's outline width: the one that draws its alpha back best around its
+// letters (to an eighth of a pixel at the disc's size); kOutline x scale when
+// it has none to measure.
+float outlineWidth(const Ink& ink, int scale)
+{
+	float* dist = ink.v ? distances(ink) : nullptr;
+	if (!dist)
+		return kOutline * scale;
+	float best = kOutline * scale, least = 1e30f;
+	for (float r = 1.0f * scale; r <= 6.0f * scale; r += scale / 8.0f) {
+		float err = 0.0f;
+		for (int i = 0; i < ink.w * ink.h; i++)
+			err += fabsf(fmaxf(ink.v[i], fminf(1.0f, fmaxf(0.0f, r + 0.5f - dist[i]))) - ink.a[i]);
+		if (err < least) {
+			least = err;
+			best  = r;
+		}
+	}
+	free(dist);
+	return best;
+}
+
 // The word's letters white in a black outline (anti-aliased), as a picture
 // with a native ResTIMG header like the menu's own: IA4 at the disc's size,
 // or IA8 with mipmaps down to the disc's size at a pack's.
-const ResTIMG* render(const Ink& word, int scale, const ResTIMG& like)
+const ResTIMG* render(const Ink& word, int scale, float outline, const ResTIMG& like)
 {
 	float* dist = distances(word);
 	if (!dist)
@@ -342,7 +371,7 @@ const ResTIMG* render(const Ink& word, int scale, const ResTIMG& like)
 		free(dist);
 		return nullptr;
 	}
-	const float reach = kOutline * scale + 0.5f;
+	const float reach = outline + 0.5f;
 	for (int i = 0; i < w * h; i++) {
 		const float white = word.v[i], outline = fminf(1.0f, fmaxf(0.0f, reach - dist[i]));
 		ia[i * 2]         = white;
@@ -452,11 +481,13 @@ const ResTIMG* make(bool pack, int* layoutW)
 		ok = decodeIA4(tx1, in.tx1) && decodeIA4(tx3, in.tx3) && decodeIA4(quit, in.quit) && decodeIA4(mono, in.mono);
 	} else {
 		ok = decodeIA4(quit, in.quit);
+		decodeIA4(tx3, in.tx3); // only for its outline
 	}
 
 	const ResTIMG* art = nullptr;
 	Ink word;
-	int w = 0;
+	int w         = 0;
+	float outline = 0.0f;
 	if (ok && like && inkNew(word, kMaxW * in.scale, kH * in.scale)) {
 		w = us ? composeQuitGame(word, in) : composeQuit(word, in.quit);
 		if (w > 0 && w <= word.w) {
@@ -465,7 +496,8 @@ const ResTIMG* make(bool pack, int* layoutW)
 			if (inkNew(tight, w, word.h)) {
 				for (int y = 0; y < word.h; y++)
 					memcpy(tight.v + y * w, word.v + y * word.w, sizeof(float) * w);
-				art = render(tight, in.scale, *like);
+				outline = outlineWidth(in.tx3, in.scale);
+				art     = render(tight, in.scale, outline, *like);
 				inkFree(tight);
 			}
 		}
@@ -478,11 +510,11 @@ const ResTIMG* make(bool pack, int* layoutW)
 	free(quitFile);
 	free(monoFile);
 	*layoutW = art ? w / in.scale : 0;
-	OSReport("[pause] QUIT GAME item: %s, %d x %d%s\n",
+	OSReport("[pause] QUIT GAME item: %s, %d x %d, outline %.2f%s\n",
 	         !art             ? "no picture"
 	         : us             ? "QUIT GAME"
 	                          : "the file select's QUIT",
-	         w, kH * in.scale, art && in.scale > 1 ? " (from the texture pack's)" : "");
+	         w, kH * in.scale, outline, art && in.scale > 1 ? " (from the texture pack's)" : "");
 	return art;
 }
 
