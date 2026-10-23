@@ -80,6 +80,12 @@ void GXPC_SetStretch2D(int on);
  * and past its edges: the game laid it out across the whole frame (the map
  * screen calls it around its drawing); 0 goes back. */
 void GXPC_SetWide2D(int on);
+/* Texture copies of w x h texels into `dest` keep that size at every internal
+ * resolution instead of the scaled EFB's (0 x 0 forgets `dest`). Delfino's
+ * goop layers call it: the game draws a layer's texture into the EFB and
+ * copies it back each frame, so a scaled copy kept each texel a hard square,
+ * where the GameCube's filtering of the small texture rounds the goop's edges. */
+void GXPC_SetNativeCopy(const void* dest, int w, int h);
 /* SMS_WIDESCREEN_HUD=edges: mark the gameplay HUD's drawing, and bracket
  * each J2D pane's drawing with its horizontal extent (game x), so HUD pieces
  * move to the screen edge on their side. */

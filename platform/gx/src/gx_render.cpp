@@ -2712,6 +2712,23 @@ static void prefetchWriteBacks() {
 }
 
 static void prefetchPeeks();
+
+// GXPC_SetNativeCopy: copy destinations whose copies keep the game's texel
+// size (w x h), whatever the internal resolution. SMS_GX_NATIVE_COPY=0 scales
+// them like every other copy.
+static std::unordered_map<const void*, std::pair<int, int>> s_nativeCopies;
+
+static bool nativeCopy(const void* dest, int tw, int th) {
+    static int on = -1;
+    if (on < 0) {
+        const char* e = getenv("SMS_GX_NATIVE_COPY");
+        on = !(e && e[0] == '0');
+    }
+    if (!on) return false;
+    auto it = s_nativeCopies.find(dest);
+    return it != s_nativeCopies.end() && it->second.first == tw && it->second.second == th;
+}
+
 static void copyEfb(uint32_t ctrl) {
     GxTimer timer;
     GxTimer tc(&s_copySeconds);
@@ -2789,6 +2806,13 @@ static void copyEfb(uint32_t ctrl) {
             oh /= 2;
         }
         int tw = half ? gw / 2 : gw, th = half ? h / 2 : h;
+        // Delfino's goop: the copy takes the EFB pixel under each texel's
+        // centre, the one a 1x EFB has (u_src below), and so stays the small
+        // texture whose filtering the goop's drawing smooths its edges with.
+        if (nativeCopy(dest, tw, th)) {
+            ow = tw;
+            oh = th;
+        }
         if (ow < 1) ow = 1;
         if (oh < 1) oh = 1;
         int cw = 0, chh = 0;
@@ -3261,6 +3285,11 @@ void GXPC_SetStretch2D(int on) {
     if (s_efbW == EFB_W || s_stretch2D == (on != 0)) return;
     flushBatch();  // what was queued keeps its own mapping
     s_stretch2D = on != 0;
+}
+
+void GXPC_SetNativeCopy(const void* dest, int w, int h) {
+    if (w > 0 && h > 0) s_nativeCopies[dest] = {w, h};
+    else s_nativeCopies.erase(dest);
 }
 
 void GXPC_SetWide2D(int on) {
