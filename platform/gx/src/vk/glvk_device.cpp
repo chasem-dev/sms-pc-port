@@ -468,6 +468,10 @@ static void statsFrame() {
            "%.1f render passes/frame, %u pipelines made (%.2f ms/frame)", g_stats.submits / f,
            g_stats.submitSeconds * 1000.0 / f, g_stats.waitSeconds * 1000.0 / f, g_stats.draws / f,
            g_stats.renderPasses / f, g_stats.pipelines, g_stats.pipelineSeconds * 1000.0 / f);
+    {
+        const QueryUsage q = queryUsage();
+        logmsg("Vulkan queries: %u held, %u retired, %u pools of 4096", q.held, q.retired, q.pools);
+    }
     if (g_stats.dropped) logmsg("Vulkan stats: %u of %u frames not presented (no drawable free)", g_stats.dropped, g_stats.frames);
     {
         VmaBudget budgets[VK_MAX_MEMORY_HEAPS];
