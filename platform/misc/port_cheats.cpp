@@ -7,4 +7,6 @@ int port_cheat_jump_height = 1;
 int port_cheat_infinite_lives = 0;
 int port_cheat_infinite_fludd = 0;
 int port_cheat_coin_multiplier = 1;
+// Counts warps (the warp menu) and save state loads: play after one doesn't earn achievements (ext/achievements).
+int port_play_unchecked = 0;
 }

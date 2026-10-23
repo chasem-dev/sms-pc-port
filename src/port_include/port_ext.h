@@ -213,6 +213,10 @@ typedef struct PortExtension {
 	// HIT_MESSAGE_TRAMPLE from `mario`, as a THitActor). objectHit is not asked for stomps
 	// (multiplayer shares them its own way). Return 1 to stop it.
 	int (*objectStomp)(void* object, void* mario);
+	// Every frame drawn, over the game's picture, its HUD and fades and under
+	// the port's own menus (TApplication's loop, before the save state menu):
+	// 2D in the game's screen coordinates, `width` x `height` (640 x 448).
+	void (*draw)(float width, float height);
 } PortExtension;
 
 // playerDeath's causes (the mod API's SMS_DEATH_*)
@@ -256,6 +260,7 @@ const PortExtension* port_ext_find(const char* name);
 
 // The hooks, as the game's patches call them.
 void port_ext_frame(void);
+void port_ext_draw(float width, float height);
 void port_ext_after_movement(void);
 void port_ext_stage_setup(void);
 int port_ext_allow_next_stage(unsigned code, void* actor);

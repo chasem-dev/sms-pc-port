@@ -68,12 +68,15 @@ void port_warp_set_ready(int ready)
 	g_ready = ready != 0;
 }
 
+extern "C" int port_play_unchecked;
+
 int port_warp_take(int* area, int* episode)
 {
 	std::lock_guard<std::mutex> l(g_lock);
 	if (!g_pending)
 		return 0;
 	g_pending = false;
+	++port_play_unchecked; // achievements don't count from here (ext/achievements)
 	*area     = g_area;
 	*episode  = g_episode;
 	return 1;

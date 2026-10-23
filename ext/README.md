@@ -10,6 +10,7 @@ They are the start of a code-mod framework for the port: a new feature that need
 | [`demo/`](demo/README.md) | plays Mario from a script, as a player holds the controller, for trailers and footage |
 | [`autosave/`](autosave/README.md) | saves by itself where the game would ask to save, with an indicator and the save sound |
 | [`outfit/`](outfit/README.md) | Mario always wears his Shine shirt, his sunglasses, or both (the launcher's Customize Mario) |
+| [`achievements/`](achievements/README.md) | the game's achievements: unlocked as you play, kept per player, announced to the launcher |
 | [`modapi/`](modapi/README.md) | native mods: loads mods from `mods/` (shared libraries) and turns these hooks into their events ([MODDING.md](https://github.com/chasem-dev/sms-mod-sdk/blob/main/docs/MODDING.md)) |
 
 ## The hooks
@@ -20,6 +21,7 @@ An extension fills in a `PortExtension` with the hooks it needs, leaving the res
 | Hook | When the game calls it | What it may do |
 | --- | --- | --- |
 | `frame` | the top of every frame of `TApplication`'s loop: title, file select, stages and movies alike | anything between frames |
+| `draw` | every frame drawn, over the game's picture, HUD and fades and under the port's own menus, in the 640 x 448 screen's coordinates | draw 2D over the game (the achievements' banner) |
 | `afterMovement` | every simulation tick of a stage, after the movement pass and before anything is posed for drawing | move objects to where they should be |
 | `stageSetup` | a stage's objects are loaded and set up (the end of `TMarDirector::setupObjects`), with the stage's heap current | add objects to the stage; what it allocates lasts as long as the stage |
 | `allowNextStage` | `TMarDirector::setNextStage` asks to leave for another area (pipes, paintings, scripts) | return 0 to refuse |
