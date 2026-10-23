@@ -122,7 +122,12 @@ renamed.
 - Super Mario Eclipse's music streams from the disc (`platform/audio/dtk.cpp`), host-side, and is not in
   a state, so after a load the stream playing may not be the state's until the music next changes. Save
   states in Eclipse builds have not been tested yet.
-- Loading a state brings its progress. Saving to the memory card afterwards saves that progress.
+- Loading a state brings its progress. Saving to the memory card afterwards saves that progress, over the
+  file's latest save even when that save came after the state. The game saves only over a file the card
+  says was saved when the game last saved it (its guard against a swapped card), and a state keeps the
+  save time of its own moment, so a state from before the latest save, or from another run, could never
+  save again. After a load the game reads the card and takes its file's save time instead (patch
+  `zzzz-savestate-03`).
 
 ## Testing
 

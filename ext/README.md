@@ -9,6 +9,7 @@ They are the start of a code-mod framework for the port: a new feature that need
 | [`multiplayer/`](multiplayer/README.md) | up to eight players in one game over the network |
 | [`demo/`](demo/README.md) | plays Mario from a script, as a player holds the controller, for trailers and footage |
 | [`autosave/`](autosave/README.md) | saves by itself where the game would ask to save, with an indicator and the save sound |
+| [`outfit/`](outfit/README.md) | Mario always wears his Shine shirt, his sunglasses, or both (the launcher's Customize Mario) |
 | [`modapi/`](modapi/README.md) | native mods: loads mods from `mods/` (shared libraries) and turns these hooks into their events ([MODDING.md](https://github.com/chasem-dev/sms-mod-sdk/blob/main/docs/MODDING.md)) |
 
 ## The hooks
