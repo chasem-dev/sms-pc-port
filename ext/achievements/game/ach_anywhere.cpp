@@ -214,8 +214,11 @@ void killerHit(TBathtubKiller* k, unsigned message, bool fromStomp)
 			s_killers[i].stomped = stomped;
 			return;
 		}
-	if (s_killerCount < kMaxKillers)
-		s_killers[s_killerCount++] = { k, stomped };
+	if (s_killerCount < kMaxKillers) {
+		s_killers[s_killerCount].killer  = k;
+		s_killers[s_killerCount].stomped = stomped;
+		++s_killerCount;
+	}
 }
 
 // The player starts a hit on `object` (a THitActor) with `message`: `fromStomp` for a stomp
