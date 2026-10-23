@@ -319,6 +319,30 @@ extern void* port_ext_damage_source;
 // out from Mario as he dies.
 extern int port_ext_death_cause;
 
+// ------------------------------------------------------------------ the HUD
+// Parts of the game's own HUD (TGCConsole2) left out of its drawing. Each
+// owner (multiplayer's SMS_CMD_HUD, the mod API's game->set_hud_hidden) says
+// which parts it hides; the game hides the union, with the settings menu's
+// HUD page's (port_hud_settings.h, asked every draw). A part is hidden for the
+// HUD's draw only and put back after it (ext/core/game/port_hud.cpp), so the
+// HUD's own logic, its animations and sounds, never sees it hidden. The bits
+// are the mod API's SMS_HUD_* (and multiplayer's MPG_HUD_*).
+#define PORT_HUD_COINS      1u
+#define PORT_HUD_SHINES     2u
+#define PORT_HUD_BLUE_COINS 4u
+#define PORT_HUD_HEALTH     8u
+#define PORT_HUD_WATER      16u
+#define PORT_HUD_LIVES      32u
+#define PORT_HUD_RED_COINS  64u
+#define PORT_HUD_ALL        0xFFFFu
+enum { PORT_HUD_BY_MULTIPLAYER = 0, PORT_HUD_BY_MODS = 1, PORT_HUD_OWNERS = 2 };
+void port_hud_set_hidden(int owner, unsigned mask);
+// The union: every owner's parts.
+unsigned port_hud_hidden(void);
+// TGCConsole2::perform's draw pass is about to draw the HUD (`after` 0), or
+// has (`after` 1): the game's patch calls it, `console` the TGCConsole2.
+void port_hud_draw(void* console, int after);
+
 #ifdef __cplusplus
 }
 #endif

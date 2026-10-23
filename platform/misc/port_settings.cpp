@@ -19,7 +19,7 @@ extern "C" void port_log(const char* fmt, ...);
 
 namespace {
 
-const char* const kPageNames[PORT_SETTINGS_PAGE_COUNT] = {"Graphics", "Display", "Gameplay", "Controls"};
+const char* const kPageNames[PORT_SETTINGS_PAGE_COUNT] = {"Graphics", "Display", "Gameplay", "Controls", "HUD"};
 
 // ------------------------------------------------------------------ presets
 // The launcher's Low, Medium, High and Ultra (sms-launcher src/presets.js): the settings each
@@ -132,6 +132,8 @@ void build() {
     t = port_audio_settings(&n);
     add(t, n);
     t = port_runtime_settings(&n);
+    add(t, n);
+    t = port_hud_settings(&n);
     add(t, n);
     s_all.push_back(&kPreset);
     // by page, then by order; a stable sort keeps a module's table order for ties

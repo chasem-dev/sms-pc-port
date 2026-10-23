@@ -34,6 +34,7 @@ enum {
 	PORT_SETTINGS_PAGE_DISPLAY,
 	PORT_SETTINGS_PAGE_GAMEPLAY,
 	PORT_SETTINGS_PAGE_CONTROLS,
+	PORT_SETTINGS_PAGE_HUD,
 	PORT_SETTINGS_PAGE_COUNT
 };
 
@@ -61,6 +62,7 @@ const PortSetting* gx_port_settings_extra(int* count);  // widescreen, HDR, prom
 const PortSetting* port_pad_settings(int* count);
 const PortSetting* port_audio_settings(int* count);
 const PortSetting* port_runtime_settings(int* count);
+const PortSetting* port_hud_settings(int* count);      // the HUD page (port_hud_settings.cpp)
 
 // The menu's view (platform/port_settings.cpp): the pages in order, and on each the available
 // options in `order`.
