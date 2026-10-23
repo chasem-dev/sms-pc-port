@@ -21,8 +21,6 @@ extern "C" {
 int sms_ach_store_on(void);
 int sms_ach_store_has(int id);
 int sms_ach_store_add(int id);
-// The in-game banner (sms_gx), when the build has it.
-void GXPC_AchievementBanner(int id) __attribute__((weak));
 // platform/misc/port_cheats.cpp
 extern int port_cheat_god_mode, port_cheat_movement_speed, port_cheat_jump_height, port_cheat_infinite_lives,
 	port_cheat_infinite_fludd, port_cheat_coin_multiplier;
@@ -185,6 +183,9 @@ struct Register {
 		if (test && debug()) {
 			s_tour = strcmp(test, "tour") == 0;
 			sscanf(test, "setflag@%d:%x", &s_testTick, &s_testFlag);
+			int id = 0;
+			if (sscanf(test, "banner:%d", &id) == 1)
+				banner(id); // shown once a stage is playing, as an unlock's is
 		}
 	}
 } s_register;
@@ -213,8 +214,7 @@ void unlock(int id)
 	}
 	if (!sms_ach_store_add(id))
 		return;
-	if (GXPC_AchievementBanner)
-		GXPC_AchievementBanner(id);
+	banner(id);
 }
 
 void require(int id, const char* what, bool found)

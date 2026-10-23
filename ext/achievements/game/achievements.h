@@ -63,6 +63,8 @@ bool on();
 // The player earned achievement `id`. Kept and announced once; ignored while
 // the play doesn't count (tainted()).
 void unlock(int id);
+// Shows an unlock's banner (ach_banner.cpp), after any already waiting.
+void banner(int id);
 bool unlocked(int id);
 // The play since the file was chosen doesn't count: a save state was loaded
 // or the warp menu used (until the next file select), or a cheat is on (until

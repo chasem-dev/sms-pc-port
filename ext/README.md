@@ -21,6 +21,7 @@ An extension fills in a `PortExtension` with the hooks it needs, leaving the res
 | Hook | When the game calls it | What it may do |
 | --- | --- | --- |
 | `frame` | the top of every frame of `TApplication`'s loop: title, file select, stages and movies alike | anything between frames |
+| `draw` | every frame drawn, over the game's picture, HUD and fades and under the port's own menus, in the 640 x 448 screen's coordinates | draw 2D over the game (the achievements' banner) |
 | `afterMovement` | every simulation tick of a stage, after the movement pass and before anything is posed for drawing | move objects to where they should be |
 | `stageSetup` | a stage's objects are loaded and set up (the end of `TMarDirector::setupObjects`), with the stage's heap current | add objects to the stage; what it allocates lasts as long as the stage |
 | `allowNextStage` | `TMarDirector::setNextStage` asks to leave for another area (pipes, paintings, scripts) | return 0 to refuse |

@@ -32,6 +32,7 @@ The tour checks all of them in one run. With `SMS_ACHIEVEMENTS_DEBUG=1 SMS_ACHIE
 Run it after changes to the game's code (decomp patches, objects, managers) and before a release: the stages come from the player's own disc, so what it checks doesn't change otherwise.
 
 `SMS_ACHIEVEMENTS_TEST=setflag@N:ID` (with `SMS_ACHIEVEMENTS_DEBUG=1`) sets save flag `ID` (hex) after `N` ticks of the first stage, to test an unlock and the launcher's side.
+`SMS_ACHIEVEMENTS_TEST=banner:ID` shows achievement `ID`'s banner once a stage is playing, without unlocking it. The banner is drawn over the game's picture: `SMS_SHOTS` captures leave it out, `SMS_WINDOW_SHOTS` (with a window, `SDL_VIDEODRIVER=offscreen`) have it.
 
 ## What doesn't count
 
@@ -45,6 +46,8 @@ Loading a file that already has everything unlocks nothing: an achievement unloc
 | --- | --- |
 | `game/ach_core.cpp` | shared state and helpers (`achievements.h`): unlocking, where the player is, whether the play counts |
 | `host/ach_store.cpp` | keeps unlocks in `SMS_ACHIEVEMENTS` and tells the launcher |
+| `game/ach_banner.cpp` | the banner an unlock shows: the medal, the name and what was done in the game's font on a blue ribbon, and BADGE GET! in the game's big letters. It waits for talks and cutscenes to end. Names from `ach_names.inc`, made from `achievements.json` by `tools/gen_names.py` |
+| `host/ach_icon.cpp` | the banner's icon, from `SMS_ACHIEVEMENT_ICONS` (the launcher's `assets/achievements`) |
 | `game/ach_flags.cpp` | 1-60: Shines (one, an area's episodes or secrets, the plaza's ten, the boathouse trades, the Shine count), blue coins, nozzle boxes, Yoshi, story flags. Table generated into `ach_flag_rules.inc` by `tools/gen_flag_rules.py` |
 | `game/ach_oneups.cpp` | the 1-Ups placed in the stages: one, or all of an area's in one visit |
 | `game/ach_plaza.cpp` | Delfino Plaza and the Airstrip's challenges, and the alternate ending |

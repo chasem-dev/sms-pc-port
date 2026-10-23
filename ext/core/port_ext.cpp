@@ -41,6 +41,11 @@ extern "C" void port_ext_frame(void)
 	EACH(frame) s_ext[i]->frame();
 }
 
+extern "C" void port_ext_draw(float width, float height)
+{
+	EACH(draw) s_ext[i]->draw(width, height);
+}
+
 extern "C" void port_ext_after_movement(void)
 {
 	EACH(afterMovement) s_ext[i]->afterMovement();
