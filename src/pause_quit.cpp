@@ -4,11 +4,12 @@
 // CONTINUE, SAVE, EXIT AREA), so this one is a picture too, made from the
 // disc's own letters. Its lettering is the file select's (option.szs), drawn
 // bolder: the same white letters, narrower, in a thicker outline and without
-// the drop shadow. Neither has a G anywhere on the disc, so QUIT GAME is
-// built from the letters' white insides: U, I, T, A and E from the menu's
-// words, Q and M from the file select's QUIT and MONO (narrowed to the
-// menu's proportions), and G from CONTINUE's C with a bar and stem. The
-// outline is drawn again around them all as the menu's words have it.
+// the drop shadow. Neither has a G or a Q anywhere on the disc, so QUIT GAME
+// is built from the letters' white insides: U, I, T, A and E from the menu's
+// words, M from the file select's MONO (narrowed to the menu's proportions),
+// Q from CONTINUE's O with a tail, and G from its C with a bar and stem. The
+// outline is drawn again around them all as the menu's words have it. (The
+// file select's Q, narrowed, closed up its hole, and the word looked bold.)
 //
 // With a texture pack that has those four words in high resolution (the UHD
 // pack draws them 8 times as large), the word is made the same way from the
@@ -50,8 +51,9 @@ const float kOutline = 3.5f;
 // overlap) and between the two words.
 const int kPad = 4, kGap = 1, kSpace = 5;
 // The file select's letters are about 14.5 pixels wide and 16 high, the
-// menu's 11 by 15, centred on row 13.
-const float kNarrowX = 11.0f / 14.5f, kNarrowY = 15.0f / 16.0f, kMiddleRow = 13.0f;
+// menu's 11 by 15, centred on row 13. An M is a little wider (12.5), which
+// keeps its notches open.
+const float kNarrowX = 11.0f / 14.5f, kNarrowM = 12.5f / 14.5f, kNarrowY = 15.0f / 16.0f, kMiddleRow = 13.0f;
 // The largest pack scale used (the UHD pack's).
 const int kMaxScale = 8;
 
@@ -166,9 +168,9 @@ bool isUS(const Source& s, int w, u32 hash)
 }
 
 // Columns x0 to x1 - 1 of a picture's letters put in the word at x (kept
-// whiter where two overlap); narrowed ones are scaled to the menu's letters
-// and centred on its middle row. Their width.
-int place(Ink& word, int x, const Ink& src, int x0, int x1, bool narrow, int scale)
+// whiter where two overlap); narrowed ones (`narrow` across, 0 for none) are
+// scaled to the menu's letters and centred on its middle row. Their width.
+int place(Ink& word, int x, const Ink& src, int x0, int x1, float narrow, int scale)
 {
 	const int w = x1 - x0;
 	if (!narrow) {
@@ -187,11 +189,11 @@ int place(Ink& word, int x, const Ink& src, int x0, int x1, bool narrow, int sca
 	if (bottom < 0)
 		return 0;
 	const float middle = (top + bottom) * 0.5f, row = kMiddleRow * scale + (scale - 1) * 0.5f;
-	const int nw       = (int)lroundf(w * kNarrowX);
+	const int nw       = (int)lroundf(w * narrow);
 	for (int y = 0; y < word.h; y++)
 		for (int i = 0; i < nw && x + i < word.w; i++) {
 			// bilinear, from where the pixel's centre falls in the letter
-			const float fx = (i + 0.5f) / kNarrowX - 0.5f;
+			const float fx = (i + 0.5f) / narrow - 0.5f;
 			const float fy = (y - row) / kNarrowY + middle;
 			const int sx = (int)floorf(fx), sy = (int)floorf(fy);
 			const float ax = fx - sx, ay = fy - sy;
@@ -231,32 +233,48 @@ struct Letters {
 	int scale;
 };
 
+// White over rows y0 to y1 - 1 and columns x0 to x1 - 1 (in the disc's
+// pixels) of a letter at x in the word.
+void fill(Ink& word, int s, int x, int y0, int y1, int x0, int x1)
+{
+	for (int y = y0 * s; y < y1 * s; y++)
+		for (int i = x0 * s; i < x1 * s && x + i < word.w; i++)
+			word(x + i, y) = 1.0f;
+}
+
 // QUIT GAME from them (where its letters are in the disc's pictures).
 int composeQuitGame(Ink& word, const Letters& in)
 {
 	struct Letter {
 		const Ink* src;
 		int x0, x1;
-		bool narrow;
+		float narrow;
 	};
-	const Letter kQ = { &in.quit, 3, 18, true }, kU = { &in.tx1, 70, 81, false }, kI = { &in.tx1, 50, 57, false },
-	             kT = { &in.tx1, 38, 49, false }, kC = { &in.tx1, 3, 14, false }, kA = { &in.tx3, 51, 61, false },
-	             kM = { &in.mono, 3, 18, true }, kE = { &in.tx3, 74, 85, false };
-	const Letter* const kLetters[] = { &kQ, &kU, &kI, &kT, nullptr, &kC, &kA, &kM, &kE };
+	const Letter kQ = { &in.tx1, 14, 26, 0 }, kU = { &in.tx1, 70, 81, 0 }, kI = { &in.tx1, 50, 57, 0 },
+	             kT = { &in.tx1, 38, 49, 0 }, kG = { &in.tx1, 3, 14, 0 }, kA = { &in.tx3, 51, 61, 0 },
+	             kM = { &in.mono, 3, 18, kNarrowM }, kE = { &in.tx3, 74, 85, 0 };
+	const Letter* const kLetters[] = { &kQ, &kU, &kI, &kT, nullptr, &kG, &kA, &kM, &kE };
 	const int s = in.scale;
 	int x       = kPad * s;
+
 	for (const Letter* l : kLetters) {
 		if (!l) {
 			x += (kSpace - kGap) * s;
 			continue;
 		}
 		const int x0 = cut(*l->src, l->x0, s), x1 = cut(*l->src, l->x1, s);
-		const int w  = place(word, x, *l->src, x0, x1, l->narrow, s);
-		if (l == &kC) {
-			// G: CONTINUE's C with a bar in from its lower right and the stem under it
-			for (int y = 12 * s; y < 17 * s; y++)
-				for (int i = 5 * s; i < 11 * s; i++)
-					word(x + i, y) = 1.0f;
+		int w = place(word, x, *l->src, x0, x1, l->narrow, s);
+		if (l == &kG) {
+			// G: CONTINUE's C with a bar in to its middle and the stem under the bar's end
+			fill(word, s, x, 12, 14, 6, 11);
+			fill(word, s, x, 12, 17, 8, 11);
+		}
+		if (l == &kQ) {
+			// Q: CONTINUE's O with a tail out of its lower right, stepping down and out
+			static const u8 kTail[5][2] = { { 7, 10 }, { 8, 11 }, { 9, 12 }, { 10, 13 }, { 10, 13 } };
+			for (int r = 0; r < 5; r++)
+				fill(word, s, x, 16 + r, 17 + r, kTail[r][0], kTail[r][1]);
+			w += 2 * s;
 		}
 		x += w + kGap * s;
 	}
@@ -275,7 +293,7 @@ int composeQuit(Ink& word, const Ink& quit)
 			}
 	if (x1 <= x0)
 		return 0;
-	return kPad + place(word, kPad, quit, x0, x1, true, 1) + kPad;
+	return kPad + place(word, kPad, quit, x0, x1, kNarrowX, 1) + kPad;
 }
 
 // Squared distances along a line to the nearest zero of f (Felzenszwalb and
