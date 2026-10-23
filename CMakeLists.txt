@@ -2,6 +2,20 @@ cmake_minimum_required(VERSION 3.20)
 project(sms_port C CXX)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# MinGW's own include folder is one of the compiler's system folders, which
+# CMake leaves off command lines. CMake reads that list from the compiler's
+# output and misses the folder when its path isn't ASCII (a Windows user name
+# such as Иван). SDL2's config then adds it as -isystem, ahead of libstdc++'s
+# headers, and <cstdlib>'s #include_next <stdlib.h> no longer finds stdlib.h.
+if(CMAKE_HOST_WIN32)
+  foreach(lang C CXX)
+    get_filename_component(_sms_toolchain_include "${CMAKE_${lang}_COMPILER}/../../include" ABSOLUTE)
+    if(EXISTS "${_sms_toolchain_include}/stdlib.h")
+      list(APPEND CMAKE_${lang}_IMPLICIT_INCLUDE_DIRECTORIES "${_sms_toolchain_include}")
+    endif()
+  endforeach()
+endif()
+
 set(SMS_DECOMP ${CMAKE_CURRENT_SOURCE_DIR}/decomp)
 set(SMS_PORT_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # The decomp's header roots, in configure.py's order: the game's include/,
