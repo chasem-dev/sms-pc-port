@@ -1,6 +1,6 @@
 --- a/bse/include/BetterSMS/music.hxx
 +++ b/bse/include/BetterSMS/music.hxx
-@@ -124,6 +124,11 @@
+@@ -124,6 +124,15 @@
  
              bool isPlaying() const;
              bool isPaused() const;
@@ -9,6 +9,10 @@
 +            // next stage starts its music; here that stage can be ready while
 +            // the old song still fades out.
 +            void finishLeavingStage();
++            // The port: the same when a stage starts its music, and also a
++            // song still fading out to its stop (the character select's
++            // stopSong, which a console's stage load outlasts).
++            void finishStoppingForStage();
  
              bool isLooping() const;
              void setLooping(bool loop);
@@ -125,7 +129,7 @@
  }
 --- a/bse/src/music.cpp
 +++ b/bse/src/music.cpp
-@@ -239,11 +239,66 @@
+@@ -239,11 +239,108 @@
  }
  
  void AudioStreamer::setVolumeFadeTo(u8 to, f32 seconds) {
@@ -186,13 +190,55 @@
 +    mRequestedClear = false;
 +}
 +
++// The port: a stage starting its music finds the last song stopped, as on a
++// console. Leaving Eclipse's character select (Peach's Castle's paintings,
++// once Luigi or Piantissimo is unlocked) ends its song with stopSong(1.0f),
++// a next() that fades out for a second and then stops the stream and moves
++// the queue on. A console is still reading the stage from the disc by then;
++// here the stage was ready while it faded: initStageMusic took the fading
++// song for the stage's own and started no sequence (Delfino Square, Click
++// Clock Wood), and a streamed stage's song was queued behind it and never
++// started (Battle Fort). Run that stop now, and the clear of leaving a stage.
++void AudioStreamer::finishStoppingForStage() {
++    if (mRequestedClear) {
++        finishLeavingStage();
++        return;
++    }
++    if (!mRequestedStop)
++        return;
++
++    OSReport("[AUDIO_STREAM] Stopping stream...\n");
++    AISetStreamVolLeft(0);
++    AISetStreamVolRight(0);
++    AISetStreamPlayState(false);
++    DVDCancelStream(&mStopBlock);
++    cbForCancelStreamOnStopAsync_(0, &mStopBlock);
++
++    const bool next     = mRequestedNext;
++    _mIsPlaying         = false;
++    _mIsPaused          = false;
++    mRequestedStop      = false;
++    mRequestedPause     = false;
++    mRequestedNext      = false;
++    mRequestedPlay      = false;
++    _mDelayedTime       = 0.0f;
++    _mFadeTime          = 0.0f;
++    _mTargetVolume      = 0;
++    _mVolLeft           = 0;
++    _mVolRight          = 0;
++    _mPreservedVolLeft  = 0;
++    _mPreservedVolRight = 0;
++    if (next)
++        nextTrack_();
++}
++
  bool AudioStreamer::queueAudio(const AudioPacket &packet) {
 +    finishLeavingStage();
 +
      for (u32 i = 0; i < AudioQueueSize; ++i) {
          AudioPacket &slot = _mAudioQueue[(i + _mAudioIndex) % AudioQueueSize];
          if (slot.getID() == 0xFFFFFFFF) {
-@@ -340,8 +395,9 @@
+@@ -340,8 +437,9 @@
  }
  
  void AudioStreamer::clear() {
@@ -204,7 +250,7 @@
  }
  
  SMS_NO_INLINE bool AudioStreamer::play_() {
-@@ -487,12 +543,12 @@
+@@ -487,12 +585,12 @@
  
  static JAISound *GetJAISoundForMusic(u32 id) {
      JAISound **unk = (JAISound **)search__19JALListS_5(id & 0x3FF); 
@@ -219,15 +265,28 @@
  }
  
  static f32 GetJAISoundSeInterVolume(JAISound *sound, u8 channel) {
-@@ -946,6 +1002,12 @@
+@@ -894,6 +992,10 @@
+ static void initExMusic(MSStageInfo bgm) {
+     Stage::TStageParams *config = Stage::getStageConfiguration();
+ 
++    // The port: the last song has stopped and its queue is clear, as on a
++    // console (finishStoppingForStage).
++    AudioStreamer::getInstance()->finishStoppingForStage();
++
+     _mIsBootOut = false;
+ 
+     if (config->mMusicSetCustom.get()) {
+@@ -946,6 +1048,14 @@
      Stage::TStageParams *config = Stage::getStageConfiguration();
      AudioStreamer *streamer     = AudioStreamer::getInstance();
  
 +    // The port: the last stage's song has stopped and its queue is clear, as
 +    // on a console. While the clear was still to run, a stage with the same
 +    // song (the castle's floors, a stage restarted after Mario lost a life)
-+    // found it current, played it again below, and lost it to the clear.
-+    streamer->finishLeavingStage();
++    // found it current, played it again below, and lost it to the clear; and
++    // while the character select's song still faded out, the stage took it
++    // for its own (finishStoppingForStage).
++    streamer->finishStoppingForStage();
 +
      _mIsBootOut = false;
  
