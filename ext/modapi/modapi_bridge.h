@@ -28,6 +28,10 @@ int modh_wants(uint32_t type);
 void modh_pad_read(SmsPadStatus* pads);
 // A cancelled SMS_EV_SAVE_STATE_REQUEST's reason, kept until the next.
 const char* modh_save_state_reason(void);
+// A save file was loaded, started anew, saved, copied or erased
+// (SMS_SAVE_FILE_*): the mods' files of save files follow it (mod_files.cpp).
+// Before SMS_EV_SAVE_FILE is sent.
+void modh_files_event(int what, int file, int from);
 
 // ---------------------------------------------------------------- game half
 
@@ -42,6 +46,9 @@ const char* modg_object_name(SmsObject obj);
 int modg_object_position(SmsObject obj, SmsVec3* out);
 int modg_object_set_position(SmsObject obj, const SmsVec3* pos);
 uint32_t modg_object_type(SmsObject obj);
+int modg_object_set_color(SmsObject obj, int which, SmsColor color);
+// The running disc's game code and maker ("GMSE01"), into out[7].
+void modg_game_code(char* out);
 int modg_object_health(SmsObject obj, int* max);
 /* the HUD's parts every mod hides (SMS_HUD_* bits ORed); the parts hidden now (any owner's) */
 void modg_set_hud_hidden(uint32_t mask);

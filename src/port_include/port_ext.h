@@ -137,7 +137,7 @@ typedef struct PortExtension {
 	// `*hasPos` 0 when the stage puts him where its scene file does (the
 	// hook may set 1 to place him), `kind` the stage's way in (0 waiting, 1
 	// rolling, 2 returning, 4 the Pinna Park coaster).
-	void (*playerSpawn)(float* pos, float* yaw, int* hasPos, int kind);
+	void (*playerSpawn)(float* pos, float* yaw, int* hasPos, int* kind);
 	// TMario::receiveMessage on any TMario: `sender` touched or hit him with
 	// `message` (HIT_MESSAGE_*: an enemy's attack, fire, an item taken...).
 	// Return 1 and he ignores it (receiveMessage returns false).
@@ -228,7 +228,43 @@ typedef struct PortExtension {
 	// mCurrArea, what loads.
 	void (*chooseStageLoad)(void);
 	void (*stageLoading)(int area, int episode);
+	// At file select, a save file was loaded or started anew, or copied over
+	// another or erased (PORT_SAVE_FILE_*; `from` the file copied, else -1).
+	// TCardLoad, as the card is asked to write (copy, erase) or has read.
+	void (*saveFile)(int what, int file, int from);
+	// FLUDD's trigger (TNozzleTrigger::movement) of a TMario is about to
+	// fire, `how` PORT_FIRE_*, with `nozzle` out: return 1 to stop it (a burst
+	// is asked again at the next A; the pressure's is spent until R is let go).
+	int (*nozzleFire)(void* mario, int nozzle, int how);
+	// A TShine is about to make its model (TShine::makeMActors); `collected`:
+	// the file has it (its see-through model). Return the name of a model the
+	// hook registered in `keeper` (a TMActorKeeper's model data keeper) for
+	// it to take, or null for the game's. The first that names one wins.
+	const char* (*shineModel)(void* shine, void* keeper, int collected);
+	// Whether Yoshi's egg is there (PORT_EGG_*; `egg` the TEggYoshi, or null
+	// for the plaza's egg event): `*present` may be changed.
+	void (*yoshiEgg)(int kind, void* egg, int* present);
+	// The Shine an episode (0..7) of world `shineStage` (SMS_getShineStage's
+	// number) stands for, where the episode select and the pause menu ask
+	// (its name, whether it is collected): `*shine` may be changed.
+	void (*episodeShine)(int shineStage, int episode, int* shine);
 } PortExtension;
+
+// saveFile's `what` (the mod API's SMS_SAVE_FILE_*)
+enum {
+	PORT_SAVE_FILE_LOADED,
+	PORT_SAVE_FILE_NEW,
+	PORT_SAVE_FILE_SAVED,
+	PORT_SAVE_FILE_COPIED,
+	PORT_SAVE_FILE_ERASED
+};
+// nozzleFire's `how` (SMS_FIRE_*)
+enum { PORT_FIRE_BURST, PORT_FIRE_PRESSURE };
+// yoshiEgg's `kind` (SMS_EGG_*)
+enum { PORT_EGG_STAGE, PORT_EGG_PLAZA_EVENT, PORT_EGG_EVENT_EGG };
+// playerSpawn's start kinds: TMarDirector::setMario's 0 waiting, 1 rolling
+// in, 2 back from a world, and Pinna Park's coaster (SMS_START_*)
+enum { PORT_START_COASTER = 4 };
 
 // playerDeath's causes (the mod API's SMS_DEATH_*)
 enum {
@@ -303,7 +339,15 @@ extern int port_ext_nozzle_asked;
 void port_ext_player_status_changed(void* mario, unsigned from, unsigned to, unsigned arg);
 int port_ext_player_heal(void* mario, int* amount, int air);
 void port_ext_player_death(void* mario, int cause);
-void port_ext_player_spawn(float* pos, float* yaw, int* hasPos, int kind);
+void port_ext_player_spawn(float* pos, float* yaw, int* hasPos, int* kind);
+// Set by setMario when an extension changed the coaster start to another:
+// TMario::isUnUsualStageStart leaves the coaster out.
+extern int port_ext_no_coaster_start;
+void port_ext_save_file(int what, int file, int from);
+int port_ext_nozzle_fire(void* mario, int nozzle, int how);
+const char* port_ext_shine_model(void* shine, void* keeper, int collected);
+void port_ext_yoshi_egg(int kind, void* egg, int* present);
+void port_ext_episode_shine(int shineStage, int episode, int* shine);
 int port_ext_player_message(void* mario, void* sender, unsigned message);
 void port_ext_player_mount(void* mario, int mount, int on, void* object);
 void port_ext_player_water(void* mario, int entered, float surfaceY);

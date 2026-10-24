@@ -34,6 +34,12 @@
 #include <System/Application.hpp>
 #include <System/FlagManager.hpp>
 #include <System/MarDirector.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DMaterial.hpp>
+#include <JSystem/J3D/J3DGraphLoader/J3DModelLoader.hpp>
+#include <M3DUtil/SDLModel.hpp>
+#include <Strategic/ObjModel.hpp>
+#include <dolphin/dvd.h>
 
 #include <math.h>
 #include <stdio.h>
@@ -667,7 +673,7 @@ void playerDeath(void* m, int cause)
 	modh_dispatch(SMS_EV_PLAYER_DEATH, &ev, sizeof ev);
 }
 
-void playerSpawn(float* pos, float* yaw, int* hasPos, int kind)
+void playerSpawn(float* pos, float* yaw, int* hasPos, int* kind)
 {
 	if (!modh_wants(SMS_EV_PLAYER_SPAWN))
 		return;
@@ -675,9 +681,12 @@ void playerSpawn(float* pos, float* yaw, int* hasPos, int kind)
 	setVec(&ev.position, pos[0], pos[1], pos[2]);
 	ev.yaw          = *yaw;
 	ev.has_position = *hasPos;
-	ev.kind         = kind;
+	ev.kind         = *kind;
 	modh_dispatch(SMS_EV_PLAYER_SPAWN, &ev, sizeof ev);
-	if (kind == SMS_START_COASTER)
+	// another start (beta 6): wait, roll or back from a world; none to the coaster
+	if (ev.kind >= SMS_START_WAIT && ev.kind <= SMS_START_RETURN)
+		*kind = ev.kind;
+	if (*kind == SMS_START_COASTER)
 		return;
 	pos[0]  = ev.position.x;
 	pos[1]  = ev.position.y;
@@ -916,9 +925,115 @@ void demoCameraEnd(const char* name, void* actor, int forced)
 
 void gameSaved(int slot)
 {
+	// the mods' files of the file go with it (api->files)
+	modh_files_event(SMS_SAVE_FILE_SAVED, slot, -1);
 	SmsEvGameSaved ev;
 	ev.file = slot;
 	modh_dispatch(SMS_EV_GAME_SAVED, &ev, sizeof ev);
+	SmsEvSaveFile sf;
+	sf.what = SMS_SAVE_FILE_SAVED;
+	sf.file = slot;
+	sf.from = -1;
+	modh_dispatch(SMS_EV_SAVE_FILE, &sf, sizeof sf);
+}
+
+// At file select (port_ext.h saveFile): the mods' files of save files follow
+// the card (api->files), then SMS_EV_SAVE_FILE.
+void saveFile(int what, int file, int from)
+{
+	modh_files_event(what, file, from);
+	SmsEvSaveFile ev;
+	ev.what = what;
+	ev.file = file;
+	ev.from = from;
+	modh_dispatch(SMS_EV_SAVE_FILE, &ev, sizeof ev);
+}
+
+int nozzleFire(void* m, int nozzle, int how)
+{
+	if (!m || m != (void*)gpMarioOriginal || !modh_wants(SMS_EV_NOZZLE_FIRE))
+		return 0;
+	SmsEvNozzleFire ev;
+	ev.nozzle = nozzle;
+	ev.how    = how;
+	return modh_dispatch(SMS_EV_NOZZLE_FIRE, &ev, sizeof ev);
+}
+
+// A Shine's model from a mod's file (SMS_EV_SHINE_SETUP), loaded into the
+// Shine manager's model data keeper under its path, once a stage (the keeper
+// and the file's bytes live in the stage's heap, as the stage's own models).
+const char* shineModel(void* p, void* k, int collected)
+{
+	if (!p || !k || !modh_wants(SMS_EV_SHINE_SETUP))
+		return 0;
+	TShine* sh = (TShine*)p;
+	SmsEvShineSetup ev;
+	ev.object    = obj(sh);
+	ev.shine     = sh->getEventId() < 120 ? (int)sh->getEventId() : -1;
+	ev.collected = collected;
+	ev.model     = 0;
+	modh_dispatch(SMS_EV_SHINE_SETUP, &ev, sizeof ev);
+	if (!ev.model || !ev.model[0])
+		return 0;
+	TModelDataKeeper* keeper = ((TMActorKeeper*)k)->getModelDataKeeper();
+	if (!keeper)
+		return 0;
+	if (keeper->getIndex(ev.model) >= 0)
+		return ev.model;
+	FILE* f = fopen(ev.model, "rb");
+	if (!f) {
+		fprintf(stderr, "[mods] SMS_EV_SHINE_SETUP: no model %s\n", ev.model);
+		return 0;
+	}
+	fseek(f, 0, SEEK_END);
+	const long size = ftell(f);
+	fseek(f, 0, SEEK_SET);
+	u8* data = size > 32 && size < (16 << 20) ? new (0x20) u8[size] : 0;
+	const bool read = data && fread(data, 1, (size_t)size, f) == (size_t)size;
+	fclose(f);
+	if (!read || memcmp(data, "J3D2bmd", 7) != 0) {
+		fprintf(stderr, "[mods] SMS_EV_SHINE_SETUP: %s is not a model (.bmd)\n", ev.model);
+		return 0;
+	}
+	port_res_to_native_named(data, (u32)size, ev.model);
+	J3DModelData* model = J3DModelLoaderDataBase::load(data, ((TMActorKeeper*)k)->getModelLoaderFlags());
+	if (!model)
+		return 0;
+	const size_t n = strlen(ev.model) + 1;
+	char* name     = new char[n];
+	memcpy(name, ev.model, n);
+	TModelDataNode* node = &keeper->mHead;
+	while (node->getNext())
+		node = node->getNext();
+	node->registerDataAndJoinNewNode(new SDLModelData(model), name);
+	return name;
+}
+
+void yoshiEgg(int kind, void* egg, int* present)
+{
+	if (!modh_wants(SMS_EV_YOSHI_EGG))
+		return;
+	SmsEvYoshiEgg ev;
+	ev.kind    = kind;
+	ev.present = *present ? 1 : 0;
+	ev.object  = egg ? obj((TEggYoshi*)egg) : 0;
+	modh_dispatch(SMS_EV_YOSHI_EGG, &ev, sizeof ev);
+	*present = ev.present ? 1 : 0;
+}
+
+int worldArea(int shineStage); // below, with the worlds
+
+void episodeShine(int shineStage, int episode, int* shine)
+{
+	if (!modh_wants(SMS_EV_EPISODE_SHINE))
+		return;
+	SmsEvEpisodeShine ev;
+	ev.area    = worldArea(shineStage);
+	ev.episode = episode;
+	ev.shine   = *shine;
+	modh_dispatch(SMS_EV_EPISODE_SHINE, &ev, sizeof ev);
+	if (ev.shine >= -1 && ev.shine < 120)
+		*shine = ev.shine;
 }
 
 void timer(int what, int time)
@@ -1012,6 +1127,11 @@ struct Register {
 		e.mapEvent            = mapEvent;
 		e.savePrompt          = savePrompt;
 		e.objectStomp         = objectStomp;
+		e.saveFile            = saveFile;
+		e.nozzleFire          = nozzleFire;
+		e.shineModel          = shineModel;
+		e.yoshiEgg            = yoshiEgg;
+		e.episodeShine        = episodeShine;
 		port_ext_register(&s_extension);
 	}
 } s_register;
@@ -1143,6 +1263,45 @@ extern "C" void modg_set_hud_hidden(uint32_t mask)
 extern "C" uint32_t modg_hud_hidden(void)
 {
 	return port_hud_hidden();
+}
+
+// One colour of every material of an object's model (game->object_set_color).
+extern "C" int modg_object_set_color(SmsObject o, int which, SmsColor c)
+{
+	JDrama::TNameRef* r = o ? ref(o) : 0;
+	J3DModel* model     = 0;
+	if (TLiveActor* a = r ? dynamic_cast<TLiveActor*>(r) : 0)
+		model = a->getMActor() ? a->getMActor()->getModel() : a->getModel();
+	if (!model || !model->getModelData() || which < SMS_COLOR_MATERIAL || which > SMS_COLOR_TEV2)
+		return 0;
+	J3DModelData* data = model->getModelData();
+	GXColor gx         = {(u8)(c >> 24), (u8)(c >> 16), (u8)(c >> 8), (u8)c};
+	GXColorS10 tevColor = {gx.r, gx.g, gx.b, gx.a};
+	J3DGXColorS10 tev(tevColor);
+	for (u16 i = 0; i < data->getMaterialNum(); i++) {
+		J3DMaterial* m = data->getMaterialNodePointer(i);
+		if (!m)
+			continue;
+		if (which == SMS_COLOR_MATERIAL) {
+			if (m->getColorBlock())
+				m->getColorBlock()->setMatColor(0, J3DGXColor(gx));
+		} else {
+			m->setTevColor((u32)(which - SMS_COLOR_TEV0), &tev);
+		}
+	}
+	return 1;
+}
+
+extern "C" void modg_game_code(char* out)
+{
+	const DVDDiskID* id = DVDGetCurrentDiskID();
+	if (id && id->gameName[0]) {
+		memcpy(out, id->gameName, 4);
+		memcpy(out + 4, id->company, 2);
+	} else {
+		memcpy(out, "GMSE01", 6);
+	}
+	out[6] = 0;
 }
 
 extern "C" int modg_object_set_position(SmsObject o, const SmsVec3* pos)
@@ -1370,6 +1529,7 @@ const int kAreas = 61; // System/StageUtil.cpp's shineStageTable
 const int kWorldArea[10] = {0, 1, 2, 3, 4, 5, 6, 8, 9, 52}; // the area each world is entered by
 
 int worldIndex(int area) { return area >= 0 && area < kAreas ? SMS_getShineStage((u8)area) : -1; }
+int worldArea(int shineStage) { return shineStage >= 0 && shineStage <= 9 ? kWorldArea[shineStage] : -1; }
 
 // A world with episodes (its shine table), by world index.
 const u8* episodeTable(int area)

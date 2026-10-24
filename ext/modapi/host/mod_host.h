@@ -46,6 +46,8 @@ struct SmsMod {
 
 namespace modhost {
 
+extern const SmsFilesApi g_files; // mod_files.cpp
+
 extern std::vector<SmsMod*> g_mods; // every mod found, in load order
 extern const SmsApi g_api;
 extern const SmsDrawApi g_drawApi;

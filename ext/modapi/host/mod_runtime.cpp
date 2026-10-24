@@ -308,7 +308,8 @@ std::map<uint32_t, std::vector<Sub>> s_subs;
 std::vector<std::pair<uint32_t, Sub>> s_newSubs; // added during a dispatch
 int s_depth      = 0;
 int s_nextHandle = 1;
-int s_live[64];  // live handlers of each built-in event
+const uint32_t kLiveTypes = 128;
+int s_live[kLiveTypes]; // live handlers of each built-in event
 std::map<std::string, uint32_t> s_customIds;
 uint32_t s_nextCustom = SMS_EV_CUSTOM_BASE;
 std::string s_saveStateReason;
@@ -358,6 +359,7 @@ bool cancellable(uint32_t type)
 	case SMS_EV_SOUND:
 	case SMS_EV_MUSIC:
 	case SMS_EV_SAVE_PROMPT:
+	case SMS_EV_NOZZLE_FIRE:
 		return true;
 	default:
 		return type >= SMS_EV_CUSTOM_BASE;
@@ -378,7 +380,7 @@ void insertSub(uint32_t type, const Sub& s)
 		return a.handle < b.handle;
 	});
 	v.insert(it, s);
-	if (type < 64)
+	if (type < kLiveTypes)
 		s_live[type]++;
 }
 
@@ -401,7 +403,7 @@ void killSub(uint32_t type, Sub& s)
 	if (s.dead)
 		return;
 	s.dead = true;
-	if (type < 64)
+	if (type < kLiveTypes)
 		s_live[type]--;
 }
 
@@ -419,6 +421,19 @@ int callHandler(Sub& s, SmsEvent* ev)
 	}
 	s_current = prev;
 	return r;
+}
+
+// A Shine's model a handler named relative to its mod's folder, made a full
+// path (kept until the next one).
+std::string s_shineModel;
+void shineModelPath(SmsMod* m, SmsEvShineSetup* p)
+{
+	if (!p || !p->model || !p->model[0] || p->model == s_shineModel.c_str())
+		return;
+	const char* n   = p->model;
+	const bool full = n[0] == '/' || n[0] == '\\' || (n[0] && n[1] == ':');
+	s_shineModel    = full ? std::string(n) : m->dir + "/" + n;
+	p->model        = s_shineModel.c_str();
 }
 
 int dispatchTo(uint32_t type, void* data, uint32_t size, SmsMod* only)
@@ -440,6 +455,8 @@ int dispatchTo(uint32_t type, void* data, uint32_t size, SmsMod* only)
 		if (s.dead || s.mod->state != SmsMod::LOADED || (only && s.mod != only))
 			continue;
 		const int r = callHandler(s, &ev);
+		if (type == SMS_EV_SHINE_SETUP)
+			shineModelPath(s.mod, (SmsEvShineSetup*)data);
 		if (r != SMS_CANCEL)
 			continue;
 		if (canConsume) {
@@ -977,6 +994,7 @@ const SmsGameApi s_game = {
 	modg_find_object,   modg_object_name, modg_object_position, modg_object_set_position, apiAreaName,
 	modg_cube_count,    apiInCube,       apiObjectCount,      apiObjectInfo,         apiGround,
 	modg_object_type,   modg_object_health, apiSetHudHidden,     apiHudHidden,
+	modg_object_set_color,
 };
 
 int apiPlayerGet(SmsPlayer* out)
@@ -1595,7 +1613,7 @@ namespace modhost {
 const SmsApi g_api = {
 	sizeof(SmsApi), SMS_MOD_API_MAJOR, SMS_MOD_API_MINOR, &s_core,   &s_game,  &s_player,
 	&s_camera,      &g_drawApi,        &s_input,          &s_config, &s_audio, &s_native,
-	&s_netTable,    &s_world,          SMS_MOD_API_PRERELEASE,
+	&s_netTable,    &s_world,          SMS_MOD_API_PRERELEASE, &g_files,
 };
 
 void log(SmsMod* mod, int level, const char* fmt, ...)
@@ -1912,7 +1930,7 @@ extern "C" int modh_dispatch(uint32_t type, void* data, uint32_t size)
 
 extern "C" int modh_wants(uint32_t type)
 {
-	if (type < 64)
+	if (type < kLiveTypes)
 		return s_live[type] > 0;
 	auto it = s_subs.find(type);
 	return it != s_subs.end() && !it->second.empty();

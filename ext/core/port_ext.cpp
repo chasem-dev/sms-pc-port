@@ -212,9 +212,38 @@ extern "C" void port_ext_player_death(void* mario, int cause)
 	EACH(playerDeath) s_ext[i]->playerDeath(mario, cause);
 }
 
-extern "C" void port_ext_player_spawn(float* pos, float* yaw, int* hasPos, int kind)
+extern "C" void port_ext_player_spawn(float* pos, float* yaw, int* hasPos, int* kind)
 {
 	EACH(playerSpawn) s_ext[i]->playerSpawn(pos, yaw, hasPos, kind);
+}
+
+int port_ext_no_coaster_start;
+
+extern "C" void port_ext_save_file(int what, int file, int from)
+{
+	EACH(saveFile) s_ext[i]->saveFile(what, file, from);
+}
+
+extern "C" int port_ext_nozzle_fire(void* mario, int nozzle, int how)
+{
+	EACH(nozzleFire) if (s_ext[i]->nozzleFire(mario, nozzle, how)) return 1;
+	return 0;
+}
+
+extern "C" const char* port_ext_shine_model(void* shine, void* keeper, int collected)
+{
+	EACH(shineModel) if (const char* name = s_ext[i]->shineModel(shine, keeper, collected)) return name;
+	return 0;
+}
+
+extern "C" void port_ext_yoshi_egg(int kind, void* egg, int* present)
+{
+	EACH(yoshiEgg) s_ext[i]->yoshiEgg(kind, egg, present);
+}
+
+extern "C" void port_ext_episode_shine(int shineStage, int episode, int* shine)
+{
+	EACH(episodeShine) s_ext[i]->episodeShine(shineStage, episode, shine);
 }
 
 extern "C" int port_ext_player_message(void* mario, void* sender, unsigned message)

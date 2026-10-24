@@ -46,11 +46,16 @@ An extension fills in a `PortExtension` with the hooks it needs, leaving the res
 | `shineCollected` | `TFlagManager::setShineFlag` sets a Shine's flag for the first time | note it |
 | `savePrompt` | the stage is about to ask the player to save, after a Shine, a blue coin, a nozzle's box or Yoshi (not a game over's) | return 1 to leave the prompt out (auto save saves instead) |
 | `chooseNextStage` | `TMarDirector::moveStage` is about to leave, before any extension's `moveStage` | change the destination, which every `moveStage` then sees (multiplayer's host sends the players where its mods chose) |
+| `saveFile` | at file select (`TCardLoad`), a save file was loaded or started anew, or is copied over another or erased (`PORT_SAVE_FILE_*`) | keep its own per-file data alongside (the mod API's `api->files`) |
+| `nozzleFire` | FLUDD's trigger (`TNozzleTrigger::movement`) is about to fire: a burst (A while R is held) or the pressure built up (`PORT_FIRE_*`) | return 1 to stop it |
+| `shineModel` | a `TShine` is about to make its model (`TShine::makeMActors`) | register a model in the given keeper and return its name for the Shine to take |
+| `yoshiEgg` | whether Yoshi's egg is there (`TEggYoshi::load`, the plaza's egg event in `TMarDirector::setupObjects`; `PORT_EGG_*`) | change it |
+| `episodeShine` | the episode select and the pause menu ask which Shine an episode stands for | change it |
 | `chooseStageLoad`, `stageLoading` | a stage is about to load, its episode chosen (`TApplication`'s `APP_STATE_GAMEPLAY`: after a world's episode select, after `moveStage` picks the plaza's episode), before the movie it opens with; once a load, every `chooseStageLoad` before any `stageLoading` (given the stage the game chose) | load another (`port_ext_load_instead`) or change `mPrevArea`, where Mario comes from (multiplayer's host sends the players where its mods chose, a travelling client loads the host's) |
 | `playerStatusChanged` | `TMario::changePlayerStatus` took a new status (after the game's own rewrites), or a spin jump started in the air (`considerJumpRotate`) | note it |
 | `playerHeal` | `TMario::incHP`, or a pickup that fills Mario's health at once (a 1-up, a Shine, his cap) | change the amount, or return 1 to stop it |
 | `playerDeath` | a `TMario` lost his life (`TMario::loserExec`, the bottomless pit in `thinkSituation`), once, with its cause (`PORT_DEATH_*`; `port_ext_death_cause` set by a caller that knows it) | note it |
-| `playerSpawn` | `TMarDirector::setMario` is about to put the player at the stage's start | change the place and turn, or give one to a stage that has none |
+| `playerSpawn` | `TMarDirector::setMario` is about to put the player at the stage's start, with its kind (0 waiting, 1 rolling in, 2 back from a world, `PORT_START_COASTER`) | change the place and turn, or give one to a stage that has none; change the kind (a coaster start changed leaves the coaster out: `port_ext_no_coaster_start`) |
 | `playerMessage` | `TMario::receiveMessage`: something touched or hit Mario (an enemy's attack, an item) | return 1 and he ignores it |
 | `playerMount` | Mario gets on or off Yoshi (`TYoshi::ride`, `TMario::getOffYoshi`) or on a Blooper (`TMario::getGesso`) | note it |
 | `playerWater` | Mario goes into the water or comes out of it (`TMario::thinkWaterSurface`) | note it |
