@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <deque>
 
@@ -289,11 +290,22 @@ void loadPipelineCache() {
         logmsg("Vulkan pipeline cache: %s (%zu KiB)", D.pipelineCachePath.c_str(), data.size() / 1024);
 }
 
+// Pipelines built, and how many there were when the cache was last saved.
+// Asking the driver for the cache serialises all of it (about 3 ms for 5 MB on
+// NVIDIA, inside a present), so it is saved only at shutdown and when asked
+// (savePipelineCacheSoon: a pause menu, a stage loading), never in play, and
+// only when something was built since.
+std::atomic<uint32_t> s_pipelinesBuilt{0};
+uint32_t s_pipelinesSaved = 0;
+std::atomic<bool> s_saveSoon{false};
+
 void savePipelineCache(bool force) {
     if (D.pipelineCachePath.empty() || !D.pipelineCache) return;
+    const uint32_t built = s_pipelinesBuilt.load();
+    if (!force && built == s_pipelinesSaved) return;
+    s_pipelinesSaved = built;
     size_t size = 0;
     if (vkGetPipelineCacheData(D.dev, D.pipelineCache, &size, nullptr) != VK_SUCCESS) return;
-    if (!force && size < D.pipelineCacheSavedSize + (64u << 10)) return;
     if (size <= D.pipelineCacheSavedSize) return;
     std::vector<uint8_t> data(size);
     if (vkGetPipelineCacheData(D.dev, D.pipelineCache, &size, data.data()) != VK_SUCCESS) return;
@@ -301,8 +313,10 @@ void savePipelineCache(bool force) {
     if (FILE* f = fopen(tmp.c_str(), "wb")) {
         const bool ok = fwrite(data.data(), 1, size, f) == size;
         fclose(f);
-        if (ok && rename(tmp.c_str(), D.pipelineCachePath.c_str()) == 0) D.pipelineCacheSavedSize = size;
-        else remove(tmp.c_str());
+        if (ok && rename(tmp.c_str(), D.pipelineCachePath.c_str()) == 0) {
+            D.pipelineCacheSavedSize = size;
+            logmsg("Vulkan pipeline cache saved (%zu KiB)", size / 1024);
+        } else remove(tmp.c_str());
     }
 }
 
@@ -423,6 +437,9 @@ void recreateSwapchain() {
 }
 
 }  // namespace
+
+void pipelineBuilt() { s_pipelinesBuilt++; }
+void savePipelineCacheSoon() { s_saveSoon = true; }
 
 // ------------------------------------------------------------------ serials
 uint64_t pollCompleted() {
@@ -1308,7 +1325,7 @@ bool presentFrame() {
     statsFrame();
     realizePending();
     pipelineFrameEnd(s_presents);
-    if ((s_presents & 1023) == 0) savePipelineCache(false);
+    if (s_saveSoon.exchange(false)) savePipelineCache(false);
     if (!s_sc.surface) {  // headless: submit, keeping as many frames in flight as with a window
         submit();
         s_headlessFrames[s_headlessFrame] = D.submitted;

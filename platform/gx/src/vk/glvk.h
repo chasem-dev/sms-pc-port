@@ -36,6 +36,10 @@ void setDefaultFramebufferSize(int w, int h);
 // Shows framebuffer 0 (SDL_GL_SwapWindow).
 void present();
 void setSwapInterval(int vsync);
+// Saves the pipeline cache at the next present if pipelines were built since
+// it was last saved (it is saved at shutdown too). Any thread: for moments
+// when a few milliseconds go unseen (a pause menu, a stage loading).
+void savePipelineCacheSoon();
 
 // "NVIDIA GeForce GTX 1060 6GB" and similar, for logs.
 const char* deviceName();

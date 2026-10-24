@@ -46,6 +46,7 @@ struct Host {
 
 pthread_mutex_t g_cpu = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t g_idle_cv = PTHREAD_COND_INITIALIZER;
+pthread_mutex_t g_idle_mx = PTHREAD_MUTEX_INITIALIZER; // g_idle_cv's, see idle_wait
 OSThread* g_cur;
 std::atomic<OSThread*> g_cur_spin; // g_cur, for threads spinning without g_cpu
 OSThread g_default_thread;
@@ -334,6 +335,29 @@ double mono_seconds()
 	return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
 }
 
+// Idle: let go of the CPU until an interrupt source kicks (port_irq_kick) or a
+// millisecond passes. The kick count is read under g_idle_mx, which the kick
+// signals under, so a kick that lands after the last deliver_irqs is not lost.
+// It was, now and then, while g_idle_cv waited on g_cpu and the kick signalled
+// without it; the retrace it carried then waited for the timeout, which on
+// Windows overran to 4-10 ms, and its frame was shown a whole retrace late.
+void idle_wait()
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_REALTIME, &ts);
+	ts.tv_nsec += 1000000;
+	if (ts.tv_nsec >= 1000000000) {
+		ts.tv_sec++;
+		ts.tv_nsec -= 1000000000;
+	}
+	pthread_mutex_lock(&g_idle_mx);
+	pthread_mutex_unlock(&g_cpu);
+	if (g_irq_kicks.load() == 0)
+		pthread_cond_timedwait(&g_idle_cv, &g_idle_mx, &ts);
+	pthread_mutex_unlock(&g_idle_mx);
+	pthread_mutex_lock(&g_cpu);
+}
+
 // Give up the CPU if someone better is runnable (or, with `yield`, an equal).
 // Blocks in the idle loop while nothing is runnable.
 void reschedule(bool yield)
@@ -352,14 +376,7 @@ void reschedule(bool yield)
 			continue;
 		if (idle_from == 0)
 			idle_from = mono_seconds();
-		struct timespec ts;
-		clock_gettime(CLOCK_REALTIME, &ts);
-		ts.tv_nsec += 1000000;
-		if (ts.tv_nsec >= 1000000000) {
-			ts.tv_sec++;
-			ts.tv_nsec -= 1000000000;
-		}
-		pthread_cond_timedwait(&g_idle_cv, &g_cpu, &ts);
+		idle_wait();
 	}
 	if (idle_from != 0)
 		g_idle_seconds += mono_seconds() - idle_from;
@@ -448,7 +465,9 @@ Host* new_host()
 extern "C" void port_irq_kick(void)
 {
 	g_irq_kicks.fetch_add(1);
+	pthread_mutex_lock(&g_idle_mx);
 	pthread_cond_signal(&g_idle_cv);
+	pthread_mutex_unlock(&g_idle_mx);
 }
 
 extern "C" void port_irq_add_source(port_irq_poll_fn fn) { g_sources.push_back(fn); }
@@ -677,10 +696,7 @@ extern "C" void OSExitThread(OSThread* valArg)
 			break;
 		if (port_vi_idle_advance())
 			continue;
-		struct timespec ts;
-		clock_gettime(CLOCK_REALTIME, &ts);
-		ts.tv_nsec = (ts.tv_nsec + 1000000) % 1000000000;
-		pthread_cond_timedwait(&g_idle_cv, &g_cpu, &ts);
+		idle_wait();
 	}
 	switch_to(self, next, true);
 }

@@ -432,6 +432,7 @@ VkPipeline createPipeline(Program* p, const VertexLayout* vl, const PipeKey& k) 
     VkPipeline pipe = VK_NULL_HANDLE;
     const double t0 = now();
     VkResult r = vkCreateGraphicsPipelines(D.dev, D.pipelineCache, 1, &ci, nullptr, &pipe);
+    pipelineBuilt();
     g_stats.pipelineSeconds += now() - t0;
     s_framePipelines++;
     s_framePipelineSeconds += now() - t0;
@@ -466,7 +467,9 @@ VkPipeline createLibrary(VkGraphicsPipelineCreateInfo& ci, VkGraphicsPipelineLib
     dy.pDynamicStates = dyn;
     ci.pDynamicState = &dy;
     VkPipeline pipe = VK_NULL_HANDLE;
-    if (vkCreateGraphicsPipelines(D.dev, D.pipelineCache, 1, &ci, nullptr, &pipe) != VK_SUCCESS) {
+    const VkResult r = vkCreateGraphicsPipelines(D.dev, D.pipelineCache, 1, &ci, nullptr, &pipe);
+    pipelineBuilt();
+    if (r != VK_SUCCESS) {
         static std::atomic<int> told{0};
         if (told++ < 4) logmsg("Vulkan: a pipeline library (part %#x) failed", unsigned(part));
         return VK_NULL_HANDLE;
@@ -547,6 +550,7 @@ VkPipeline linkPipeline(Program* p, const VertexLayout* vl, const PipeKey& k) {
     VkPipeline pipe = VK_NULL_HANDLE;
     const double t0 = now();
     VkResult r = vkCreateGraphicsPipelines(D.dev, D.pipelineCache, 1, &ci, nullptr, &pipe);
+    pipelineBuilt();
     g_stats.pipelineSeconds += now() - t0;
     s_framePipelines++;
     s_framePipelineSeconds += now() - t0;
@@ -873,6 +877,7 @@ VkPipeline clearPipeline(VkFormat color, VkFormat depth, VkSampleCountFlagBits s
     ci.layout = s_clearLayout;
     VkPipeline pipe = VK_NULL_HANDLE;
     vkCreateGraphicsPipelines(D.dev, D.pipelineCache, 1, &ci, nullptr, &pipe);
+    pipelineBuilt();
     s_clearPipes[key] = pipe;
     return pipe;
 }

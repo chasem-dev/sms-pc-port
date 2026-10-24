@@ -1174,6 +1174,11 @@ const char* GXPC_WindowTitle(void) { return s_title.c_str(); }
 void GXPC_SetAutoPresent(int enable) { s_autoPresent = enable != 0; }
 void GXPC_SkipNextPresent(int skip) { s_skipPresent = skip != 0; }
 double GXPC_LastPresentSeconds(void) { return s_lastPresent; }
+void GXPC_SavePipelineCacheSoon(void) {
+#ifdef SMS_GX_HAVE_VULKAN
+    if (s_vulkan) glvk::savePipelineCacheSoon();
+#endif
+}
 int GXPC_MouseCaptured(void) {
 #ifdef SMS_GX_HAVE_SDL2
     return s_mouseCaptured;
@@ -1196,7 +1201,10 @@ int GXPC_RequestQuit(void) {
 }
 // The game's settings menu is up (1) or closed (0): like the cheat and warp menus, it frees the mouse
 // that mouse look holds, and mouse look takes it back when the menu closes. The event pump does it.
-void GXPC_SettingsMenuOpen(int open) { s_settingsMenuOpen = open != 0; }
+void GXPC_SettingsMenuOpen(int open) {
+    s_settingsMenuOpen = open != 0;
+    if (open) GXPC_SavePipelineCacheSoon();
+}
 int GXPC_SettingsMenuIsOpen(void) { return s_settingsMenuOpen ? 1 : 0; }
 int GXPC_IsHeadless(void) { return s_mode != MODE_WINDOW; }
 uint32_t GXPC_FrameCount(void) { return s_frame; }

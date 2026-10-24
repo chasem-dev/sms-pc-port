@@ -47,6 +47,7 @@ void GXPC_SetAutoPresent(int enable);
 void GXPC_Present(const void* xfb);          /* window mode: draw XFB, swap, pump events */
 void GXPC_SkipNextPresent(int skip);         /* the next GXCopyDisp is not presented (events still pumped), if presenting is slow */
 double GXPC_LastPresentSeconds(void);        /* the last GXCopyDisp's present, 0 if it was not presented */
+void GXPC_SavePipelineCacheSoon(void);       /* Vulkan: save new pipelines at the next present, a moment a hitch goes unseen (pause, loading) */
 uint32_t GXPC_FrameCount(void);              /* display copies so far */
 /* Window (taskbar / Dock) icon: w x h RGBA8 pixels, copied. Applied to the
  * SDL window now, or when it opens; ignored without a window. */

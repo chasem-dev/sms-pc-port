@@ -106,6 +106,9 @@ struct Device {
 };
 extern Device D;
 VmaAllocationCreateInfo hostBufferAllocInfo(bool readback);
+// After each vkCreateGraphicsPipelines (any thread): the pipeline cache is
+// saved only when something was built since it was last (savePipelineCache).
+void pipelineBuilt();
 
 // The serial the commands being recorded now will signal.
 inline uint64_t currentSerial() { return D.submitted + 1; }
