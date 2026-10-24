@@ -15,6 +15,7 @@
 #include "mp_boss.hpp"
 #include "mp_mirror.hpp"
 #include "mp_puppet.hpp"
+#include "mp_pvp.hpp"
 #include "mp_server.hpp"
 #include "port_ext.h"
 #include "port_framerate.h"
@@ -794,7 +795,7 @@ void MpCountSound(int slot)
 		s_soundHeard[slot]++;
 }
 
-void MpEmitWater(const MpgPose& p, f32* carry)
+void MpEmitWater(int slot, const MpgPose& p, f32* carry)
 {
 	TMario* m = gpMarioOriginal;
 	if (!m || !m->mWaterGun || !gpModelWaterManager || p.nozzle >= 6 || !p.emitters)
@@ -830,7 +831,7 @@ void MpEmitWater(const MpgPose& p, f32* carry)
 		const f32 pow  = e.mEmitPow.get();
 		const f32 ctrl = e.mEmitCtrl.get();
 		info->mPow.set(pow * p.pressure * ctrl + pow * (1.0f - ctrl));
-		info->mFlag.set(0x40 | kDrawnWater);
+		info->mFlag.set(0x40 | kDrawnWater | MpPvpWaterTag(slot)); // whose (a water fight's, mp_pvp.cpp)
 		gpModelWaterManager->emitRequest(*info);
 	}
 }

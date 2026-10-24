@@ -1,6 +1,7 @@
 // Other players drawn in this game (mp_puppet.hpp).
 #include "mp_puppet.hpp"
 #include "mp_mirror.hpp"
+#include "mp_pvp.hpp"
 #include "../mp_recolour.h"
 
 #include <JSystem/J3D/J3DGraphAnimator/J3DJoint.hpp>
@@ -488,6 +489,7 @@ TMpPuppet::TMpPuppet(int slot, bool self)
     , mFxSeen(false)
     , mSoundSeq(0)
     , mSoundSeen(false)
+    , mFlushed(false)
 {
 	memset(mView, 0, sizeof mView);
 	memset(mProjection, 0, sizeof mProjection);
@@ -1128,10 +1130,21 @@ void MpMeasureSmoothness(int slot, const MpgPose& pose)
 	}
 }
 
+BOOL TMpPuppet::receiveMessage(THitActor* sender, u32 message)
+{
+	(void)sender;
+	return message == HIT_MESSAGE_TRAMPLE && !mSelf && mActive && mpg_collision();
+}
+
 void TMpPuppet::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	if (!mModel)
 		return;
+	// once a frame, for every player (after Mario, who is first in the group)
+	if (cue & CUE_ENTRY)
+		MpPvpEntry(graphics);
+	if (cue & CUE_UNK20000000)
+		MpPvpDraw(graphics);
 
 	if (cue & CUE_CALC_ANIM) {
 		float age = 0.0f;
@@ -1180,7 +1193,7 @@ void TMpPuppet::perform(u32 cue, JDrama::TGraphics* graphics)
 			applyPose(graphics);
 			// their water (our own player's is the game's own)
 			if (!mSelf && (pose.flags & MPG_POSE_SPRAYING))
-				MpEmitWater(pose, &mWaterCarry);
+				MpEmitWater(mSlot, pose, &mWaterCarry);
 			// their effects (our own player's are the game's own)
 			if (!mSelf)
 				showEffects(pose);
@@ -1224,6 +1237,18 @@ void TMpPuppet::perform(u32 cue, JDrama::TGraphics* graphics)
 		mSwapped              = true;
 	}
 	if ((cue & CUE_ENTRY) && mActive) {
+		// splashed: Shadow Mario's flush (mp_pvp.cpp), and off again after
+		const bool flushed = MpPvpFlushed(mSlot);
+		if (flushed || mFlushed) {
+			const f32 at[3] = {mPosition.x, mPosition.y, mPosition.z};
+			MpPvpFog(mBodyData, flushed, at, graphics);
+			for (int h = 0; h < 2; h++)
+				for (int s = 0; s < 2; s++)
+					MpPvpFog(mHands[h][s]->getModelData(), flushed, at, graphics);
+			for (int c = 0; c < 2; c++)
+				MpPvpFog(mCap[c]->getModelData(), flushed, at, graphics);
+			mFlushed = flushed;
+		}
 		mModel->perform(CUE_ENTRY, graphics);
 		for (int h = 0; h < 2; h++)
 			for (int s = 0; s < 2; s++)

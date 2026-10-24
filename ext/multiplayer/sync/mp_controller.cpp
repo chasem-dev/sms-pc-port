@@ -70,6 +70,7 @@ enum Kind : uint8_t {
 	K_SERVER,       // host -> client: whether it is a server (not a player), its game mode's name (a server
 	                // mod's); first to a newcomer, so the characters are known
 	K_CMD,          // host -> client: a server command (cmdMessage: type, flags, delay, numbers, text)
+	K_SPLASH,       // client -> host: session, the player its player's water hit, drops, where (MPG_RULE_WATER_HITS)
 };
 // The longest look kept (every region chosen takes 14 bytes).
 const size_t kMaxLook = 400;
@@ -175,6 +176,12 @@ struct Controller {
 	};
 	std::vector<Due> due;
 	std::deque<MpgNetEvent> netEvents;
+	// players collide (mpg_collision): the host's own setting (its settings
+	// menu, SMS_MULTIPLAYER_COLLISION) unless a server mod set it (-1: none);
+	// a client's as the host last said (K_SERVER)
+	bool collisionSetting = false;
+	int collisionMod      = -1;
+	bool collisionHeard   = false;
 	int joinNotice = 0; // client: joined (1) or back (2): told once the host's first word says who we play
 	unsigned waitingStage = 0; // players who joined while the host was between stages: told once it has arrived
 
@@ -344,6 +351,22 @@ void netEvent(int type, int slot, const char* name)
 	g.netEvents.push_back(e);
 }
 
+// Player `by`'s water hit `victim` (mpg_splash): for the server mods. Only
+// players in the game, in the session, another's water.
+void splashEvent(int by, int victim, int drops, const float pos[3])
+{
+	if (by < 0 || by >= MP_MAX_PLAYERS || victim < 0 || victim >= MP_MAX_PLAYERS || victim == by || drops <= 0
+	    || !(mp_players() & (1u << victim)) || (g_dedicated && victim == 0))
+		return;
+	char name[MP_NAME_LEN];
+	mp_player_name(victim, name, sizeof name);
+	netEvent(MPG_NET_SPLASH, victim, name);
+	MpgNetEvent& e = g.netEvents.back();
+	e.by           = by;
+	e.drops        = drops < 1000 ? drops : 1000;
+	memcpy(e.pos, pos, sizeof e.pos);
+}
+
 // A command as sent: its type, flags, delay, four whole numbers and four
 // others, its text, and four more others (API 1.4: after what older games read).
 std::vector<uint8_t> cmdMessage(const MpgCmd& c, uint32_t delayMs)
@@ -444,12 +467,15 @@ void replaySticky(int slot)
 			sendCmd(slot, st.cmd, 0);
 }
 
+bool collisionNow() { return g.collisionMod >= 0 ? g.collisionMod != 0 : g.collisionSetting; }
+
 void sendServerInfo(int slot)
 {
 	uint8_t buf[24];
 	Writer w(buf, sizeof buf);
 	w.u8(g_dedicated ? 1 : 0);
 	w.str(g.modeName.c_str(), 15);
+	w.u8(collisionNow() ? 1 : 0); // the game's settings for everyone (bit 0: players collide); older games stop before
 	for (int i = 1; i < MP_MAX_PLAYERS; i++)
 		if ((slot < 0 || slot == i) && (mp_players() & (1u << i)))
 			mp_send(i, K_SERVER, buf, w.len);
@@ -997,6 +1023,17 @@ void hostMessage(const MpEvent& ev)
 	case K_CLEAN:
 		readCleans(r, ev.slot);
 		break;
+	case K_SPLASH: {
+		const uint32_t s = r.u32();
+		const int victim = r.u8(), drops = r.u16();
+		float pos[3];
+		for (float& v : pos)
+			v = r.f32();
+		if (!r.ok || s != g.session || !g.session || pos[0] != pos[0] || pos[1] != pos[1] || pos[2] != pos[2])
+			break;
+		splashEvent(ev.slot, victim, drops, pos);
+		break;
+	}
 	case K_HIT:
 		readHits(r, ev.slot);
 		break;
@@ -1109,6 +1146,10 @@ void clientMessage(const MpEvent& ev)
 			break;
 		g_dedicated = dedicated != 0;
 		g.modeName  = mode;
+		const int settings = r.left() ? r.u8() : 0;
+		if ((settings & 1) != g.collisionHeard)
+			fprintf(stderr, "[multiplayer] the host says players %s\n", settings & 1 ? "collide" : "pass through each other");
+		g.collisionHeard = (settings & 1) != 0;
 		break;
 	}
 	case K_CMD: {
@@ -1758,6 +1799,11 @@ extern "C" int mpg_start(void)
 		// dedicated server's mods)
 		const char* dedicated = getenv("SMS_MULTIPLAYER_DEDICATED");
 		g_dedicated           = dedicated && !strcmp(dedicated, "1");
+		// players collide (the settings menu changes it as the game goes on)
+		const char* collide = getenv("SMS_MULTIPLAYER_COLLISION");
+		g.collisionSetting  = collide && (!strcmp(collide, "1") || !strcmp(collide, "on") || !strcmp(collide, "true"));
+		if (g.collisionSetting)
+			notice("Players collide with each other (the host's Player Collision setting).");
 		mp_set_host_mode("", g_dedicated);
 		if (g_dedicated)
 			notice("Running as a server: the first player to join plays Mario.");
@@ -1863,6 +1909,68 @@ extern "C" int mpg_next_cmd(MpgCmd* out)
 }
 
 extern "C" int mpg_dedicated(void) { return g.role != MPG_ROLE_OFF && g_dedicated; }
+
+extern "C" int mpg_collision(void)
+{
+	if (g.role == MPG_ROLE_HOST) {
+		std::lock_guard<std::mutex> hold(g_lock);
+		return collisionNow();
+	}
+	return g.role == MPG_ROLE_CLIENT && g.collisionHeard;
+}
+
+// The host's own setting, and a server mod's word over it (-1: none).
+void setCollision(bool setting, int mod)
+{
+	const bool was     = collisionNow();
+	g.collisionSetting = setting;
+	g.collisionMod     = mod;
+	if (collisionNow() != was) {
+		fprintf(stderr, "[multiplayer] players %s\n", collisionNow() ? "collide" : "pass through each other");
+		sendServerInfo(-1);
+	}
+}
+
+extern "C" int mpg_collision_setting(void) { return g.collisionSetting; }
+
+extern "C" int mpg_set_collision_setting(int on)
+{
+	if (g.role != MPG_ROLE_HOST)
+		return 0;
+	std::lock_guard<std::mutex> hold(g_lock);
+	setCollision(on != 0, g.collisionMod);
+	return 1;
+}
+
+extern "C" int mpg_server_set_collision(int on)
+{
+	if (g.role != MPG_ROLE_HOST)
+		return 0;
+	std::lock_guard<std::mutex> hold(g_lock);
+	setCollision(g.collisionSetting, on < 0 ? -1 : on != 0);
+	return 1;
+}
+
+extern "C" void mpg_splash(int victim, int drops, const float pos[3])
+{
+	if (g.role == MPG_ROLE_OFF || drops <= 0 || !pos)
+		return;
+	std::lock_guard<std::mutex> hold(g_lock);
+	if (!(g.role == MPG_ROLE_HOST ? g.session : g.localSession))
+		return;
+	if (g.role == MPG_ROLE_HOST) {
+		splashEvent(mp_local_slot(), victim, drops, pos);
+		return;
+	}
+	uint8_t buf[24];
+	Writer w(buf, sizeof buf);
+	w.u32(g.localSession);
+	w.u8((uint8_t)victim);
+	w.u16((uint16_t)(drops < 0xFFFF ? drops : 0xFFFF));
+	for (int k = 0; k < 3; k++)
+		w.f32(pos[k]);
+	mp_send(0, K_SPLASH, buf, w.len);
+}
 
 extern "C" void mpg_server_mode(const char* name)
 {

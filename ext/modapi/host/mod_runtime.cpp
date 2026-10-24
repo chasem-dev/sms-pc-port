@@ -1168,13 +1168,15 @@ int apiNetSetRespawn(int slot, int how, const SmsVec3* p, float yaw)
 {
 	return mpg_role() == MPG_ROLE_HOST && mpg_server_set_respawn(slot, p ? how : 0, p ? p->x : 0, p ? p->y : 0, p ? p->z : 0, yaw);
 }
+int apiNetSetCollision(int on) { return mpg_server_set_collision(on); }
+int apiNetCollision(void) { return mpg_collision(); }
 void apiNetSetMode(const char* name) { mpg_server_mode(name); }
 void apiNetSetStatus(const char* text) { mpg_server_status(text); }
 
 const SmsNetApi s_netTable = {
 	sizeof(SmsNetApi), apiNetRole, apiNetDedicated, apiNetLocalSlot, apiNetPlayers,  apiNetPlayer,
 	apiNetSession,     apiNetSend, apiNetLoadStage, apiNetSetMode,   apiNetSetStatus,
-	apiNetSetLook,     apiNetLook, apiNetSetRespawn,
+	apiNetSetLook,     apiNetLook, apiNetSetRespawn, apiNetSetCollision, apiNetCollision,
 };
 
 // ------------------------------------------------------------------ world (API 1.4)
@@ -1222,6 +1224,11 @@ void netEvents()
 		if (e.type == MPG_NET_SESSION) {
 			SmsEvNetSession ev = {e.area, e.episode, e.session};
 			modh_dispatch(SMS_EV_NET_SESSION, &ev, sizeof ev);
+			continue;
+		}
+		if (e.type == MPG_NET_SPLASH) {
+			SmsEvNetSplash ev = {e.slot, e.by, e.drops, {e.pos[0], e.pos[1], e.pos[2]}};
+			modh_dispatch(SMS_EV_NET_PLAYER_SPLASHED, &ev, sizeof ev);
 			continue;
 		}
 		static const uint32_t kType[] = {0, SMS_EV_NET_PLAYER_JOINED, SMS_EV_NET_PLAYER_LEFT, SMS_EV_NET_PLAYER_ARRIVED};

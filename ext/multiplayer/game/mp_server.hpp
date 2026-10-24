@@ -36,6 +36,8 @@ const char* MpServerStatusLine();
 int MpServerAfterFileSelect();
 // MPG_RULE_NO_DAMAGE in force: this game's player loses no health.
 int MpServerNoDamage();
+// The MPG_RULE_* bits in force (MPG_CMD_RULES).
+unsigned MpServerRules();
 // The game camera's eye and the point it looks at, about to be used: shaken (MPG_CMD_SHAKE).
 void MpServerCamera(float* eye, float* at);
 

@@ -31,7 +31,8 @@ void MpCapturePose(TMario* mario, MpgPose* pose);
 // memory, and is gone in the next (a director's address can come back).
 unsigned MpStageNumber();
 // Another player's FLUDD water, emitted in this game (mp_game.cpp).
-void MpEmitWater(const MpgPose& pose, f32* carry);
+// Another player's (slot's) FLUDD water, emitted in this game (mp_game.cpp).
+void MpEmitWater(int slot, const MpgPose& pose, f32* carry);
 // A rotation matrix's quaternion (x, y, z, w).
 void MpMtxToQuat(const f32 (*m)[4], f32 q[4]);
 
@@ -44,6 +45,9 @@ public:
 	// Builds the models; false when there was not room for them.
 	bool init();
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
+	// Players colliding (mpg_collision): a stomp on its head lands, as on an
+	// enemy's (TMario::trampleExec asks it; nothing else touches it).
+	virtual BOOL receiveMessage(THitActor* sender, u32 message);
 
 	int slot() const { return mSlot; }
 	bool active() const { return mActive; }
@@ -126,6 +130,7 @@ private:
 	bool mFxSeen;            // mFxSeq is known (none from before replayed)
 	u8 mSoundSeq;            // their newest sound heard (as mFxSeq)
 	bool mSoundSeen;
+	bool mFlushed;           // its models wear the damage fog (a splash, mp_pvp.cpp)
 };
 
 // Debug: an effect of `slot`'s shown here (`ongoing`: one going on every frame).
