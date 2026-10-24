@@ -2,9 +2,9 @@
 // unlocked and tells the launcher. SMS_ACHIEVEMENTS names the file they are
 // kept in (the launcher's, one per player, not per save file); unset, they are
 // off. Each unlock is a line "<id> <unix time>" added to it, and a line
-//   [achievement] {"id":12,"time":1761170000}
+//   [achievement] {"id":12,"time":1761170000,"game":"sunshine"}
 // on stdout, which the launcher reads as it does [presence] lines and shows at
-// once. A Super Mario Eclipse build has its own story, so they are off there.
+// once. A Super Mario Eclipse build keeps Eclipse's (game "eclipse").
 #include <mutex>
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,17 +19,25 @@
 
 namespace {
 
-enum { COUNT = 148 };
+// Super Mario Eclipse has its own achievements (eclipse.json), numbered from 1
+// as Sunshine's are: the launcher gives each its own file.
+#ifdef SMS_ECLIPSE
+const bool kEclipse = true;
+#else
+const bool kEclipse = strstr(SMS_GAME_BUILD, "-eclipse") != nullptr;
+#endif
+enum { SUNSHINE_COUNT = 148, ECLIPSE_COUNT = 128, MAX_COUNT = 148 };
+const int COUNT = kEclipse ? ECLIPSE_COUNT : SUNSHINE_COUNT;
 
 std::mutex s_lock;
 int s_on = -1;
-bool s_have[COUNT + 1];
+bool s_have[MAX_COUNT + 1];
 char s_path[1024];
 
 void load()
 {
 	const char* path = getenv("SMS_ACHIEVEMENTS");
-	s_on             = path && *path && !strstr(SMS_GAME_BUILD, "-eclipse");
+	s_on             = path && *path;
 	if (!s_on)
 		return;
 	snprintf(s_path, sizeof s_path, "%s", path);
@@ -46,10 +54,17 @@ void load()
 		}
 		fclose(f);
 	}
-	fprintf(stderr, "[achievements] on: %d of %d unlocked (%s)\n", n, COUNT, s_path);
+	fprintf(stderr, "[achievements] on: %d of %s's %d unlocked (%s)\n", n, kEclipse ? "Super Mario Eclipse" : "Sunshine", COUNT,
+	        s_path);
 }
 
 } // namespace
+
+// 1 in a Super Mario Eclipse build: its achievements, not Sunshine's.
+extern "C" int sms_ach_store_eclipse(void)
+{
+	return kEclipse;
+}
 
 extern "C" int sms_ach_store_on(void)
 {
@@ -83,7 +98,7 @@ extern "C" int sms_ach_store_add(int id)
 	} else {
 		fprintf(stderr, "[achievements] couldn't write %s: %d is unlocked for this session only\n", s_path, id);
 	}
-	printf("[achievement] {\"id\":%d,\"time\":%ld}\n", id, now);
+	printf("[achievement] {\"id\":%d,\"time\":%ld,\"game\":\"%s\"}\n", id, now, kEclipse ? "eclipse" : "sunshine");
 	fflush(stdout);
 	return 1;
 }

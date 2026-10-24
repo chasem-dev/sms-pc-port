@@ -3,6 +3,15 @@
 The game's own achievements: the 148 of the "Core" list, unlocked as you play, kept per player (not per save file), and shown by the launcher as they happen.
 They are off unless the launcher turns them on.
 
+## Super Mario Eclipse
+
+An Eclipse build has Eclipse's own 128 achievements instead (`eclipse.json`, numbered from 1 as Sunshine's are; the launcher gives them their own file, and the `[achievement]` line says `"game":"eclipse"`).
+Where Eclipse keeps its Shines and blue coins is its pause menu tracker's (Eclipse's `src/stage/tracker.cpp`): `game/ach_eclipse_flags.cpp` reads them as it does.
+The castle paintings' Power Stars are Shines with event 86 (a Shine every file has), so they save nothing: `game/ach_eclipse_challenges.cpp` counts those taken this session, the 100-coin Shine left out.
+Eclipse chooses the file its own way, so its play counts from the first stage after the title screen.
+Areas and episodes are Eclipse's `stageArc.bin`'s; `SMS_ACHIEVEMENTS_TEST=survey` (with `SMS_ACHIEVEMENTS_DEBUG=1`) warps through them all and lists each stop's 1-Ups, Shines and star-named actors, which is where the counts in the challenges file come from.
+Three are approximate: 124 and 126 count any talk where they ask for one, and 128's statue is placed by its plaque in the castle grounds' map.
+
 ## Turning them on
 
 | Variable | What it does |
@@ -47,6 +56,9 @@ Loading a file that already has everything unlocks nothing: an achievement unloc
 | `game/ach_core.cpp` | shared state and helpers (`achievements.h`): unlocking, where the player is, whether the play counts |
 | `host/ach_store.cpp` | keeps unlocks in `SMS_ACHIEVEMENTS` and tells the launcher |
 | `game/ach_banner.cpp` | the banner an unlock shows: the medal, the name and what was done in the game's font on a blue ribbon, and BADGE GET! in the game's big letters. It waits for talks and cutscenes to end. Names from `ach_names.inc`, made from `achievements.json` by `tools/gen_names.py` |
+| `game/ach_eclipse_flags.cpp` | Super Mario Eclipse's 1-51: its areas' Shines and blue coins, Episode 7 everywhere, the races, the counts |
+| `game/ach_eclipse_challenges.cpp` | Super Mario Eclipse's 1-Ups, Power Stars and challenges |
+| `game/ach_survey.cpp` | the survey test aid |
 | `host/ach_icon.cpp` | the banner's icon, from `SMS_ACHIEVEMENT_ICONS` (the launcher's `assets/achievements`) |
 | `game/ach_flags.cpp` | 1-60: Shines (one, an area's episodes or secrets, the plaza's ten, the boathouse trades, the Shine count), blue coins, nozzle boxes, Yoshi, story flags. Table generated into `ach_flag_rules.inc` by `tools/gen_flag_rules.py` |
 | `game/ach_oneups.cpp` | the 1-Ups placed in the stages: one, or all of an area's in one visit |

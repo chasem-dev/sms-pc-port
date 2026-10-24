@@ -10,7 +10,7 @@ class TMario;
 
 namespace ach {
 
-enum { COUNT = 148 };
+enum { COUNT = 148, ECLIPSE_COUNT = 128 };
 
 // The game's areas (TGameSequence's stage, gpApplication.mCurrArea), as the
 // achievements name them.
@@ -57,10 +57,15 @@ enum Area {
 	CORONA_BOSS        = 0x3C, // Family Feud
 };
 
-// Achievements are on: the launcher passed SMS_ACHIEVEMENTS (the file they
-// are kept in) and this is the game itself, not a mod with its own story.
+// Sunshine's achievements are on: the launcher passed SMS_ACHIEVEMENTS (the
+// file they are kept in) and this isn't a Super Mario Eclipse build.
 bool on();
-// The player earned achievement `id`. Kept and announced once; ignored while
+// This is a Super Mario Eclipse build: its own achievements (ach_eclipse_*.cpp,
+// eclipse.json), numbered from 1 as Sunshine's are.
+bool eclipse();
+// Eclipse's achievements are on (SMS_ACHIEVEMENTS in an Eclipse build).
+bool eclipseOn();
+// The player earned achievement `id` (of the build's set: Sunshine's, or Eclipse's in an Eclipse build). Kept and announced once; ignored while
 // the play doesn't count (tainted()).
 void unlock(int id);
 // Shows an unlock's banner (ach_banner.cpp), after any already waiting.
@@ -77,6 +82,8 @@ bool tainted();
 // here, which is a bug, so it is always reported (stderr, once per stage),
 // and the tour test (SMS_ACHIEVEMENTS_TEST=tour) counts it.
 void require(int id, const char* what, bool found);
+// The survey (a test aid, ach_survey.cpp): lists this stop's 1-Ups, Shines and star-named actors.
+void survey();
 
 // Where the player is: the current area and its scenario (episode 0-7 in the
 // main courses; the plaza's and Pinna Park's own states elsewhere).

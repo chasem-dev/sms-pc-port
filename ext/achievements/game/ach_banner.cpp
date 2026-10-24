@@ -41,6 +41,10 @@ struct Name {
 const Name kNames[] = {
 #include "ach_names.inc"
 };
+// Super Mario Eclipse's, in an Eclipse build
+const Name kEclipseNames[] = {
+#include "ach_eclipse_names.inc"
+};
 
 const f32 kU = 448.0f / 840.0f; // the design's pixels to the screen's
 
@@ -93,9 +97,11 @@ f32 bounce(f32 p)
 
 const Name* nameOf(int id)
 {
-	for (unsigned i = 0; i < sizeof kNames / sizeof kNames[0]; i++)
-		if (kNames[i].id == id)
-			return &kNames[i];
+	const Name* names = ach::eclipse() ? kEclipseNames : kNames;
+	const unsigned n  = ach::eclipse() ? sizeof kEclipseNames / sizeof kEclipseNames[0] : sizeof kNames / sizeof kNames[0];
+	for (unsigned i = 0; i < n; i++)
+		if (names[i].id == id)
+			return &names[i];
 	return nullptr;
 }
 
