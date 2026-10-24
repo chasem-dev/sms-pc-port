@@ -15,6 +15,7 @@
 // overview of it (the whole picture at most 1536 pixels on a side, each
 // pixel the average of those under it) for the full map.
 #include "gx_internal.h"
+#include "gx_path.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -112,7 +113,7 @@ void init() {
         if (!fs::is_directory(base, ec)) continue;
         std::vector<std::string> packs;
         for (fs::directory_iterator it(base, ec), end; !ec && it != end; it.increment(ec))
-            if (it->is_directory(ec)) packs.push_back(it->path().filename().string());
+            if (it->is_directory(ec)) packs.push_back(gx::fsString(it->path().filename()));
         std::sort(packs.begin(), packs.end());
         for (const std::string& p : packs) {
             const std::string dir = std::string(base) + "/" + p;

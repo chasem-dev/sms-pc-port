@@ -25,6 +25,7 @@
 #include "gl_funcs.h"
 #include "gx_glcache.h"
 #include "gx_glthread.h"
+#include "gx_path.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -155,10 +156,10 @@ static bool endsWith(const std::string& s, const char* suf) {
 }
 
 static void indexFile(const std::filesystem::path& p, bool look) {
-    std::string ext = p.extension().string();
+    std::string ext = fsString(p.extension());
     for (char& c : ext) c = char(tolower(c));
     if (ext != ".png" && ext != ".dds") return;
-    std::string stem = p.stem().string();
+    std::string stem = fsString(p.stem());
     if (stem.compare(0, 5, "tex1_") != 0) return;
     bool arb = false;
     if (endsWith(stem, "_arb")) {
@@ -176,11 +177,11 @@ static void indexFile(const std::filesystem::path& p, bool look) {
     if (f.look && !look) return;
     f.look = look;
     if (level == 0) {
-        if (f.path.empty()) f.path = p.string();
+        if (f.path.empty()) f.path = fsString(p);
         f.arbitrary = f.arbitrary || arb;
     } else {
         if (f.mips.size() < size_t(level)) f.mips.resize(size_t(level));
-        if (f.mips[size_t(level) - 1].empty()) f.mips[size_t(level) - 1] = p.string();
+        if (f.mips[size_t(level) - 1].empty()) f.mips[size_t(level) - 1] = fsString(p);
     }
 }
 
@@ -215,9 +216,9 @@ static void scan() {
         const std::string& d = dirs[i];
         bool isLook = i == 0 && look && *look;
         std::error_code ec;
-        if (!fs::is_directory(d, ec)) continue;
+        if (!fs::is_directory(fsPath(d), ec)) continue;
         size_t before = s_index.size();
-        for (auto it = fs::recursive_directory_iterator(d, fs::directory_options::follow_directory_symlink, ec);
+        for (auto it = fs::recursive_directory_iterator(fsPath(d), fs::directory_options::follow_directory_symlink, ec);
              !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
             // The UHD pack's widescreen_stars_fix blanks two star textures to
             // hide stars Dolphin's widescreen hack shows at the screen's edges.
@@ -267,7 +268,7 @@ const char* hiresDumpDir() {
         if (e && *e && strcmp(e, "0") != 0) {
             dir = e;
             std::error_code ec;
-            std::filesystem::create_directories(dir, ec);
+            std::filesystem::create_directories(fsPath(dir), ec);
         }
     }
     return dir;
@@ -645,7 +646,7 @@ void hiresPrefetchResource(const void* ptr, uint32_t size, const char* name) {
     bool model = !memcmp(data, "J3D2", 4), particle = !memcmp(data, "JEFFjpa1", 8);
     if (!model && !particle) {
         if (name) {
-            std::string ext = std::filesystem::path(name).extension().string();
+            std::string ext = fsString(fsPath(name).extension());
             for (char& c : ext) c = char(tolower(uint8_t(c)));
             if (ext == ".bti" && data[0x19] != 0x6E) prefetchTimg(data, size, 0);
         }
@@ -907,7 +908,7 @@ static const std::string& mipCacheDir() {
         if (d.empty()) return d;
         if (!(e && *e)) d += "/texture-mips";
         std::error_code ec;
-        std::filesystem::create_directories(d, ec);
+        std::filesystem::create_directories(fsPath(d), ec);
         return ec ? std::string() : d;
     }();
     return dir;
@@ -915,9 +916,9 @@ static const std::string& mipCacheDir() {
 
 static bool sourceStamp(const std::string& path, uint64_t* size, int64_t* mtime) {
     std::error_code ec;
-    uint64_t n = std::filesystem::file_size(path, ec);
+    uint64_t n = std::filesystem::file_size(fsPath(path), ec);
     if (ec) return false;
-    auto t = std::filesystem::last_write_time(path, ec);
+    auto t = std::filesystem::last_write_time(fsPath(path), ec);
     if (ec) return false;
     *size = n;
     *mtime = int64_t(t.time_since_epoch().count());
@@ -996,8 +997,8 @@ static void storeCachedLevels(const std::string& name, const PackFile& f, const 
         }
     ok = fclose(out) == 0 && ok;
     std::error_code ec;
-    if (ok) std::filesystem::rename(part, path, ec);
-    if (!ok || ec) std::filesystem::remove(part, ec);
+    if (ok) std::filesystem::rename(fsPath(part), fsPath(path), ec);
+    if (!ok || ec) std::filesystem::remove(fsPath(part), ec);
 }
 
 // A few UHD-pack shadows and clouds replacing intensity textures (I4, I8, IA4,

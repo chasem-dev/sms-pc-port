@@ -17,6 +17,7 @@ set(SMS_GX_SOURCES
     src/gx_hires.cpp
     src/gx_mod_layer.cpp
     src/gx_overlay.cpp
+    src/gx_path.cpp
     src/gx_platform.cpp
     src/gx_prompts.cpp
     src/gx_radar_maps.cpp
