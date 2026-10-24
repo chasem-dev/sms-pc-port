@@ -7,7 +7,7 @@
     python3 tools/mods/get.py eclipse     Super Mario Eclipse (patched from your disc), and its maps
     python3 tools/mods/get.py eclipse-maps  only the radar's maps of Eclipse's stages;
                                           --if-outdated as for extras
-    python3 tools/mods/get.py achievement-icons  the achievements' icons, into assets/achievements/
+    python3 tools/mods/get.py achievement-icons  the achievements' icons (Eclipse's too), into assets/achievements/
     python3 tools/mods/get.py language fr the game's text in French (de, es, it, pl: German,
                                           Spanish, Italian, Polish); --if-outdated as for extras
     python3 tools/mods/get.py lua         the lua mod, which runs Lua script mods (native
@@ -580,12 +580,14 @@ def get_achievement_icons(keep, if_outdated=False):
     tmp = mod["install"] + ".part"
     remove(tmp)
     try:
-        # the zip holds achievements/ (1.png to 148.png), as assets/achievements/
+        # the zip holds achievements/ (1.png to 148.png, and Super Mario
+        # Eclipse's eclipse/1.png to 128.png), as assets/achievements/
         with zipfile.ZipFile(archive) as z:
             names = [n for n in z.namelist() if not n.endswith("/")]
-            icons = [n for n in names if n.endswith(".png")]
-            if len(icons) != 148 or any(not n.startswith("achievements/") or ".." in n.split("/") for n in names):
-                raise Failure("the archive is not laid out as expected (achievements/1.png to 148.png)")
+            sunshine = ["achievements/%d.png" % i for i in range(1, 149)]
+            eclipse = ["achievements/eclipse/%d.png" % i for i in range(1, 129)]
+            if not set(sunshine + eclipse) <= set(names) or any(not n.startswith("achievements/") or ".." in n.split("/") for n in names):
+                raise Failure("the archive is not laid out as expected (achievements/1.png to 148.png, achievements/eclipse/1.png to 128.png)")
             z.extractall(tmp)
         if os.path.isdir(mod["install"]):
             remove(mod["install"])
