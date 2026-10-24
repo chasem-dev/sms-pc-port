@@ -9,6 +9,7 @@ ssize_t port_pread(int fd, void* buffer, size_t count, unsigned long long offset
 int port_setenv(const char* name, const char* value, int overwrite);
 int port_mkdir(const char* path, int mode);
 void port_sleep_until(const struct timespec* deadline);
+void port_timer_thread_priority(void);
 #else
 #include <unistd.h>
 #include <stdlib.h>
@@ -54,6 +55,7 @@ static inline void port_sleep_until(const struct timespec* deadline)
 	clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, deadline, NULL);
 #endif
 }
+static inline void port_timer_thread_priority(void) {}
 #endif
 
 #endif

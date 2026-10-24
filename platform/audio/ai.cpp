@@ -220,6 +220,7 @@ void sdl_callback(void*, uint8_t* stream, int len)
 
 void* null_clock(void*)
 {
+	port_timer_thread_priority();
 	struct timespec t;
 	clock_gettime(CLOCK_MONOTONIC, &t);
 	for (;;) {

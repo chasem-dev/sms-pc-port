@@ -133,6 +133,7 @@ extern "C" int GXPC_GetSpeed(void) __attribute__((weak));
 
 void* timer_thread(void*)
 {
+	port_timer_thread_priority();
 	// SMS_VI_HZ=<rate> overrides the actual retrace rate (benchmarking).
 	long period_ns = 16683350 / g_retrace_multiplier; // 59.94 or 119.88 Hz
 	if (const char* hz = getenv("SMS_VI_HZ"))
