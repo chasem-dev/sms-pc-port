@@ -24,7 +24,7 @@ SMS Launcher starts it with **Play co-op**, under ▾ beside Play; without the l
 
 **Luigi's colours.** Mario's models share their textures between every load of them, so player 2's body, hands and cap get texture tables of their own (each a block of headers, images and palettes, its offsets positive for the 64-bit build), and the body's main texture is recoloured as multiplayer's Luigi is ([`mp_recolour.h`](../multiplayer/mp_recolour.h)). The body's display lists are made in `loadAfter`, after that; the cap's are made again.
 
-**Camera 2** is a second `CPolarSubCamera` (`TCoopCamera`), made while the stage loads, reading controller 2, following player 2 (it moves right after them). A controller's meanings (`TMarioGamePad::updateMeaning`) follow the camera of the player holding it (`port_coop_pad_camera`, patch `zzzzzz-coop-02`): controller 2 reads as in the close-up view Y opens while camera 2 is in it, not camera 1.
+**Camera 2** is a second `CPolarSubCamera` (`TCoopCamera`), made while the stage loads, reading controller 2, following player 2 (it moves right after them). Camera 2 gets its own list of the actors the close-up view can turn to (`setNoticeInfo`, as the director makes camera 1's), or Y read an unmade list. A controller's meanings (`TMarioGamePad::updateMeaning`) follow the camera of the player holding it (`port_coop_pad_camera`, patch `zzzzzz-coop-02`): controller 2 reads as in the close-up view Y opens while camera 2 is in it, not camera 1.
 
 **Two views.** The `drawStage` hook draws the stage itself while both play: the frame's set-up and the goop's textures once; then each view into its part of the frame (`GXPC_SetSplitView`: viewports, scissors, EFB copies and their clears and peeks are moved and scaled into it after the widescreen mapping), with the stage's GX lists, the silhouettes and the 3D part of the GX Post list; then the 2D (the HUD, the screen's effects, the frame's copy) once over both, and a line between the views. The first view is drawn from the entry pass the game makes after each tick, as when alone. For the second, the entry pass (each model's view matrices, the draw buffers) is made again with camera 2 in camera 1's place in the lists; goop is stamped from the first only (`TPollutionManager::stampModel`). The game's view-frustum check (`ViewFrustumClipCheck`) counts what either camera sees as in view, so what either player sees moves and draws in both. Each camera's aspect is its part's (half or twice the game's) while the screen is split.
 
@@ -44,6 +44,7 @@ Headless, with scripted input (`SMS_AUTOPRESS` for player 1) and these test aids
 | `SMS_COOP_TEST_LIVES=n` | the shared lives are set to `n` as they join |
 | `SMS_COOP_TEST_ONE_UP=n` | a 1-Up `n` frames after they joined |
 | `SMS_COOP_TEST_COINS=n:count` | from `n` frames after they joined, `count` coins brought out at them and taken, one each 10 frames |
+| `SMS_COOP_TEST_FLUDD=n` | FLUDD put on their back `n` frames after they joined (as a stage that starts without it hands it out) |
 | `SMS_COOP_TEST_SHINE=n` | the stage's 100-coin Shine brought out `n` frames after they joined, and touched by them 360 frames later |
 | `SMS_COOP_TEST_WARP=frame:area,episode` | the stage changes |
 | `SMS_COOP_DEBUG=1` | the stage's lists as found, and both players' places once a second |
