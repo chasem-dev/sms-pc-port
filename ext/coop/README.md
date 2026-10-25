@@ -8,7 +8,7 @@ SMS Launcher starts it with **Play co-op**, under ▾ beside Play; without the l
   Holding Start for 1.5 seconds leaves; a short press of their Start is the pause menu, as the first player's is. Unplugging their controller leaves too.
 - Which controller is "another": with the keyboard and mouse in hand (they were used last), any controller's Start joins; with a controller in hand, another controller's does. The first player's own controller always pauses, so a player alone with one controller never joins by accident, and plain Play (no `SMS_COOP`) never takes a second player at all.
   A GameCube adapter's ports are controllers of their own: the second port with a controller in it joins the same way.
-- Coins, Shines, blue and red coins and lives are the game's own, so shared. The second player losing a life costs no life: they are back beside Mario three seconds later (and if they fall out of the world, or are left far behind, at once).
+- Coins, Shines, blue and red coins and lives are the game's own, so shared, as in multiplayer. The second player losing a life (an enemy, a pit) takes one from the shared count, the HUD's, which shows it, and they are back beside Mario three seconds later. Lost on the last one (×00), the death plays and they leave the screen: Mario carries on alone, and the next life that comes (a 1-Up, 50 coins) is theirs and brings them back. Mario losing his last life is the game over as ever. (Falling out of the world, or being left far behind, puts them back beside Mario at once, with no life lost.)
 - Enemies go after whoever is nearer: each object that moves near the second player moves as if they were Mario (`objectMove`). Either player can talk to people and read signs, take pipes and paintings (everyone goes), and get Shines.
 - The screen is split while both play the level. Cutscenes, a Shine Get and other moments the game shows on its own camera are full screen, on the first player's camera, as is everything while the second player is out.
 - `SMS_COOP_SPLIT=stacked` puts the views one above the other (the first player's on top); by default they are side by side (the first player's on the left). The launcher's Settings → Display has it as **Co-op split screen**.
@@ -39,6 +39,8 @@ Headless, with scripted input (`SMS_AUTOPRESS` for player 1) and these test aids
 | `SMS_COOP_TEST_JOIN=n` | a second player without a controller joins `n` frames after the stage starts playing |
 | `SMS_COOP_TEST_PAD=x:y@frame+frames,a@frame+frames,...` | that player's stick (-100..100), A, B or R (`b@`, `r@`), frames since they joined |
 | `SMS_COOP_TEST_LEAVE=n` | they leave `n` frames after joining |
-| `SMS_COOP_TEST_KILL=frame` | they lose a life |
+| `SMS_COOP_TEST_KILL=frame` | they lose a life (frames since the game started) |
+| `SMS_COOP_TEST_LIVES=n` | the shared lives are set to `n` as they join |
+| `SMS_COOP_TEST_ONE_UP=n` | a 1-Up `n` frames after they joined |
 | `SMS_COOP_TEST_WARP=frame:area,episode` | the stage changes |
 | `SMS_COOP_DEBUG=1` | the stage's lists as found, and both players' places once a second |

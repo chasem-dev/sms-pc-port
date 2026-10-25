@@ -11,6 +11,7 @@
 // (objectMove), so enemies go after whoever is nearest.
 // Game code: C++03.
 #include "port_ext.h"
+#include "port_framerate.h"
 #include "../../multiplayer/mp_recolour.h"
 
 #include <Camera/Camera.hpp>
@@ -32,6 +33,11 @@
 #include <Strategic/LiveActor.hpp>
 #include <Strategic/Strategy.hpp>
 #include <System/Application.hpp>
+#include <GC2D/BoundPane.hpp>
+#include <GC2D/GCConsole2.hpp>
+#include <JSystem/J2D/J2DPicture.hpp>
+#include <JSystem/JUtility/JUTTexture.hpp>
+#include <System/FlagManager.hpp>
 #include <System/MarDirector.hpp>
 #include <System/MarioGamePad.hpp>
 #include <System/PerformList.hpp>
@@ -90,7 +96,36 @@ bool s_wanted;        // SMS_COOP: co-op is on
 int s_layout;         // 0 side by side, 1 one above the other
 f32 s_baseAspect;     // the game camera's own aspect
 TMarDirector* s_dir;  // the director whose stage has them
-int s_respawnFrames;  // player 2 is down: frames until they are back
+int s_respawnFrames;  // player 2 is down: the frame they are back on
+// Lives are shared, as in multiplayer: player 2's lost life is one of the
+// game's (TFlagManager 0x20001, the HUD's count). Lost on the last one,
+// player 2 is out until the next life comes (a 1-Up), which brings them back.
+const u32 kLivesFlag = 0x20001;
+
+// A life taken from the shared count. The HUD redraws its lives only when
+// they go up (losing one reloads the stage), so its digits are set here, as
+// TGCConsole2 sets them, and its lives panel shown as for a 1-Up.
+void showLives()
+{
+	TGCConsole2* c = gpMarDirector ? gpMarDirector->getConsole() : nullptr;
+	if (!c)
+		return;
+	int lives = TFlagManager::getInstance()->getFlag(kLivesFlag);
+	lives     = lives < 0 ? 0 : lives > 99 ? 99 : lives;
+	c->unk3AC = (u8)lives;
+	((J2DPicture*)c->unk39C[0]->getPane())->changeTexture(c->unkE0[lives / 10]->getTexInfo(), 0);
+	((J2DPicture*)c->unk39C[1]->getPane())->changeTexture(c->unkE0[lives % 10]->getTexInfo(), 0);
+	c->startAppearMario(false);
+}
+
+void takeLife()
+{
+	TFlagManager::getInstance()->decFlag(kLivesFlag, 1);
+	showLives();
+}
+bool s_out;           // player 2 is out of lives
+bool s_lastLife;      // ...and their death is playing: out once it has
+s32 s_livesWhenOut;   // the count when they went out: a life more brings them back
 int s_noticeFrames;
 int s_hintFrames;     // "press Start to join" shown at a stage's start
 bool s_hintShown;
@@ -448,6 +483,11 @@ void stageSetup()
 	s_post3DEnd = s_postOverlayFrom = s_postOverlayTo = s_composite = -1;
 	s_respawnFrames = 0;
 	s_hintShown     = false;
+	if (s_lastLife) { // the stage changed while their last life was being lost
+		s_lastLife     = false;
+		s_out          = true;
+		s_livesWhenOut = TFlagManager::getInstance()->getFlag(kLivesFlag);
+	}
 	if (!s_made || !gpMarDirector)
 		return;
 	TMarDirector* d = gpMarDirector;
@@ -715,6 +755,8 @@ void frame()
 	s_frame++;
 	if (!s_wanted)
 		return;
+	if (gpApplication.mCurrArea.getStage() == 15)
+		s_out = s_lastLife = false; // the title: a file's lives start again
 	TMarDirector* d = director();
 	const bool here = s_made && d && d == s_dir;
 	if (!here) {
@@ -733,16 +775,35 @@ void frame()
 			s_testJoined    = true;
 			s_testJoinFrame = s_frame;
 			port_coop_join_virtual();
+			if (const char* l = getenv("SMS_COOP_TEST_LIVES")) // the shared lives as the test joins
+				TFlagManager::getInstance()->setFlag(kLivesFlag, atoi(l)), showLives();
 		}
+	if (const char* t = getenv("SMS_COOP_TEST_ONE_UP")) // a 1-Up, frames after the test's join
+		if (s_testJoined && s_frame == s_testJoinFrame + atoi(t))
+			TFlagManager::getInstance()->incMario(1);
 	if (const char* t = getenv("SMS_COOP_TEST_LEAVE")) // a test's player 2 leaving, frames after joining
 		if (s_testJoined && s_frame == s_testJoinFrame + atoi(t))
 			port_coop_leave();
 	const unsigned events = port_coop_take_events();
-	if (events & 1)
+	if ((events & 1) && s_out)
+		notice("Luigi is out of lives. The next 1-Up brings him back.", kNoticeFrames);
+	else if (events & 1)
 		notice("Luigi joined! Hold START on their controller to leave.", kNoticeFrames);
 	if (events & 2)
 		notice("Luigi left. Press START on another controller to play again.", kNoticeFrames);
-	const bool want = port_coop_player2() != 0;
+	// out of lives: back with the next life that comes (it is theirs)
+	if (s_out && !s_active && playing()) {
+		TFlagManager* flags = TFlagManager::getInstance();
+		const s32 lives     = flags->getFlag(kLivesFlag);
+		if (lives > s_livesWhenOut) {
+			takeLife();
+			s_out = false;
+			notice("A 1-Up for Luigi: he's back!", kNoticeFrames / 2);
+		} else if (lives < s_livesWhenOut) {
+			s_livesWhenOut = lives; // Mario lost one meanwhile
+		}
+	}
+	const bool want = port_coop_player2() != 0 && !s_out;
 	if (want != s_active && (!want || playing()))
 		activate(want);
 	if (!s_active && !s_hintShown && playing() && port_coop_can_join()) {
@@ -792,12 +853,29 @@ void afterMovement()
 		fprintf(stderr, "[coop] %d object moves led by player 2 lately; player 2 health %d\n", s_swapCount, (int)m->mHealth);
 		s_swapCount = 0;
 	}
-	// player 2 down (a lost life, a pit): back beside player 1 a moment later
+	// player 2 down (a lost life, a pit): a life from the shared count, as
+	// Mario's is; back beside player 1 a moment later, or out on the last one
 	if (m->checkFlag(MARIO_FLAG_GAME_OVER)) {
-		if (s_respawnFrames == 0)
-			s_respawnFrames = s_frame + 30 * 3;
-		else if (s_frame >= s_respawnFrames) {
+		const int fps = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
+		TFlagManager* flags = TFlagManager::getInstance();
+		if (s_respawnFrames == 0) {
+			s_respawnFrames = s_frame + fps * 3;
+			if (flags->getFlag(kLivesFlag) > 0) {
+				takeLife();
+				notice("Luigi lost a life.", kNoticeFrames / 2);
+			} else {
+				s_lastLife = true; // the death plays out, then they leave the screen
+			}
+		} else if (s_frame >= s_respawnFrames) {
 			s_respawnFrames = 0;
+			if (s_lastLife) {
+				s_lastLife     = false;
+				s_out          = true;
+				s_livesWhenOut = flags->getFlag(kLivesFlag);
+				activate(false);
+				notice("Luigi is out of lives. The next 1-Up brings him back.", kNoticeFrames);
+				return;
+			}
 			revive(m);
 		}
 	}
