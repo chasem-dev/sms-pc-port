@@ -987,8 +987,10 @@ void padRead(void* statusv)
 		for (char* tok = strtok(buf, ","); tok && s_testCount < 32; tok = strtok(nullptr, ",")) {
 			TestPress p = { 0, 0, 0, 0, 0 };
 			int len     = 8;
-			if (tok[0] == 'a' || tok[0] == 'b' || tok[0] == 'r') {
-				p.buttons = tok[0] == 'a' ? PAD_BUTTON_A : tok[0] == 'b' ? PAD_BUTTON_B : PAD_TRIGGER_R;
+			if (strchr("abrxyzl", tok[0]) && tok[1] == '@') {
+				p.buttons = tok[0] == 'a' ? PAD_BUTTON_A : tok[0] == 'b' ? PAD_BUTTON_B : tok[0] == 'x' ? PAD_BUTTON_X
+				          : tok[0] == 'y' ? PAD_BUTTON_Y : tok[0] == 'z' ? PAD_TRIGGER_Z : tok[0] == 'l' ? PAD_TRIGGER_L
+				                                                                         : PAD_TRIGGER_R;
 				if (sscanf(tok + 1, "@%d+%d", &p.at, &len) < 1)
 					continue;
 			} else if (sscanf(tok, "%d:%d@%d+%d", &p.x, &p.y, &p.at, &len) < 3) {
@@ -1010,6 +1012,8 @@ void padRead(void* statusv)
 				s.stickX = (s8)s_test[i].x, s.stickY = (s8)s_test[i].y;
 			if (s_test[i].buttons & PAD_TRIGGER_R)
 				s.triggerRight = 255;
+			if (s_test[i].buttons & PAD_TRIGGER_L)
+				s.triggerLeft = 255;
 		}
 }
 
@@ -1017,6 +1021,24 @@ int allowSaveStates() { return !s_active; }
 const char* saveStatesOffReason() { return "Save states are off while two play"; }
 
 PortExtension s_extension;
+
+} // namespace
+
+// decomp-patches/zzzzzz-coop-02: the camera a controller's player sees
+// through, for the controller's meanings (TMarioGamePad::updateMeaning reads
+// whether it is in the close-up view Y opens). Controller 2 is player 2's,
+// with camera 2, while they play this stage; everything else gpCamera.
+CPolarSubCamera* port_coop_pad_camera(const TMarioGamePad* pad)
+{
+	if (s_made && s_active && s_p2.cam && gpApplication.mAppState == TApplication::APP_STATE_GAMEPLAY
+	    && gpMarDirector == s_dir && pad == gpMarDirector->getGamePad(1))
+		return s_p2.cam;
+	if (s_made && s_inP2 && s_p1.cam && pad == gpMarDirector->getGamePad(0))
+		return s_p1.cam; // controller 1 updated while player 2's globals are in force
+	return gpCamera;
+}
+
+namespace {
 
 struct Register {
 	Register()

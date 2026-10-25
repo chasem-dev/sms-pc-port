@@ -882,6 +882,73 @@ void automouse_init()
 	port_log("[pad] SMS_AUTOMOUSE: %u scripted mouse moves\n", (unsigned)g_autoMouse.size());
 }
 
+// --- Test input: SMS_AUTOCONTROLLER=id:button@field[+fields],id:axis=value@field[+fields],...
+// e.g. SMS_AUTOCONTROLLER=7:6@4700,7:3@4800 presses Start, then Y, on a pretend
+// SDL controller with instance id 7: the events go through on_event as a real
+// controller's would (split-screen co-op's second player). Buttons and axes by
+// SDL number (A 0, B 1, X 2, Y 3, Start 6; axes 0-5).
+struct AutoCtlEvent {
+	s32 which;
+	int button, axis, value; // button >= 0, else axis and value
+	u32 at, until;
+	bool down, done;
+};
+std::vector<AutoCtlEvent> g_autoCtl;
+
+void autocontroller_init()
+{
+	const char* e = getenv("SMS_AUTOCONTROLLER");
+	if (!e || !*e)
+		return;
+	char buf[1024];
+	strncpy(buf, e, sizeof buf - 1);
+	buf[sizeof buf - 1] = 0;
+	for (char* tok = strtok(buf, ","); tok; tok = strtok(NULL, ",")) {
+		AutoCtlEvent a = {};
+		u32 hold       = 8;
+		int which      = 0;
+		if (sscanf(tok, "%d:%d=%d@%u+%u", &which, &a.axis, &a.value, &a.at, &hold) >= 4)
+			a.button = -1;
+		else if (sscanf(tok, "%d:%d@%u+%u", &which, &a.button, &a.at, &hold) < 3) {
+			port_log("[pad] SMS_AUTOCONTROLLER: cannot read '%s'\n", tok);
+			continue;
+		}
+		a.which = which;
+		a.until = a.at + (hold ? hold : 1);
+		g_autoCtl.push_back(a);
+	}
+	port_log("[pad] SMS_AUTOCONTROLLER: %u scripted controller inputs\n", (unsigned)g_autoCtl.size());
+}
+
+void autocontroller_field(u32 field)
+{
+	for (size_t i = 0; i < g_autoCtl.size(); i++) {
+		AutoCtlEvent& a = g_autoCtl[i];
+		if (a.done || field < a.at || (a.down && field < a.until))
+			continue;
+		const bool down = !a.down;
+		a.down          = true;
+		a.done          = !down;
+		if (a.button >= 0) {
+			sdl::ControllerButtonEvent ev = {};
+			ev.type   = down ? sdl::CBUTTONDOWN : sdl::CBUTTONUP;
+			ev.which  = a.which;
+			ev.button = (u8)a.button;
+			ev.state  = down ? 1 : 0;
+			on_event((const union SDL_Event*)&ev);
+		} else {
+			sdl::ControllerAxisEvent ev = {};
+			ev.type  = sdl::CAXIS;
+			ev.which = a.which;
+			ev.axis  = (u8)a.axis;
+			ev.value = (s16)(down ? a.value : 0);
+			on_event((const union SDL_Event*)&ev);
+		}
+		port_log("[pad] autocontroller %d %s %d %s at field %u\n", (int)a.which, a.button >= 0 ? "button" : "axis",
+		         a.button >= 0 ? a.button : a.axis, down ? "down" : "up", field);
+	}
+}
+
 void automouse_field(u32 field)
 {
 	for (size_t i = 0; i < g_autoMouse.size(); i++) {
@@ -902,6 +969,7 @@ void automouse_field(u32 field)
 extern "C" void port_pad_autopress_field(u32 field)
 {
 	automouse_field(field);
+	autocontroller_field(field);
 	for (size_t i = 0; i < g_auto.size(); i++) {
 		AutoPress& a = g_auto[i];
 		if (a.done)
@@ -1257,6 +1325,7 @@ extern "C" u32 PADRead(PADStatus* status)
 		autoInited = true;
 		autopress_init();
 		automouse_init();
+		autocontroller_init();
 	}
 	g_reads++;
 	if (sms_gx_pump_events)

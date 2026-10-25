@@ -24,7 +24,7 @@ SMS Launcher starts it with **Play co-op**, under ▾ beside Play; without the l
 
 **Luigi's colours.** Mario's models share their textures between every load of them, so player 2's body, hands and cap get texture tables of their own (each a block of headers, images and palettes, its offsets positive for the 64-bit build), and the body's main texture is recoloured as multiplayer's Luigi is ([`mp_recolour.h`](../multiplayer/mp_recolour.h)). The body's display lists are made in `loadAfter`, after that; the cap's are made again.
 
-**Camera 2** is a second `CPolarSubCamera` (`TCoopCamera`), made while the stage loads, reading controller 2, following player 2 (it moves right after them).
+**Camera 2** is a second `CPolarSubCamera` (`TCoopCamera`), made while the stage loads, reading controller 2, following player 2 (it moves right after them). A controller's meanings (`TMarioGamePad::updateMeaning`) follow the camera of the player holding it (`port_coop_pad_camera`, patch `zzzzzz-coop-02`): controller 2 reads as in the close-up view Y opens while camera 2 is in it, not camera 1.
 
 **Two views.** The `drawStage` hook draws the stage itself while both play: the frame's set-up and the goop's textures once; then each view into its part of the frame (`GXPC_SetSplitView`: viewports, scissors, EFB copies and their clears and peeks are moved and scaled into it after the widescreen mapping), with the stage's GX lists, the silhouettes and the 3D part of the GX Post list; then the 2D (the HUD, the screen's effects, the frame's copy) once over both, and a line between the views. The first view is drawn from the entry pass the game makes after each tick, as when alone. For the second, the entry pass (each model's view matrices, the draw buffers) is made again with camera 2 in camera 1's place in the lists; goop is stamped from the first only (`TPollutionManager::stampModel`). The game's view-frustum check (`ViewFrustumClipCheck`) counts what either camera sees as in view, so what either player sees moves and draws in both. Each camera's aspect is its part's (half or twice the game's) while the screen is split.
 
@@ -37,7 +37,8 @@ Headless, with scripted input (`SMS_AUTOPRESS` for player 1) and these test aids
 | Variable | Effect |
 | --- | --- |
 | `SMS_COOP_TEST_JOIN=n` | a second player without a controller joins `n` frames after the stage starts playing |
-| `SMS_COOP_TEST_PAD=x:y@frame+frames,a@frame+frames,...` | that player's stick (-100..100), A, B or R (`b@`, `r@`), frames since they joined |
+| `SMS_COOP_TEST_PAD=x:y@frame+frames,a@frame+frames,...` | that player's stick (-100..100), or a button (`a@`, `b@`, `x@`, `y@`, `z@`, `l@`, `r@`), frames since they joined |
+| `SMS_AUTOCONTROLLER=id:button@field+fields,id:axis=value@field+fields,...` | (platform/pad) a pretend SDL controller's buttons and axes, by SDL number (A 0, B 1, X 2, Y 3, Start 6; axes 0-5), through the same path as a real one: its Start joins as player 2 |
 | `SMS_COOP_TEST_LEAVE=n` | they leave `n` frames after joining |
 | `SMS_COOP_TEST_KILL=frame` | they lose a life (frames since the game started) |
 | `SMS_COOP_TEST_LIVES=n` | the shared lives are set to `n` as they join |
