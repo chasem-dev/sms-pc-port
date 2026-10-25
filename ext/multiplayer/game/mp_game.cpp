@@ -700,6 +700,10 @@ void MpCapturePose(TMario* m, MpgPose* out)
 		p.flags |= MPG_POSE_CAP;
 	if (mm->unk24[1].unk3 != 0xff)
 		p.flags |= MPG_POSE_UPPER;
+	// the sunglasses (the stand's, the launcher's outfit, Eclipse's Persistent Shades)
+	if (m->mCap && m->mCap->isModelActive(TMarioCap::E_CAP_MODEL_SUNGLASSES))
+		p.more |= MPG_POSE2_SUNGLASSES;
+	p.body = (u8)MpLocalBody();
 	// surfing on a Blooper: the game draws it with Mario (TMario::entryModels)
 	if (m->checkStatusType(MARIO_STATUS_FLAG_UNK10000) && m->mSurfGesso)
 		p.more |= MPG_POSE2_SURF | (u8)((m->mSurfGessoType & 3) << 2);

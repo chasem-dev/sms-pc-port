@@ -299,6 +299,8 @@ bool hiresLog();
 std::string hiresName(const uint8_t* data, uint32_t fmt, uint32_t w, uint32_t h, bool mipmapped, const uint8_t* tlut,
                       uint32_t tlutBytes, bool onlyIfPresent);
 unsigned hiresTexture(const std::string& name, int unit, uint32_t gxW, uint32_t gxH, int* scale);
+// `name`'s replacement is Mario's look's (SMS_MARIO_LOOK), not a texture pack's.
+bool hiresIsLook(const std::string& name);
 // The share of a decoded level's texels (RGBA8) at or above alpha 128.
 float alphaCoverage(const uint8_t* rgba, size_t texels);
 // Before a replacement is asked for: alphaCoverage of each of its original's
