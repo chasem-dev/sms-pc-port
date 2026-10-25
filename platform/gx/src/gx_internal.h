@@ -202,6 +202,9 @@ void platformRequestDisplay(int index);
 bool platformMouseLook();
 void platformRequestMouseLook(bool on);
 bool platformRawMouse();
+// Why the Vulkan renderer asked for (SMS_GX_BACKEND=vulkan) is not drawing, or
+// "" when it is or was not asked for (gx_platform.cpp).
+const char* vulkanMissing();
 bool platformRawMouseMatters();
 void platformRequestRawMouse(bool on);
 // FSR 1 and NIS modes (0 native, 1 quality, 2 balanced, 3 performance, 4 ultra performance): the one
@@ -299,6 +302,8 @@ bool hiresLog();
 std::string hiresName(const uint8_t* data, uint32_t fmt, uint32_t w, uint32_t h, bool mipmapped, const uint8_t* tlut,
                       uint32_t tlutBytes, bool onlyIfPresent);
 unsigned hiresTexture(const std::string& name, int unit, uint32_t gxW, uint32_t gxH, int* scale);
+// `name`'s replacement is Mario's look's (SMS_MARIO_LOOK), not a texture pack's.
+bool hiresIsLook(const std::string& name);
 // The share of a decoded level's texels (RGBA8) at or above alpha 128.
 float alphaCoverage(const uint8_t* rgba, size_t texels);
 // Before a replacement is asked for: alphaCoverage of each of its original's

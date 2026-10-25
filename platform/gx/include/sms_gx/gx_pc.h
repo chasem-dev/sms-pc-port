@@ -321,7 +321,13 @@ const char* GXPC_KeyName(int scancode);
 // own, such as multiplayer's players, each in their own colours. Any thread:
 // the picture is copied, and uploaded the next time the texture is drawn.
 void GXPC_SetTextureOverride(const void* data, size_t bytes, const uint8_t* rgba, int w, int h);
-// Drops every such picture (a stage's memory is let go).
+// The texture whose data is at `data` drawn as it is (a texture pack's picture
+// for it too), never Mario's look (SMS_MARIO_LOOK), whose pictures would find
+// a copy of Mario's textures by their data as well: another player's, with no
+// picture of theirs. Dropped as a picture is (GXPC_SetTextureOverride with
+// NULL `rgba`, or the data changing).
+void GXPC_SetTexturePlain(const void* data, size_t bytes);
+// Drops every such picture, and every plain texture (a stage's memory is let go).
 void GXPC_ClearTextureOverrides(void);
 
 /* Statistics for the current frame (reset by GXCopyDisp). */

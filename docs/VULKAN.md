@@ -1,7 +1,7 @@
 # The Vulkan backend
 
 `renderer = vulkan` in [`settings.txt`](../settings.txt) (or `SMS_GX_BACKEND=vulkan`, or `--vulkan` after the image) draws the game with Vulkan instead of OpenGL.
-OpenGL stays the default; when Vulkan cannot start (no driver, too old a device), the game says why in its log and starts with OpenGL.
+OpenGL stays the default; when Vulkan cannot start (no driver, too old a device), the game says why in its log and starts with OpenGL. As OpenGL can be much slower on the same computer, it also says so in a notice at the top of the window for its first 20 seconds, and in the debug overlay (`` ` ``) for as long as it runs.
 
 It is the same renderer either way.
 `platform/gx` speaks the OpenGL 3.3 subset in [`gl_funcs.h`](../platform/gx/src/gl_funcs.h) and fetches every entry point through one get-proc function; with Vulkan, the platform layer hands it `glvk::getProc` (`platform/gx/src/vk/`), which implements that subset on Vulkan.
@@ -14,8 +14,8 @@ Extended dynamic state and `VK_EXT_depth_clip_control` are used when present.
 The Vulkan loader is opened at run time (volk), so the game still starts on a system without one.
 
 The backend is built in by default on Linux and macOS (MoltenVK, below); Windows has not been tried yet: `SMS_GX_VULKAN=ON ./build.sh` (CMake `-DSMS_GX_VULKAN=ON`) builds it there, `SMS_GX_VULKAN=OFF` leaves it out anywhere.
-Its dependencies (Vulkan-Headers, volk, VMA, glslang) are downloaded at configure time and checked against their SHA-256, or taken from the tarballs in `-DSMS_GX_VULKAN_DEPS=dir`; when one cannot be had, configure warns and the game is built without the backend, as before it existed.
-Without the backend, `renderer = vulkan` logs that and draws with OpenGL.
+Its dependencies (Vulkan-Headers, volk, VMA, glslang) are downloaded at configure time (each tried three times, stopping at the first that cannot be had) and checked against their SHA-256, or taken from the tarballs in `-DSMS_GX_VULKAN_DEPS=dir`; when one cannot be had, configure warns and the game is built without the backend, as before it existed. `SMS_GX_VULKAN` stays on in the cache then, so the cache's `SMS_GX_VULKAN_BUILT` says whether the backend is in (SMS Launcher reads it to build such a game again), and the next configure tries the downloads again.
+Without the backend, `renderer = vulkan` logs that, draws with OpenGL, and says so in the window (above).
 
 ## Pictures
 

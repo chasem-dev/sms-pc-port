@@ -1502,7 +1502,7 @@ void packPose(const MpgPose& p, std::vector<uint8_t>& out)
 	// then the newest of those asked for once (each is in a few poses)
 	// (room is kept for the sounds, which are small)
 	const int sounds = std::min<int>(p.soundCount, MPG_MAX_SOUNDS);
-	const size_t tail = kPadBytes + 2 + sounds * 2;
+	const size_t tail = kPadBytes + 2 + sounds * 2 + 1; // and the body
 	int fx = std::min<int>(p.fxCount, MPG_MAX_FX), shots = std::min<int>(p.shotCount, MPG_MAX_FX);
 	while (fx > 0 && w.len + 3 + fx * kFxBytes + tail > kPoseSize)
 		fx--;
@@ -1526,6 +1526,8 @@ void packPose(const MpgPose& p, std::vector<uint8_t>& out)
 	w.u8(p.soundSeq);
 	for (int i = 0; i < sounds; i++)
 		w.u16(p.sounds[i]);
+	// whose model they wear (Eclipse's characters), after them: older games stop before it
+	w.u8(p.body);
 	out.resize(w.len);
 }
 
@@ -1608,6 +1610,10 @@ bool unpackPose(const uint8_t* d, size_t n, MpgPose& p)
 			return false;
 		for (int i = 0; i < p.soundCount; i++)
 			p.sounds[i] = r.u16();
+		if (r.ok && r.left() >= 1) {
+			const uint8_t body = r.u8();
+			p.body             = body < MPG_BODIES ? body : (uint8_t)MPG_BODY_MARIO;
+		}
 	}
 	return r.ok;
 }

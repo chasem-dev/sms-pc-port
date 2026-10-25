@@ -24,6 +24,8 @@ extern "C" void GXPC_SetTextureOverride(const void* data, size_t, const unsigned
 	g_shownFor = data;
 	g_shown.assign(rgba, rgba + (size_t)w * h * 4);
 }
+static const void* g_plainFor;
+extern "C" void GXPC_SetTexturePlain(const void* data, size_t) { g_plainFor = data; }
 extern "C" void GXPC_ClearTextureOverrides(void) {}
 
 static int failures;
@@ -102,6 +104,12 @@ int main()
 	g_look.clear();
 	CHECK(mpg_dress(1, MPG_CHAR_LUIGI, "H_watergun_main_s3tc", data, sizeof data));
 	CHECK(!memcmp(g_shown.data(), fluddRgba, 8));
+
+	// a texture with no picture (none of this game's, or Eclipse's own
+	// characters' textures): kept plain, so this game's own look stays off it
+	CHECK(!mpg_dress(1, MPG_CHAR_MARIO, "H_ma_other_texture", data, sizeof data));
+	mpg_dress_plain(data, sizeof data);
+	CHECK(g_plainFor == data);
 
 	remove((std::string(dir) + "/1.paint").c_str());
 	remove((std::string(dir) + "/paint.txt").c_str());

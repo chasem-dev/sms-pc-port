@@ -12,12 +12,17 @@
 // With the launcher's paint data, each player wears their own colours
 // (Customize Mario's, else their character's) in place of those textures
 // (mpg_dress), painted again whenever anyone's change; FLUDD too, from its own
-// copy of FLUDD's files.
+// copy of FLUDD's files. Without a picture, a texture is drawn as it is, never
+// in this game's own Mario's look (mpg_dress_plain). With Super Mario Eclipse,
+// a player who chose another character (Luigi, Il Piantissimo, Shadow Mario)
+// wears that character's model, from its archive on the disc, in its own
+// colours; and everyone wears the sunglasses when theirs are on.
 
 #include "../mp_game_api.h"
 #include <Strategic/HitActor.hpp>
 
 class J3DModel;
+class JKRHeap;
 class J3DNode;
 class J3DModelData;
 class J3DDrawBuffer;
@@ -27,6 +32,9 @@ class MActor;
 class TMario;
 // Mario's look this frame, as a pose (mp_game.cpp).
 void MpCapturePose(TMario* mario, MpgPose* pose);
+// Whose model this game's player wears (MPG_BODY_*): Eclipse's character
+// select's, else Mario's.
+int MpLocalBody();
 // Counts the stages set up: what was loaded for one stage lives in its
 // memory, and is gone in the next (a director's address can come back).
 unsigned MpStageNumber();
@@ -67,7 +75,10 @@ private:
 	void applyPose(JDrama::TGraphics* graphics);
 	void blendPoses(const MpgPose& a, const MpgPose& b, f32 t, MpgPose* out);
 	void showHands(int hand);
-	bool buildBody();
+	bool buildBody(int body);
+	void keepBody();
+	void takeBody(int body);
+	bool wearBody(int body);
 	bool buildFludd();
 	bool buildYoshi();
 	bool buildSurf();
@@ -102,6 +113,20 @@ private:
 	J3DModelData* mBodyData;
 	J3DModel* mHands[2][2];  // [ma_hnd2, ma_hnd3][right, left]
 	J3DModel* mCap[2];       // ma_cap1 (cap), ma_cap3 (hair, capless)
+	J3DModel* mGlasses;      // ma_glass1 (the sunglasses), or null
+	int mBody;               // whose model it wears (MPG_BODY_*)
+	// each body made in this stage (keepBody), the one worn in the members above
+	struct Body {
+		M3UModelMario* model;
+		J3DModelData* data;
+		J3DModel* hands[2][2];
+		J3DModel* cap[2];
+		J3DModel* glasses;
+		u16 joints[5]; // chest, hands R and L, head, M_head
+	};
+	Body mBodies[MPG_BODIES];
+	u8 mNoBody;              // bodies that could not be made in this stage (bit n: body n)
+	JKRHeap* mHeap;          // the stage's, where its models are made
 	MActor* mFludd;
 	J3DModelData* mFluddData; // this puppet's own copy of FLUDD's, or null when it shares Mario's
 	MActor* mNozzles[6];

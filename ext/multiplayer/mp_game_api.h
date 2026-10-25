@@ -51,6 +51,17 @@ enum {
 	MPG_CHAR_ICE_MARIO,    // light blue, white overalls
 };
 
+// Whose model a player wears (MpgPose::body): Super Mario Eclipse's character
+// select mounts that character's archive (/data/luigi.szs, ...) as "mario";
+// without Eclipse, always Mario's.
+enum {
+	MPG_BODY_MARIO = 0,
+	MPG_BODY_LUIGI,
+	MPG_BODY_PIANTISSIMO,
+	MPG_BODY_SHADOW_MARIO,
+	MPG_BODIES,
+};
+
 // What a player looks like this frame, enough to draw them elsewhere.
 enum {
 	MPG_POSE_VISIBLE   = 1,
@@ -67,6 +78,7 @@ enum {
 	MPG_POSE2_SURF_TYPE = 12,  // 0 red, 4 yellow, 8 green (TMario::mSurfGessoType << 2)
 	MPG_POSE2_PAUSED    = 16,  // the game is paused (the host's: the others' worlds run on their own)
 	MPG_POSE2_COASTER   = 32,  // riding Pinna Park's coaster car (Mecha-Bowser's fight: TMario::mTorocco)
+	MPG_POSE2_SUNGLASSES = 64, // wearing the sunglasses (TMarioCap's E_CAP_MODEL_SUNGLASSES)
 };
 // One of Mario's effects as his game asked for it (TMarioParticleManager's
 // emit and its kin: port_ext.h's particleEmit), for the others to show at
@@ -140,6 +152,9 @@ typedef struct MpgPose {
 	// games stop before them
 	uint8_t soundCount, soundSeq;
 	uint16_t sounds[MPG_MAX_SOUNDS];
+	// whose model they wear (MPG_BODY_*); after the sounds, so older games
+	// stop before it (and draw everyone as Mario)
+	uint8_t body;
 } MpgPose;
 
 // An enemy as the host's game has it, named by its manager's place in the
@@ -523,6 +538,11 @@ int mpg_ground(float x, float y, float z, MpgGround* out);
 // set to show in place of the texture whose data is at `data` (`bytes` long).
 // 1 if this game has a picture for that texture, 0 to leave it as it is.
 int mpg_dress(int slot, int character, const char* textureName, const void* data, size_t bytes);
+// A texture of another player's model with no picture from mpg_dress: drawn as
+// it is, never in this game's own Mario's look (the launcher's SMS_MARIO_LOOK
+// pack, which finds its textures by their data, so it would find a copy of
+// Mario's own too).
+void mpg_dress_plain(const void* data, size_t bytes);
 // Forgets every picture mpg_dress set (a new stage's puppets are made).
 void mpg_undress_all(void);
 

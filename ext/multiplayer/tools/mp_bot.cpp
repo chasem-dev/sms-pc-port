@@ -18,6 +18,9 @@
 // how smoothly the others draw them).
 // --coins N reports N coins picked up, one a second from three seconds in
 // the host's stage, to check that pickups add up in the host's game.
+// --body N wears Eclipse character N's model (MPG_BODY_*: 0 Mario, 1 Luigi,
+// 2 Il Piantissimo, 3 Shadow Mario), whatever the host plays.
+// --sunglasses wears the sunglasses; --no-sunglasses never does.
 #include "../mp_game_api.h"
 
 #include <chrono>
@@ -45,6 +48,8 @@ int main(int argc, char** argv)
 	int follow     = 0;
 	float delay    = 0.0f, yawDeg = 0.0f;
 	float circle   = 0.0f;
+	int body       = -1;
+	int sunglasses = -1;
 	for (int i = 2; i < argc; i++) {
 		if (!strcmp(argv[i], "--name") && i + 1 < argc)
 			name = argv[++i];
@@ -68,6 +73,12 @@ int main(int argc, char** argv)
 			yawDeg = (float)atof(argv[++i]);
 		else if (!strcmp(argv[i], "--circle") && i + 1 < argc)
 			circle = (float)atof(argv[++i]);
+		else if (!strcmp(argv[i], "--body") && i + 1 < argc)
+			body = atoi(argv[++i]) % MPG_BODIES;
+		else if (!strcmp(argv[i], "--sunglasses"))
+			sunglasses = 1;
+		else if (!strcmp(argv[i], "--no-sunglasses"))
+			sunglasses = 0;
 	}
 	setenv("SMS_MULTIPLAYER", "join", 1);
 	setenv("SMS_MULTIPLAYER_ADDRESS", argv[1], 1);
@@ -158,6 +169,10 @@ int main(int argc, char** argv)
 			for (int e = 0; e < 2; e++)
 				for (int c = 0; c < 3; c++)
 					mine.emitPos[e][c] += host.mtx[c][0] * offX + host.mtx[c][2] * offZ;
+			if (body >= 0)
+				mine.body = (uint8_t)body;
+			if (sunglasses >= 0)
+				mine.more = (uint8_t)(sunglasses ? mine.more | MPG_POSE2_SUNGLASSES : mine.more & ~MPG_POSE2_SUNGLASSES);
 			if (turn)
 				for (int r = 0; r < 3; r++) {
 					mine.mtx[r][0] = -mine.mtx[r][0];

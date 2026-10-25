@@ -1409,6 +1409,11 @@ static void finishUpload(Upload& u, int unit) {
     g_statTexUploads++;
 }
 
+bool hiresIsLook(const std::string& name) {
+    const auto f = s_index.find(name);
+    return f != s_index.end() && f->second.look;
+}
+
 // The GL texture replacing `name` (a name hiresName found in the pack), or 0
 // while it is still preparing or if it cannot be read. Normal draws only
 // request/look up replacements; uploads happen at frame boundaries/loading.

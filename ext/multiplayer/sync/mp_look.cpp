@@ -34,6 +34,7 @@
 
 extern "C" void GXPC_SetTextureOverride(const void* data, size_t bytes, const uint8_t* rgba, int w, int h)
     __attribute__((weak));
+extern "C" void GXPC_SetTexturePlain(const void* data, size_t bytes) __attribute__((weak));
 extern "C" void GXPC_ClearTextureOverrides(void) __attribute__((weak));
 
 namespace {
@@ -324,6 +325,12 @@ extern "C" int mpg_dress(int slot, int character, const char* textureName, const
 		painted = paint(p, *pic, look, character);
 	GXPC_SetTextureOverride(data, bytes, painted->data(), pic->w, pic->h);
 	return 1;
+}
+
+extern "C" void mpg_dress_plain(const void* data, size_t bytes)
+{
+	if (data && bytes && GXPC_SetTexturePlain)
+		GXPC_SetTexturePlain(data, bytes);
 }
 
 extern "C" void mpg_undress(const void* data, size_t bytes)
