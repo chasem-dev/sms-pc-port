@@ -70,8 +70,8 @@ static void voice(bool automatic)
 		put<uint16_t>(voices, 0x58, 1);
 	} else {
 		put<uint16_t>(voices, 0x10, 0xD00);
-		put<uint16_t>(voices, 0x12, 0x4000);
-		put<uint16_t>(voices, 0x14, 0x4000);
+		put<uint16_t>(voices, 0x12, 0x2000); // 1.0 (Q13)
+		put<uint16_t>(voices, 0x14, 0x2000);
 	}
 }
 int main()
@@ -147,7 +147,7 @@ int main()
 			}
 			assert(frames <= 16);
 		} while (!get<uint16_t>(voices, 2));
-		assert(frames == 15); // Halve the current volume until zero, then finish.
+		assert(frames == (automatic ? 15 : 14)); // Halve the current volume (0x4000 or 0x2000) until zero, then finish.
 		render();
 		for (int i = 0; i < 80; i++)
 			assert(left[i] == 0 && right[i] == 0);
@@ -270,7 +270,7 @@ int main()
 				int32_t y = (int32_t)(acc >> 15);
 				y = y > 32767 ? 32767 : y < -32768 ? -32768 : y;
 				x2 = x1, x1 = 16383, y2 = y1, y1 = y;
-				assert(left[i] == y); // slot volume 1.0 (Q14)
+				assert(left[i] == y); // slot volume 1.0 (Q13)
 			}
 		}
 		assert(left[0] > 16383 && left[79] == 32767); // this row's bass boost saturates a DC input

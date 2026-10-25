@@ -149,10 +149,11 @@ Dolphin's DSP HLE gave the same levels (the boot jingle peaks at 13760 in both).
 - **Master** (`DSP_MIXERLEVEL`, SMS sets 0x5000): **Q15**, i.e. 0x5000 = 0.625×.
   The boot jingle (an auto-mixer voice) then matches retail sample for sample: correlation 1.000 and gain 0.994–1.001 on both channels (Q14 gave 0.497).
 - **Auto-mixer volume** (0x056): Q15 with a sine/cosine pan law (0.707 each at centre); fixed by the same jingle match.
-- **`mixChannels` volumes**: **Q14**, consistent with JAudio capping them at `MAX_MIXERLEVEL = gain × 16384`.
-  Evidence: retail's own voice blocks (the oracle traced `CH_BUF` every field over 600 fields of file-select music) replayed through this mixer come out 1.2–1.3× quieter than retail's dump with Q14, and about 2.5× quieter with Q15 (envelope regression; field-rate snapshots limit this to ±20 %).
-- These three scales cannot be told apart from "`mixChannels` Q15, auto-mixer at half, master Q14": every path gives the same output.
-  Streams (0x7FFF sends) therefore play at 1.25×, and their loudest peaks can saturate, as they would under either reading.
+- **`mixChannels` volumes**: **Q13**, so JAudio's cap `MAX_MIXERLEVEL = gain × 16384` is 2.0. This is where the music goes: BGM channels use explicit mix configs, sound effects mostly the auto mixer.
+  Evidence (2026-10-25): `movies/title.dtm` (boot → title → file select) under Dolphin with DSP LLE and with DSP HLE gives the same whole-mix level, second by second within about 1 dB and −25.7/−25.9 dBFS over 20–66 s, where music voices dominate (a port trace of the same inputs starts 1316 `mixChannels` music voices and 143 auto-mixer SFX voices). Dolphin's Zelda HLE mixes these sends as `vol × sample >> 16` and applies the master as 4.12 (`level >> 12`), which is Q13 against this mixer's Q15 master; its auto-mixer path works out to this mixer's Q15 exactly (the boot jingle peaks at 13760 in all three). The port with the same inputs, which cannot follow the movie frame for frame, measures −25.73 dBFS over 20–66 s at Q13 and −28.24 at Q14, and its 6 s windows aligned on the envelope sit within about ±2 dB of retail at Q13 and 3–6.7 dB under it at Q14.
+  The earlier choice, Q14, came from replaying field-rate snapshots of retail's voice blocks (`CH_BUF` over 600 fields of file-select music), which still came out 1.2–1.3× quieter than retail's dump. Snapshots miss what changes between fields, so that method read low. At Q14 the music played 6 dB under the sound effects (sms-launcher#127).
+- These three scales cannot be told apart from "`mixChannels` Q15, auto-mixer at quarter, master Q13": every path gives the same output.
+  Streams (0x7FFF sends) therefore play at 2.5×, as in Dolphin's HLE, and their loudest peaks can saturate. No retail code starts one.
 - `SMS_AUDIO_MASTER_SHIFT` and `SMS_AUDIO_SLOT_SHIFT` override the two shifts.
 
 ## Bus → channel

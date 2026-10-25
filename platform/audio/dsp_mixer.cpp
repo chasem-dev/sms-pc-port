@@ -182,7 +182,7 @@ struct State {
 	int gainTo[PORT_DSPMIX_CLASSES];
 	bool gainSeen;                      // gainTo holds the last subframe's gain
 	int masterShift; // master level fixed point: Q15 (measured against retail, PROTOCOL.md)
-	int slotShift;   // mixChannels volume fixed point: Q14
+	int slotShift;   // mixChannels volume fixed point: Q13 (measured against retail, PROTOCOL.md)
 	bool fxOff;
 	bool filtersOff;
 	bool warnedFir;
@@ -524,9 +524,9 @@ void apply_filters(int vi, Voice& v, Decoder& d, bool reset, int32_t* src, int n
 		biquad(v, src, n);
 }
 
-// `shift` is the volume's fixed point: 14 for mixChannels sends (JAudio caps
-// them at MAX_MIXERLEVEL = gain x 16384), 15 for the auto mixer
-// (volume x 32767.5). Both measured against retail (PROTOCOL.md, Levels).
+// `shift` is the volume's fixed point: 13 for mixChannels sends (so JAudio's
+// MAX_MIXERLEVEL, gain x 16384, is 2.0), 15 for the auto mixer (volume x
+// 32767.5). Both measured against retail (PROTOCOL.md, Levels).
 void mix_slot(int32_t* bus, const int32_t* src, int n, int32_t cur, int32_t tgt, int shift)
 {
 	if (cur == 0 && tgt == 0)
@@ -754,7 +754,7 @@ extern "C" void port_dspmix_setup(uint32_t nvoices, void* voices, const uint32_t
 	e             = getenv("SMS_AUDIO_MASTER_SHIFT");
 	g.masterShift = e && *e ? atoi(e) : 15;
 	e             = getenv("SMS_AUDIO_SLOT_SHIFT");
-	g.slotShift   = e && *e ? atoi(e) : 14;
+	g.slotShift   = e && *e ? atoi(e) : 13;
 	e             = getenv("SMS_AUDIO_FILTERS");
 	g.filtersOff  = e && strcmp(e, "0") == 0;
 	e             = getenv("SMS_AUDIO_TRACE");

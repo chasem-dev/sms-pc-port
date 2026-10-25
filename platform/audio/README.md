@@ -62,7 +62,7 @@ It boots, and the logo, UI sounds, sequences and voice clips play; see Status.
 | `SMS_AUDIO_FILTERS=0` | bypass the per-voice biquad and low-pass filters (the under-water muffle; PROTOCOL.md, Voice filters) |
 | `SMS_AUDIO_SWAP=0` | keep DMA pair order (the default swaps the (right, left) DMA pairs for SDL) |
 | `SMS_AUDIO_MASTER_SHIFT=n` | fixed point of the DSP master level (default 15, measured) |
-| `SMS_AUDIO_SLOT_SHIFT=n` | fixed point of `mixChannels` volumes (default 14, measured) |
+| `SMS_AUDIO_SLOT_SHIFT=n` | fixed point of `mixChannels` volumes (default 13, measured) |
 | `SMS_AUDIO_ARAM_DUMP=file[,n]` | write the ARAM image after `n` subframes (default 16000) |
 | `SMS_VOLUME=0..100` | master volume (default 100): scales the stream the SDL callback plays, so `SMS_AUDIO_WAV` records it unscaled. The in-game Volume row changes it. Needs a real output device, as does the row |
 | `SMS_MUSIC_VOLUME=0..100` | Music Volume, percent (default 100); settings.txt `music_volume`, the in-game Music Volume row. Scales the music before it is mixed (see Music and SFX volume), so it is in `SMS_AUDIO_WAV` too |
@@ -100,7 +100,8 @@ Check a build with `SMS_AUDIO_TRACE=1`: each voice-start line ends with `music` 
 Compared against retail running under Dolphin with DSP LLE (the game's own microcode), boot → title → file select; the numbers are in PROTOCOL.md.
 
 - The boot jingle matches retail sample for sample (correlation 1.000, gain 0.99–1.00).
-  This fixed the master at Q15 (earlier Q14 was 2× too loud); `mixChannels` volumes are Q14 (auto mixer Q15).
+  This fixed the master at Q15 (earlier Q14 was 2× too loud); the auto mixer is Q15.
+- `mixChannels` volumes, which carry the music, are Q13: the file-select music then matches retail's level (whole-mix RMS within 0.1 dB over 46 s). They were Q14 until 2026-10-25, which played the music 6 dB under the sound effects (sms-launcher#127).
 - Voices, waves and volumes match retail's voice blocks (the same ARAM addresses, the same slot volumes).
   File-select music plays with retail's voice count (11–13 vs 10.9) and a continuous floor, after two timing fixes: AI blocks wait for the DSP frame, and `audio-03` stops the host-time "DSP overload" voice stealing that cut notes to about a third.
 - Bus 1 is left, bus 2 right, as retail.
