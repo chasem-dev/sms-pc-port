@@ -154,6 +154,11 @@ void GXPC_OverlayDraw(int winW, int winH) {
                     strstr(s_renderer.c_str(), "Software");
         if (s_renderer.size() > 44) s_renderer.resize(44);
         if (soft) s_renderer += "\nSOFTWARE RENDERING (no GPU driver): see README";
+        if (const char* missing = gx::vulkanMissing(); *missing) {
+            std::string why = missing;
+            if (why.size() > 60) why.resize(60);
+            s_renderer += "\nVULKAN ASKED FOR, DRAWING WITH OPENGL: " + why;
+        }
     }
     // Keep drawing the cached panel every frame, but only rasterise and upload
     // at 4 Hz. Rebuilding it at the game's frame rate can miss a retrace and

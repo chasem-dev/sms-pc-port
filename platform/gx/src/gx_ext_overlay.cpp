@@ -303,6 +303,12 @@ extern "C" void GXPC_ExtOverlaySet(int panel, const char* text) {
 
 namespace gx {
 
+void extOverlayClearIf(int panel, const std::string& text) {
+    if (panel < 0 || panel >= GXPC_EXT_OVERLAY_PANELS) return;
+    std::lock_guard<std::mutex> hold(s_lock);
+    if (s_panels[panel].text == text) s_panels[panel].text.clear();
+}
+
 void extOverlayRender(int winW, int winH) {
     if (winW <= 0 || winH <= 0) return;
     renderMarkers(winW, winH);  // the colour over the window first: the text stays over it

@@ -202,6 +202,9 @@ void platformRequestDisplay(int index);
 bool platformMouseLook();
 void platformRequestMouseLook(bool on);
 bool platformRawMouse();
+// Why the Vulkan renderer asked for (SMS_GX_BACKEND=vulkan) is not drawing, or
+// "" when it is or was not asked for (gx_platform.cpp).
+const char* vulkanMissing();
 bool platformRawMouseMatters();
 void platformRequestRawMouse(bool on);
 // FSR 1 and NIS modes (0 native, 1 quality, 2 balanced, 3 performance, 4 ultra performance): the one

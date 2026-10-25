@@ -159,11 +159,19 @@ function(sms_gx_fetch var file url hash)
     if(SMS_GX_VULKAN_DEPS AND EXISTS ${SMS_GX_VULKAN_DEPS}/${file})
         set(_tar ${SMS_GX_VULKAN_DEPS}/${file})
     else()
-        file(DOWNLOAD ${url} ${_tar} STATUS _status TIMEOUT 120 INACTIVITY_TIMEOUT 30)
-        list(GET _status 0 _code)
+        # Three tries: a dropped or stalled connection is the usual reason a
+        # download fails, and the game is built without the backend if all do.
+        foreach(_try RANGE 1 3)
+            file(DOWNLOAD ${url} ${_tar} STATUS _status TIMEOUT 120 INACTIVITY_TIMEOUT 30)
+            list(GET _status 0 _code)
+            if(_code EQUAL 0)
+                break()
+            endif()
+            file(REMOVE ${_tar})
+            message(STATUS "sms_gx: could not download ${url} (${_status}), try ${_try} of 3")
+        endforeach()
         if(NOT _code EQUAL 0)
             message(WARNING "sms_gx: could not download ${url} (${_status})")
-            file(REMOVE ${_tar})
             return()
         endif()
     endif()
@@ -188,23 +196,36 @@ function(sms_gx_fetch var file url hash)
 endfunction()
 
 if(SMS_GX_VULKAN)
+    # One after another, stopping at the first that cannot be had (the network
+    # is down or GitHub is blocked: the rest would only wait as long again).
     sms_gx_fetch(_vk_headers vulkan-headers-1.3.296.tar.gz
         https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v1.3.296.tar.gz
         e204e0b3c19f622d197df945737f5db913d6621830999b8578d34e80a7c90585)
-    sms_gx_fetch(_vk_volk volk-1.3.296.0.tar.gz
-        https://github.com/zeux/volk/archive/refs/tags/vulkan-sdk-1.3.296.0.tar.gz
-        8ffd0e81e29688f4abaa39e598937160b098228f37503903b10d481d4862ab85)
-    sms_gx_fetch(_vk_vma vma-3.1.0.tar.gz
-        https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/archive/refs/tags/v3.1.0.tar.gz
-        ae134ecc37c55634f108e926f85d5d887b670360e77cd107affaf3a9539595f2)
-    sms_gx_fetch(_vk_glslang glslang-15.0.0.tar.gz
-        https://github.com/KhronosGroup/glslang/archive/refs/tags/15.0.0.tar.gz
-        c31c8c2e89af907507c0631273989526ee7d5cdf7df95ececd628fd7b811e064)
+    if(_vk_headers)
+        sms_gx_fetch(_vk_volk volk-1.3.296.0.tar.gz
+            https://github.com/zeux/volk/archive/refs/tags/vulkan-sdk-1.3.296.0.tar.gz
+            8ffd0e81e29688f4abaa39e598937160b098228f37503903b10d481d4862ab85)
+    endif()
+    if(_vk_volk)
+        sms_gx_fetch(_vk_vma vma-3.1.0.tar.gz
+            https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/archive/refs/tags/v3.1.0.tar.gz
+            ae134ecc37c55634f108e926f85d5d887b670360e77cd107affaf3a9539595f2)
+    endif()
+    if(_vk_vma)
+        sms_gx_fetch(_vk_glslang glslang-15.0.0.tar.gz
+            https://github.com/KhronosGroup/glslang/archive/refs/tags/15.0.0.tar.gz
+            c31c8c2e89af907507c0631273989526ee7d5cdf7df95ececd628fd7b811e064)
+    endif()
     if(NOT _vk_headers OR NOT _vk_volk OR NOT _vk_vma OR NOT _vk_glslang)
         message(WARNING "sms_gx: building without the Vulkan backend (its dependencies could not be had); the game draws with OpenGL")
         set(SMS_GX_VULKAN OFF)
     endif()
 endif()
+# Whether the backend is built in: SMS_GX_VULKAN stays ON in the cache when its
+# dependencies could not be had, so this says what the build has. SMS Launcher
+# reads it to build again a game whose Vulkan is missing; the next configure
+# tries the downloads again.
+set(SMS_GX_VULKAN_BUILT ${SMS_GX_VULKAN} CACHE INTERNAL "The Vulkan backend is built in (SMS_GX_VULKAN, and its dependencies were had)")
 if(SMS_GX_VULKAN)
     # glslang: the GLSL front end and SPIR-V back end only
     set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
