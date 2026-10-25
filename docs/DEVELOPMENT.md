@@ -115,6 +115,9 @@ C-stick orbit (`SMS_CSTICK_ORBIT=1`, `decomp-patches/zzz-camera-06-cstick-orbit.
 Once Mario can move it holds the C-stick's up or down through the pad layer's key state for 20 frames at a time and checks what moved: with the setting on the tilt moves (up lowers the camera, down raises it, Invert camera Y the other way) and the distance ratio does not; with `CAMERA_ZOOM` held (the right stick's press) or the setting off, the distance ratio moves and the tilt does not.
 `AUTOSAVE_PART=shine` runs only the Shine. `AUTOSAVE_PART=fallback` makes the slot look saved over by another game, and the prompt must then open.
 
+Aiming FLUDD in place with the C-stick (`SMS_CLOSE_CAMERA_CSTICK`, `decomp-patches/zzz-camera-07-stance-cstick-aim.patch`) has `tools/regress/stance_aim.py`, run under gdb on regular Sunshine with the same environment as the nozzle check.
+Once Mario can move it holds keys through the pad layer for 30 frames at a time: with the setting on, R (Space) and the C-stick's right turn Mario and the camera follows him; the C-stick's up tilts FLUDD the way it tilts the Y close-up camera (also checked), and the other way with Invert camera Y; L with the control stick walks him sideways while the C-stick turns him. Standing, and with the setting off, the C-stick turns the camera and not Mario.
+
 Water with a NaN speed in an Eclipse stage ([ECLIPSE.md](ECLIPSE.md), the Tramplin' Stu crash) has `tools/regress/eclipse_nan_water.py`, run under gdb on an Eclipse build with the Eclipse disc, a copy of the card `regress.py`'s `ecl-firstboot` run saves, `SMS_WARP=66,1` (Hotel Lacrima's basement) and `regress.py`'s `ECL_WARP_AP` as `SMS_AUTOPRESS`.
 Once the Tramplin' Stu moves it emits 50 water particles with a NaN speed above Mario (the water manager drops particles far from him) and checks that the game runs `NAN_SECONDS` (default 20) more; without the fix the 64-bit build faults in BetterSunshineEngine's `checkWallsExotic_` within a frame.
 

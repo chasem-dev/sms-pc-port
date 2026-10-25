@@ -94,7 +94,10 @@ __attribute__((weak)) int GXPC_RequestQuit(void);
 //   SMS_FREE_CAMERA=1          the camera stays where it is put (no auto swing-back)
 //   SMS_MOUSE_SENSITIVITY=%    mouse look speed, when the GX layer captures the mouse
 //   SMS_CLOSE_CAMERA_CSTICK=1  the C-stick turns (and aims FLUDD in) the Y close-up
-//                              camera too (decomp-patches/zzz-camera-04-close-camera-cstick.patch)
+//                              camera too (decomp-patches/zzz-camera-04-close-camera-cstick.patch),
+//                              and turns Mario and tilts FLUDD while he sprays in
+//                              place, R all the way down or L held to walk sideways
+//                              (decomp-patches/zzz-camera-07-stance-cstick-aim.patch)
 //   SMS_CLOSE_CAMERA_MOUSE=0   mouse look leaves the Y close-up camera alone; by
 //                              default it turns it, and so aims FLUDD in it
 //                              (decomp-patches/zzz-camera-05-close-camera-mouse.patch)
@@ -660,7 +663,7 @@ void init()
 	g_invert_cy = env_on("SMS_CAMERA_INVERT_Y");
 	g_closeCameraCStick = env_on("SMS_CLOSE_CAMERA_CSTICK");
 	if (g_closeCameraCStick)
-		port_log("[pad] the C-stick turns the close-up camera too\n");
+		port_log("[pad] the C-stick turns the close-up camera, and aims FLUDD in place\n");
 	if (const char* e = getenv("SMS_CLOSE_CAMERA_MOUSE"))
 		g_closeCameraMouse = !*e || env_on("SMS_CLOSE_CAMERA_MOUSE");
 	if (!g_closeCameraMouse)
