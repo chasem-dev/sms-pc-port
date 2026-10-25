@@ -25,6 +25,8 @@
 #include <JSystem/JKernel/JKRHeap.hpp>
 #include <JSystem/JSupport/JSUMemoryInputStream.hpp>
 #include <MarioUtil/DrawUtil.hpp>
+#include <MoveBG/ItemManager.hpp>
+#include <MoveBG/Item.hpp>
 #include <MSound/MSound.hpp>
 #include <M3DUtil/M3UModelMario.hpp>
 #include <Player/Mario.hpp>
@@ -842,6 +844,41 @@ void afterMovement()
 		if (!warped && sscanf(w, "%d:%d,%d", &at, &area, &episode) == 3 && s_frame >= at) {
 			warped = true;
 			s_dir->setNextStage((u16)(((area + 1) << 8) | episode), nullptr);
+		}
+	}
+	// coins brought out at player 2 and taken by them, frames after joining
+	static int coinsDone;
+	if (const char* t = getenv("SMS_COOP_TEST_COINS")) {
+		int at = 0, count = 0;
+		if (sscanf(t, "%d:%d", &at, &count) == 2 && s_testJoined && coinsDone < count && gpItemManager
+		    && s_frame >= s_testJoinFrame + at + coinsDone * 10 && playing()) {
+			if (TCoin* coin = gpItemManager->newAndRegisterCoinReal()) {
+				coin->mPosition = m->mPosition;
+				coin->appear();
+				coin->touchActor(m); // as the hit check does when they meet
+			}
+			coinsDone++;
+			fprintf(stderr, "[coop] test: player 2 took coin %d; the stage's coins: %d\n", coinsDone,
+			        (int)TFlagManager::getInstance()->getFlag(0x40002));
+		}
+	}
+	// the stage's 100-coin Shine brought out, frames after joining, and player 2
+	// put on it once it has come out
+	static TShine* shine;
+	static int shineAt;
+	if (const char* t = getenv("SMS_COOP_TEST_SHINE")) {
+		if (!shineAt && s_testJoined && s_frame >= s_testJoinFrame + atoi(t) && gpItemManager) {
+			shineAt = s_frame;
+			shine   = gpItemManager->makeShineAppearWithDemo("シャイン（１００枚コイン用）", "シャイン（１００枚コイン用）カメラ",
+			                                                 m->mPosition.x, m->mPosition.y + 50.0f, m->mPosition.z);
+		}
+		if (shine && shineAt && s_frame >= shineAt + 360 && shineAt > 0 && playing()) {
+			shineAt      = -1;
+			m->mPosition = shine->mPosition;
+			m->mPosition.y -= 60.0f;
+			fprintf(stderr, "[coop] test: player 2 touches the Shine at %.0f %.0f %.0f (state %d)\n", shine->mPosition.x,
+			        shine->mPosition.y, shine->mPosition.z, (int)shine->mState);
+			shine->touchActor(m); // as the hit check does when they meet
 		}
 	}
 	if (getenv("SMS_COOP_DEBUG") && s_frame % 30 == 0) {
