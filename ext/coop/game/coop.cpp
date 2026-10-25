@@ -55,6 +55,7 @@ extern int port_coop_in_p2;
 // platform/gx
 void GXPC_SetSplitView(int on, float x, float y, float w, float h) __attribute__((weak));
 void GXPC_ExtOverlaySet(int panel, const char* text) __attribute__((weak));
+u32 GXPC_FrameCount(void) __attribute__((weak));
 // ext/multiplayer/game/mp_spawn.cpp: the stage's scene.bin records
 int port_spawn_record_of(const void* object, const void** record, unsigned* size);
 // decomp-patches/zzzzzz-coop-01: ViewFrustumClipCheck's other view
@@ -591,6 +592,7 @@ int drawStage(void* director, void* graphics)
 		s_post[i]->perform(CUE_ALL, g);
 	for (int i = s_postOverlayTo; i < s_postCount; i++)
 		s_post[i]->perform(CUE_ALL, g);
+
 	return 1;
 }
 
@@ -661,6 +663,9 @@ void activate(bool on)
 	if (!m || s_active == on)
 		return;
 	s_active = on;
+	if (getenv("SMS_COOP_DEBUG"))
+		fprintf(stderr, "[coop] frame %d (gx frame %u): player 2 %s\n", s_frame, GXPC_FrameCount ? GXPC_FrameCount() : 0,
+		        on ? "in play" : "out of play");
 	if (on) {
 		m->offHitFlag(HIT_FLAG_NO_COLLISION);
 		revive(m);
@@ -846,7 +851,7 @@ void objectMove(void* object, int after)
 }
 
 // A test's player 2 input (SMS_COOP_TEST_PAD=stick x:y@frame+frames,...;
-// "a@frame+frames" presses A): what controller 2 reads.
+// "a@frame+frames" presses A; frames since they joined): what controller 2 reads.
 struct TestPress {
 	int x, y;
 	u16 buttons;
@@ -884,7 +889,7 @@ void padRead(void* statusv)
 	PADStatus& s = status[1];
 	s.err        = PAD_ERR_NONE;
 	for (int i = 0; i < s_testCount; i++)
-		if (s_frame >= s_test[i].at && s_frame < s_test[i].until) {
+		if (s_frame - s_testJoinFrame >= s_test[i].at && s_frame - s_testJoinFrame < s_test[i].until) {
 			if (s_test[i].buttons)
 				s.button |= s_test[i].buttons;
 			else

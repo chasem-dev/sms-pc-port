@@ -37,7 +37,7 @@ Headless, with scripted input (`SMS_AUTOPRESS` for player 1) and these test aids
 | Variable | Effect |
 | --- | --- |
 | `SMS_COOP_TEST_JOIN=n` | a second player without a controller joins `n` frames after the stage starts playing |
-| `SMS_COOP_TEST_PAD=x:y@frame+frames,a@frame+frames,...` | that player's stick (-100..100), A, B or R (`b@`, `r@`), frames since the game started |
+| `SMS_COOP_TEST_PAD=x:y@frame+frames,a@frame+frames,...` | that player's stick (-100..100), A, B or R (`b@`, `r@`), frames since they joined |
 | `SMS_COOP_TEST_LEAVE=n` | they leave `n` frames after joining |
 | `SMS_COOP_TEST_KILL=frame` | they lose a life |
 | `SMS_COOP_TEST_WARP=frame:area,episode` | the stage changes |
