@@ -23,6 +23,7 @@
 #include <math.h>
 #include <dlfcn.h>
 #include <algorithm>
+#include <chrono>
 #include <vector>
 
 // --- SDL2 event ABI (SDL_events.h, SDL_scancode.h, SDL_gamecontroller.h) ---
@@ -1104,9 +1105,7 @@ GcAdapterInput g_gcLast[2];
 
 double now_seconds()
 {
-	struct timespec ts;
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return (double)ts.tv_sec + ts.tv_nsec * 1e-9;
+	return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
 // Whose the GameCube adapter's port is: its first connected port, its second.
