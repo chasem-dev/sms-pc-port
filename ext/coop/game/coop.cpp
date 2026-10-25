@@ -67,6 +67,7 @@ namespace {
 
 const int kNoticeFrames = 30 * 5;
 const int kOverlayNotice = 0; // GXPC_EXT_OVERLAY_NOTICE
+const int kOverlayStatus = 1; // GXPC_EXT_OVERLAY_STATUS
 
 // ------------------------------------------------------------ the players' globals
 
@@ -95,6 +96,7 @@ bool s_hintShown;
 bool s_testJoined;
 int s_testJoinFrame;
 int s_frame;
+int s_swapCount;      // object moves led by player 2 lately (SMS_COOP_DEBUG)
 
 void capture(Ctx& c)
 {
@@ -680,6 +682,29 @@ void setAspects(bool split)
 		s_p2.cam->mAspect = aspect;
 }
 
+// The HUD's health meter is player 1's: player 2's health shows in the
+// window's corner while they are hurt (as the game's meter shows Mario's).
+void showHealth()
+{
+	static int shown = -1;
+	TMario* m = p2();
+	const int max = m ? m->mDeParams.mHPMax.get() : 0;
+	const int now = s_active && m && !m->checkFlag(MARIO_FLAG_GAME_OVER) && m->mHealth < max ? m->mHealth : -1;
+	if (now == shown || !GXPC_ExtOverlaySet)
+		return;
+	shown = now;
+	if (now < 0) {
+		GXPC_ExtOverlaySet(kOverlayStatus, "");
+		return;
+	}
+	char text[64]; // the overlay's font is ASCII: a bar of the health left
+	int at = snprintf(text, sizeof text, "#5ad25a Luigi [");
+	for (int i = 0; i < max && at < (int)sizeof text - 3; i++)
+		text[at++] = i < now ? '#' : '-';
+	snprintf(text + at, sizeof text - at, "]");
+	GXPC_ExtOverlaySet(kOverlayStatus, text);
+}
+
 void frame()
 {
 	s_frame++;
@@ -721,6 +746,7 @@ void frame()
 	}
 	if (s_noticeFrames > 0 && --s_noticeFrames == 0 && GXPC_ExtOverlaySet)
 		GXPC_ExtOverlaySet(kOverlayNotice, "");
+	showHealth();
 	// two views while both play the stage; one (player 1's camera) for its
 	// cutscenes, Shine Gets and the like, which the game shows on camera 1
 	const bool split = s_active && d->mState >= TMarDirector::STATE_UNK4 && !d->isDemoModeNow()
@@ -758,6 +784,8 @@ void afterMovement()
 		        s_frame, m->mPosition.x, m->mPosition.y, m->mPosition.z, (unsigned)m->mStatus,
 		        pad ? pad->getMainStickX() : 0.0f, pad ? pad->getMainStickY() : 0.0f, p1()->mPosition.x, p1()->mPosition.y,
 		        p1()->mPosition.z);
+		fprintf(stderr, "[coop] %d object moves led by player 2 lately; player 2 health %d\n", s_swapCount, (int)m->mHealth);
+		s_swapCount = 0;
 	}
 	// player 2 down (a lost life, a pit): back beside player 1 a moment later
 	if (m->checkFlag(MARIO_FLAG_GAME_OVER)) {
@@ -808,6 +836,7 @@ void objectMove(void* object, int after)
 	if (dist2(a->mPosition, s_p2.mario->mPosition) >= dist2(a->mPosition, s_p1.mario->mPosition)
 	    || s_p2.mario->checkFlag(MARIO_FLAG_GAME_OVER))
 		return;
+	s_swapCount++;
 	Swap& w        = s_swaps[s_swapDepth++];
 	w.object       = object;
 	w.saved.mario  = gpMarioOriginal;
