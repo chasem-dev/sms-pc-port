@@ -262,6 +262,20 @@ extern "C" void port_spawn_record(void* object, const void* record, unsigned siz
 
 void MpSpawnRecord(void* object, const void* record, unsigned size) { port_spawn_record(object, record, size); }
 
+// The scene.bin record `object` was made from in this stage, as the loader
+// read it (split-screen co-op makes its second Mario from Mario's): 1 and the
+// record, or 0 when the stage made it some other way.
+extern "C" int port_spawn_record_of(const void* object, const void** record, unsigned* size)
+{
+	for (int k = 0; k < s_recordCount; k++)
+		if (s_records[k].object == object) {
+			*record = s_records[k].bytes;
+			*size   = s_records[k].size;
+			return 1;
+		}
+	return 0;
+}
+
 void MpSpawnStageSetup()
 {
 	// this stage's records are all in; the next ones are another stage's

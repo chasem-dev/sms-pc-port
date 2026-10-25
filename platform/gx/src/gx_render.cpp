@@ -88,6 +88,18 @@ struct XMap {
     float a = 1, b = 0, clip = 1;
 };
 static XMap s_xmap;
+// GXPC_SetSplitView (split-screen co-op): while on, everything drawn lands in
+// a part of the frame, as if that part were the whole: viewports, scissors,
+// EFB copies and their clears, and peeks are moved and scaled into it, after
+// the widescreen mapping. x, y in widened-EFB pixels; sx, sy the part's share
+// of the frame's width and height.
+struct SplitView {
+    bool on = false;
+    float x = 0, y = 0, sx = 1, sy = 1;
+};
+static SplitView s_split;
+static float splitX(float x) { return s_split.on ? s_split.x + x * s_split.sx : x; }
+static float splitY(float y) { return s_split.on ? s_split.y + y * s_split.sy : y; }
 static bool s_stretch2D = false;  // GXPC_SetStretch2D: the game's faders
 static bool s_wide2D = false;     // GXPC_SetWide2D: 2D the game laid out past the 4:3 edges (the map)
 // SMS_WIDESCREEN_HUD=edges: while the game draws its gameplay HUD
@@ -1629,6 +1641,14 @@ static void applyGlState() {
             sw = r - l;
         }
     }
+    if (s_split.on) {  // into the split view's part of the frame
+        int l = int(floorf(splitX(float(left)))), r = int(ceilf(splitX(float(left + sw))));
+        int t = int(floorf(splitY(float(top)))), b = int(ceilf(splitY(float(top + sh))));
+        left = l;
+        sw = r - l;
+        top = t;
+        sh = b - t;
+    }
     GLint sc[4] = {scaled(left), scaled(top), scaled(left + sw) - scaled(left), scaled(top + sh) - scaled(top)};
     if (memcmp(sc, c.sc, sizeof sc) != 0) {
         memcpy(c.sc, sc, sizeof sc);
@@ -1867,6 +1887,12 @@ static void uploadUniforms(const ShaderProgram* sp, float texW[8], float texH[8]
     if (s_efbW != EFB_W) {  // the draw's widescreen mapping (centre and half-width, clip x scale)
         vp[4] = (vp[4] - 342.0f) * s_xmap.a + s_xmap.b + 342.0f;
         vp[0] *= s_xmap.a * s_xmap.clip;
+    }
+    if (s_split.on) {  // the split view's part of the frame
+        vp[4] = splitX(vp[4] - 342.0f) + 342.0f;
+        vp[0] *= s_split.sx;
+        vp[5] = splitY(vp[5] - 342.0f) + 342.0f;
+        vp[1] *= s_split.sy;
     }
     UNI(uViewport, vp, vp, glUniform4fv(sp->uViewport, 2, vp));
     float ch[16];
@@ -2256,7 +2282,9 @@ static XMap drawXMapExact() {
         m.a = s_stretch;
         float p00 = xff(XFR_PROJ), p11 = xff(XFR_PROJ + 2);
         float aspect = p00 != 0.0f ? fabsf(p11 / p00) : 0.0f;
-        if (aspect < kCamAspect * sqrtf(s_wide)) m.clip = 1.0f / s_stretch;  // not widened by the game
+        float wideAspect = kCamAspect * sqrtf(s_wide);
+        if (s_split.on) wideAspect *= s_split.sx / s_split.sy;  // a split view's camera is narrower or wider
+        if (aspect < wideAspect) m.clip = 1.0f / s_stretch;  // not widened by the game
         return m;
     }
     // 2D across the whole width: artwork (menus, the map, movies: colour
@@ -2843,6 +2871,17 @@ static void copyEfb(uint32_t ctrl) {
     float fx = float(x), fw = float(w);
     if (s_efbW != EFB_W && !stretched && !(x == 0 && w == s_efbW))
         fx = float(x - s_ox) + pixelAligned(float(s_ox));  // where the centred draws it copies landed
+    // a split view's copy takes its part of the frame (the texture keeps its size)
+    const int fullOw = x1 - x0, fullOh = scaled(y + h) - scaled(y);
+    float fy = float(y), fh = float(h);
+    if (s_split.on && !disp) {
+        fx = splitX(fx);
+        fw *= s_split.sx;
+        fy = splitY(fy);
+        fh *= s_split.sy;
+        x0 = int(floorf(fx * s_scale));
+        x1 = int(ceilf((fx + fw) * s_scale));
+    }
     if (stretched) {
         // A stretched piece's edges fall inside widened pixels, and its quad
         // covers the scaled columns up to them, so the copy and its clear take
@@ -2886,7 +2925,7 @@ static void copyEfb(uint32_t ctrl) {
         bool intensity = ((ctrl >> 15) & 3) == 3;
         bool zcopy = (g.bp[BP_PE_CONTROL] & 7) == 3;
         bool half = (ctrl >> 9) & 1;
-        int ow = x1 - x0, oh = scaled(y + h) - scaled(y);
+        int ow = fullOw, oh = fullOh;
         if (half) {
             ow /= 2;
             oh /= 2;
@@ -2913,7 +2952,7 @@ static void copyEfb(uint32_t ctrl) {
         uint32_t mode = fmt | (intensity ? 16u : 0u) | (zcopy ? 32u : 0u);
         efbCopyRegister(dest, tex, ow, oh, mode);
         // s_efbColor (s_efbDepth for depth copies), sampled below, holds the current EFB
-        efbReadFbo(x0, scaled(y), x1, scaled(y + h), zcopy ? GL_DEPTH_BUFFER_BIT : GL_COLOR_BUFFER_BIT);
+        efbReadFbo(x0, int(floorf(fy * s_scale)), x1, int(ceilf((fy + fh) * s_scale)), zcopy ? GL_DEPTH_BUFFER_BIT : GL_COLOR_BUFFER_BIT);
         glBindFramebuffer(GL_FRAMEBUFFER, s_tmpFbo);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
         glViewport(0, 0, ow, oh);
@@ -2922,11 +2961,11 @@ static void copyEfb(uint32_t ctrl) {
         glBindTexture(GL_TEXTURE_2D, s_efbDepth);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, s_efbColor);
-        float rect[4] = {fx / float(s_efbW), float(y) / EFB_H, fw / float(s_efbW), float(h) / EFB_H};
+        float rect[4] = {fx / float(s_efbW), fy / EFB_H, fw / float(s_efbW), fh / EFB_H};
         glUniform4fv(s_copyURect, 1, rect);
         // the copy's rectangle in EFB pixels (the scaled EFB is scaled(s_efbW) x scaled(EFB_H) of them)
         const float pxX = float(scaled(s_efbW)) / float(s_efbW), pxY = float(scaled(EFB_H)) / EFB_H;
-        const float left = fx * pxX, top = float(y) * pxY, across = fw * pxX, down = float(h) * pxY;
+        const float left = fx * pxX, top = fy * pxY, across = fw * pxX, down = fh * pxY;
         const float src[4] = {left, top, half ? 0.0f : across / float(ow), down / float(oh)};
         glUniform4fv(s_copyUSrc, 1, src);
         const CopyMap map{left - floorf(left), top - floorf(top), across / float(tw), down / float(th),
@@ -2939,7 +2978,10 @@ static void copyEfb(uint32_t ctrl) {
         s_stats.efbCopies++;
         writeBackCopy(dest, tex, ow, oh, tw, th, map, copyLayout(fmt, zcopy));
     }
-    if (clear) clearRect(x0, x1, y, h);
+    if (clear) {
+        if (s_split.on && !disp) clearRect(x0, x1, int(floorf(fy)), int(ceilf(fy + fh)) - int(floorf(fy)));
+        else clearRect(x0, x1, y, h);
+    }
     glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
     if (clear) s_drawGen++;
     if (disp) {
@@ -3169,6 +3211,10 @@ static uint32_t peekRaw(int x, int y, bool depth) {
     // so clear colour and the far plane
     if (!s_ready) return depth ? 0xFFFFFF00u : 0;
     if (s_efbW != EFB_W && x >= 0) x = int((float(x) + 0.5f) * s_stretch);  // the game camera's coordinates: stretched
+    if (s_split.on && x >= 0 && y >= 0) {  // a split view's: in its part of the frame
+        x = int(splitX(float(x)));
+        y = int(splitY(float(y) + 0.5f));
+    }
     flushBatch();
     glcInvalidate();
     GxTimer tp(&s_peekSeconds);
@@ -3365,6 +3411,15 @@ void GXPC_HudPieceEnd(void) {
     GXPC_HudPaneEnd();
     if (!s_hudPieceInHud.back()) GXPC_SetHud(0);
     s_hudPieceInHud.pop_back();
+}
+
+void GXPC_SetSplitView(int on, float x, float y, float w, float h) {
+    flushBatch();
+    s_split.on = on != 0;
+    s_split.x = x * float(s_efbW);
+    s_split.y = y * 448.0f;  // the game's frame: the EFB's top 448 lines
+    s_split.sx = w > 0.0f ? w : 1.0f;
+    s_split.sy = h > 0.0f ? h : 1.0f;
 }
 
 void GXPC_SetStretch2D(int on) {

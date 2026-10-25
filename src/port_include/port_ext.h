@@ -257,6 +257,17 @@ typedef struct PortExtension {
 	// `from` the item or barrel, null for the water around): return 1 to stop
 	// it (the tank stays as it is).
 	int (*fluddRefill)(void* mario, int source, void* from);
+	// A stage's scene (scene.bin) is loaded, before its objects' parameter
+	// files are let go and before their loadAfter (TMarDirector::setupObjects):
+	// objects made here and put in the scene get their parameters as the
+	// stage's own do, and their loadAfter with theirs (split-screen co-op's
+	// second Mario and camera). The stage's heap is the current one.
+	void (*sceneLoaded)(void);
+	// A stage is about to be drawn (TMarDirector::direct's draw pass,
+	// `director` a TMarDirector, `graphics` its JDrama::TGraphics): return 1
+	// to draw it yourself (split-screen co-op draws it once a view) instead
+	// of the game's own pass. The first that returns 1 draws it.
+	int (*drawStage)(void* director, void* graphics);
 } PortExtension;
 
 // fluddRefill's `source`
@@ -385,6 +396,8 @@ void port_ext_timer(int what, int time);
 void port_ext_script_call(const char* name, void* owner, int argc);
 void port_ext_map_event(void* event);
 int port_ext_object_stomp(void* object, void* mario);
+void port_ext_scene_loaded(void);
+int port_ext_draw_stage(void* director, void* graphics);
 // TApplication's APP_STATE_GAMEPLAY, before its opening movie check:
 // `afterMovie` 1 on the pass that follows the stage's opening movie (the same
 // load: chooseStageLoad and stageLoading are not asked again).

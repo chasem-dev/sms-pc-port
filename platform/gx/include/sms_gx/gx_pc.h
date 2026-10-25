@@ -83,6 +83,11 @@ void GXPC_SetWidescreen(float widthOver43);
 /* With widescreen, draw the following 2D stretched across the whole frame
  * (the game's faders call it around their drawing); 0 goes back. */
 void GXPC_SetStretch2D(int on);
+// Split-screen co-op (ext/coop): while on, everything drawn lands in the part
+// of the frame at x, y (its left and top edges) sized w, h, all as shares of
+// the frame's width and height, as if that part were the whole frame:
+// viewports, scissors, EFB copies and their clears, and peeks.
+void GXPC_SetSplitView(int on, float x, float y, float w, float h);
 /* With widescreen, draw the following 2D at the 4:3 frame's scale, centred,
  * and past its edges: the game laid it out across the whole frame (the map
  * screen calls it around its drawing); 0 goes back. */

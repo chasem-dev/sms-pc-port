@@ -7,6 +7,7 @@ They are the start of a code-mod framework for the port: a new feature that need
 | --- | --- |
 | [`core/`](core/port_ext.cpp) | the registry: the game's hooks call each registered extension in turn |
 | [`multiplayer/`](multiplayer/README.md) | up to eight players in one game over the network |
+| [`coop/`](coop/README.md) | split-screen co-op: a second player on another controller, as Luigi, with a camera and half of the screen of their own |
 | [`demo/`](demo/README.md) | plays Mario from a script, as a player holds the controller, for trailers and footage |
 | [`autosave/`](autosave/README.md) | saves by itself where the game would ask to save, with an indicator and the save sound |
 | [`outfit/`](outfit/README.md) | Mario always wears his Shine shirt, his sunglasses, or both (the launcher's Customize Mario) |
@@ -77,6 +78,8 @@ An extension fills in a `PortExtension` with the hooks it needs, leaving the res
 | `scriptCall` | a stage's event script calls one of the game's functions (`TSpcInterp::dispatchBuiltin*`) | note it |
 | `mapEvent` | one of the stage's map events is set off (`TMapEvent::perform`: its goop cleaned) | note it |
 | `objectStomp` | the player stomps an object (`TMario::trampleExec`; `objectHit` is not asked for stomps) | return 1 to stop it |
+| `sceneLoaded` | a stage's `scene.bin` is loaded, before its objects' parameter files are let go and before their `loadAfter` (`TMarDirector::setupObjects`) | make objects that need the stage's parameters, and put them in the scene for their `loadAfter` (co-op's second Mario and camera) |
+| `drawStage` | the stage is about to be drawn (`TMarDirector::direct`'s draw pass) | return 1 to draw it yourself (co-op draws it once a view) |
 
 Every hook runs on the game thread inside the game's own steps, so an extension uses the game's globals (`gpApplication`, `gpMarDirector`, `gpMarioOriginal`, `TFlagManager`) as the game does there.
 With no extension switched on, each hook is a loop over nothing.

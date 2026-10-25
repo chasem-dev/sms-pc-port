@@ -16,6 +16,9 @@ struct GcAdapterInput {
 void gc_adapter_start();
 // False while no controller is plugged into the adapter.
 bool gc_adapter_read(GcAdapterInput* in);
+// The next port with a controller after that one (split-screen co-op's
+// second player); false while there is none.
+bool gc_adapter_read_second(GcAdapterInput* in);
 // Runs or stops the motor of the controller that feeds controller 1.
 void gc_adapter_rumble(bool on);
 // At exit: gives the thread time to stop the motor.

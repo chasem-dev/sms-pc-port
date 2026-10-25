@@ -1,0 +1,44 @@
+# Split-screen co-op
+
+Two players in one game on one computer, each with their own camera and half of the screen.
+SMS Launcher starts it with **Play co-op**, under ▾ beside Play; without the launcher, `SMS_COOP=1` does.
+
+- The first player plays as ever, on the keyboard and mouse or a controller.
+- A second player joins any time a level is being played by pressing **Start on another controller**: they appear beside Mario as Luigi (Mario's model in Luigi's green), with FLUDD, and the screen splits in two.
+  Holding Start for 1.5 seconds leaves; a short press of their Start is the pause menu, as the first player's is. Unplugging their controller leaves too.
+- Which controller is "another": with the keyboard and mouse in hand (they were used last), any controller's Start joins; with a controller in hand, another controller's does. The first player's own controller always pauses, so a player alone with one controller never joins by accident, and plain Play (no `SMS_COOP`) never takes a second player at all.
+  A GameCube adapter's ports are controllers of their own: the second port with a controller in it joins the same way.
+- Coins, Shines, blue and red coins and lives are the game's own, so shared. The second player losing a life costs no life: they are back beside Mario three seconds later (and if they fall out of the world, or are left far behind, at once).
+- Enemies go after whoever is nearer: each object that moves near the second player moves as if they were Mario (`objectMove`). Either player can talk to people and read signs, take pipes and paintings (everyone goes), and get Shines.
+- The screen is split while both play the level. Cutscenes, a Shine Get and other moments the game shows on its own camera are full screen, on the first player's camera, as is everything while the second player is out.
+- `SMS_COOP_SPLIT=stacked` puts the views one above the other (the first player's on top); by default they are side by side (the first player's on the left). The launcher's Settings → Display has it as **Co-op split screen**.
+- Save states are off while two play. Co-op is off in multiplayer games (`SMS_MULTIPLAYER`).
+
+## How it works
+
+[`game/coop.cpp`](game/coop.cpp), with the input in [`platform/pad/pad.cpp`](../../platform/pad/pad.cpp) and the views in [`platform/gx`](../../platform/gx/src/gx_render.cpp).
+
+**Controller 2.** The port used to put every controller into controller 1. It now keeps each SDL controller's state apart (by its instance id), puts together all but the second player's for controller 1, and gives the second player's its own `PADStatus` on channel 1, which the game reads as it reads channel 1 on a GameCube. `port_coop_*` tell the game who joined and left. Mouse look stays the first player's camera's (`port_camera_take_mouse` gives the second camera nothing).
+
+**Player 2** is a second `TMario` (`TCoopMario`), made from the stage's own Mario record (the one the loader read, kept by `zzzzz-ext-20`) while the stage loads (the `sceneLoaded` hook, before the stage lets its parameter files go), so they have Mario's parameters, models and FLUDD. They go in the player group (`プレーヤーグループ`), beside Mario, so the stage moves, animates, hits and draws them with him; until someone joins they do nothing and touch nothing. The game already runs other `TMario`s than Mario (Shadow Mario, Il Piantissimo): the Mario code works on `this`, and reaches "the player" through `gpMarioOriginal`, `gpMarioAddress` and the access globals (`gpMarioPos`, `SMS_SetMarioAccessParams`). While player 2 runs (their move, their camera's, their view's drawing), those globals are theirs, and so are `gpCamera` and the camera's helpers (`gpCameraShake`, `gpCameraMario`, `gpCameraOption`), so the game's own code plays them as it plays Mario. Things that are the whole stage's stay the first player's: a fall into a pit is theirs alone (the director's hell-dead flag is put back), and the sound's listener is Mario.
+
+**Luigi's colours.** Mario's models share their textures between every load of them, so player 2's body, hands and cap get texture tables of their own (each a block of headers, images and palettes, its offsets positive for the 64-bit build), and the body's main texture is recoloured as multiplayer's Luigi is ([`mp_recolour.h`](../multiplayer/mp_recolour.h)). The body's display lists are made in `loadAfter`, after that; the cap's are made again.
+
+**Camera 2** is a second `CPolarSubCamera` (`TCoopCamera`), made while the stage loads, reading controller 2, following player 2 (it moves right after them).
+
+**Two views.** The `drawStage` hook draws the stage itself while both play: the frame's set-up and the goop's textures once; then each view into its part of the frame (`GXPC_SetSplitView`: viewports, scissors, EFB copies and their clears and peeks are moved and scaled into it after the widescreen mapping), with the stage's GX lists, the silhouettes and the 3D part of the GX Post list; then the 2D (the HUD, the screen's effects, the frame's copy) once over both, and a line between the views. The first view is drawn from the entry pass the game makes after each tick, as when alone. For the second, the entry pass (each model's view matrices, the draw buffers) is made again with camera 2 in camera 1's place in the lists; goop is stamped from the first only (`TPollutionManager::stampModel`). The game's view-frustum check (`ViewFrustumClipCheck`) counts what either camera sees as in view, so what either player sees moves and draws in both. Each camera's aspect is its part's (half or twice the game's) while the screen is split.
+
+Patches: [`zzzzzz-coop-01-split-screen`](../../decomp-patches/zzzzzz-coop-01-split-screen.patch) (the hooks, the frustum check, the goop stamp).
+
+## Testing
+
+Headless, with scripted input (`SMS_AUTOPRESS` for player 1) and these test aids:
+
+| Variable | Effect |
+| --- | --- |
+| `SMS_COOP_TEST_JOIN=n` | a second player without a controller joins `n` frames after the stage starts playing |
+| `SMS_COOP_TEST_PAD=x:y@frame+frames,a@frame+frames,...` | that player's stick (-100..100), A, B or R (`b@`, `r@`), frames since the game started |
+| `SMS_COOP_TEST_LEAVE=n` | they leave `n` frames after joining |
+| `SMS_COOP_TEST_KILL=frame` | they lose a life |
+| `SMS_COOP_TEST_WARP=frame:area,episode` | the stage changes |
+| `SMS_COOP_DEBUG=1` | the stage's lists as found, and both players' places once a second |

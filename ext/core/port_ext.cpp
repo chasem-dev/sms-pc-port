@@ -367,5 +367,16 @@ extern "C" int port_ext_object_stomp(void* object, void* mario)
 	return 0;
 }
 
+extern "C" void port_ext_scene_loaded(void)
+{
+	EACH(sceneLoaded) s_ext[i]->sceneLoaded();
+}
+
+extern "C" int port_ext_draw_stage(void* director, void* graphics)
+{
+	EACH(drawStage) if (s_ext[i]->drawStage(director, graphics)) return 1;
+	return 0;
+}
+
 void* port_ext_damage_source; // C linkage: declared so in port_ext.h
 int port_ext_death_cause;      // C linkage: declared so in port_ext.h

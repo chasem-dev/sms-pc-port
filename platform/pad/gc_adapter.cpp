@@ -49,6 +49,7 @@ struct State {
 	std::atomic<int> rumble{ 0 }; // written by PADControlMotor
 };
 State g_state;
+State g_second; // the next port with a controller (split-screen co-op)
 
 // USB ids of adapters that speak the Nintendo protocol: the official adapter
 // and the copies of it, plus SMS_GC_ADAPTER's.
@@ -130,6 +131,9 @@ void session(Link& link)
 	int origin[4]   = { 128, 128, 128, 128 };
 	bool haveOrigin = false;
 	int slot        = -1; // the port feeding controller 1
+	int slot2       = -1; // the next one (a second player's)
+	int origin2[4]  = { 128, 128, 128, 128 };
+	bool haveOrigin2 = false;
 	int motor       = 0;  // the port whose motor runs, 1-4, or 0
 	for (;;) {
 		// Rumble: one byte per port after 0x11. The motors only run with
@@ -161,7 +165,7 @@ void session(Link& link)
 			haveOrigin = false;
 		}
 		if (slot < 0) {
-			g_state.present = 0;
+			g_state.present = g_second.present = 0;
 			continue;
 		}
 		const unsigned char* c = rep + 1 + slot * 9;
@@ -179,7 +183,36 @@ void session(Link& link)
 		g_state.lt      = c[7];
 		g_state.rt      = c[8];
 		g_state.present = 1;
+		// the next port with a controller, for a second player
+		int next = -1;
+		for (int k = 1; k < 4 && next < 0; k++)
+			if (rep[1 + ((slot + k) & 3) * 9] & 0x30)
+				next = (slot + k) & 3;
+		if (next != slot2) {
+			slot2       = next;
+			haveOrigin2 = false;
+		}
+		if (slot2 < 0) {
+			g_second.present = 0;
+			continue;
+		}
+		const unsigned char* d = rep + 1 + slot2 * 9;
+		if (!haveOrigin2) {
+			for (int k = 0; k < 4; k++)
+				origin2[k] = d[3 + k];
+			haveOrigin2 = true;
+		}
+		g_second.b1      = d[1];
+		g_second.b2      = d[2];
+		g_second.lx      = d[3] - origin2[0];
+		g_second.ly      = d[4] - origin2[1];
+		g_second.cx      = d[5] - origin2[2];
+		g_second.cy      = d[6] - origin2[3];
+		g_second.lt      = d[7];
+		g_second.rt      = d[8];
+		g_second.present = 1;
 	}
+	g_second.present = 0;
 	g_state.present = 0;
 	port_log("[pad] GameCube adapter disconnected%s%s\n", link.error[0] ? ": " : "", link.error);
 }
@@ -874,6 +907,21 @@ bool gc_adapter_read(GcAdapterInput* in)
 	in->cy = g_state.cy;
 	in->lt = g_state.lt;
 	in->rt = g_state.rt;
+	return true;
+}
+
+bool gc_adapter_read_second(GcAdapterInput* in)
+{
+	if (!g_second.present)
+		return false;
+	in->b1 = g_second.b1;
+	in->b2 = g_second.b2;
+	in->lx = g_second.lx;
+	in->ly = g_second.ly;
+	in->cx = g_second.cx;
+	in->cy = g_second.cy;
+	in->lt = g_second.lt;
+	in->rt = g_second.rt;
 	return true;
 }
 
