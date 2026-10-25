@@ -63,7 +63,6 @@ extern int port_coop_in_p2;
 // platform/gx
 void GXPC_SetSplitView(int on, float x, float y, float w, float h) __attribute__((weak));
 void GXPC_ExtOverlaySet(int panel, const char* text) __attribute__((weak));
-u32 GXPC_FrameCount(void) __attribute__((weak));
 // ext/multiplayer/game/mp_spawn.cpp: the stage's scene.bin records
 int port_spawn_record_of(const void* object, const void** record, unsigned* size);
 // decomp-patches/zzzzzz-coop-01: ViewFrustumClipCheck's other view
@@ -706,7 +705,7 @@ void activate(bool on)
 		return;
 	s_active = on;
 	if (getenv("SMS_COOP_DEBUG"))
-		fprintf(stderr, "[coop] frame %d (gx frame %u): player 2 %s\n", s_frame, GXPC_FrameCount ? GXPC_FrameCount() : 0,
+		fprintf(stderr, "[coop] frame %d (gx frame %u): player 2 %s\n", s_frame, (unsigned)GXPC_FrameCount(),
 		        on ? "in play" : "out of play");
 	if (on) {
 		m->offHitFlag(HIT_FLAG_NO_COLLISION);
