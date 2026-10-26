@@ -159,6 +159,10 @@ frame_rate = 60
 # How far the L_SOFT / R_SOFT bindings press L or R, in percent (5 to 95), as a
 # light trigger press without the click (R_SOFT is the middle mouse button).
 # soft_trigger = 95
+# How far a controller's sticks (both, and a GameCube adapter's) go before they
+# move anything, in percent of their travel (0 to 50). 15 is the console's; more
+# stops a stick that drifts, less makes small movements count.
+# stick_deadzone = 15
 # Open the debug overlay (frame rate, where the time goes) at start.
 # overlay = off
 

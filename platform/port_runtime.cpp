@@ -874,6 +874,7 @@ static const struct {
 	{ "music_volume", "SMS_MUSIC_VOLUME" }, // music (the BGM sequences, streams and movies), 0 to 100
 	{ "sfx_volume", "SMS_SFX_VOLUME" },     // sound effects and everything else the game's sound system plays, 0 to 100
 	{ "soft_trigger", "SMS_SOFT_TRIGGER" }, // L_SOFT / R_SOFT press depth, percent
+	{ "stick_deadzone", "SMS_STICK_DEADZONE" }, // controller sticks' dead zone, percent of their travel (15)
 	{ "overlay", "SMS_OVERLAY" },
 	{ "save_dir", "SMS_SAVE_DIR" },
 	{ "save_state_dir", "SMS_SAVE_STATE_DIR" },
