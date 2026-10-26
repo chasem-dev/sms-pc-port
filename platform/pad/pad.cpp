@@ -86,6 +86,7 @@ __attribute__((weak)) void sms_gx_pump_events(void);
 __attribute__((weak)) int sms_gx_rumble(unsigned short strength);
 __attribute__((weak)) void sms_gx_rumble_shutdown(void);
 __attribute__((weak)) int GXPC_IsHeadless(void);
+__attribute__((weak)) int GXPC_ControllerCount(void);
 __attribute__((weak)) int GXPC_MouseCaptured(void);
 __attribute__((weak)) int GXPC_GameInputBlocked(void);
 __attribute__((weak)) int GXPC_SettingsMenuIsOpen(void);
@@ -1285,7 +1286,9 @@ extern "C" unsigned port_coop_take_events(void)
 	g_coopEvents     = 0;
 	return e;
 }
-// Whether a controller other than the first player's is there to join with.
+// Whether a controller other than the first player's is there to join with:
+// one pressed already, or one connected but not pressed yet (SDL's controllers
+// are known here only once used).
 extern "C" int port_coop_can_join(void)
 {
 	if (!g_coop || g_p2 != kNoCtl)
@@ -1294,6 +1297,8 @@ extern "C" int port_coop_can_join(void)
 	for (int i = 0; i < kMaxCtl; i++)
 		if (g_ctl[i].used && g_ctl[i].which != p1)
 			return 1;
+	if (GXPC_ControllerCount && GXPC_ControllerCount() > (p1 >= 0 ? 1 : 0))
+		return 1;
 	GcAdapterInput gc;
 	return (gc_adapter_read(&gc) && kGcFirst != p1) || (gc_adapter_read_second(&gc) && kGcSecond != p1);
 }

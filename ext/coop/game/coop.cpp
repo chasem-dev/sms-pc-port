@@ -130,6 +130,7 @@ s32 s_livesWhenOut;   // the count when they went out: a life more brings them b
 int s_noticeFrames;
 int s_hintFrames;     // "press Start to join" shown at a stage's start
 bool s_hintShown;
+bool s_connectHintShown; // "connect a second controller", shown once a game
 bool s_testJoined;
 int s_testJoinFrame;
 int s_frame;
@@ -826,6 +827,10 @@ void frame()
 	if (!s_active && !s_hintShown && playing() && port_coop_can_join()) {
 		s_hintShown = true;
 		notice("Co-op: press START on another controller to join as Luigi.", kNoticeFrames);
+	} else if (!s_active && !s_hintShown && !s_connectHintShown && playing() && port_coop_player2() == 0) {
+		// no controller but the first player's (once a game: they may mean to play alone for now)
+		s_connectHintShown = true;
+		notice("Co-op: connect a second controller, then press its START to join as Luigi.", kNoticeFrames);
 	}
 	if (s_noticeFrames > 0 && --s_noticeFrames == 0 && GXPC_ExtOverlaySet)
 		GXPC_ExtOverlaySet(kOverlayNotice, "");

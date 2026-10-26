@@ -1407,6 +1407,9 @@ static bool modKeyEvent(const SDL_Event& ev) {
 
 extern "C" void GXPC_NoteInputDevice(int controller, int sdlType, const char* name);
 
+// The controllers connected, pressed yet or not (split-screen co-op's hint, platform/pad).
+extern "C" int GXPC_ControllerCount(void) { return int(s_pads.size()); }
+
 // Tell the button prompts which device the player last used: a key, mouse
 // click or mouse movement means keyboard and mouse; a button or a stick pushed
 // well off centre means that controller.
