@@ -1410,6 +1410,22 @@ extern "C" void GXPC_NoteInputDevice(int controller, int sdlType, const char* na
 // The controllers connected, pressed yet or not (split-screen co-op's hint, platform/pad).
 extern "C" int GXPC_ControllerCount(void) { return int(s_pads.size()); }
 
+// A multiplayer guest (SMS_MULTIPLAYER=join): the warp and cheat menus are the
+// host's, as the stage and the game's rules are (a guest's warp left the others).
+static bool multiplayerGuest() {
+    static const bool guest = [] {
+        const char* e = getenv("SMS_MULTIPLAYER");
+        return e && !strcmp(e, "join");
+    }();
+    return guest;
+}
+static void guestMenuRefused(const char* menu) {
+    static bool told[2];
+    bool& t = told[menu[0] == 'c'];
+    if (!t) logmsg("multiplayer: the %s menu is the host's; not opening it in a joined game", menu);
+    t = true;
+}
+
 // Tell the button prompts which device the player last used: a key, mouse
 // click or mouse movement means keyboard and mouse; a button or a stick pushed
 // well off centre means that controller.
@@ -1489,7 +1505,9 @@ void sms_gx_pump_events(void) {
         }
         // F9 opens and closes the cheat menu and is kept from the pad layer
         if ((ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) && ev.key.keysym.scancode == SDL_SCANCODE_F9) {
-            if (ev.type == SDL_KEYDOWN && !ev.key.repeat) {
+            if (ev.type == SDL_KEYDOWN && !ev.key.repeat && multiplayerGuest() && !cheatMenuVisible()) {
+                guestMenuRefused("cheat");
+            } else if (ev.type == SDL_KEYDOWN && !ev.key.repeat) {
                 if (warpMenuVisible()) warpMenuToggle();
                 cheatMenuToggle();
                 syncMenuInput();
@@ -1507,7 +1525,9 @@ void sms_gx_pump_events(void) {
             bool& held = s_warpToggleHeld[warpButton];
             const bool down = ev.type == SDL_KEYDOWN || ev.type == SDL_CONTROLLERBUTTONDOWN;
             const bool repeat = warpKey && ev.key.repeat;
-            if (down && !repeat && (warpMenuVisible() || GXPC_OverlayVisible())) {
+            if (down && !repeat && !warpMenuVisible() && GXPC_OverlayVisible() && multiplayerGuest()) {
+                guestMenuRefused("warp");
+            } else if (down && !repeat && (warpMenuVisible() || GXPC_OverlayVisible())) {
                 if (cheatMenuVisible()) cheatMenuToggle();
                 warpMenuToggle();
                 syncMenuInput();
