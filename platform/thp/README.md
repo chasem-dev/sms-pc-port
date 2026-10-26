@@ -75,6 +75,9 @@ The plaza's looping portal movie still decodes and plays, since its frames are i
 This prevents the host texture decoder from reading movie-sized images out of a small placeholder, especially with HD replacements.
 
 The video decoder thread runs at priority 20, below the game thread's 16, so it only decodes while the game thread waits.
+The decoding itself runs on a host thread of its own (`thp_decode.cpp`, `thp-07`): the decoder thread sleeps on the emulated CPU until its frame is done, as it would wait for hardware, so the game's other threads run meanwhile on another core.
+An HD frame (1920×960) takes about 20 ms to decode on a 3.5 GHz desktop, most of a 30 fps movie frame.
+`SMS_THP_DECODE_THREAD=0`, a deterministic clock or one CPU core keep it on the emulated CPU.
 A frame that ends late skips its retrace wait (`port_vi_frame_wait`), so it gives lower-priority threads up to a quarter frame instead (`port_os_run_lower`).
 Without that, a host too slow for the frame rate left the portal movie stuck on one frame.
 

@@ -19,8 +19,13 @@
 
 #include "dsp_mixer.h"
 
+#include <atomic>
+#include <condition_variable>
 #include <deque>
+#include <mutex>
 #include <string>
+#include <thread>
+#include <time.h>
 #include <vector>
 
 extern "C" u8* port_aram_ptr(u32 addr);
@@ -88,14 +93,127 @@ void maybe_dump_aram()
 	}
 }
 
+// The mixer thread. On the console the DSP is a processor of its own: after
+// DSPReleaseHalt the CPU goes on (JAudio's audio thread waits for the 0xFF00
+// mail) while the DSP renders the subframe. Here the subframe renders on a
+// host thread of its own the same way, so the mixing leaves the emulated CPU
+// and the game's threads run meanwhile; the mail goes out once it is done
+// (poll_mixer, an interrupt source). It renders in place, as the mail is sent,
+// with a deterministic clock (tests), on one core, or with
+// SMS_AUDIO_DSP_THREAD=0. SMS_AUDIO_DSP_STATS=1 logs the time spent mixing.
+struct Mixer {
+	std::mutex m;
+	std::condition_variable cv;
+	std::atomic<int> state{0}; // 0 idle, 1 rendering, 2 rendered (its mail not sent yet)
+	int16_t* outA;
+	int16_t* outB;
+	int n;
+	u16 master;
+	bool stats;
+	double busy, since; // stats: seconds spent mixing, since when
+};
+// Never destroyed: exit() runs while the mixer thread waits on it (as ai.cpp's
+// state, a destroyed mutex throws on Windows).
+Mixer& mx = *new Mixer();
+int g_threaded = -1; // -1 not chosen yet
+
+double mono_seconds()
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+}
+
+void mix(int16_t* outA, int16_t* outB, int n, u16 master)
+{
+	const double t0 = mx.stats ? mono_seconds() : 0;
+	port_dspmix_render(outA, outB, n, master);
+	if (!mx.stats)
+		return;
+	const double t1 = mono_seconds();
+	mx.busy += t1 - t0;
+	if (mx.since == 0)
+		mx.since = t0;
+	if (t1 - mx.since >= 10) {
+		port_log("[audio] DSP stats: %.2f ms/s mixing (%s)\n", mx.busy * 1000 / (t1 - mx.since),
+		         g_threaded ? "on its own thread" : "on the game's CPU");
+		mx.busy  = 0;
+		mx.since = t1;
+	}
+}
+
+void mixer_main()
+{
+	std::unique_lock<std::mutex> l(mx.m);
+	for (;;) {
+		mx.cv.wait(l, [] { return mx.state.load() == 1; });
+		l.unlock();
+		mix(mx.outA, mx.outB, mx.n, mx.master);
+		mx.state.store(2);
+		port_irq_kick();
+		l.lock();
+	}
+}
+
+void subframe_done()
+{
+	g.sub++;
+	g.subframesRendered++;
+	reply(0xFF00);
+}
+
+// Interrupt source: a subframe the mixer thread finished.
+void poll_mixer()
+{
+	int done = 2;
+	if (mx.state.compare_exchange_strong(done, 0))
+		subframe_done();
+}
+
+// Waits for the subframe in flight, and sends its mail.
+void mixer_settle()
+{
+	if (g_threaded <= 0)
+		return;
+	while (mx.state.load() == 1)
+		std::this_thread::yield();
+	poll_mixer();
+}
+
+bool threaded()
+{
+	if (g_threaded < 0) {
+		const char* e = getenv("SMS_AUDIO_DSP_THREAD");
+		mx.stats = getenv("SMS_AUDIO_DSP_STATS") && atoi(getenv("SMS_AUDIO_DSP_STATS"));
+		g_threaded = !(e && !strcmp(e, "0")) && !port_vi_deterministic() && std::thread::hardware_concurrency() > 1;
+		if (g_threaded) {
+			port_irq_add_source(poll_mixer);
+			std::thread(mixer_main).detach();
+		}
+		port_log("[audio] DSP mixing %s\n", g_threaded ? "on its own thread" : "on the game's CPU");
+	}
+	return g_threaded;
+}
+
 void render_subframe()
 {
 	maybe_dump_aram();
 	u32 n = g.subSamples;
-	port_dspmix_render(g.outA + g.sub * n, g.outB + g.sub * n, (int)n, g.master);
-	g.sub++;
-	g.subframesRendered++;
-	reply(0xFF00);
+	if (!threaded()) {
+		mix(g.outA + g.sub * n, g.outB + g.sub * n, (int)n, g.master);
+		subframe_done();
+		return;
+	}
+	mixer_settle(); // one subframe at a time, as JAudio sends them
+	{
+		std::lock_guard<std::mutex> l(mx.m);
+		mx.outA   = g.outA + g.sub * n;
+		mx.outB   = g.outB + g.sub * n;
+		mx.n      = (int)n;
+		mx.master = g.master;
+		mx.state.store(1);
+	}
+	mx.cv.notify_one();
 }
 
 void execute()
@@ -109,6 +227,7 @@ void execute()
 			render_subframe();
 		return;
 	}
+	mixer_settle(); // the commands below change what a subframe in flight uses
 	switch (op) {
 	case 0x81: // DsetupTable(n, CH_BUF, DSPRES_FILTER, DSPADPCM_FILTER, FX_BUF)
 		if (w.size() >= 5) {
@@ -191,6 +310,11 @@ extern "C" void port_audio_dsp_assert_int(void)
 }
 
 extern "C" u64 port_audio_dsp_subframes(void) { return g.subframesRendered; }
+
+// For save states (platform/savestate): a subframe is rendering on the mixer
+// thread or its mail is not sent yet; port_audio_dsp_settle finishes it.
+extern "C" int port_audio_dsp_busy(void) { return mx.state.load() != 0; }
+extern "C" void port_audio_dsp_settle(void) { mixer_settle(); }
 
 // True while a frame started by 0x82 still has subframes to render. The AI
 // layer does not start another DMA block until it is done: on hardware the

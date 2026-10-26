@@ -50,6 +50,11 @@ extern "C" u8* port_ar_memory(u32* size, u32** alloc);
 extern "C" int port_dvd_busy(void);
 extern "C" int port_os_thread_list(OSThread** out, int max);
 extern "C" int port_os_irq_work_pending(void);
+extern "C" void port_irq_check(void);
+extern "C" int port_audio_dsp_busy(void);
+extern "C" void port_audio_dsp_settle(void);
+extern "C" int port_thp_video_decode_busy(void);
+extern "C" void port_thp_video_decode_settle(void);
 extern "C" const char* port_card_dir(void);
 // platform/gx (absent in a build without it)
 extern "C" __attribute__((weak)) void GXPC_MemoryWritten(const void* p, uint32_t n);
@@ -544,13 +549,28 @@ void port_savestate_hint(PortSaveStateHint* out)
 		out->hasImage[i] = port_button_glyph && port_button_glyph(PORT_PROMPT_SAVESTATE + i) != nullptr;
 }
 
+// Disc reads, interrupt work, or work on the port's own threads still under
+// way. The DSP's subframes (platform/audio/dsp_hle.cpp) and a movie's frame
+// (platform/thp/thp_decode.cpp) end in a moment, so those are waited for:
+// their interrupts run, and JAudio's audio thread may send the next subframe
+// of its frame (a frame has a handful).
+static bool game_busy()
+{
+	for (int i = 0; i < 32 && (port_audio_dsp_busy() || port_thp_video_decode_busy()); i++) {
+		port_audio_dsp_settle();
+		port_thp_video_decode_settle();
+		port_irq_check();
+	}
+	return port_dvd_busy() || port_os_irq_work_pending() || port_audio_dsp_busy() || port_thp_video_decode_busy();
+}
+
 int port_savestate_save(const PortSaveStatePortable* portable)
 {
 	if (g_writing.exchange(true)) {
 		set_message("Still saving the last state");
 		return 0;
 	}
-	if (port_dvd_busy() || port_os_irq_work_pending()) {
+	if (game_busy()) {
 		g_writing = false;
 		set_message("Could not save the state: the game is busy");
 		return 0;
@@ -599,7 +619,7 @@ int port_savestate_can_load_exact(const char* path)
 	const Info now = current_info();
 	const char* why = nullptr;
 	return savestate::read_file(path, &chunks, kWanted, 2) && read_info(chunks, &saved) && same_game(saved, now)
-	       && exact_compatible(saved, now, &why) && !port_dvd_busy() && !port_os_irq_work_pending()
+	       && exact_compatible(saved, now, &why) && !game_busy()
 	       && threads_match(chunks);
 }
 
@@ -634,7 +654,7 @@ int port_savestate_load_exact(const char* path, PortSaveStatePortable* portable,
 		port_log("[savestate] %s: loading the position only: %s\n", path, why);
 		return 0;
 	}
-	if (port_dvd_busy() || port_os_irq_work_pending()) {
+	if (game_busy()) {
 		port_log("[savestate] %s: the game is busy; loading the position only\n", path);
 		return 0;
 	}
