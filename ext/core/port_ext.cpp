@@ -4,11 +4,18 @@
 // arrays (no allocation: the game's operator new is its JKR heaps').
 #include "port_ext.h"
 
+#include <stdio.h>
 #include <string.h>
 
 namespace {
 
-enum { kMaxExtensions = 16 };
+// Room for every extension (ext/*/game has 19, co-op's only with SMS_COOP)
+// and more to come. A full registry says so on stderr: it once held 16 and
+// dropped the rest without a word, and which were dropped depended on the
+// order the platform runs static constructors in (link order on Linux, the
+// reverse with MinGW), so Windows lost the achievements' banner and Linux
+// Customize Mario's outfit.
+enum { kMaxExtensions = 64 };
 const PortExtension* s_ext[kMaxExtensions];
 int s_count;
 
@@ -20,11 +27,16 @@ static int s_startFile = -1, s_startNew = 1;
 
 extern "C" void port_ext_register(const PortExtension* ext)
 {
-	if (!ext || s_count >= kMaxExtensions)
+	if (!ext)
 		return;
 	for (int i = 0; i < s_count; i++)
 		if (s_ext[i] == ext)
 			return;
+	if (s_count >= kMaxExtensions) {
+		fprintf(stderr, "[ext] no room for extension %s: %d are registered, raise kMaxExtensions (ext/core/port_ext.cpp)\n",
+		        ext->name ? ext->name : "(unnamed)", s_count);
+		return;
+	}
 	s_ext[s_count++] = ext;
 }
 

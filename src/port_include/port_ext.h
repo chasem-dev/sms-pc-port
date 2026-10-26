@@ -338,6 +338,7 @@ enum {
 };
 
 // Adds an extension; call from a static constructor or before the first frame.
+// Room for 64 (ext/core/port_ext.cpp); one more is reported on stderr, not added.
 void port_ext_register(const PortExtension* ext);
 // The registered extension called `name`, or null.
 const PortExtension* port_ext_find(const char* name);
