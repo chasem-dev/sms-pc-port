@@ -1377,8 +1377,8 @@ extern "C" void port_coop_hear(Vec* camSpace, Vec* prev, const Vec* pos)
 {
 	if (!s_earMtx || !pos)
 		return;
-	Vec other;
-	MTXMultVec(*s_earMtx, pos, &other);
+	Vec at = *pos, other; // (the SDK's PSMTXMultVec takes a non-const source)
+	MTXMultVec(*s_earMtx, &at, &other);
 	const f32 d1 = camSpace->x * camSpace->x + camSpace->y * camSpace->y + camSpace->z * camSpace->z;
 	const f32 d2 = other.x * other.x + other.y * other.y + other.z * other.z;
 	const Vec chosen = d2 < d1 ? other : *camSpace;
