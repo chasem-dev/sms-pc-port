@@ -575,16 +575,18 @@ static int s_encRows = 0;
 // gamma it was decoded with (2.35), so only its colours change. With HDR the
 // display is Direct3D's expansion, which decodes with 2.2, so 2.2 it is.
 // Both are off by default, and then the picture is drawn as before.
-#define SMS_COLOR_CORRECT_GLSL R"(
-uniform vec4 u_cc[4];  // rows 0-2: the matrix to BT.709; 3: x the game's gamma (0: off), y the display's (0: sRGB)
-vec3 colorCorrect(vec3 c) {
-  if (u_cc[3].x == 0.0) return c;
-  c = pow(clamp(c, 0.0, 1.0), vec3(u_cc[3].x));
-  c = clamp(vec3(dot(u_cc[0].xyz, c), dot(u_cc[1].xyz, c), dot(u_cc[2].xyz, c)), 0.0, 1.0);
-  if (u_cc[3].y > 0.0) return pow(c, vec3(1.0 / u_cc[3].y));
-  return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));
-}
-)"
+// Plain strings, not a raw string: GCC 11 (Ubuntu 22.04, where sms-server
+// builds) ends a #define at the line's end even inside a raw string.
+#define SMS_COLOR_CORRECT_GLSL \
+  "\n" \
+  "uniform vec4 u_cc[4];  // rows 0-2: the matrix to BT.709; 3: x the game's gamma (0: off), y the display's (0: sRGB)\n" \
+  "vec3 colorCorrect(vec3 c) {\n" \
+  "  if (u_cc[3].x == 0.0) return c;\n" \
+  "  c = pow(clamp(c, 0.0, 1.0), vec3(u_cc[3].x));\n" \
+  "  c = clamp(vec3(dot(u_cc[0].xyz, c), dot(u_cc[1].xyz, c), dot(u_cc[2].xyz, c)), 0.0, 1.0);\n" \
+  "  if (u_cc[3].y > 0.0) return pow(c, vec3(1.0 / u_cc[3].y));\n" \
+  "  return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));\n" \
+  "}\n"
 static const char* kPostVs = R"(#version 330 core
 uniform int u_flip;
 out vec2 v_uv;
