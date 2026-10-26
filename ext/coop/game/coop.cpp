@@ -18,6 +18,7 @@
 #include <Camera/CameraMarioData.hpp>
 #include <Camera/CameraOption.hpp>
 #include <Camera/CameraShake.hpp>
+#include <Camera/CubeManagerBase.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
 #include <JSystem/J3D/J3DGraphBase/J3DTexture.hpp>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
@@ -69,6 +70,8 @@ int port_spawn_record_of(const void* object, const void** record, unsigned* size
 Mtx* port_coop_other_view = nullptr;
 // ...and TPollutionManager::stampModel's: the second view's entry pass is on
 int port_coop_second_entry = 0;
+// zzzzzz-coop-03: both players' cameras while player 2 plays, for clipping
+Mtx* port_coop_views[2] = { nullptr, nullptr };
 }
 
 namespace {
@@ -86,6 +89,9 @@ struct Ctx {
 	TCameraShake* shake;
 	TCameraMarioData* camMario;
 	TCameraOption* camOption;
+	// the cube the player is in, of the area cubes and fast cubes A, B and C
+	// (TMario::thinkCube sets them for whoever is gpMarioOriginal)
+	int cubes[4];
 };
 
 Ctx s_p1, s_p2;
@@ -143,6 +149,9 @@ void capture(Ctx& c)
 	c.shake     = gpCameraShake;
 	c.camMario  = gpCameraMario;
 	c.camOption = gpCameraOption;
+	TCubeManagerMarioIn* m[4] = { gpCubeArea, gpCubeFastA, gpCubeFastB, gpCubeFastC };
+	for (int i = 0; i < 4; i++)
+		c.cubes[i] = m[i] ? m[i]->unk1C : -1;
 }
 
 void apply(const Ctx& c)
@@ -155,6 +164,10 @@ void apply(const Ctx& c)
 	gpCameraShake  = c.shake;
 	gpCameraMario  = c.camMario;
 	gpCameraOption = c.camOption;
+	TCubeManagerMarioIn* m[4] = { gpCubeArea, gpCubeFastA, gpCubeFastB, gpCubeFastC };
+	for (int i = 0; i < 4; i++)
+		if (m[i])
+			m[i]->unk1C = c.cubes[i];
 }
 
 // Player 2's globals for as long as it lives (nested: the outermost restores).
@@ -167,6 +180,7 @@ struct InP2 {
 		if (!entered)
 			return;
 		capture(saved);
+		memcpy(s_p1.cubes, saved.cubes, sizeof s_p1.cubes); // player 1's, the other cubes while player 2 runs
 		apply(s_p2);
 		s_inP2          = true;
 		port_coop_in_p2 = 1;
@@ -777,6 +791,9 @@ void frame()
 		s_out = s_lastLife = false; // the title: a file's lives start again
 	TMarDirector* d = director();
 	const bool here = s_made && d && d == s_dir;
+	// both cameras clip the stage's actors while both play (zzzzzz-coop-03)
+	port_coop_views[0] = here && s_active && s_p1.cam ? (Mtx*)s_p1.cam->getUnk1EC() : nullptr;
+	port_coop_views[1] = here && s_active && s_p2.cam ? (Mtx*)s_p2.cam->getUnk1EC() : nullptr;
 	if (!here) {
 		port_coop_set_joinable(0);
 		s_split = false;
@@ -864,6 +881,20 @@ void afterMovement()
 		if (!warped && sscanf(w, "%d:%d,%d", &at, &area, &episode) == 3 && s_frame >= at) {
 			warped = true;
 			s_dir->setNextStage((u16)(((area + 1) << 8) | episode), nullptr);
+		}
+	}
+	// player 2 put at x,y,z facing angle (SMS_COOP_TEST_AT), 10 frames after joining
+	if (const char* t = getenv("SMS_COOP_TEST_AT")) {
+		static bool placed;
+		float x, y, z;
+		int ang;
+		if (!placed && s_testJoined && s_frame >= s_testJoinFrame + 10 && sscanf(t, "%f,%f,%f,%d", &x, &y, &z, &ang) == 4) {
+			placed = true;
+			m->mPosition.x = x, m->mPosition.y = y, m->mPosition.z = z;
+			m->mFaceAngle.y = (s16)ang;
+			m->mModelFaceAngle = (s16)ang;
+			InP2 in;
+			gpCamera->warpPosAndAt(gpCamera->mCurrentTarget.unk28, *gpMarioAngleY + 0x8000);
 		}
 	}
 	// FLUDD put on player 2's back mid-stage, frames after joining (as a stage
@@ -1053,6 +1084,21 @@ const char* saveStatesOffReason() { return "Save states are off while two play";
 PortExtension s_extension;
 
 } // namespace
+
+// decomp-patches/zzzzzz-coop-03: the cube the other player is in (player 2's
+// while player 1's globals are in force, player 1's while player 2's are), of
+// the area cubes or one of the fast cubes; -1 without a second player.
+extern "C" int port_coop_other_cube(const void* manager)
+{
+	if (!s_active || !s_made || !gpMarDirector || gpMarDirector != s_dir)
+		return -1;
+	const Ctx& other = s_inP2 ? s_p1 : s_p2;
+	const void* m[4] = { gpCubeArea, gpCubeFastA, gpCubeFastB, gpCubeFastC };
+	for (int i = 0; i < 4; i++)
+		if (manager == m[i])
+			return other.cubes[i];
+	return -1;
+}
 
 // decomp-patches/zzzzzz-coop-02: the camera a controller's player sees
 // through, for the controller's meanings (TMarioGamePad::updateMeaning reads
