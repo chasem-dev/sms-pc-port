@@ -18,7 +18,9 @@
 // them. SMS_MARIO_LOOK=dir is one more pack, read before all of those and even
 // with packs off: the launcher's repainted Mario (Customize Mario), named after
 // the textures it replaces, so its images win over any pack's and no other
-// pack's mip levels are mixed into them. Resource textures prepare on a
+// pack's mip levels are mixed into them. A pack's image for one of those names
+// is kept apart (hiresPackName), for copies of the texture kept out of the
+// look (GXPC_SetTexturePlain). Resource textures prepare on a
 // worker, then upload before gameplay.
 // Late textures show their original until a bounded frame-end upload finishes.
 #include "gx_internal.h"
@@ -140,6 +142,9 @@ struct PackFile {
     bool arbitrary = false;
     bool look = false;  // from SMS_MARIO_LOOK: later packs add nothing to it
 };
+// A texture pack's image for a name Mario's look has: indexed under the name
+// with this after it (hiresPackName).
+static const char kUnderLook[] = "@pack";
 static std::unordered_map<std::string, PackFile>& s_index =
     *new std::unordered_map<std::string, PackFile>;  // key: the texture name (read by the worker; never destroyed)
 static std::atomic<int> s_state{-1};                       // published after the index and GL formats are ready
@@ -173,8 +178,9 @@ static void indexFile(const std::filesystem::path& p, bool look) {
         level = atoi(stem.c_str() + m + 4);
         stem.resize(m);
     }
-    PackFile& f = s_index[stem];
-    if (f.look && !look) return;
+    PackFile* found = &s_index[stem];
+    if (found->look && !look) found = &s_index[stem + kUnderLook];
+    PackFile& f = *found;
     f.look = look;
     if (level == 0) {
         if (f.path.empty()) f.path = fsString(p);
@@ -1412,6 +1418,11 @@ static void finishUpload(Upload& u, int unit) {
 bool hiresIsLook(const std::string& name) {
     const auto f = s_index.find(name);
     return f != s_index.end() && f->second.look;
+}
+
+std::string hiresPackName(const std::string& name) {
+    std::string under = name + kUnderLook;
+    return s_index.count(under) ? under : std::string();
 }
 
 // The GL texture replacing `name` (a name hiresName found in the pack), or 0

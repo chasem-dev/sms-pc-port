@@ -425,6 +425,22 @@ int main(int argc, char** argv) {
         expect(compressedCalls == 5 && uploadedBytes == 104 && maxLevel == 4 && gx::hiresStats().completing == 0,
             "a later session reads the completed levels from the cache");
     }
+    {  // Mario's look (SMS_MARIO_LOOK) takes a name from the packs; the pack's image stays, for plain copies
+        gx::hiresShutdown();
+        auto look = dir; look += "-look";  // beside the pack, not in it
+        std::filesystem::create_directories(look);
+        dds(look/(textureName(single)+".dds"), 16, 8, 1);
+        env("SMS_MARIO_LOOK", look.string());
+        gx::hiresEnabled();
+        expect(gx::hiresIsLook(textureName(single)) && gx::hiresPackName(textureName(single)) == textureName(single) + "@pack",
+            "a pack's image for a name of Mario's look is kept under its own name");
+        expect(!gx::hiresIsLook(textureName(partial)) && gx::hiresPackName(textureName(partial)).empty(),
+            "a name Mario's look doesn't have has the pack's image only");
+        gx::hiresShutdown();
+        env("SMS_MARIO_LOOK", "");
+        std::filesystem::remove_all(look);
+        gx::hiresEnabled();
+    }
     // Shut down with more work queued, then rebuild the index in the same context.
     gx::hiresShutdown();
     gx::hiresEnabled();

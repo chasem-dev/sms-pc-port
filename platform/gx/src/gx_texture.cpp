@@ -808,9 +808,13 @@ unsigned bindTextureMap(int map, float* outW, float* outH) {
             return t;
         }
     }
-    if (!e.hires.empty() && !(plain && hiresIsLook(e.hires))) {  // the replacement, once decoded (the original meanwhile)
+    // the replacement, once decoded (the original meanwhile); kept out of Mario's look, a texture pack's own
+    const std::string* hires = &e.hires;
+    std::string under;
+    if (plain && !e.hires.empty() && hiresIsLook(e.hires)) hires = &(under = hiresPackName(e.hires));
+    if (!hires->empty()) {
         int scale = 0;
-        if (GLuint t = hiresTexture(e.hires, map, w, h, &scale)) {
+        if (GLuint t = hiresTexture(*hires, map, w, h, &scale)) {
             glcBindTexture(map, t);
             glcBindSampler(map, samplerFor(mode0, mode1, levels, scale, e.arbitraryMips));
             return t;
@@ -855,6 +859,14 @@ extern "C" void GXPC_SetTexturePlain(const void* data, size_t bytes) {
     o.bytes = bytes;
     o.hash = gx::hashBytes(data, bytes);
     gx::s_overrideCount = int(gx::s_overrides.size());
+}
+
+extern "C" int GXPC_TextureIsPlain(const void* data, size_t bytes) {
+    if (!data) return 0;
+    std::lock_guard<std::mutex> hold(gx::s_overrideMu);
+    const auto it = gx::s_overrides.find(data);
+    return it != gx::s_overrides.end() && it->second.plain && it->second.bytes == bytes &&
+           gx::hashBytes(data, bytes) == it->second.hash;
 }
 
 extern "C" void GXPC_ClearTextureOverrides(void) {

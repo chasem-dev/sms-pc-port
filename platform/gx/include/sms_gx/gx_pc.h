@@ -327,6 +327,9 @@ void GXPC_SetTextureOverride(const void* data, size_t bytes, const uint8_t* rgba
 // picture of theirs. Dropped as a picture is (GXPC_SetTextureOverride with
 // NULL `rgba`, or the data changing).
 void GXPC_SetTexturePlain(const void* data, size_t bytes);
+// Whether the texture at `data` is still drawn plain (GXPC_SetTexturePlain): not
+// since dropped, or its data changed.
+int GXPC_TextureIsPlain(const void* data, size_t bytes);
 // Drops every such picture, and every plain texture (a stage's memory is let go).
 void GXPC_ClearTextureOverrides(void);
 
