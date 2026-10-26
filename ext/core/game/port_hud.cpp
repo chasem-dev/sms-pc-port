@@ -19,6 +19,7 @@
 #include <GC2D/GCConsole2.hpp>
 #include <JSystem/J2D/J2DPane.hpp>
 #include <JSystem/J2D/J2DPicture.hpp>
+#include <JSystem/J2D/J2DScreen.hpp>
 #include <JSystem/JParticle/JPAEmitter.hpp>
 #include <System/MarDirector.hpp>
 
@@ -26,6 +27,7 @@ namespace {
 
 unsigned s_hidden[PORT_HUD_OWNERS];
 unsigned s_mask; // the union of s_hidden
+unsigned s_drawn = PORT_HUD_EVERYTHING; // port_hud_set_drawn
 
 // Whether the pause menu is up (the settings menu opens in it). gpMarDirector is null
 // outside a stage.
@@ -41,11 +43,11 @@ bool pauseMenu()
 unsigned hiddenNow()
 {
 	const unsigned settings = port_hud_settings_mask();
-	return s_mask | (settings && !pauseMenu() ? settings : 0);
+	return s_mask | (settings && !pauseMenu() ? settings : 0) | (~s_drawn & PORT_HUD_ALL);
 }
 
 // The panes hidden for this draw and how each was, to put back after it.
-enum { kMaxPanes = 32 };
+enum { kMaxPanes = 64 };
 J2DPane* s_pane[kMaxPanes];
 bool s_was[kMaxPanes];
 int s_count;
@@ -92,10 +94,33 @@ void before(TGCConsole2* c)
 	s_tankSaved = false;
 	const unsigned mask = hiddenNow(); // every owner's, and the settings page's
 
-	// every draw, hidden or not: a sparkle shown again when its counter is
-	sparkle(c->unk124, mask & PORT_HUD_COINS);
-	sparkle(c->unk144, mask & PORT_HUD_SHINES);
-	sparkle(c->unk164, mask & PORT_HUD_BLUE_COINS);
+	// every draw of its counter, hidden or not: a sparkle shown again when
+	// its counter is
+	if (s_drawn & PORT_HUD_COINS)
+		sparkle(c->unk124, mask & PORT_HUD_COINS);
+	if (s_drawn & PORT_HUD_SHINES)
+		sparkle(c->unk144, mask & PORT_HUD_SHINES);
+	if (s_drawn & PORT_HUD_BLUE_COINS)
+		sparkle(c->unk164, mask & PORT_HUD_BLUE_COINS);
+	if (!(s_drawn & PORT_HUD_REST)) {
+		// every group of the layout that is no part's: the timer, the balloon
+		// counter, the message ticker, the help balloon, and whatever a code
+		// mod's layout adds and looks after on the game's HUD (Eclipse's
+		// Shadow Mario brush card); drawConsole leaves out the radar and the
+		// mod's draw callbacks (port_hud_drawing_rest)
+		const J2DPane* parts[] = { c->unk108->getPane(), c->unk140->getPane(), c->unk160->getPane(),
+			                   c->unk1C4->getPane(), c->unk2F8->getPane(), c->unk3A8->getPane(),
+			                   c->unk428->getPane(), c->unk314[0], c->unk314[1], c->unk324 };
+		if (J2DPane* root = c->unkB0->search('ROOT'))
+			for (JSUTree<J2DPane>* t = root->getFirstChild(); t != root->getEndChild(); t = t->getNextChild()) {
+				J2DPane* group = t->getObject();
+				bool part      = false;
+				for (unsigned i = 0; i < sizeof parts / sizeof parts[0]; i++)
+					part = part || group == parts[i];
+				if (!part)
+					hideForDraw(group);
+			}
+	}
 	if (!mask)
 		return;
 
@@ -168,6 +193,16 @@ extern "C" void port_hud_set_hidden(int owner, unsigned mask)
 extern "C" unsigned port_hud_hidden(void)
 {
 	return hiddenNow();
+}
+
+extern "C" void port_hud_set_drawn(unsigned parts)
+{
+	s_drawn = parts & PORT_HUD_EVERYTHING;
+}
+
+extern "C" int port_hud_drawing_rest(void)
+{
+	return (s_drawn & PORT_HUD_REST) != 0;
 }
 
 extern "C" void port_hud_draw(void* console, int afterDraw)

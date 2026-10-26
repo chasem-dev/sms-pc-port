@@ -454,8 +454,21 @@ extern int port_ext_death_cause;
 #define PORT_HUD_ALL        0xFFFFu
 enum { PORT_HUD_BY_MULTIPLAYER = 0, PORT_HUD_BY_MODS = 1, PORT_HUD_OWNERS = 2 };
 void port_hud_set_hidden(int owner, unsigned mask);
-// The union: every owner's parts.
+// The union: every owner's parts (and, while port_hud_set_drawn draws only
+// some, the others).
 unsigned port_hud_hidden(void);
+// The parts the HUD's draws draw from now on, the others left out as hidden
+// ones are: PORT_HUD_* bits and PORT_HUD_REST, everything without a bit of its
+// own (the timer, the messages, the balloon counter, the radar, a code mod's
+// draw callbacks). PORT_HUD_EVERYTHING, as the game starts, draws them all.
+// Split-screen co-op draws the HUD a part at a time, each player's health and
+// FLUDD in their own view; a counter's sparkle is shown or not only by a draw
+// that draws its counter.
+#define PORT_HUD_REST       0x10000u
+#define PORT_HUD_EVERYTHING (PORT_HUD_ALL | PORT_HUD_REST)
+void port_hud_set_drawn(unsigned parts);
+// Whether the HUD's draws draw PORT_HUD_REST.
+int port_hud_drawing_rest(void);
 // TGCConsole2::perform's draw pass is about to draw the HUD (`after` 0), or
 // has (`after` 1): the game's patch calls it, `console` the TGCConsole2.
 void port_hud_draw(void* console, int after);
