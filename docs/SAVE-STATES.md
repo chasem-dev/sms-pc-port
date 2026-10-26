@@ -16,7 +16,8 @@ Each state holds two copies of the moment.
   functions, globals). The game is non-PIE everywhere for this, so those addresses are the same every run.
 - **Portable**: where the game was, as plain values (`PortSaveStatePortable` in
   `src/port_include/port_savestate.h`). That is the area and episode, Mario's position, facing, speed,
-  health, FLUDD's water and nozzles, the camera, and the progress flags (`TFlagManager` banks 1 to 4).
+  health, FLUDD's water and nozzles, the camera, the progress flags (`TFlagManager` banks 1 to 4), and
+  which save file they are (A to C; none for a state saved at the title).
   Loading it sets the flags and warps to the area as the warp menu does, then puts Mario back
   (`TMario::warpRequest`). It warps even into the area already loaded. The level's objects (a blue coin, a
   Shine) and the HUD's counters only follow the flags when a stage loads. The HUD's blue coin and Shine
@@ -128,6 +129,13 @@ renamed.
   save time of its own moment, so a state from before the latest save, or from another run, could never
   save again. After a load the game reads the card and takes its file's save time instead (patch
   `zzzz-savestate-03`).
+- A portable load puts the state's progress into the game, so the next save writes it over the file being
+  played. A state from file B loaded while file A was played, or at the title (where only the last file's
+  number is left), used to save file B's progress over file A, auto save included. A state keeps its file,
+  and a portable load goes back to that file (patch `zzzz-savestate-04`). States saved before they kept
+  their file are taken as the played file's, as before, except at the title: there the game takes no
+  file's save time and saves over no file until the file select reads one ("Its file is unknown, so no
+  file is saved over").
 
 ## Testing
 

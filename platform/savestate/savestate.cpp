@@ -26,6 +26,7 @@
 #include <dolphin/os/OSThread.h>
 
 #include <dirent.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -382,6 +383,11 @@ void write_in_background(Pending* job)
 		g_writing = false;
 	}).detach();
 }
+
+// saveFile is the padding that followed faceAngle, so states from before it
+// read the same, with 0 there (the file unknown).
+static_assert(offsetof(PortSaveStatePortable, saveFile) == 42 && offsetof(PortSaveStatePortable, status) == 44,
+              "PortSaveStatePortable's layout is the state file's");
 
 bool read_portable(const std::vector<Chunk>& chunks, PortSaveStatePortable* out)
 {
