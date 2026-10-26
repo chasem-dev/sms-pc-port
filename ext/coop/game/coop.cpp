@@ -7,8 +7,10 @@
 // (gpMarioOriginal, gpMarioPos and the rest, gpCamera and its helpers) are
 // theirs, so the game's own Mario code plays them as it plays Mario. Each
 // view is drawn into its half of the frame (GXPC_SetSplitView), the HUD once
-// over both. Objects near player 2 move as if player 2 were Mario
-// (objectMove), so enemies go after whoever is nearest.
+// over both, with each player's health and FLUDD in their own view (player 2's
+// from a second HUD of their own). Sounds are heard from the nearer player's
+// camera. Objects near player 2 move as if player 2 were Mario (objectMove),
+// so enemies go after whoever is nearest.
 // Game code: C++03.
 #include "port_ext.h"
 #include "port_framerate.h"
@@ -31,6 +33,8 @@
 #include <NPC/NpcBase.hpp>
 #include <MoveBG/Item.hpp>
 #include <MSound/MSound.hpp>
+#include <MSound/SoundEffects.hpp>
+#include <JSystem/JParticle/JPAEmitter.hpp>
 #include <M3DUtil/M3UModelMario.hpp>
 #include <Player/Mario.hpp>
 #include <Player/MarioAccess.hpp>
@@ -40,6 +44,7 @@
 #include <Strategic/Strategy.hpp>
 #include <System/Application.hpp>
 #include <GC2D/BoundPane.hpp>
+#include <GC2D/ExPane.hpp>
 #include <GC2D/GCConsole2.hpp>
 #include <JSystem/J2D/J2DPicture.hpp>
 #include <JSystem/JUtility/JUTTexture.hpp>
@@ -75,13 +80,14 @@ Mtx* port_coop_other_view = nullptr;
 int port_coop_second_entry = 0;
 // zzzzzz-coop-03: both players' cameras while player 2 plays, for clipping
 Mtx* port_coop_views[2] = { nullptr, nullptr };
+// zzzzzz-coop-08: camera 2's place while player 2 plays, the sound's second ear
+const Vec* port_coop_ear_pos = nullptr;
 }
 
 namespace {
 
 const int kNoticeFrames = 30 * 5;
 const int kOverlayNotice = 0; // GXPC_EXT_OVERLAY_NOTICE
-const int kOverlayStatus = 1; // GXPC_EXT_OVERLAY_STATUS
 
 // ------------------------------------------------------------ the players' globals
 
@@ -103,6 +109,8 @@ bool s_made;          // this stage has player 2 and their camera
 bool s_active;        // player 2 is playing
 bool s_split;         // the stage is drawn in two views this frame
 bool s_wanted;        // SMS_COOP: co-op is on
+TGCConsole2* s_console2; // player 2's HUD, for their health and FLUDD
+Mtx* s_earMtx;        // camera 2's view while player 2 plays: the sound's second ear
 int s_layout;         // 0 side by side, 1 one above the other
 f32 s_baseAspect;     // the game camera's own aspect
 TMarDirector* s_dir;  // the director whose stage has them
@@ -428,22 +436,41 @@ public:
 	}
 };
 
+// The scene.bin record `object` was made from, past its type name
+// (TNameRef::getType): what its load reads.
+bool recordBody(const void* object, const u8** body, u32* size)
+{
+	const void* record = nullptr;
+	unsigned bytes     = 0;
+	if (!port_spawn_record_of(object, &record, &bytes) || bytes < 8)
+		return false;
+	const u8* r = (const u8*)record;
+	u32 at      = 4 + 2;
+	at += 2 + ((u32)r[at] << 8 | r[at + 1]);
+	if (at >= bytes)
+		return false;
+	*body = r + at;
+	*size = bytes - at;
+	return true;
+}
+
 // The stage's scene is in: player 2 and their camera are made from Mario's
 // record and with the stage's parameters, and put where the scene's loadAfter
 // finds them (the player group, the cameras).
 void sceneLoaded()
 {
-	s_made   = false;
-	s_split  = false;
-	s_active = false; // a new stage's player 2 joins it once it plays (frame)
+	s_made     = false;
+	s_split    = false;
+	s_active   = false; // a new stage's player 2 joins it once it plays (frame)
+	s_console2 = nullptr;
 	if (!s_wanted || !gpMarioOriginal || !gpCamera || !gpStrategy || gpApplication.mCurrArea.getStage() == 15)
 		return;
 	TIdxGroupObj* players = gpStrategy->unk10[6]; // "プレーヤーグループ"
 	JDrama::TViewObjPtrListT<JDrama::TViewObj>* cameras
 	    = (JDrama::TViewObjPtrListT<JDrama::TViewObj>*)JDrama::TNameRefGen::search2("Cameras");
-	const void* record = nullptr;
-	unsigned size      = 0;
-	if (!players || !cameras || !port_spawn_record_of(gpMarioOriginal, &record, &size) || size < 8) {
+	const u8* record = nullptr;
+	u32 size         = 0;
+	if (!players || !cameras || !recordBody(gpMarioOriginal, &record, &size)) {
 		fprintf(stderr, "[coop] this stage has no Mario of its own to copy\n");
 		return;
 	}
@@ -459,17 +486,10 @@ void sceneLoaded()
 	cam->setGamePad(gpMarDirector->getGamePad(1));
 	cameras->getChildren().push_back(cam);
 
-	// player 2: Mario's record, its type name passed over (TNameRef::getType)
-	const u8* r = (const u8*)record;
-	u32 at      = 4 + 2;
-	at += 2 + ((u32)r[at] << 8 | r[at + 1]);
-	if (at >= size) {
-		fprintf(stderr, "[coop] Mario's record is too short\n");
-		return;
-	}
+	// player 2: Mario's record
 	TCoopMario* m = new TCoopMario;
 	s_p2.mario    = m;
-	JSUMemoryInputStream body((void*)(r + at), size - at);
+	JSUMemoryInputStream body((void*)record, size);
 	m->load(body); // as player 2 (InP2): its parameters, models and FLUDD
 	m->setGamePad(gpMarDirector->getGamePad(1));
 	dressAsLuigi(m);
@@ -509,6 +529,36 @@ void swapCamLinks(JDrama::TViewObj* to)
 {
 	for (int i = 0; i < s_camLinkCount; i++)
 		s_camLinks[i]->mPerformer = to;
+}
+
+// Player 2's HUD: a second TGCConsole2, made from the stage's own (its
+// record, as the stage loaded it) once that one is set up, its loadAfter with
+// player 2's globals, so it shows their health and FLUDD as the game's shows
+// Mario's. It runs and is drawn with the game's (port_coop_hud); only its
+// health and FLUDD meters are ever drawn.
+void makeConsole2()
+{
+	s_console2       = nullptr;
+	TGCConsole2* own = gpMarDirector->getConsole();
+	const u8* record = nullptr;
+	u32 size         = 0;
+	if (!own || !recordBody(own, &record, &size)) {
+		fprintf(stderr, "[coop] this stage has no HUD of its own to copy: player 2's health and FLUDD go unshown\n");
+		return;
+	}
+	TGCConsole2* c = new TGCConsole2("console 2");
+	JSUMemoryInputStream body((void*)record, size);
+	c->load(body);
+	{
+		InP2 in;
+		c->loadAfter();
+	}
+	// its counters are the game's HUD's: their sparkles are never drawn
+	JPABaseEmitter* sparkles[3] = { c->unk124, c->unk144, c->unk164 };
+	for (int i = 0; i < 3; i++)
+		if (sparkles[i])
+			sparkles[i]->stopDrawParticle();
+	s_console2 = c;
 }
 
 void stageSetup()
@@ -560,6 +610,7 @@ void stageSetup()
 	if (getenv("SMS_COOP_DEBUG"))
 		fprintf(stderr, "[coop] %d camera links; GX Post: %d links, 3D to %d, composite %d, overlays %d-%d\n",
 		        s_camLinkCount, s_postCount, s_post3DEnd, s_composite, s_postOverlayFrom, s_postOverlayTo);
+	makeConsole2();
 }
 
 void performPost(int from, int to, JDrama::TGraphics* g)
@@ -678,6 +729,76 @@ int drawStage(void* director, void* graphics)
 	return 1;
 }
 
+// ------------------------------------------------------------ each player's HUD
+
+bool s_hudBusy;          // port_coop_hud is running the HUDs (their performs come back to it)
+bool s_console2Updating; // player 2's HUD's update: its sounds (soundHook)
+
+// One draw of a HUD: `parts` of it (port_hud_set_drawn), moved and scaled into
+// x, y, w, h of the frame (GXPC_SetSplitView; 0, 0, 1, 1 where it is).
+void hudPass(TGCConsole2* c, JDrama::TGraphics* g, unsigned parts, float x, float y, float w, float h)
+{
+	const bool moved = x != 0.0f || y != 0.0f || w != 1.0f || h != 1.0f;
+	port_hud_set_drawn(parts);
+	if (moved && GXPC_SetSplitView)
+		GXPC_SetSplitView(1, x, y, w, h);
+	c->perform(8, g);
+	if (moved && GXPC_SetSplitView)
+		GXPC_SetSplitView(0, 0, 0, 1, 1);
+	port_hud_set_drawn(PORT_HUD_EVERYTHING);
+}
+
+// The HUD while the screen is split: what the players share (the counters,
+// the lives, the messages) where the game has it, and each player's health
+// and FLUDD in their own view. Side by side, a view is as tall as the frame
+// and half as wide: player 1's meters move left by half the frame, to their
+// view's right edge, and player 2's stay at the frame's; both health meters
+// come down below the top row, where player 1's would cover the lives (at the
+// frame's top middle). One above the other, each player's HUD is drawn at
+// half size into the right half of their view, so the health meter sits at
+// its top right and FLUDD at its bottom right.
+const float kHealthDown = 80.0f / 448.0f; // side by side: under the lives' row
+
+void drawHuds(TGCConsole2* own, JDrama::TGraphics* g)
+{
+	const unsigned meters = PORT_HUD_HEALTH | PORT_HUD_WATER;
+	hudPass(own, g, PORT_HUD_EVERYTHING & ~meters, 0.0f, 0.0f, 1.0f, 1.0f);
+	if (s_layout == 1) {
+		hudPass(own, g, meters, 0.5f, 0.0f, 0.5f, 0.5f);
+	} else {
+		hudPass(own, g, PORT_HUD_HEALTH, -0.5f, kHealthDown, 1.0f, 1.0f);
+		hudPass(own, g, PORT_HUD_WATER, -0.5f, 0.0f, 1.0f, 1.0f);
+	}
+	InP2 in;
+	if (s_layout == 1) {
+		hudPass(s_console2, g, meters, 0.5f, 0.5f, 0.5f, 0.5f);
+	} else {
+		hudPass(s_console2, g, PORT_HUD_HEALTH, 0.0f, kHealthDown, 1.0f, 1.0f);
+		hudPass(s_console2, g, PORT_HUD_WATER, 0.0f, 0.0f, 1.0f, 1.0f);
+	}
+}
+
+// Sounds player 2's HUD makes as it runs: those of their health and FLUDD
+// (hurt, healed, low, the tank full); the rest are the game's HUD's already
+// (the counters, the messages, the HUD sliding in and out).
+int soundHook(unsigned* id, const float* pos, int system)
+{
+	(void)pos;
+	(void)system;
+	if (!s_console2Updating)
+		return 0;
+	switch (*id) {
+	case MSD_SE_SY_HP_EMPTY:
+	case MSD_SE_SY_HP_RECOVER:
+	case MSD_SE_SY_HP_DOWN:
+	case MSD_SE_SY_DAMAGE:
+	case MSD_SE_SY_PO_WATER_FULL:
+		return 0;
+	default:
+		return 1;
+	}
+}
+
 // ------------------------------------------------------------ joining, leaving, play
 
 TMarDirector* director()
@@ -720,8 +841,28 @@ void placeBesideP1(TMario* m)
 	s_movedP2At = s_frame;
 }
 
+// Player 2's FLUDD gauge as a stage starts it (TGCConsole2::loadAfter: down,
+// to come up as they have FLUDD), after it went down with them. While their
+// death plays, their HUD takes their camera's death close-up for a cutscene
+// and hides the gauge every frame, as the game's does for Mario's (whose death
+// then reloads the stage), while it goes on bringing it up: it would be left
+// up with nothing shown but its back.
+void resetTank(TGCConsole2* c)
+{
+	if (!c || c->unk2F8->getPane()->isVisible())
+		return;
+	c->unk45 = c->unk46 = 0;
+	c->unk7C = 0;
+	c->unk26C->getPane()->show();
+	c->unk270->getPane()->hide();
+	c->unk274->getPane()->hide();
+	c->unk29C->getPane()->hide();
+	c->unk288->hide();
+}
+
 void revive(TMario* m)
 {
+	resetTank(s_console2);
 	m->offFlag(MARIO_FLAG_GAME_OVER);
 	m->mHealth = m->mDeParams.mHPMax.get();
 	placeBesideP1(m);
@@ -807,29 +948,6 @@ void setAspects(bool split)
 		s_p2.cam->mAspect = aspect;
 }
 
-// The HUD's health meter is player 1's: player 2's health shows in the
-// window's corner while they are hurt (as the game's meter shows Mario's).
-void showHealth()
-{
-	static int shown = -1;
-	TMario* m = p2();
-	const int max = m ? m->mDeParams.mHPMax.get() : 0;
-	const int now = s_active && m && !m->checkFlag(MARIO_FLAG_GAME_OVER) && m->mHealth < max ? m->mHealth : -1;
-	if (now == shown || !GXPC_ExtOverlaySet)
-		return;
-	shown = now;
-	if (now < 0) {
-		GXPC_ExtOverlaySet(kOverlayStatus, "");
-		return;
-	}
-	char text[64]; // the overlay's font is ASCII: a bar of the health left
-	int at = snprintf(text, sizeof text, "#5ad25a Luigi [");
-	for (int i = 0; i < max && at < (int)sizeof text - 3; i++)
-		text[at++] = i < now ? '#' : '-';
-	snprintf(text + at, sizeof text - at, "]");
-	GXPC_ExtOverlaySet(kOverlayStatus, text);
-}
-
 void frame()
 {
 	s_frame++;
@@ -842,6 +960,9 @@ void frame()
 	// both cameras clip the stage's actors while both play (zzzzzz-coop-03)
 	port_coop_views[0] = here && s_active && s_p1.cam ? (Mtx*)s_p1.cam->getUnk1EC() : nullptr;
 	port_coop_views[1] = here && s_active && s_p2.cam ? (Mtx*)s_p2.cam->getUnk1EC() : nullptr;
+	// ...and sounds are heard from the nearer camera (zzzzzz-coop-08)
+	s_earMtx          = port_coop_views[1];
+	port_coop_ear_pos = s_earMtx ? &s_p2.cam->getUnk124Vec() : nullptr;
 	if (!here) {
 		port_coop_set_joinable(0);
 		s_split = false;
@@ -905,7 +1026,6 @@ void frame()
 	}
 	if (s_noticeFrames > 0 && --s_noticeFrames == 0 && GXPC_ExtOverlaySet)
 		GXPC_ExtOverlaySet(kOverlayNotice, "");
-	showHealth();
 	// two views while both play the stage; one (player 1's camera) for its
 	// cutscenes, Shine Gets and the like, which the game shows on camera 1
 	const bool split = s_active && d->mState >= TMarDirector::STATE_UNK4 && !d->isDemoModeNow()
@@ -987,6 +1107,19 @@ void afterMovement()
 			m->onFlag(MARIO_FLAG_HAS_FLUDD);
 			fprintf(stderr, "[coop] test: player 2 has FLUDD now\n");
 		}
+	// both players hurt, frames after joining: Mario by 2, player 2 by 3, and
+	// player 2's FLUDD a third full (their meters)
+	static bool hurt;
+	if (const char* t = getenv("SMS_COOP_TEST_HURT"))
+		if (!hurt && s_testJoined && s_frame >= s_testJoinFrame + atoi(t)) {
+			hurt = true;
+			p1()->decHP(2);
+			InP2 in;
+			m->decHP(3);
+			if (TWaterGun* gun = m->getFludd())
+				gun->mCurrentWater = gun->getMaxWater() / 3;
+			fprintf(stderr, "[coop] test: Mario's health %d, player 2's %d\n", (int)p1()->mHealth, (int)m->mHealth);
+		}
 	// coins brought out at player 2 and taken by them, frames after joining
 	static int coinsDone;
 	if (const char* t = getenv("SMS_COOP_TEST_COINS")) {
@@ -1027,7 +1160,8 @@ void afterMovement()
 		        s_frame, m->mPosition.x, m->mPosition.y, m->mPosition.z, (unsigned)m->mStatus,
 		        pad ? pad->getMainStickX() : 0.0f, pad ? pad->getMainStickY() : 0.0f, p1()->mPosition.x, p1()->mPosition.y,
 		        p1()->mPosition.z);
-		fprintf(stderr, "[coop] %d object moves led by player 2 lately; player 2 health %d\n", s_swapCount, (int)m->mHealth);
+		fprintf(stderr, "[coop] %d object moves led by player 2 lately; player 2 health %d, water %d\n", s_swapCount,
+		        (int)m->mHealth, m->getFludd() ? (int)m->getFludd()->mCurrentWater : -1);
 		s_swapCount = 0;
 	}
 	// player 2 down (a lost life, a pit): a life from the shared count, as
@@ -1197,6 +1331,80 @@ PortExtension s_extension;
 
 } // namespace
 
+// decomp-patches/zzzzzz-coop-09: the game's HUD's perform (`console`, its
+// `flags`: 1 its update, 2 its second pass, 8 its draw). Player 2's HUD
+// updates with it, with their globals; while the screen is split, both are
+// drawn a part at a time, each player's meters in their view (drawHuds). 0
+// leaves the game's perform to itself.
+extern "C" int port_coop_hud(void* console, unsigned flags, void* graphics)
+{
+	TGCConsole2* own = (TGCConsole2*)console;
+	if (s_hudBusy || !s_console2 || !s_made || !gpMarDirector || gpMarDirector != s_dir
+	    || own != gpMarDirector->getConsole())
+		return 0;
+	JDrama::TGraphics* g = (JDrama::TGraphics*)graphics;
+	s_hudBusy = true;
+	// its update and its second pass (the balloon's, the counters' and the
+	// gauge's Yoshi juice look)
+	if (const unsigned update = flags & 3) {
+		own->perform(update, g);
+		if (s_active) {
+			InP2 in;
+			// the counters' bursts are not made for it (port_hud_hidden)
+			port_hud_set_drawn(PORT_HUD_HEALTH | PORT_HUD_WATER);
+			s_console2Updating = true;
+			s_console2->perform(update, g);
+			s_console2Updating = false;
+			port_hud_set_drawn(PORT_HUD_EVERYTHING);
+		}
+	}
+	if (flags & 8) {
+		if (s_split && s_active)
+			drawHuds(own, g);
+		else
+			own->perform(8, g);
+	}
+	s_hudBusy = false;
+	return 1;
+}
+
+// decomp-patches/zzzzzz-coop-08: where a sound is, as the nearer of the two
+// cameras hears it (`camSpace` as camera 1's view has it, made camera 2's when
+// that is nearer; `prev`, last frame's, made this frame's as the sound goes
+// from one camera to the other, so its Doppler has no jump). Volume, pan,
+// surround, priority and the distance at which sounds are dropped all follow.
+extern "C" void port_coop_hear(Vec* camSpace, Vec* prev, const Vec* pos)
+{
+	if (!s_earMtx || !pos)
+		return;
+	Vec other;
+	MTXMultVec(*s_earMtx, pos, &other);
+	const f32 d1 = camSpace->x * camSpace->x + camSpace->y * camSpace->y + camSpace->z * camSpace->z;
+	const f32 d2 = other.x * other.x + other.y * other.y + other.z * other.z;
+	const Vec chosen = d2 < d1 ? other : *camSpace;
+	const Vec other2 = d2 < d1 ? *camSpace : other;
+	// last frame's from the other camera (nearer to where that one has it)
+	const f32 toChosen = (prev->x - chosen.x) * (prev->x - chosen.x) + (prev->y - chosen.y) * (prev->y - chosen.y)
+	                     + (prev->z - chosen.z) * (prev->z - chosen.z);
+	const f32 toOther = (prev->x - other2.x) * (prev->x - other2.x) + (prev->y - other2.y) * (prev->y - other2.y)
+	                    + (prev->z - other2.z) * (prev->z - other2.z);
+	if (toOther < toChosen)
+		*prev = chosen;
+	*camSpace = chosen;
+}
+
+// decomp-patches/zzzzzz-coop-08: the stage is going (TMarDirector's
+// destructor): player 2, camera 2 and their HUD go with its heap.
+extern "C" void port_coop_stage_exit(void)
+{
+	s_made             = false;
+	s_split            = false;
+	s_console2         = nullptr;
+	s_earMtx           = nullptr;
+	port_coop_ear_pos  = nullptr;
+	port_coop_views[0] = port_coop_views[1] = nullptr;
+}
+
 // decomp-patches/zzzzzz-coop-03: the cube the other player is in (player 2's
 // while player 1's globals are in force, player 1's while player 2's are), of
 // the area cubes or one of the fast cubes; -1 without a second player.
@@ -1301,6 +1509,7 @@ struct Register {
 		s_extension.saveStatesOffReason = saveStatesOffReason;
 		s_extension.sceneLoaded         = sceneLoaded;
 		s_extension.drawStage           = drawStage;
+		s_extension.sound               = soundHook;
 		port_ext_register(&s_extension);
 	}
 } s_register;
