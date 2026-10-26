@@ -466,6 +466,16 @@ BSE_FIXES = TEXTURE_FIXES + CARD_IMAGE_FIXES + optional([RAWADDR_FIX]) + [RAWDAT
      "BSE's console log formats its arguments"),
     ("src/logging.cpp", r"\bOSReport\(msg, vargs\);", r"sms_mod_vreport(msg, vargs);",
      "BSE's console log formats its arguments"),
+    # Player::registerData added a key to the player's slot of the eight and
+    # went on to the next empty one, which it took for the same player: each
+    # key Mario's modules register used a slot. Alone there were enough; with
+    # co-op's player 2 registering as Mario does, the eight were gone before
+    # Shadow Mario's (TEMario::loadAfter), and his first move read his missing
+    # data (Delfino Plaza crashed as it loaded). The key goes in his own slot.
+    ("src/player.cpp",
+     r"(?m)^([ \t]*)(sPlayerDatas\[i\]\.mData\.push_back\(\{key, data\}\);\r?\n)([ \t]*\}\r?\n[ \t]*if \(sPlayerDatas\[i\]\.mPlayer == nullptr\) \{)",
+     lambda m: m.group(1) + m.group(2) + m.group(1) + "return true;\n" + m.group(3),
+     "a player's data keys share their one slot"),
 ] + FRAME_RATE_FIXES + ASPECT_RATIO_FIXES + BSE_HUD_EDGE_FIXES
 MOVESET_FIXES = optional(TEXTURE_FIXES + [RAWADDR_FIX]) + CARD_IMAGE_FIXES
 SHI_FIXES = BOOL_RET_FIXES + SHI_WORD_FIXES + SHI_GAME_TYPES + [
