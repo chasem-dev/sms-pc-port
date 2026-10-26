@@ -1368,6 +1368,37 @@ extern "C" int port_coop_hud(void* console, unsigned flags, void* graphics)
 	return 1;
 }
 
+// decomp-patches/zzzzzz-coop-10: the director's check for a change of state,
+// as BetterSunshineEngine makes it (checkBootOut: before it, `after` 0; after
+// it, 1). After a Shine Get that keeps the players in the stage (Super Mario
+// Eclipse's no-boot Shines), the mod puts gpMarioAddress back in play once the
+// camera or the save prompt is done, if it is in its Shine Get: player 1 was,
+// and player 2, who took the Shine, stayed in their Shine Get pose for good.
+// While player 2 is in the Shine Get of the Shine the director has, they are
+// "the player" for it (not camera 2: the Shine Get plays on camera 1).
+static TMario* s_shineGetSaved;
+extern "C" void port_coop_shine_get_player(void* director, int after)
+{
+	if (after) {
+		if (s_shineGetSaved) {
+			gpMarioOriginal = s_shineGetSaved;
+			gpMarioAddress  = s_shineGetSaved;
+			SMS_SetMarioAccessParams();
+			s_shineGetSaved = nullptr;
+		}
+		return;
+	}
+	TMarDirector* d = (TMarDirector*)director;
+	TMario* m       = s_p2.mario;
+	if (!s_active || s_inP2 || !m || !d || !d->unk25C || m->unk384 != (THitActor*)d->unk25C
+	    || m->mStatus != MARIO_STATUS_WIN_DEMO || gpMarioOriginal != s_p1.mario)
+		return;
+	s_shineGetSaved = gpMarioOriginal;
+	gpMarioOriginal = m;
+	gpMarioAddress  = m;
+	SMS_SetMarioAccessParams();
+}
+
 // decomp-patches/zzzzzz-coop-08: where a sound is, as the nearer of the two
 // cameras hears it (`camSpace` as camera 1's view has it, made camera 2's when
 // that is nearer; `prev`, last frame's, made this frame's as the sound goes
