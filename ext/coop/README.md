@@ -46,9 +46,9 @@ Headless, with scripted input (`SMS_AUTOPRESS` for player 1) and these test aids
 | `SMS_COOP_TEST_KILL=frame` | they lose a life (frames since the game started) |
 | `SMS_COOP_TEST_LIVES=n` | the shared lives are set to `n` as they join |
 | `SMS_COOP_TEST_ONE_UP=n` | a 1-Up `n` frames after they joined |
-| `SMS_COOP_TEST_COINS=n:count` | from `n` frames after they joined, `count` coins brought out at them and taken, one each 10 frames |
+| `SMS_COOP_TEST_COINS=n:count` | from `n` frames after they joined, `count` coins brought out at them, one each 10 frames, for the item group's hit check to take |
 | `SMS_COOP_TEST_FLUDD=n` | FLUDD put on their back `n` frames after they joined (as a stage that starts without it hands it out) |
-| `SMS_COOP_TEST_SHINE=n` | the stage's 100-coin Shine brought out `n` frames after they joined, and touched by them 360 frames later |
+| `SMS_COOP_TEST_SHINE=n` | the stage's 100-coin Shine brought out `n` frames after they joined, and player 2 put on it 360 frames later (the item group's hit check gives it to them) |
 | `SMS_COOP_TEST_WARP=frame:area,episode` | the stage changes |
 | `SMS_COOP_TEST_AT=x,y,z,angle` | player 2 put there, facing `angle` (0-65535), 10 frames after joining, their camera behind them |
 | `SMS_COOP_DEBUG=1` | the stage's lists as found, and both players' places once a second |

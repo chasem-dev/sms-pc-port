@@ -26,13 +26,16 @@
 #include <JSystem/JKernel/JKRHeap.hpp>
 #include <JSystem/JSupport/JSUMemoryInputStream.hpp>
 #include <MarioUtil/DrawUtil.hpp>
+#include <Map/MapData.hpp>
 #include <MoveBG/ItemManager.hpp>
+#include <NPC/NpcBase.hpp>
 #include <MoveBG/Item.hpp>
 #include <MSound/MSound.hpp>
 #include <M3DUtil/M3UModelMario.hpp>
 #include <Player/Mario.hpp>
 #include <Player/MarioAccess.hpp>
 #include <Player/MarioCap.hpp>
+#include <Player/WaterGun.hpp>
 #include <Strategic/LiveActor.hpp>
 #include <Strategic/Strategy.hpp>
 #include <System/Application.hpp>
@@ -171,29 +174,36 @@ void apply(const Ctx& c)
 }
 
 // Player 2's globals for as long as it lives (nested: the outermost restores).
+bool enterP2(Ctx& saved)
+{
+	if (s_inP2 || !s_p2.mario || !s_p2.cam)
+		return false;
+	capture(saved);
+	memcpy(s_p1.cubes, saved.cubes, sizeof s_p1.cubes); // player 1's, the other cubes while player 2 runs
+	apply(s_p2);
+	s_inP2          = true;
+	port_coop_in_p2 = 1;
+	return true;
+}
+void leaveP2(const Ctx& saved)
+{
+	capture(s_p2); // what player 2's code changed (a camera's helpers) stays theirs
+	s_p2.mario = (TMario*)gpMarioOriginal;
+	apply(saved);
+	s_inP2          = false;
+	port_coop_in_p2 = 0;
+}
 struct InP2 {
 	Ctx saved;
 	bool entered;
 	InP2()
-	    : entered(!s_inP2 && s_p2.mario && s_p2.cam)
+	    : entered(enterP2(saved))
 	{
-		if (!entered)
-			return;
-		capture(saved);
-		memcpy(s_p1.cubes, saved.cubes, sizeof s_p1.cubes); // player 1's, the other cubes while player 2 runs
-		apply(s_p2);
-		s_inP2          = true;
-		port_coop_in_p2 = 1;
 	}
 	~InP2()
 	{
-		if (!entered)
-			return;
-		capture(s_p2); // what player 2's code changed (a camera's helpers) stays theirs
-		s_p2.mario = (TMario*)gpMarioOriginal;
-		apply(saved);
-		s_inP2          = false;
-		port_coop_in_p2 = 0;
+		if (entered)
+			leaveP2(saved);
 	}
 };
 
@@ -691,9 +701,9 @@ void notice(const char* text, int frames)
 }
 
 // Beside player 1, facing as they do, a little behind and to their right.
-void placeBesideP1(TMario* m)
+int s_movedP2At = -100; // the frame co-op itself last put player 2 somewhere
+void placeBeside(TMario* m, TMario* a)
 {
-	TMario* a  = p1();
 	const f32 s = sinf(a->mFaceAngle.y * (3.14159265f / 32768.0f));
 	const f32 c = cosf(a->mFaceAngle.y * (3.14159265f / 32768.0f));
 	m->mPosition.x = a->mPosition.x + c * 90.0f - s * 40.0f;
@@ -703,6 +713,11 @@ void placeBesideP1(TMario* m)
 	m->mModelFaceAngle = a->mFaceAngle.y;
 	m->mVel.x = m->mVel.y = m->mVel.z = 0.0f;
 	m->mForwardVel = 0.0f;
+}
+void placeBesideP1(TMario* m)
+{
+	placeBeside(m, p1());
+	s_movedP2At = s_frame;
 }
 
 void revive(TMario* m)
@@ -729,6 +744,38 @@ void revive(TMario* m)
 	}
 }
 
+f32 dist2(const JGeometry::TVec3<f32>& a, const JGeometry::TVec3<f32>& b);
+
+// Player 2's FLUDD as the stage set up Mario's (TMarDirector::setMario: none
+// in a secret course, the saved nozzle, the Rocket where it is the stage's).
+TMarDirector* s_fluddSyncedFor;
+void syncFludd(TMario* m)
+{
+	TMario* a = p1();
+	if (a->checkFlag(MARIO_FLAG_HAS_FLUDD))
+		m->onFlag(MARIO_FLAG_HAS_FLUDD);
+	else
+		m->offFlag(MARIO_FLAG_HAS_FLUDD);
+	TWaterGun* g1 = a->getFludd();
+	TWaterGun* g2 = m->getFludd();
+	if (!g1 || !g2 || g1->mCurrentNozzle == TWaterGun::Yoshi)
+		return;
+	InP2 in;
+	if (g2->mSecondNozzle != g1->mSecondNozzle && g1->mSecondNozzle != TWaterGun::Spray)
+		g2->changeNozzle((TWaterGun::TNozzleType)g1->mSecondNozzle, true);
+	if (g2->mCurrentNozzle != g1->mCurrentNozzle)
+		g2->changeNozzle((TWaterGun::TNozzleType)g1->mCurrentNozzle, true);
+}
+
+// Player 2 beside Mario and their camera behind them, as after Mario was
+// warped (a script's warp, a pipe within the stage, a rising floor).
+void followP1(TMario* m)
+{
+	placeBesideP1(m);
+	InP2 in;
+	gpCamera->warpPosAndAt(gpCamera->mCurrentTarget.unk28, *gpMarioAngleY + 0x8000);
+}
+
 void activate(bool on)
 {
 	TMario* m = p2();
@@ -741,6 +788,7 @@ void activate(bool on)
 	if (on) {
 		m->offHitFlag(HIT_FLAG_NO_COLLISION);
 		revive(m);
+		s_fluddSyncedFor = nullptr; // as the stage set up Mario's
 	} else {
 		m->onHitFlag(HIT_FLAG_NO_COLLISION);
 		m->mPosition.y = -100000.0f; // out of everyone's way
@@ -802,8 +850,10 @@ void frame()
 	port_coop_set_joinable(playing());
 	// controller 2 reads as controller 1 does in each of the stage's modes
 	// (the director sets controller 1's: play, talk, menus)
+	// (flag 4, B talks, is each controller's own: the director sets it for the
+	// player with someone to talk to, port_coop_find_talk_npc)
 	if (TMarioGamePad* pad2 = d->getGamePad(1))
-		pad2->mFlags = d->getGamePad(0)->mFlags;
+		pad2->mFlags = (d->getGamePad(0)->mFlags & ~4u) | (pad2->mFlags & 4u);
 	// a test's player 2 (SMS_COOP_TEST_JOIN=frames into the stage)
 	if (const char* t = getenv("SMS_COOP_TEST_JOIN"))
 		if (!s_testJoined && playing() && ++s_hintFrames > atoi(t)) {
@@ -841,6 +891,10 @@ void frame()
 	const bool want = port_coop_player2() != 0 && !s_out;
 	if (want != s_active && (!want || playing()))
 		activate(want);
+	if (s_active && playing() && s_fluddSyncedFor != s_dir && p2()) {
+		s_fluddSyncedFor = s_dir;
+		syncFludd(p2());
+	}
 	if (!s_active && !s_hintShown && playing() && port_coop_can_join()) {
 		s_hintShown = true;
 		notice("Co-op: press START on another controller to join as Luigi.", kNoticeFrames);
@@ -865,8 +919,34 @@ void frame()
 void afterMovement()
 {
 	TMario* m = p2();
-	if (!s_active || !m || director() != s_dir)
+	static JGeometry::TVec3<f32> p1Last;
+	static TMarDirector* p1LastFor;
+	if (!s_active || !m || director() != s_dir) {
+		p1LastFor = nullptr;
 		return;
+	}
+	// Mario warped (moved further than any run, jump or rocket takes him in a
+	// frame): player 2 goes with him, as everyone does through a pipe
+	const JGeometry::TVec3<f32> p1Now = p1()->mPosition;
+	if (p1LastFor == s_dir && playing() && !m->checkFlag(MARIO_FLAG_GAME_OVER)
+	    && dist2(p1Now, p1Last) > 1500.0f * 1500.0f && dist2(m->mPosition, p1Now) > 1500.0f * 1500.0f) {
+		if (getenv("SMS_COOP_DEBUG"))
+			fprintf(stderr, "[coop] Mario warped %.0f units: player 2 goes with him\n", sqrtf(dist2(p1Now, p1Last)));
+		followP1(m);
+	}
+	// ...and Mario goes with player 2 when they are warped (a warp floor of theirs)
+	static JGeometry::TVec3<f32> p2Last;
+	const JGeometry::TVec3<f32> p2Now = m->mPosition;
+	if (p1LastFor == s_dir && playing() && !m->checkFlag(MARIO_FLAG_GAME_OVER) && s_frame - s_movedP2At > 2
+	    && dist2(p2Now, p2Last) > 1500.0f * 1500.0f && dist2(p2Now, p1()->mPosition) > 1500.0f * 1500.0f) {
+		if (getenv("SMS_COOP_DEBUG"))
+			fprintf(stderr, "[coop] player 2 warped %.0f units: Mario goes with them\n", sqrtf(dist2(p2Now, p2Last)));
+		placeBeside(p1(), m);
+		gpCamera->warpPosAndAt(gpCamera->mCurrentTarget.unk28, *gpMarioAngleY + 0x8000);
+	}
+	p2Last    = m->mPosition;
+	p1Last    = p1()->mPosition;
+	p1LastFor = s_dir;
 	// test aids (frames since the game started): player 2 loses a life; the
 	// stage changes (SMS_COOP_TEST_WARP=frame:area,episode)
 	static bool killed, warped;
@@ -890,6 +970,7 @@ void afterMovement()
 		int ang;
 		if (!placed && s_testJoined && s_frame >= s_testJoinFrame + 10 && sscanf(t, "%f,%f,%f,%d", &x, &y, &z, &ang) == 4) {
 			placed = true;
+			s_movedP2At = s_frame;
 			m->mPosition.x = x, m->mPosition.y = y, m->mPosition.z = z;
 			m->mFaceAngle.y = (s16)ang;
 			m->mModelFaceAngle = (s16)ang;
@@ -914,11 +995,10 @@ void afterMovement()
 		    && s_frame >= s_testJoinFrame + at + coinsDone * 10 && playing()) {
 			if (TCoin* coin = gpItemManager->newAndRegisterCoinReal()) {
 				coin->mPosition = m->mPosition;
-				coin->appear();
-				coin->touchActor(m); // as the hit check does when they meet
+				coin->appear(); // the item group's hit check takes it, as it does Mario's
 			}
 			coinsDone++;
-			fprintf(stderr, "[coop] test: player 2 took coin %d; the stage's coins: %d\n", coinsDone,
+			fprintf(stderr, "[coop] test: coin %d brought out at player 2; the stage's coins: %d\n", coinsDone,
 			        (int)TFlagManager::getInstance()->getFlag(0x40002));
 		}
 	}
@@ -936,9 +1016,9 @@ void afterMovement()
 			shineAt      = -1;
 			m->mPosition = shine->mPosition;
 			m->mPosition.y -= 60.0f;
-			fprintf(stderr, "[coop] test: player 2 touches the Shine at %.0f %.0f %.0f (state %d)\n", shine->mPosition.x,
+			fprintf(stderr, "[coop] test: player 2 put on the Shine at %.0f %.0f %.0f (state %d)\n", shine->mPosition.x,
 			        shine->mPosition.y, shine->mPosition.z, (int)shine->mState);
-			shine->touchActor(m); // as the hit check does when they meet
+			// the item group's hit check gives it to them, as it does to Mario
 		}
 	}
 	if (getenv("SMS_COOP_DEBUG") && s_frame % 30 == 0) {
@@ -997,6 +1077,28 @@ f32 dist2(const JGeometry::TVec3<f32>& a, const JGeometry::TVec3<f32>& b)
 	return x * x + y * y + z * z;
 }
 
+// Which player an object plays with this move: the one touching it (its hits
+// this frame, as the hit check found them) when only one is, else the one
+// standing on it, else the nearer.
+TMario* playerFor(THitActor* a)
+{
+	bool touch1 = false, touch2 = false;
+	for (int i = 0; i < a->getColNum(); i++) {
+		THitActor* c = a->getCollision(i);
+		touch1      = touch1 || c == (THitActor*)s_p1.mario;
+		touch2      = touch2 || c == (THitActor*)s_p2.mario;
+	}
+	if (touch1 != touch2)
+		return touch2 ? s_p2.mario : s_p1.mario;
+	// ...else the one standing on it (a platform asking whether Mario is on it)
+	const bool on1 = s_p1.mario->mGroundPlane && (const void*)s_p1.mario->mGroundPlane->mActor == (const void*)a;
+	const bool on2 = s_p2.mario->mGroundPlane && (const void*)s_p2.mario->mGroundPlane->mActor == (const void*)a;
+	if (on1 != on2)
+		return on2 ? s_p2.mario : s_p1.mario;
+	return dist2(a->mPosition, s_p2.mario->mPosition) < dist2(a->mPosition, s_p1.mario->mPosition) ? s_p2.mario
+	                                                                                                  : s_p1.mario;
+}
+
 void objectMove(void* object, int after)
 {
 	if (after) {
@@ -1005,24 +1107,25 @@ void objectMove(void* object, int after)
 			gpMarioOriginal = w.saved.mario;
 			gpMarioAddress  = w.saved.mario;
 			SMS_SetMarioAccessParams();
+			gpCamera = w.saved.cam;
 		}
 		return;
 	}
 	if (!s_active || s_inP2 || s_swapDepth >= 16 || !s_p1.mario || gpMarioOriginal != s_p1.mario)
 		return;
-	TLiveActor* a = dynamic_cast<TLiveActor*>(static_cast<JDrama::TViewObj*>(object));
-	if (!a || dynamic_cast<TMario*>(a))
-		return;
-	if (dist2(a->mPosition, s_p2.mario->mPosition) >= dist2(a->mPosition, s_p1.mario->mPosition)
-	    || s_p2.mario->checkFlag(MARIO_FLAG_GAME_OVER))
+	// any object the hit check knows (a TLiveActor, a gate's TTakeActor...), not the players
+	THitActor* a = dynamic_cast<THitActor*>(static_cast<JDrama::TViewObj*>(object));
+	if (!a || dynamic_cast<TMario*>(a) || s_p2.mario->checkFlag(MARIO_FLAG_GAME_OVER) || playerFor(a) != s_p2.mario)
 		return;
 	s_swapCount++;
 	Swap& w        = s_swaps[s_swapDepth++];
 	w.object       = object;
 	w.saved.mario  = gpMarioOriginal;
+	w.saved.cam    = gpCamera;
 	gpMarioOriginal = s_p2.mario;
 	gpMarioAddress  = s_p2.mario;
 	SMS_SetMarioAccessParams();
+	gpCamera = s_p2.cam; // what is in sight of the player it plays with (an NPC awake beside player 2)
 }
 
 // A test's player 2 input (SMS_COOP_TEST_PAD=stick x:y@frame+frames,...;
@@ -1061,21 +1164,30 @@ void padRead(void* statusv)
 			s_test[s_testCount++] = p;
 		}
 	}
-	if (!s_testCount)
-		return;
 	PADStatus& s = status[1];
-	s.err        = PAD_ERR_NONE;
-	for (int i = 0; i < s_testCount; i++)
-		if (s_frame - s_testJoinFrame >= s_test[i].at && s_frame - s_testJoinFrame < s_test[i].until) {
-			if (s_test[i].buttons)
-				s.button |= s_test[i].buttons;
-			else
-				s.stickX = (s8)s_test[i].x, s.stickY = (s8)s_test[i].y;
-			if (s_test[i].buttons & PAD_TRIGGER_R)
-				s.triggerRight = 255;
-			if (s_test[i].buttons & PAD_TRIGGER_L)
-				s.triggerLeft = 255;
-		}
+	if (s_testCount) {
+		s.err = PAD_ERR_NONE;
+		for (int i = 0; i < s_testCount; i++)
+			if (s_frame - s_testJoinFrame >= s_test[i].at && s_frame - s_testJoinFrame < s_test[i].until) {
+				if (s_test[i].buttons)
+					s.button |= s_test[i].buttons;
+				else
+					s.stickX = (s8)s_test[i].x, s.stickY = (s8)s_test[i].y;
+				if (s_test[i].buttons & PAD_TRIGGER_R)
+					s.triggerRight = 255;
+				if (s_test[i].buttons & PAD_TRIGGER_L)
+					s.triggerLeft = 255;
+			}
+	}
+	// a talk (either player's) reads controller 1: player 2's A and B move it on too
+	TMarDirector* d = director();
+	if (s_active && d && d == s_dir && d->isTalkModeNow()) {
+		status[0].button |= s.button & (PAD_BUTTON_A | PAD_BUTTON_B);
+		if (s.analogA > status[0].analogA)
+			status[0].analogA = s.analogA;
+		if (s.analogB > status[0].analogB)
+			status[0].analogB = s.analogB;
+	}
 }
 
 int allowSaveStates() { return !s_active; }
@@ -1098,6 +1210,59 @@ extern "C" int port_coop_other_cube(const void* manager)
 		if (manager == m[i])
 			return other.cubes[i];
 	return -1;
+}
+
+// decomp-patches/zzzzzz-coop-04: player 2 while they play this stage (not
+// down), for the item group's hit check and the water's reach; null otherwise.
+static TMario* playingP2()
+{
+	TMario* m = p2();
+	if (!s_active || !m || !gpMarDirector || gpMarDirector != s_dir || m->checkFlag(MARIO_FLAG_GAME_OVER))
+		return nullptr;
+	return m;
+}
+extern "C" THitActor* port_coop_player2_actor(void) { return playingP2(); }
+// decomp-patches/zzzzzz-coop-07: player 2 for the wire manager
+extern "C" TTakeActor* port_coop_wire_player2(void) { return playingP2(); }
+
+// decomp-patches/zzzzzz-coop-06: game code run again as player 2 (a pass of
+// TMapWarp's), and where goop's enemies come up (each player's place in turn).
+static Ctx s_gameP2Saved;
+static bool s_gameP2Entered;
+extern "C" int port_coop_enter_player2(void)
+{
+	if (s_gameP2Entered || !playingP2() || !enterP2(s_gameP2Saved))
+		return 0;
+	s_gameP2Entered = true;
+	return 1;
+}
+extern "C" void port_coop_leave_player2(void)
+{
+	if (!s_gameP2Entered)
+		return;
+	s_gameP2Entered = false;
+	leaveP2(s_gameP2Saved);
+}
+extern "C" const JGeometry::TVec3<f32>* port_coop_spawn_center(const JGeometry::TVec3<f32>* mario)
+{
+	static unsigned turn;
+	TMario* m = playingP2();
+	return m && (turn++ & 1) ? &m->mPosition : mario;
+}
+extern "C" const Vec* port_coop_player2_pos(void)
+{
+	TMario* m = playingP2();
+	return m ? (const Vec*)&m->mPosition : nullptr;
+}
+
+// decomp-patches/zzzzzz-coop-05: the person player 2 can talk to, found as the
+// director finds Mario's, with player 2 as Mario.
+TBaseNPC* port_coop_find_talk_npc(TMarDirector* director)
+{
+	if (!playingP2() || director != s_dir)
+		return nullptr;
+	InP2 in;
+	return director->findNearestTalkNPC();
 }
 
 // decomp-patches/zzzzzz-coop-02: the camera a controller's player sees
