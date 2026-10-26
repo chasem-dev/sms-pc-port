@@ -9,8 +9,10 @@
 // mod's disc a pack in mods/maps, Super Mario Eclipse's installed with it;
 // sms_gx loads it, platform/gx/src/gx_radar_maps.cpp), found by a hash of the
 // stage's loaded collision, so a stage without one has no radar. GX
-// textures are at most 1024 square and the pictures are larger, so the map
-// is drawn here into a small round RGBA8 texture whenever Mario moves. Over
+// textures are at most 1024 square and the pictures are larger, so the
+// radar shows a window of the picture around Mario (Window): the map is a
+// round fan whose texture coordinates follow him, so the GPU scrolls and
+// filters it, and the CPU only makes a new window now and then. Over
 // it go the blue coins and the Shines (a Shine got is the pale blue of the
 // game's empty Shine), cut at the map's round edge so they scroll in from
 // past it rather than appear; then the border (made once: white, with a dark
@@ -148,9 +150,24 @@ unsigned long long sKey;
 int sMapState = -1; // 1 the map is here, 0 it is loading, -1 none
 PortRadarMap sMap;
 
-u8* sDisc;   // the map: GX RGBA8, kTex x kTex, below 4 GiB
-u8* sBorder; // the border over it, the same
-f32 sLastX = 1e30f, sLastZ;
+u8* sBorder; // the border over the map: GX RGBA8, kTex x kTex, below 4 GiB
+
+// The map's window: a kWin-square crop of the picture around Mario, a GX
+// RGBA8 texture. At level L a texel of it is 2^L x 2^L of the picture's
+// pixels (four of them averaged), the level at which the radar's reach is
+// about half the window. Two of them: the one shown, and the next, made a
+// band of rows a frame (kBandRows) once Mario is halfway to where the shown
+// one runs out, so a new one costs no frame much.
+const int kWin = 512, kBandRows = 64;
+struct Window {
+	u8* tex;                 // below 4 GiB
+	int ox, oy, level;       // its top left in the picture's pixels, and its level
+	unsigned long long key;  // the map's (sKey) it was made from
+};
+Window sWin[2];
+int sShown = -1;          // the window drawn
+int sNext = -1, sNextRow; // the one being made, and its rows made so far
+bool sWinStale = true;    // the map changed: make one at once
 f32 sAlpha; // fades in and out, 0..1
 
 JUTTexture sShineArt, sBlueCoinArt;
@@ -267,13 +284,13 @@ bool stage()
 		sMapState = sKey ? 0 : -1;
 		sFullOpen = false;
 		sFullAlpha = 0.0f;
-		sLastX    = 1e30f;
+		sWinStale = true;
 		sHaveArt  = loadArt(sShineArt, "shine_icon") && loadArt(sBlueCoinArt, "bluecoin_icon");
 	}
 	if (sMapState == 0) {
 		sMapState = port_radar_map(sKey, &sMap);
 		if (sMapState == 1)
-			sLastX = 1e30f;
+			sWinStale = true;
 	}
 	return sMapState == 1 && sHaveArt;
 }
@@ -320,40 +337,95 @@ inline void putBlock(u8* tex, size_t& o, const u8 (*px)[4])
 	}
 }
 
-// The map around (mx, mz), north up, into sDisc: round, a little past kMapR
-// so the border's inner edge covers its own.
-void compose(f32 mx, f32 mz)
+// The window's level for the radar's reach: its width, in the picture's
+// pixels, at most about half the window's.
+int windowLevel()
 {
-	const f32 half = kTex * 0.5f, perTexel = sZoom / kMapR;
-	const f32 d = sMap.density;
-	size_t o    = 0;
-	for (int by = 0; by < kTex; by += 4) {
-		for (int bx = 0; bx < kTex; bx += 4) {
+	const f32 reach = 2.0f * sZoom * (kMapR + 3.0f) / kMapR * sMap.density;
+	int level = 0;
+	while (level < 6 && reach / (1 << level) > kWin * 0.55f)
+		level++;
+	return level;
+}
+
+// Rows y0 to y1 (multiples of 4) of a window: each texel the average of four
+// of the picture's pixels across its 2^level square (all of them at level 1).
+void windowRows(const Window& w, int y0, int y1)
+{
+	const int s = 1 << w.level, a = s / 4, b = 3 * s / 4;
+	size_t o = (size_t)(y0 / 4) * (kWin / 4) * 64;
+	for (int by = y0; by < y1; by += 4) {
+		for (int bx = 0; bx < kWin; bx += 4) {
 			u8 px[16][4];
 			for (int i = 0; i < 16; i++) {
-				const f32 sx = bx + (i & 3) + 0.5f - half, sy = by + (i >> 2) + 0.5f - half;
-				const f32 r     = sqrtf(sx * sx + sy * sy);
-				const f32 cover = clamp01(kMapR + 2.5f - r);
-				px[i][0] = px[i][1] = px[i][2] = 0;
-				px[i][3] = (u8)(cover * 255.0f + 0.5f);
-				if (cover <= 0.0f)
-					continue;
-				const f32 wx = mx + sx * perTexel, wz = mz + sy * perTexel;
-				const f32 u = (wx - sMap.x0) * d - 0.5f, v = (wz - sMap.z0) * d - 0.5f;
-				const int x0 = (int)floorf(u), y0 = (int)floorf(v);
-				const f32 ax = u - x0, ay = v - y0;
-				const u8 *a = texel(x0, y0), *b = texel(x0 + 1, y0), *c = texel(x0, y0 + 1), *e = texel(x0 + 1, y0 + 1);
-				// a faint shade just inside the border, so the map sits in it
-				const f32 shade = 1.0f - 0.22f * clamp01((r - (kMapR - 12.0f)) / 12.0f);
-				for (int k = 0; k < 3; k++) {
-					const f32 top = a[k] + (b[k] - a[k]) * ax, bottom = c[k] + (e[k] - c[k]) * ax;
-					px[i][k]      = (u8)((top + (bottom - top) * ay) * shade + 0.5f);
-				}
+				const int x = w.ox + (bx + (i & 3)) * s, y = w.oy + (by + (i >> 2)) * s;
+				const u8 *p = texel(x + a, y + a), *q = texel(x + b, y + a), *r = texel(x + a, y + b),
+				         *e = texel(x + b, y + b);
+				for (int k = 0; k < 3; k++)
+					px[i][k] = (u8)((p[k] + q[k] + r[k] + e[k] + 2) >> 2);
+				px[i][3] = 255;
 			}
-			putBlock(sDisc, o, px);
+			putBlock(w.tex, o, px);
 		}
 	}
-	DCFlushRange(sDisc, kTex * kTex * 4); // the texture cache sees the new picture
+}
+
+// A window centred on the picture's pixel (px, pz), not made yet.
+void windowStart(Window& w, f32 px, f32 pz, int level)
+{
+	const int s = 1 << level;
+	w.ox    = (int)floorf(px) - kWin / 2 * s;
+	w.oy    = (int)floorf(pz) - kWin / 2 * s;
+	w.level = level;
+	w.key   = sKey;
+}
+
+// How far the picture's pixel (px, pz) is off a window's centre, in its
+// texels (along x or z, the farther); far for a window of another map or level.
+f32 offCentre(const Window& w, f32 px, f32 pz, int level)
+{
+	if (w.key != sKey || w.level != level)
+		return 1e30f;
+	const f32 s = (f32)(1 << level);
+	return fmaxf(fabsf((px - w.ox) / s - kWin / 2), fabsf((pz - w.oy) / s - kWin / 2));
+}
+
+// Keeps a window under the radar around Mario at (mx, mz): the next one is
+// made a band a frame while he is past halfway to the shown one's edge, and
+// shown when done; one is made at once when none will do (a new stage, a
+// zoom step to another level, a warp).
+void updateWindow(f32 mx, f32 mz)
+{
+	const int level = windowLevel(), s = 1 << level;
+	const f32 px = (mx - sMap.x0) * sMap.density, pz = (mz - sMap.z0) * sMap.density;
+	// how far it may be off the window's centre, in its texels, for the radar to fit
+	const f32 room = kWin / 2 - sZoom * (kMapR + 3.0f) / kMapR * sMap.density / s - 2.0f;
+	if (sWinStale || sShown < 0 || offCentre(sWin[sShown], px, pz, level) > room) {
+		sWinStale = false;
+		sShown    = sShown < 0 ? 0 : sShown ^ 1;
+		sNext     = -1;
+		windowStart(sWin[sShown], px, pz, level);
+		windowRows(sWin[sShown], 0, kWin);
+		DCFlushRange(sWin[sShown].tex, kWin * kWin * 4); // the texture cache sees the new picture
+		return;
+	}
+	if (sNext < 0) {
+		if (offCentre(sWin[sShown], px, pz, level) > room * 0.5f) {
+			sNext    = sShown ^ 1;
+			sNextRow = 0;
+			windowStart(sWin[sNext], px, pz, level);
+		}
+		return;
+	}
+	const int y1 = sNextRow + kBandRows < kWin ? sNextRow + kBandRows : kWin;
+	windowRows(sWin[sNext], sNextRow, y1);
+	sNextRow = y1;
+	if (sNextRow == kWin) {
+		DCFlushRange(sWin[sNext].tex, kWin * kWin * 4);
+		if (offCentre(sWin[sNext], px, pz, level) <= room)
+			sShown = sNext;
+		sNext = -1;
+	}
 }
 
 // The border, once, into sBorder: the ring, lighter at the top, its dark
@@ -435,6 +507,54 @@ void quad(f32 x, f32 y, f32 w, f32 h, u32 colour, f32 alpha)
 		GXTexCoord2f32(kU[i], kV[i]);
 	}
 	GXEnd();
+}
+
+const int kSides = 64; // the round map's and its shade's
+
+// The map: the shown window as a round fan of radius r around (cx, cy), each
+// corner's texture coordinates where its place in the world falls in the
+// window (mx, mz at the centre, `scale` 2D units per world unit).
+void mapFan(f32 cx, f32 cy, f32 r, f32 mx, f32 mz, f32 scale, f32 alpha)
+{
+	const Window& w = sWin[sShown];
+	const f32 perU = sMap.density / ((f32)(1 << w.level) * kWin); // texture coordinate per world unit
+	GXTexObj tex;
+	GXInitTexObj(&tex, w.tex, kWin, kWin, GX_TF_RGBA8, GX_CLAMP, GX_CLAMP, GX_FALSE);
+	GXInitTexObjLOD(&tex, GX_LINEAR, GX_LINEAR, 0.0f, 0.0f, 0.0f, GX_FALSE, GX_FALSE, GX_ANISO_1);
+	GXLoadTexObj(&tex, GX_TEXMAP0);
+	setupTextured();
+	const f32 u0 = (mx - sMap.x0) * perU - (f32)w.ox / ((1 << w.level) * kWin);
+	const f32 v0 = (mz - sMap.z0) * perU - (f32)w.oy / ((1 << w.level) * kWin);
+	const u8 a = (u8)(255.0f * alpha);
+	GXBegin(GX_TRIANGLEFAN, GX_VTXFMT0, kSides + 2);
+	for (int i = -1; i <= kSides; i++) {
+		const f32 ang = i * (6.2831853f / kSides);
+		const f32 dx = i < 0 ? 0.0f : r * cosf(ang), dy = i < 0 ? 0.0f : r * sinf(ang);
+		GXPosition3f32(cx + dx, cy + dy, 0.0f);
+		GXColor4u8(255, 255, 255, a);
+		GXTexCoord2f32(u0 + dx / scale * perU, v0 + dy / scale * perU);
+	}
+	GXEnd();
+}
+
+// A faint shade just inside the border, so the map sits in it: black, from
+// nothing 12 texels inside kMapR to 0.22 there and on under the border (k:
+// 2D units per texel of the border's texture).
+void mapShade(f32 cx, f32 cy, f32 k, f32 alpha)
+{
+	static const f32 kR[3] = { kMapR - 12.0f, kMapR, kMapR + 2.5f }, kA[3] = { 0.0f, 0.22f, 0.22f };
+	setupColour();
+	for (int band = 0; band < 2; band++) {
+		GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, 2 * (kSides + 1));
+		for (int i = 0; i <= kSides; i++) {
+			const f32 ang = i * (6.2831853f / kSides), c = cosf(ang), sn = sinf(ang);
+			for (int j = band; j <= band + 1; j++) {
+				GXPosition3f32(cx + kR[j] * k * c, cy + kR[j] * k * sn, 0.0f);
+				GXColor4u8(0, 0, 0, (u8)(255.0f * kA[j] * alpha + 0.5f));
+			}
+		}
+		GXEnd();
+	}
 }
 
 // A sprite h tall at its own proportions, centred on (x, y).
@@ -891,8 +1011,9 @@ void RadarDraw(const JDrama::TRect& viewport, f32 lifeX1, f32 lifeY1, f32 lifeX2
 				if (!strcmp(p, names[i]))
 					sPlace = (Place)i;
 		}
-		sDisc   = (u8*)port_low_alloc(kTex * kTex * 4);
-		sBorder = (u8*)port_low_alloc(kTex * kTex * 4);
+		sWin[0].tex = (u8*)port_low_alloc(kWin * kWin * 4);
+		sWin[1].tex = (u8*)port_low_alloc(kWin * kWin * 4);
+		sBorder     = (u8*)port_low_alloc(kTex * kTex * 4);
 		if (sBorder)
 			composeBorder();
 	}
@@ -919,7 +1040,6 @@ void RadarDraw(const JDrama::TRect& viewport, f32 lifeX1, f32 lifeY1, f32 lifeX2
 			sZoomStep  = (sZoomStep + 1) % kZoomCount;
 			sZoom      = sZoomBase * 100.0f / kZoomSteps[sZoomStep];
 			sZoomShown = 75;
-			sLastX     = 1e30f;
 			SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_CURSOR, 0, nullptr, 0);
 		}
 	}
@@ -929,15 +1049,11 @@ void RadarDraw(const JDrama::TRect& viewport, f32 lifeX1, f32 lifeY1, f32 lifeX2
 	sAlpha = clamp01(sAlpha);
 	if (sFullAlpha > 0.0f && gpMarioPos && sMapState == 1 && sOverviewKey == sKey)
 		drawFullMap(viewport, gpMarioPos->x, gpMarioPos->z);
-	if (sAlpha <= 0.0f || !sDisc || !sBorder || !gpMarioPos || !stage())
+	if (sAlpha <= 0.0f || !sWin[0].tex || !sWin[1].tex || !sBorder || !gpMarioPos || !stage())
 		return;
 
 	const f32 mx = gpMarioPos->x, mz = gpMarioPos->z;
-	if (fabsf(mx - sLastX) > 0.5f || fabsf(mz - sLastZ) > 0.5f) {
-		compose(mx, mz);
-		sLastX = mx;
-		sLastZ = mz;
-	}
+	updateWindow(mx, mz);
 
 	// its place (Place): at the top right of the frame, clear of the HUD's
 	// lives counter, unless the life meter needs it
@@ -989,11 +1105,10 @@ void RadarDraw(const JDrama::TRect& viewport, f32 lifeX1, f32 lifeY1, f32 lifeX2
 	graph.setup2D();
 	GXPC_HudPaneBegin(cx - R, cx + R);
 
-	GXTexObj disc;
-	GXInitTexObj(&disc, sDisc, kTex, kTex, GX_TF_RGBA8, GX_CLAMP, GX_CLAMP, GX_FALSE);
-	GXInitTexObjLOD(&disc, GX_LINEAR, GX_LINEAR, 0.0f, 0.0f, 0.0f, GX_FALSE, GX_FALSE, GX_ANISO_1);
-	GXLoadTexObj(&disc, GX_TEXMAP0);
-	quad(cx, cy, 2 * R, 2 * R, 0xFFFFFFFF, sAlpha);
+	// the map, a little past kMapR so the border's inner edge covers its own
+	const f32 perTexel = R / (kTex * 0.5f); // 2D units per texel of the border's texture
+	mapFan(cx, cy, (kMapR + 2.5f) * perTexel, mx, mz, scale, sAlpha);
+	mapShade(cx, cy, perTexel, sAlpha);
 
 	// the sprites, cut at the border's inner edge (a little under it), so
 	// one coming in from past the edge slides in under the border
