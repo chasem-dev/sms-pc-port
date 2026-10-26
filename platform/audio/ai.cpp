@@ -119,7 +119,11 @@ struct Ai {
 	FILE* wav;
 	u32 wavBytes;
 	std::vector<int16_t> mix; // a block in output order, with the DVD stream (dtk.cpp)
-} g;
+};
+// Never destroyed: exit() (Quit, closing the window) runs while SDL's audio
+// thread and the game's threads still use it, and a destroyed mutex threw
+// std::system_error ("Invalid argument") as the game closed on Windows.
+Ai& g = *new Ai();
 
 size_t fifo_cap() { return g.fifo.size() / 2; }
 
