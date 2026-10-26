@@ -287,6 +287,8 @@ The everyday options are in the [README](../README.md#options); this is the full
 | `SMS_AUDIO=0` | no sound output; the game's audio (JAudio's thread and sequencer, the software DSP) still runs, paced as with no output device ([64-BIT.md](64-BIT.md), item 19) |
 | `SMS_AUDIO_OPEN_TIMEOUT=s` | seconds to wait for the sound output to open (default 5; 0 waits for ever); without an answer the game plays without sound and logs what it was waiting for (`platform/audio/ai.cpp`) |
 | `SMS_NO_AUDIO=1` | run with an empty JAudio configuration and an idle AI DMA; THP movies stall (their video waits for audio), so combine with `SMS_SKIP_MOVIES=1` |
+| `SMS_AUDIO_DSP_THREAD=0` | mix the software DSP's subframes on the game's emulated CPU, as the mail arrives, instead of on a thread of its own (`platform/audio/dsp_hle.cpp`; always so with `SMS_VI_DETERMINISTIC` or one CPU core); `SMS_AUDIO_DSP_STATS=1` logs the time spent mixing |
+| `SMS_THP_DECODE_THREAD=0` | decode movie frames on the game's emulated CPU instead of on a thread of their own (`platform/thp/thp_decode.cpp`; always so with `SMS_VI_DETERMINISTIC` or one CPU core) |
 | `SMS_SKIP_MOVIES=1` | skip cutscenes; keep the plaza portals' looping movies |
 | `SMS_SKIP_INTRO=1` | start at the title: no Nintendo and Dolby logos, no opening movie (`zz-movie-skip-02`) |
 | `SMS_WARP=stage,scenario[,shines]` | debugging: loading a file goes to that area instead (`1,0,1` is Delfino Plaza right after the airstrip), optionally with that Shine count |
