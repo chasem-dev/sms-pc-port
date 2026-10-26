@@ -1449,6 +1449,8 @@ void sms_gx_pump_events(void) {
                     const char* name = SDL_GameControllerName(c);
                     s_pads.push_back({c, SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(c)),
                                       int(SDL_GameControllerGetType(c)), name ? name : ""});
+                    // in the log, so one controller seen twice (a remapper's beside it) shows
+                    logmsg("controller %d connected: %s", int(s_pads.back().id), name ? name : "(no name)");
                     if (s_rumblePad < 0) s_rumblePad = s_pads.back().id;
                 }
             }

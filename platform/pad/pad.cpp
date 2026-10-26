@@ -276,7 +276,9 @@ struct Ctl {
 	s16 axis[6];
 	bool btn[21];
 	u32 seen;
-	bool startWas; // Start held at the last PADRead
+	bool startWas;  // Start held at the last PADRead
+	double startAt; // when its Start last went down (split-screen co-op)
+	double heldAt;  // when it was last played with: a button but Start, a stick, a trigger (co-op)
 };
 const int kPadStart = 6; // SDL_CONTROLLER_BUTTON_START
 const int kMaxCtl = 8;
@@ -1159,6 +1161,12 @@ void fill_status(PADStatus& s, bool haveGc, const GcAdapterInput& gc)
 // adapter's ports join the same way, each port a controller.
 // The second player's Start held for 1.5 seconds leaves; pressed briefly, it
 // is controller 1's Start (the pause menu). Unplugging it leaves too.
+// While a stage is played, the first player's device stays theirs as long as
+// they play with it (kOwnerIdle): a second player trying their stick before
+// pressing Start (which moves Mario, as every controller but player 2's is
+// controller 1) does not make it the first player's, so their Start joins.
+// One controller seen as two (DS4Windows, BetterJoy, Steam Input beside the
+// controller itself) presses Start on both at once: such a Start never joins.
 const s32 kNoCtl = -1000, kGcFirst = -3, kGcSecond = -2, kVirtual = -4; // SDL instance ids are >= 0
 s32 g_p2 = kNoCtl;
 double g_p2StartAt;   // when its Start went down (0: up, or the press that joined)
@@ -1170,6 +1178,11 @@ int g_joinable;
 u32 g_gcSeen[2];
 bool g_gcStartWas[2];
 GcAdapterInput g_gcLast[2];
+double g_gcHeldAt[2], g_keyHeldAt; // when the adapter's ports, the keyboard and mouse were last played with
+s32 g_owner = kNoCtl;              // the first player's device (p1_controller)
+const double kOwnerIdle = 3.0;     // seconds of nothing from it before the device used last is theirs
+s32 g_joinPending = kNoCtl;        // a controller whose Start joins once no twin's comes with it
+const double kTwinWindow = 0.15;   // seconds apart two controllers' Starts are one press
 
 double now_seconds()
 {
@@ -1183,8 +1196,8 @@ bool gc_used_since(const GcAdapterInput& a, const GcAdapterInput& b)
 	return ((a.b1 & ~b.b1) & 0xFF) || ((a.b2 & ~b.b2) & 0x0E) || (moved > 40 && (abs(a.lx) > 50 || abs(a.ly) > 50 || abs(a.cx) > 50 || abs(a.cy) > 50));
 }
 
-// The controller the first player has in hand, or kNoCtl on the keyboard.
-s32 p1_controller()
+// The controller used last, or kNoCtl for the keyboard and mouse.
+s32 last_used()
 {
 	s32 best = kNoCtl;
 	u32 seen = g_keySeen;
@@ -1199,6 +1212,69 @@ s32 p1_controller()
 			best = p ? kGcSecond : kGcFirst;
 		}
 	return best;
+}
+
+// The controller the first player has in hand, or kNoCtl on the keyboard.
+s32 p1_controller() { return g_owner; }
+
+// Whether a controller is played with now: a button but Start, a stick pushed, a trigger.
+bool ctl_held(const Ctl& c)
+{
+	for (int k = 0; k < 21; k++)
+		if (c.btn[k] && k != kPadStart)
+			return true;
+	for (int k = 0; k < 4; k++)
+		if (abs(c.axis[k]) > 12000)
+			return true;
+	return c.axis[4] > 8000 || c.axis[5] > 8000;
+}
+
+bool gc_held(const GcAdapterInput& a)
+{
+	return (a.b1 & 0xFF) || (a.b2 & 0x0E) || abs(a.lx) > 50 || abs(a.ly) > 50 || abs(a.cx) > 50 || abs(a.cy) > 50;
+}
+
+double held_at(s32 who)
+{
+	if (who == kNoCtl)
+		return g_keyHeldAt;
+	if (who == kGcFirst || who == kGcSecond)
+		return g_gcHeldAt[who == kGcSecond];
+	const Ctl* c = ctl_of(who, false);
+	return c ? c->heldAt : 0.0;
+}
+
+// Once a PADRead: what each device is doing, and whose the first player's is.
+void update_owner(const bool gcHave[2], const GcAdapterInput gc[2], double t)
+{
+	for (int i = 0; i < kMaxCtl; i++)
+		if (g_ctl[i].used && ctl_held(g_ctl[i]))
+			g_ctl[i].heldAt = t;
+	for (int p = 0; p < 2; p++)
+		if (gcHave[p] && gc_held(gc[p]))
+			g_gcHeldAt[p] = t;
+	bool key = g_keySeen == g_reads; // a key or mouse button pressed, the mouse moved (mouse look)
+	for (int k = 0; k < kKeyCodes && !key; k++)
+		key = g_key[k];
+	if (key)
+		g_keyHeldAt = t;
+	const s32 last = last_used();
+	if (last != g_owner && (!g_joinable || g_owner == g_p2 || t - held_at(g_owner) >= kOwnerIdle)) {
+		if (g_joinable)
+			port_log("[pad] co-op: player 1 has %s now (theirs was idle)\n", last == kNoCtl ? "the keyboard" : "another controller");
+		g_owner = last;
+	}
+}
+
+// Another controller's Start went down with this one's: one controller seen twice.
+bool start_twin(const Ctl& c)
+{
+	for (int i = 0; i < kMaxCtl; i++) {
+		const Ctl& o = g_ctl[i];
+		if (o.used && o.which != c.which && o.startAt > 0 && fabs(o.startAt - c.startAt) < kTwinWindow)
+			return true;
+	}
+	return false;
 }
 
 void coop_join(s32 which)
@@ -1233,17 +1309,34 @@ void coop_update(const bool gcHave[2], const GcAdapterInput gc[2])
 	}
 	if (!g_coop)
 		return;
+	const double t = now_seconds();
+	for (int i = 0; i < kMaxCtl; i++)
+		if (g_ctl[i].used && g_ctl[i].btn[kPadStart] && !g_ctl[i].startWas)
+			g_ctl[i].startAt = t;
+	update_owner(gcHave, gc, t);
 	if (g_p2 != kNoCtl) { // still there?
 		bool there = g_p2 == kGcFirst ? gcHave[0] : g_p2 == kGcSecond ? gcHave[1] : g_p2 == kVirtual || ctl_of(g_p2, false);
 		if (!there)
 			coop_leave("its controller is gone");
 	}
-	if (g_p2 == kNoCtl && g_joinable && g_focused) {
+	if (g_joinPending != kNoCtl) { // joins once no other controller's Start came with its own
+		const Ctl* c = ctl_of(g_joinPending, false);
+		if (c && start_twin(*c))
+			port_log("[pad] co-op: controller %d's Start came with another controller's: one controller seen twice "
+			         "(DS4Windows, BetterJoy, Steam Input)? Not joining\n", (int)g_joinPending);
+		if (!c || !g_joinable || g_p2 != kNoCtl || start_twin(*c))
+			g_joinPending = kNoCtl;
+		else if (t - c->startAt >= kTwinWindow) {
+			g_joinPending = kNoCtl;
+			coop_join(c->which);
+		}
+	}
+	if (g_p2 == kNoCtl && g_joinPending == kNoCtl && g_joinable && g_focused) {
 		const s32 p1 = p1_controller();
-		for (int i = 0; i < kMaxCtl && g_p2 == kNoCtl; i++) {
+		for (int i = 0; i < kMaxCtl && g_joinPending == kNoCtl; i++) {
 			Ctl& c = g_ctl[i];
-			if (c.used && c.btn[kPadStart] && !c.startWas && c.which != p1)
-				coop_join(c.which);
+			if (c.used && c.btn[kPadStart] && !c.startWas && c.which != p1 && !start_twin(c))
+				g_joinPending = c.which;
 		}
 		for (int p = 0; p < 2 && g_p2 == kNoCtl; p++)
 			if (start[p] && !g_gcStartWas[p] && (p ? kGcSecond : kGcFirst) != p1)
@@ -1257,7 +1350,6 @@ void coop_update(const bool gcHave[2], const GcAdapterInput gc[2])
 		return;
 	const Ctl* c  = g_p2 >= 0 ? ctl_of(g_p2, false) : nullptr;
 	const bool down = c ? c->btn[kPadStart] : g_p2 == kGcFirst ? start[0] : start[1];
-	const double t = now_seconds();
 	if (down && !g_p2StartWas)
 		g_p2StartAt = t;
 	if (down && g_p2StartAt > 0 && t - g_p2StartAt >= 1.5) {
@@ -1346,8 +1438,8 @@ extern "C" u32 PADRead(PADStatus* status)
 		for (int k = 0; k < 6; k++)
 			if (abs(c.axis[k]) > abs(g_axis[k]))
 				g_axis[k] = c.axis[k];
-		for (int k = 0; k < 21; k++)
-			g_cbtn[k] = g_cbtn[k] || c.btn[k];
+		for (int k = 0; k < 21; k++) // a Start about to join is not the pause menu's
+			g_cbtn[k] = g_cbtn[k] || (c.btn[k] && !(k == kPadStart && c.which == g_joinPending));
 	}
 	for (int i = 0; i < 4; i++) {
 		memset(&status[i], 0, sizeof status[i]);
