@@ -89,6 +89,8 @@
 extern "C" void GXPC_ExtOverlaySet(int panel, const char* text) __attribute__((weak));
 extern "C" void GXPC_ExtOverlayLabels(const GXPCLabel* labels, int count) __attribute__((weak));
 enum { OVERLAY_NOTICE = 0, OVERLAY_STATUS = 1 };
+// SMS_SKIP_INTRO (platform): no Nintendo and Dolby logos, no opening movie.
+extern "C" int port_skip_intro;
 
 namespace {
 
@@ -1127,6 +1129,31 @@ void guestCardNotice()
 		s_statusFrames = 0; // the player list would cover it (why the link ended was its own notice)
 	}
 	s_noticeFrames = noticeFrames();
+}
+
+// A joining game goes straight to the host's level: no Nintendo and Dolby
+// logos or opening movie (as SMS_SKIP_INTRO, set from its first frame, before
+// the logos' first), and the title it passes through (skipTitle) is kept out
+// of sight, black under the notices of how joining goes, until it fades into
+// the host's level. A game the host refused, or whose host is gone, shows its
+// title as ever (guestCardNotice says why).
+bool joinCovered()
+{
+	if (s_role != MPG_ROLE_CLIENT || mpg_link_over() || s_leftWhy[0])
+		return false;
+	const int state = gpApplication.mAppState;
+	if (state == TApplication::APP_STATE_BOOT || state == TApplication::APP_STATE_NLOGO
+	    || state == TApplication::APP_STATE_DONE)
+		return true; // the logos, the boot's loading, the opening movie (skipped)
+	return state == TApplication::APP_STATE_GAMEPLAY && gpApplication.mCurrArea.getStage() == 15;
+}
+
+void joinCover()
+{
+	const bool covered = joinCovered();
+	MpServerCover(covered);
+	if (covered && !s_notice[0])
+		showNotice("Joining the game...");
 }
 
 // The host left while we were in its game (closed it, went back to the title,
@@ -4450,8 +4477,11 @@ void dressSelf()
 
 void frame()
 {
-	if (s_role < 0)
+	if (s_role < 0) {
 		s_role = mpg_start();
+		if (s_role == MPG_ROLE_CLIENT)
+			port_skip_intro = 1; // joinCovered
+	}
 	if (!enabled())
 		return;
 	s_clock++;
@@ -4599,6 +4629,7 @@ void frame()
 		mpg_set_pose(&none);
 	}
 	selectFrame();
+	joinCover();
 	MpServerFrame(dir, s_arrivedNow, s_playing && inStage());
 	updateText();
 }

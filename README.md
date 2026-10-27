@@ -91,7 +91,7 @@ Options can be kept in [`settings.txt`](settings.txt) (`resolution = 2`, `textur
 | Option | Effect |
 | --- | --- |
 | `SMS_SKIP_MOVIES=1` | skip cutscenes; keep portal animations playing |
-| `SMS_SKIP_INTRO=1` | start at the title: no Nintendo and Dolby logos or opening movie (A skips each of them anyway) |
+| `SMS_SKIP_INTRO=1` | start at the title: no Nintendo and Dolby logos or opening movie (A skips each of them anyway; a game joining a multiplayer game skips them and the title too) |
 | `SMS_ECLIPSE_SUNSHINE_MOVIES=PATH` | Super Mario Eclipse: play the ten movies it kept from Sunshine from this Sunshine disc, at Sunshine's quality (default: the one in `rom/`; `0` for Eclipse's copies; [docs/ECLIPSE.md](docs/ECLIPSE.md)) |
 | `SMS_LANGUAGE=fr` | play in French, German (`de`), Spanish (`es`), Italian (`it`) or Polish (`pl`) instead of English (`en`, the default), with that [language pack](#languages) installed |
 | `SMS_HEAT_HAZE=0` | turn off the heat-wave shimmer that distorts the picture in sunny areas |

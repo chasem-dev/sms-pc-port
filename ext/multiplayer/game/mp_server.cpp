@@ -160,6 +160,7 @@ Marker s_markers[kMarkers];
 // the screen's colour (MPG_CMD_SCREEN): from when, how long, which way
 int s_screenMode;
 u32 s_screenRgba;
+bool s_cover; // MpServerCover
 unsigned s_screenAt;
 f32 s_screenSeconds;
 // the camera shaking (MPG_CMD_SHAKE): how hard, until when
@@ -846,6 +847,10 @@ void screenFrame()
 {
 	if (!GXPC_ExtOverlayScreen)
 		return;
+	if (s_cover) {
+		GXPC_ExtOverlayScreen(0x000000FFu);
+		return;
+	}
 	const f32 t = s_screenSeconds > 0.0f ? (f32)(clockMs() - s_screenAt) / (s_screenSeconds * 1000.0f) : 1.0f;
 	const f32 u = t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t;
 	f32 level;
@@ -1069,6 +1074,8 @@ void hostLoad(TMarDirector* dir)
 }
 
 } // namespace
+
+void MpServerCover(bool black) { s_cover = black; }
 
 bool MpServerDedicated() { return mpg_role() == MPG_ROLE_HOST && mpg_dedicated(); }
 

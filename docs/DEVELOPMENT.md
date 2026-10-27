@@ -295,7 +295,7 @@ The everyday options are in the [README](../README.md#options); this is the full
 | `SMS_AUDIO_DSP_THREAD=0` | mix the software DSP's subframes on the game's emulated CPU, as the mail arrives, instead of on a thread of its own (`platform/audio/dsp_hle.cpp`; always so with `SMS_VI_DETERMINISTIC` or one CPU core); `SMS_AUDIO_DSP_STATS=1` logs the time spent mixing |
 | `SMS_THP_DECODE_THREAD=0` | decode movie frames on the game's emulated CPU instead of on a thread of their own (`platform/thp/thp_decode.cpp`; always so with `SMS_VI_DETERMINISTIC` or one CPU core) |
 | `SMS_SKIP_MOVIES=1` | skip cutscenes; keep the plaza portals' looping movies |
-| `SMS_SKIP_INTRO=1` | start at the title: no Nintendo and Dolby logos, no opening movie (`zz-movie-skip-02`) |
+| `SMS_SKIP_INTRO=1` | start at the title: no Nintendo and Dolby logos, no opening movie (`zz-movie-skip-02`); always on for a game joining a multiplayer game (`SMS_MULTIPLAYER=join`) |
 | `SMS_WARP=stage,scenario[,shines]` | debugging: loading a file goes to that area instead (`1,0,1` is Delfino Plaza right after the airstrip), optionally with that Shine count |
 | `SMS_WARP_LIST=1` | print the warp menu's list (`area,episode` as `SMS_WARP` takes them, the stage, the episode and its scene) when the menu first opens |
 | `SMS_WARP_MOVIE=n` | debugging: loading a file plays streaming movie `n` (0–19, `TMovieDirector::getStreamMovieName`) |

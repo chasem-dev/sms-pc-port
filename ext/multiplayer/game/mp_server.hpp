@@ -18,6 +18,9 @@ void MpServerStageSetup();
 // a dedicated server's title and its player kept out of play; a stage a
 // server mod asked for. `arrived`: playing a stage just loaded.
 void MpServerFrame(TMarDirector* dir, bool arrived, bool playing);
+// The window black, under the notices (a joining game's title), or as the
+// commands have it.
+void MpServerCover(bool black);
 // After each movement tick in a stage: the player held, watching.
 void MpServerTick();
 // The controllers as read: nothing from a player held.
