@@ -338,6 +338,11 @@ void encodeBlock(int format, const uint8_t* rgba, uint8_t* out);
 // (0 A, 1 B, 2 X, 3 Y, 4 Z, 5 L, 6 R, 7 C-stick) in the style shown now, with
 // that style's id in *style; null to keep the game's own picture.
 const uint8_t* promptImage(int glyph, int* style);
+// SMS_NINTENDO_LAYOUT: every controller has Nintendo's letters (A right, B
+// bottom), so SDL controllers other than Switch ones (nintendoController, an
+// SDL_GameControllerType) have A and B, and X and Y, swapped as they are read.
+bool nintendoLayout();
+bool nintendoController(int sdlType);
 
 // ---------------------------------------------------------------- shaders (gx_shader.cpp)
 // The uniform values a program was last given (uploadUniforms skips the ones

@@ -15,6 +15,12 @@
 # what the environment set it to (unset: as Invert camera Y) and that the
 # settings menu's Invert Camera Y moves it only until its own switch is used.
 # STANCE_AIM_ENV_ONLY=1 checks only that, as soon as Mario can move.
+# Mouse aim in the stance (decomp-patches/zzz-camera-08-stance-mouse-aim.patch):
+# with Mouse Aim in Mario Cam on (the default) the mouse's motion, given to the
+# pad layer a frame at a time as mouse look would, turns Mario and tilts FLUDD
+# in the stance as the C-stick does with its setting, and the camera follows
+# him; off, or standing, it turns the camera. Invert camera X leaves the mouse
+# alone (it still flips the C-stick); Invert camera Y flips its tilt.
 import os
 import gdb
 
@@ -51,7 +57,10 @@ def s16(v):
 
 # name, aim setting, Invert camera Y, Invert FLUDD aim Y, keys held from the
 # start, the key held for the check (a C-stick's, or the control stick's up),
-# toggle the close-up camera with Y
+# toggle the close-up camera with Y, and optionally the mouse: its motion each
+# frame of the hold (pixels; up is negative), Mouse Aim in Mario Cam (default
+# on) and Invert camera X (default off)
+MOUSE_PX = 10
 CHECKS = [
     ('on, R, C right', 1, 0, 0, [SPACE], KEY_L, False),
     ('on, R, C up', 1, 0, 0, [SPACE], KEY_I, False),
@@ -67,6 +76,14 @@ CHECKS = [
     ('on, R, stick up, Invert FLUDD Y', 1, 0, 1, [SPACE], KEY_W, False),
     ('off, close-up camera, stick up', 0, 0, 0, [], KEY_W, True),
     ('off, close-up camera, stick up, Invert FLUDD Y', 0, 0, 1, [], KEY_W, True),
+    ('off, standing, C right, Invert X', 0, 0, 0, [], KEY_L, False, {'invx': 1}),
+    ('mouse, R, right', 0, 0, 0, [SPACE], None, False, {'dx': MOUSE_PX}),
+    ('mouse, R, up', 0, 0, 0, [SPACE], None, False, {'dy': -MOUSE_PX}),
+    ('mouse, R, up, Invert Y', 0, 1, 0, [SPACE], None, False, {'dy': -MOUSE_PX}),
+    ('mouse, L + stick right, right', 0, 0, 0, [LSHIFT, KEY_D], None, False, {'dx': MOUSE_PX}),
+    ('mouse off, R, right', 0, 0, 0, [SPACE], None, False, {'dx': MOUSE_PX, 'close': 0}),
+    ('mouse, standing, right', 0, 0, 0, [], None, False, {'dx': MOUSE_PX}),
+    ('mouse, standing, right, Invert X', 0, 0, 0, [], None, False, {'dx': MOUSE_PX, 'invx': 1}),
 ]
 ENV_ONLY = os.environ.get('STANCE_AIM_ENV_ONLY') == '1'
 
@@ -145,12 +162,15 @@ class Frames(gdb.Breakpoint):
             self.initial['port_fludd_aim_invert_y'] = int(ev('port_fludd_aim_invert_y'))
         if ENV_ONLY or self.check == len(CHECKS):
             return True
-        name, aim, invert, fludd, held, cstick, closeup = CHECKS[self.check]
+        name, aim, invert, fludd, held, cstick, closeup = CHECKS[self.check][:7]
+        mouse = CHECKS[self.check][7] if len(CHECKS[self.check]) > 7 else {}
         f = self.frame
         if f == 0:
             setv('g_closeCameraCStick', aim)
             setv('g_invert_cy', invert)
             setv('g_invertFluddY', fludd)
+            setv('g_closeCameraMouse', mouse.get('close', 1))
+            setv('g_invert_cx', mouse.get('invx', 0))
             # a full tank, so the stance holds while it sprays
             gdb.execute('set var ((TMario*)gpMarioAddress)->mWaterGun->mCurrentWater = '
                         '((TMario*)gpMarioAddress)->mWaterGun->mNozzleList[0]->mEmitParams.mAmountMax.value',
@@ -161,16 +181,26 @@ class Frames(gdb.Breakpoint):
             self.statuses = set()
         elif f == 3 and closeup:
             self.keys([KEY_E], False)
+        elif f == ENTER - 1 and mouse:
+            # the camera behind him, where it was in the C-stick's checks, so
+            # that following him keeps it there
+            gdb.execute('set var gpCamera->mCurrentTarget.mYaw = '
+                        '(short)(((TMario*)gpMarioAddress)->mFaceAngle.y - 0x8000)', to_string=True)
         elif f == ENTER:
             self.start = values()
-            self.keys([cstick], True)
+            if cstick is not None:
+                self.keys([cstick], True)
         elif ENTER < f <= ENTER + HOLD:
             self.statuses.add(values()['status'])
+        if ENTER <= f < ENTER + HOLD and mouse:
+            # this frame's motion, which the camera takes (port_camera_take_mouse)
+            setv('g_mouseDX', mouse.get('dx', 0))
+            setv('g_mouseDY', mouse.get('dy', 0))
         if f == ENTER + HOLD:
             end = values()
             end['vy'] = water_vy()
             self.results.append((CHECKS[self.check], self.start, end, sorted(self.statuses)))
-            self.keys(held + [cstick], False)
+            self.keys(held + ([cstick] if cstick is not None else []), False)
             if closeup:
                 self.keys([KEY_E], True)
         if f == ENTER + HOLD + 3 and closeup:
@@ -232,7 +262,7 @@ if frames.check != len(CHECKS):
 gun = {}
 vy = {}
 for check, a, b, statuses in frames.results:
-    name, aim, invert, fludd, held, cstick, closeup = check
+    name, aim, invert, fludd, held, cstick, closeup = check[:7]
     d = {
         'yaw': s16(b['yaw'] - a['yaw']),
         'cam': s16(b['cam'] - a['cam']),
@@ -274,6 +304,25 @@ for check, a, b, statuses in frames.results:
             good = good and abs(d['gun'] - gun['off, close-up camera, stick up']) <= 64
         else:
             good = good and abs(d['gun']) > 100
+    elif name == 'off, standing, C right, Invert X':
+        # Invert camera X still flips the C-stick
+        good = not stance and d['yaw'] == 0 and d['cam'] < -1000
+    elif name == 'mouse, R, right':
+        # the mouse's right turns him right (the C-stick's left), and the
+        # camera keeps up with him
+        good = stance and d['yaw'] < -1000 and abs(behind) < -d['yaw'] / 4
+    elif name == 'mouse, R, up':
+        # the mouse's up tilts FLUDD up, as the C-stick's does
+        good = stance and d['gun'] < -100 and d['yaw'] == 0 and abs(d['ratio']) < 1e-4
+    elif name == 'mouse, R, up, Invert Y':
+        good = stance and d['gun'] > 100 and d['yaw'] == 0
+    elif name == 'mouse, L + stick right, right':
+        good = stance and d['yaw'] < -1000 and d['move'] > 20 and abs(behind) < -d['yaw'] / 4
+    elif name == 'mouse off, R, right':
+        good = stance and d['yaw'] == 0 and d['cam'] < -1000
+    elif name in ('mouse, standing, right', 'mouse, standing, right, Invert X'):
+        # the view turns right whichever way Invert camera X sets the C-stick
+        good = not stance and d['yaw'] == 0 and d['cam'] < -1000
     elif name == 'on, standing, C right':
         good = not stance and d['yaw'] == 0 and d['cam'] > 1000
     elif name == 'off, R, C right':

@@ -1,4 +1,4 @@
-Reason: port: Jump Height (F9 menu, factor 1/2/4/6): the normal, double and triple jumps launch at sqrt(factor) times their speed, so the apex is about factor times as high under constant gravity (port_cheat_jump_height in platform/misc/port_cheats.cpp); TEnemyMario is left alone through isMario()
+Reason: port: Jump Height (F9 menu, factor 1/2/4/6/8): the normal, double and triple jumps launch at sqrt(factor) times their speed, so the apex is about factor times as high under constant gravity (port_cheat_jump_height in platform/misc/port_cheats.cpp); TEnemyMario is left alone through isMario()
 --- a/src/Player/MarioMove.cpp
 +++ b/src/Player/MarioMove.cpp
 @@ -459,1 +459,5 @@

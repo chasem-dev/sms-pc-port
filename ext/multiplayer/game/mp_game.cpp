@@ -3216,6 +3216,17 @@ bool shineOutEarly(TShine* shine)
 	return false;
 }
 
+// Out in this game already: coming out (TShine::appearWithTime's rise,
+// circle and fall), touched, or out and waiting. Not one a script only
+// showed for its cutscene to bring out (setTransScale shows what it moves:
+// Super Mario Eclipse's Bollente Crypt puts its Shine in the lava that way,
+// then calls appearShine), nor a "quickly" one asking for its own (0x12).
+const u16 kShineComingOut = 0xB, kShineOut = 0x11; // TShine's states
+bool shineCameOut(TShine* shine)
+{
+	return !shine->checkLiveFlag(LIVE_FLAG_DEAD) && shine->mState >= kShineComingOut && shine->mState <= kShineOut;
+}
+
 int demoCamera(const char* name, const float* pos, int frames, float angle, int option, int hasCallback, void* actor,
                unsigned flags)
 {
@@ -3227,7 +3238,7 @@ int demoCamera(const char* name, const float* pos, int frames, float angle, int 
 	// cutscene brought out here already, or that is out: it played
 	if (enabled() && !s_replayingDemo && hasCallback && inStage()) {
 		TShine* shine = shineOfDemo(pos, true);
-		if (shine && (shineOutEarly(shine) || !shine->checkLiveFlag(LIVE_FLAG_DEAD))) {
+		if (shine && (shineOutEarly(shine) || shineCameOut(shine))) {
 			fprintf(stderr, "[multiplayer] the Shine's cutscene (%s) played here already: left out\n", name);
 			return 1;
 		}

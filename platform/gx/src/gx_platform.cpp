@@ -557,6 +557,8 @@ bool openWindow(float scale, bool vulkan) {
         SDL_SetHintWithPriority("SDL_HIDAPI_IGNORE_DEVICES", list, SDL_HINT_OVERRIDE);
     }
     SDL_SetHint("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1");
+    // Switch controllers' buttons by their letters (SDL 2's default, kept): A is the right-hand one.
+    SDL_SetHint("SDL_GAMECONTROLLER_USE_BUTTON_LABELS", "1");
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMECONTROLLER) != 0) {
         logmsg("SDL_Init failed: %s", SDL_GetError());
         snprintf(s_windowError, sizeof s_windowError, "%s", SDL_GetError());
@@ -1426,6 +1428,20 @@ static void guestMenuRefused(const char* menu) {
     t = true;
 }
 
+// With SMS_NINTENDO_LAYOUT, a controller printed like Nintendo's that SDL reads
+// as another kind has its A and B, and X and Y, swapped here, before anything
+// reads the event, so the button marked A is A everywhere (the game, its menus).
+// Switch controllers are read by their letters already, and a Steam Deck's own
+// controls are printed like an Xbox pad's.
+static void nintendoLetters(SDL_Event& ev) {
+    if (ev.type != SDL_CONTROLLERBUTTONDOWN && ev.type != SDL_CONTROLLERBUTTONUP) return;
+    if (ev.cbutton.button > SDL_CONTROLLER_BUTTON_Y || !nintendoLayout()) return;
+    for (const Pad& p : s_pads)
+        if (p.id == ev.cbutton.which && (nintendoController(p.type) || p.name.find("Steam Deck") != std::string::npos))
+            return;
+    ev.cbutton.button ^= 1;  // A 0 <-> B 1, X 2 <-> Y 3
+}
+
 // Tell the button prompts which device the player last used: a key, mouse
 // click or mouse movement means keyboard and mouse; a button or a stick pushed
 // well off centre means that controller.
@@ -1460,6 +1476,7 @@ void sms_gx_pump_events(void) {
     }
     SDL_Event ev;
     while (SDL_PeepEvents(&ev, 1, SDL_GETEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT) > 0) {
+        nintendoLetters(ev);
         if (!menuVisible()) noteInputDevice(ev);
         switch (ev.type) {
         case SDL_CONTROLLERDEVICEADDED:

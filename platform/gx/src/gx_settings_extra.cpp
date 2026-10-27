@@ -236,18 +236,18 @@ int highlightsSet(int i) {
 
 // ------------------------------------------------------------------ button prompts
 int promptsAvail() { return promptsAvailable(); }
-int promptStyleCount() { return 6; }
+int promptStyleCount() { return 7; }
 const char* promptStyleName(int i) {
-    static const char* const kNames[] = {"GameCube", "Auto", "Xbox", "PlayStation", "Steam Deck", "Keyboard"};
-    return i >= 0 && i < 6 ? kNames[i] : "";
+    static const char* const kNames[] = {"GameCube", "Auto", "Xbox", "PlayStation", "Steam Deck", "Nintendo", "Keyboard"};
+    return i >= 0 && i < 7 ? kNames[i] : "";
 }
 int promptStyleGet() { return promptsStyle(); }
 int promptStyleSet(int i) { return promptsSetStyle(i) ? 1 : 0; }
 
-int promptPadCount() { return 5; }
+int promptPadCount() { return 6; }
 const char* promptPadName(int i) {
-    static const char* const kNames[] = {"Match", "GameCube", "Xbox", "PlayStation", "Steam Deck"};
-    return i >= 0 && i < 5 ? kNames[i] : "";
+    static const char* const kNames[] = {"Match", "GameCube", "Xbox", "PlayStation", "Steam Deck", "Nintendo"};
+    return i >= 0 && i < 6 ? kNames[i] : "";
 }
 int promptPadGet() { return promptsPad(); }
 int promptPadSet(int i) { return promptsSetPad(i) ? 1 : 0; }

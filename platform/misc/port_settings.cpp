@@ -182,9 +182,9 @@ const Words kWords[] = {
     {"displayGamma", {{"sRGB", "\"srgb\""}, {"2.2", "\"2.2\""}, {"2.4", "\"2.4\""}}},
     {"vsync", {{"Off", "\"off\""}, {"On", "\"on\""}, {"Adaptive", "\"adaptive\""}}},
     {"buttonPrompts", {{"GameCube", "\"gamecube\""}, {"Auto", "\"auto\""}, {"Xbox", "\"xbox\""}, {"PlayStation", "\"playstation\""},
-                       {"Steam Deck", "\"steamdeck\""}, {"Keyboard", "\"keyboard\""}}},
+                       {"Steam Deck", "\"steamdeck\""}, {"Nintendo", "\"nintendo\""}, {"Keyboard", "\"keyboard\""}}},
     {"promptPad", {{"Match", "\"match\""}, {"GameCube", "\"gamecube\""}, {"Xbox", "\"xbox\""}, {"PlayStation", "\"playstation\""},
-                   {"Steam Deck", "\"steamdeck\""}}},
+                   {"Steam Deck", "\"steamdeck\""}, {"Nintendo", "\"nintendo\""}}},
 };
 // Off and On, as false and true.
 const char* const kSwitches[] = {"mpCollision", "fxaa", "heatHaze", "textures", "shaderWarmup", "fullscreen", "hudEdges", "overlay", "hdr",
