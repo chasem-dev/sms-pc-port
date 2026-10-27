@@ -177,8 +177,11 @@ frame_rate = 60
 # in percent. With mouse look, moving the mouse up and down tilts the camera
 # around Mario (mouse_orbit = off makes it act as the C-stick's up and down
 # instead), the mouse wheel zooms: down moves the camera out, up brings it in,
-# and the mouse turns the close-up view Y opens, aiming FLUDD in it
-# (close_camera_mouse = off leaves that view to the stick). raw_mouse = off
+# and the mouse turns the close-up view Y opens, aiming FLUDD in it, and aims
+# FLUDD in place, R all the way down or L, turning Mario and tilting FLUDD
+# (close_camera_mouse = off leaves both to the stick). camera_invert_x flips
+# the C-stick, not the mouse, which turns the view the way it moves; the mouse
+# follows camera_invert_y. raw_mouse = off
 # makes mouse look follow the system's pointer speed and acceleration (Windows
 # and X11). cstick_orbit = on makes the C-stick's up and down tilt the camera
 # as the mouse does; holding CAMERA_ZOOM (the right stick's press) then moves

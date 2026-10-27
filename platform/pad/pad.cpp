@@ -94,7 +94,10 @@ __attribute__((weak)) int GXPC_RequestQuit(void);
 }
 
 // PC camera options, read by the camera code (decomp-patches/zzz-pc-camera.patch):
-//   SMS_CAMERA_INVERT_X / _Y   flip the C-stick (and mouse) on that axis
+//   SMS_CAMERA_INVERT_X / _Y   flip the C-stick on that axis, and _Y mouse look's
+//                              up and down too (the mouse turns the view left and
+//                              right the way it moves, whichever way the C-stick
+//                              is set to)
 //   SMS_FLUDD_AIM_INVERT_Y     flips the control stick's up and down while Mario
 //                              aims FLUDD spraying in place (R all the way down,
 //                              or L held to walk sideways); unset, it follows
@@ -111,7 +114,9 @@ __attribute__((weak)) int GXPC_RequestQuit(void);
 //                              (decomp-patches/zzz-camera-07-stance-cstick-aim.patch)
 //   SMS_CLOSE_CAMERA_MOUSE=0   mouse look leaves the Y close-up camera alone; by
 //                              default it turns it, and so aims FLUDD in it
-//                              (decomp-patches/zzz-camera-05-close-camera-mouse.patch)
+//                              (decomp-patches/zzz-camera-05-close-camera-mouse.patch),
+//                              and in the spray-in-place stance it turns Mario and
+//                              tilts FLUDD (decomp-patches/zzz-camera-08-stance-mouse-aim.patch)
 //   SMS_MOUSE_ORBIT=0          the mouse's up/down acts as the C-stick's again
 //                              (nearer and lower, or further and higher) instead
 //                              of tilting the camera around Mario
@@ -144,6 +149,12 @@ f32 port_camera_zoom         = 1.0f;
 // Frames left in which the camera follows the mouse as closely as it follows
 // the C-stick (the game follows a camera left alone more slowly).
 int port_camera_mouse_busy   = 0;
+// Mouse aim in the spray-in-place stance (zzz-camera-08): the motion the normal
+// camera passed on to Mario instead of turning itself, until TMario::squating
+// turns him by it (s16 angle units, as far as it would have turned the camera)
+// and TNozzleBase::calcGunAngle tilts FLUDD by it (C-stick units).
+int port_stance_mouse_turn   = 0;
+f32 port_stance_mouse_tilt   = 0.0f;
 }
 
 // SMS_RUMBLE_STRENGTH above 100: how much more often the game runs the motor,
@@ -1559,10 +1570,12 @@ extern "C" u32 PADRead(PADStatus* status)
 }
 
 // Mouse look: the motion since the last call, in C-stick units (1.0 is full
-// deflection for one frame), with the camera's inversion applied. Returns 0
-// when the mouse has not moved. The cameras the mouse turns (the normal, the Y
-// close-up and the coaster's) call it once a frame, which also moves the
-// wheel's zoom along; motion they leave is dropped (g_mouseTaken).
+// deflection for one frame), with Invert camera Y applied. Invert camera X is
+// left out: it flips the C-stick, whose right turns the view left as on the
+// GameCube, so that it turns the view as the mouse does. Returns 0 when the
+// mouse has not moved. The cameras the mouse turns (the normal, the Y close-up
+// and the coaster's) call it once a frame, which also moves the wheel's zoom
+// along; motion they leave is dropped (g_mouseTaken).
 // While split-screen co-op runs the second player's camera (ext/coop), the
 // mouse is the first player's: it gives that camera nothing.
 extern "C" int port_coop_in_p2 = 0;
@@ -1586,8 +1599,6 @@ extern "C" int port_camera_take_mouse(f32* dx, f32* dy)
 	// moving the mouse right turns the view right, as the C-stick pushed left does
 	*dx = -(float)g_mouseDX * k;
 	*dy = -(float)g_mouseDY * k;
-	if (g_invert_cx)
-		*dx = -*dx;
 	if (g_invert_cy)
 		*dy = -*dy;
 	g_mouseDX = g_mouseDY = 0;
@@ -1784,7 +1795,7 @@ const PortSetting kPadSettings[] = {
 	  "50 is the console's rumble, more runs it more often. Some adapters are on or off.", 0, NULL, rumble_count,
 	  rumble_name, rumble_get, rumble_set },
 	{ "invertCameraX", PORT_SETTINGS_PAGE_GAMEPLAY, 50, "Invert Camera X",
-	  "Flips the C-stick and mouse look left and right.", 0, NULL, off_on_count, off_on_name, invert_x_get,
+	  "Flips the C-stick left and right. The mouse turns the view the way it moves.", 0, NULL, off_on_count, off_on_name, invert_x_get,
 	  invert_x_set },
 	{ "invertCameraY", PORT_SETTINGS_PAGE_GAMEPLAY, 55, "Invert Camera Y",
 	  "Flips the C-stick and mouse look up and down.", 0, NULL, off_on_count, off_on_name, invert_y_get,
@@ -1802,7 +1813,7 @@ const PortSetting kPadSettings[] = {
 	  "How fast the C-stick turns the camera. 100 is the original speed.", 0, NULL, camera_speed_count,
 	  camera_speed_name, camera_speed_get, camera_speed_set },
 	{ "closeCameraMouse", PORT_SETTINGS_PAGE_GAMEPLAY, 82, "Mouse Aim in Mario Cam",
-	  "With mouse look on, the mouse turns the close-up view Y opens, and aims FLUDD in it.", 0, NULL,
+	  "With mouse look on, the mouse aims FLUDD in the close-up view Y opens, and when you spray in place.", 0, NULL,
 	  off_on_count, off_on_name, close_mouse_get, close_mouse_set },
 	{ "mouseSensitivity", PORT_SETTINGS_PAGE_GAMEPLAY, 85, "Mouse Sensitivity",
 	  "How fast mouse look turns the camera, when mouse look is on. 100 is normal.", 0, NULL, mouse_sens_count,
