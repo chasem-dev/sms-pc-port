@@ -1025,6 +1025,11 @@ extern "C" int port_pad_savestate_labels(int style, char labels[2][16])
 		"A", "B", "X", "Y", "View", "Steam", "Menu", "L3", "R3", "L1", "R1", "Up", "Down", "Left", "Right",
 		"...", "L4", "R4", "L5", "R5", "Touchpad", "L2", "R2",
 	};
+	// by their letters, as SDL reads Switch controllers (and others with SMS_NINTENDO_LAYOUT)
+	static const char* const kNintendo[PAD_SRC_COUNT] = {
+		"A", "B", "X", "Y", "-", "Home", "+", "LS", "RS", "L", "R", "Up", "Down", "Left", "Right",
+		"Capture", "P1", "P2", "P3", "P4", "Touchpad", "ZL", "ZR",
+	};
 	init();
 	labels[0][0] = labels[1][0] = 0;
 	const bool keyboard = style == 0;
@@ -1040,7 +1045,7 @@ extern "C" int port_pad_savestate_labels(int style, char labels[2][16])
 				if (kKeys[k].code == parts[i])
 					name = kKeys[k].name;
 		} else if (parts[i] < PAD_SRC_COUNT) {
-			name = (style == 2 ? kPlayStation : style == 3 ? kSteamDeck : kXbox)[parts[i]];
+			name = (style == 2 ? kPlayStation : style == 3 ? kSteamDeck : style == 4 ? kNintendo : kXbox)[parts[i]];
 		}
 		if (name)
 			snprintf(labels[i], 16, "%s", name);
