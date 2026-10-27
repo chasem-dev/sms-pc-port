@@ -85,6 +85,7 @@ __attribute__((weak)) void sms_gx_set_event_callback(void (*cb)(const union SDL_
 __attribute__((weak)) void sms_gx_pump_events(void);
 __attribute__((weak)) int sms_gx_rumble(unsigned short strength);
 __attribute__((weak)) void sms_gx_rumble_shutdown(void);
+__attribute__((weak)) int sms_gx_fludd_trigger(int level);
 __attribute__((weak)) int GXPC_IsHeadless(void);
 __attribute__((weak)) int GXPC_ControllerCount(void);
 __attribute__((weak)) int GXPC_MouseCaptured(void);
@@ -129,6 +130,9 @@ int port_close_camera_mouse  = 1;
 // Presses of MAP so far; the radar (src/radar.cpp) opens or closes its full
 // map on each.
 int port_radar_map_presses = 0;
+// 1 while Mario has FLUDD and his stage is running (not paused, not a movie or
+// a menu): ext/dualsense sets it for the DualSense's FLUDD trigger (below).
+int port_fludd_trigger_ready = 0;
 f32 port_camera_speed_x   = 1.0f;
 f32 port_camera_speed_y   = 1.0f;
 // Mouse orbit (zzz-camera-02): whether the mouse's up/down tilts the camera,
@@ -194,6 +198,11 @@ int g_softTrigger = 95 * 255 / 100;
 // own (ClampRegion's minStick and minSubstick, 15 of a stick's 100), so the game plays as on hardware.
 const int kClampDeadzone = 15;
 int g_stickDeadzone = kClampDeadzone;
+// DualSense FLUDD trigger (SMS_FLUDD_TRIGGER, percent, 0 or unset off): on a DualSense, R2 gets
+// harder to pull along its travel while it is FLUDD's trigger (Mario has FLUDD, his stage runs, the
+// window has focus and R is bound to R2), up to this share of the controller's strongest resistance
+// at the end. Only the force on the trigger: what R2 reads, and so the game, is the same.
+int g_fluddTrigger;
 
 struct KeyName {
 	const char* name;
@@ -378,6 +387,20 @@ bool g_focused = true, g_backgroundInput;
 u16 g_rumbleStrength = 0xFFFF;
 bool g_motor; // controller 1's motor, as the game last set it
 
+// The DualSense FLUDD trigger (g_fluddTrigger): its strength at the end of R2's travel, 1 to 8,
+// while R2 is FLUDD's trigger, and 0 (no resistance) otherwise. The GX layer sends it to the
+// controller in use when it changes, if that is a DualSense.
+void update_fludd_trigger(bool blocked)
+{
+	if (!sms_gx_fludd_trigger)
+		return;
+	bool r2 = false;
+	for (int i = 0; i < g_npbind[C_R]; i++)
+		r2 = r2 || g_pbind[C_R][i] == PAD_SRC_RT;
+	const bool on = g_fluddTrigger && port_fludd_trigger_ready && g_focused && !blocked && r2;
+	sms_gx_fludd_trigger(on ? std::max(1, (g_fluddTrigger * 8 + 50) / 100) : 0);
+}
+
 // Sends the motor's state, off while another window has focus.
 void update_rumble()
 {
@@ -389,6 +412,8 @@ void update_rumble()
 
 void stop_rumble_at_exit()
 {
+	if (sms_gx_fludd_trigger)
+		sms_gx_fludd_trigger(0);
 	if (sms_gx_rumble_shutdown)
 		sms_gx_rumble_shutdown();
 	if (!g_motor)
@@ -736,6 +761,11 @@ void init()
 			if (g_stickDeadzone != kClampDeadzone)
 				port_log("[pad] stick dead zone: %d%%\n", g_stickDeadzone);
 		}
+	if (const char* e = getenv("SMS_FLUDD_TRIGGER")) {
+		g_fluddTrigger = atoi(e) < 0 ? 0 : atoi(e) > 100 ? 100 : atoi(e);
+		if (g_fluddTrigger)
+			port_log("[pad] DualSense FLUDD trigger: %d%%\n", g_fluddTrigger);
+	}
 	if (const char* e = getenv("SMS_RUMBLE"))
 		if (*e && !env_on("SMS_RUMBLE")) {
 			g_rumbleStrength = 0;
@@ -1500,6 +1530,7 @@ extern "C" u32 PADRead(PADStatus* status)
 	if (hudKey && !wasHud && !hotkeysBlocked)
 		port_hud_settings_toggle();
 	wasHud = hudKey;
+	update_fludd_trigger(blocked);
 	if (blocked)
 		return PAD_CHAN0_BIT;
 	// controller 1: the keyboard and every controller but the second player's,
@@ -1598,7 +1629,7 @@ const char* percent_name(const PortValueList& l, int i)
 }
 
 // The launcher's values come from the standard steps, plus the one the game started with.
-PortValueList g_cameraSpeedList, g_mouseSensList, g_softTriggerList, g_deadzoneList, g_rumbleList;
+PortValueList g_cameraSpeedList, g_mouseSensList, g_softTriggerList, g_deadzoneList, g_rumbleList, g_fluddTriggerList;
 
 int camera_speed_percent() { return (int)(port_camera_speed_x * 100.0f + 0.5f); }
 int mouse_sens_percent() { return (int)(g_mouseSens * 100.0f + 0.5f); }
@@ -1727,6 +1758,31 @@ int soft_trigger_set(int i)
 int deadzone_count() { return deadzone_list().n; }
 const char* deadzone_name(int i) { return percent_name(deadzone_list(), i); }
 int deadzone_get() { return deadzone_list().indexOf(g_stickDeadzone); }
+const PortValueList& fludd_trigger_list()
+{
+	static const int steps[] = { 0, 25, 50, 75, 100 };
+	if (!g_fluddTriggerList.built) {
+		init();
+		g_fluddTriggerList.build(steps, (int)(sizeof steps / sizeof steps[0]), g_fluddTrigger);
+	}
+	return g_fluddTriggerList;
+}
+int fludd_trigger_count() { return fludd_trigger_list().n; }
+const char* fludd_trigger_name(int i)
+{
+	const PortValueList& l = fludd_trigger_list();
+	return i >= 0 && i < l.n && l.v[i] == 0 ? "Off" : percent_name(l, i);
+}
+int fludd_trigger_get() { return fludd_trigger_list().indexOf(g_fluddTrigger); }
+int fludd_trigger_set(int i)
+{
+	const PortValueList& l = fludd_trigger_list();
+	if (i < 0 || i >= l.n)
+		return 0;
+	g_fluddTrigger = l.v[i];
+	return 1;
+}
+
 int deadzone_set(int i)
 {
 	const PortValueList& l = deadzone_list();
@@ -1768,6 +1824,9 @@ const PortSetting kPadSettings[] = {
 	{ "rumbleStrength", PORT_SETTINGS_PAGE_CONTROLS, 20, "Rumble Strength",
 	  "50 is the console's rumble, more runs it more often. Some adapters are on or off.", 0, NULL, rumble_count,
 	  rumble_name, rumble_get, rumble_set },
+	{ "fluddTrigger", PORT_SETTINGS_PAGE_CONTROLS, 25, "DualSense FLUDD Trigger",
+	  "On a DualSense, R2 gets harder to pull as you press it, while Mario has FLUDD. Off by default.", 0,
+	  NULL, fludd_trigger_count, fludd_trigger_name, fludd_trigger_get, fludd_trigger_set },
 	{ "invertCameraX", PORT_SETTINGS_PAGE_GAMEPLAY, 50, "Invert Camera X",
 	  "Flips the C-stick and mouse look left and right.", 0, NULL, off_on_count, off_on_name, invert_x_get,
 	  invert_x_set },

@@ -10,6 +10,7 @@ They are the start of a code-mod framework for the port: a new feature that need
 | [`coop/`](coop/README.md) | split-screen co-op: a second player on another controller, as Luigi, with a camera and half of the screen of their own |
 | [`demo/`](demo/README.md) | plays Mario from a script, as a player holds the controller, for trailers and footage |
 | [`autosave/`](autosave/README.md) | saves by itself where the game would ask to save, with an indicator and the save sound |
+| [`dualsense/`](dualsense/README.md) | a DualSense's R2 gets harder to pull while it is FLUDD's trigger |
 | [`outfit/`](outfit/README.md) | Mario always wears his Shine shirt, his sunglasses, or both (the launcher's Customize Mario) |
 | [`look/`](look/README.md) | Customize Mario's colours stay on Mario: Eclipse's Luigi and Il Piantissimo keep their own mouth |
 | [`pipelinecache/`](pipelinecache/README.md) | saves the Vulkan pipeline cache in pauses and loads, not in play |

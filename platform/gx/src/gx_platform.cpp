@@ -1717,8 +1717,75 @@ int sms_gx_rumble(unsigned short strength) {
 #endif
 }
 
+#ifdef SMS_GX_HAVE_SDL2
+namespace {
+// The adaptive trigger effect, through SDL's PS5 driver: SDL_GameControllerSendEffect takes the
+// output report's effect block (SDL's DS5EffectsState_t, 47 bytes; SDL fills in the report's header
+// for USB or Bluetooth). Its first byte says which parts to change (0x04: the right trigger's
+// effect), and the right trigger's effect is the 11 bytes from byte 10. Effect 0x21 ("feedback") sets
+// a resistance for each tenth of the trigger's travel, 1 to 8 (stored as 0 to 7, three bits each)
+// with a bit per tenth that has one; effect 0x05 is none.
+bool sendFluddTrigger(SDL_JoystickID pad, int level) {
+#if SDL_VERSION_ATLEAST(2, 0, 16)
+    SDL_GameController* c = nullptr;
+    for (const Pad& p : s_pads)
+        if (p.id == pad && p.type == SDL_CONTROLLER_TYPE_PS5) c = p.c;
+    if (!c) return false;
+    Uint8 effect[47] = {};
+    effect[0] = 0x04;
+    Uint8* right = effect + 10;
+    if (level <= 0) {
+        right[0] = 0x05;
+    } else {
+        // harder along the travel: a light pull is light, the end is `level`
+        Uint32 forces = 0;
+        for (int zone = 0; zone < 10; zone++) {
+            const int force = SDL_max(1, (level * (zone + 1) + 5) / 10);
+            forces |= Uint32(force - 1) << (3 * zone);
+        }
+        right[0] = 0x21;
+        right[1] = 0xFF;  // all ten tenths
+        right[2] = 0x03;
+        for (int i = 0; i < 4; i++) right[3 + i] = Uint8(forces >> (8 * i));
+    }
+    std::lock_guard<std::mutex> l(s_padLock);
+    return SDL_GameControllerSendEffect(c, effect, int(sizeof effect)) == 0;
+#else
+    (void)pad;
+    (void)level;
+    return false;
+#endif
+}
+int s_fluddTriggerLevel = 0;
+SDL_JoystickID s_fluddTriggerPad = -1;
+}  // namespace
+#endif
+
+int sms_gx_fludd_trigger(int level) {
+#ifdef SMS_GX_HAVE_SDL2
+    level = level < 0 ? 0 : level > 8 ? 8 : level;
+    const SDL_JoystickID pad = s_rumblePad;
+    static bool taken;
+    if (level == s_fluddTriggerLevel && pad == s_fluddTriggerPad) return taken;
+    // a controller put down keeps no resistance
+    if (s_fluddTriggerLevel && s_fluddTriggerPad >= 0 && s_fluddTriggerPad != pad)
+        sendFluddTrigger(s_fluddTriggerPad, 0);
+    const bool was = taken;
+    taken = pad >= 0 && sendFluddTrigger(pad, level);
+    if (level && taken && (!was || pad != s_fluddTriggerPad))
+        logmsg("DualSense FLUDD trigger on controller %d", int(pad));
+    s_fluddTriggerLevel = level;
+    s_fluddTriggerPad = pad;
+    return taken;
+#else
+    (void)level;
+    return 0;
+#endif
+}
+
 void sms_gx_rumble_shutdown(void) {
 #ifdef SMS_GX_HAVE_SDL2
+    if (s_fluddTriggerLevel) sms_gx_fludd_trigger(0);
     {
         std::lock_guard<std::mutex> l(s_rumble.lock);
         if (!s_rumble.started) return;

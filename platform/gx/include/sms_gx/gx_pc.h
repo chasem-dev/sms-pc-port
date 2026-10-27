@@ -131,6 +131,11 @@ void sms_gx_pump_events(void);
 int sms_gx_rumble(unsigned short strength);
 /* At exit: stops that thread and every controller's rumble. */
 void sms_gx_rumble_shutdown(void);
+/* The DualSense FLUDD trigger (platform/pad, SMS_FLUDD_TRIGGER): on the controller
+ * last used, if it is a DualSense, R2 gets harder to pull along its travel, up to
+ * `level` (1 to 8) at the end; 0 lets it go. Sent only when the level or the
+ * controller changes.  Returns 1 if the controller in use takes it. */
+int sms_gx_fludd_trigger(int level);
 
 /* Call once with an OpenGL 3.3 core context current (SDL, EGL, ...), before the
  * game calls GXInit.  efbScale multiplies the 640x528 EFB (1 = native; FSR 1's

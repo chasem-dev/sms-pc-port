@@ -163,6 +163,11 @@ frame_rate = 60
 # move anything, in percent of their travel (0 to 50). 15 is the console's; more
 # stops a stick that drifts, less makes small movements count.
 # stick_deadzone = 15
+# On a DualSense, R2 gets harder to pull along its travel while Mario has FLUDD,
+# up to this share of the controller's strongest resistance at the end of the
+# pull (25, 50, 75 or 100 percent; off by default). Only the force changes: R2
+# reads the same. See ext/dualsense/README.md.
+# fludd_trigger = 0
 # Open the debug overlay (frame rate, where the time goes) at start.
 # overlay = off
 
