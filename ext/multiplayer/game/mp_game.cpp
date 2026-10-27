@@ -105,7 +105,7 @@ bool s_arrivedNow; // this frame is the first of play in a stage just loaded
 int32_t s_flags[kMaxFlags];
 uint32_t s_flagIds[kMaxFlags];
 int s_flagCount;
-uint8_t s_itemAlive[kMaxItems]; // the stage's own items, alive when it started
+uint8_t s_itemAlive[kMaxItems]; // the stage's own items, alive when it started (until gone and brought back as another)
 int s_itemCount;
 uint8_t s_itemLive[kMaxItems]; // every item, alive last frame
 int s_takenAtSeen;             // the session's taken-at list, looked at so far
@@ -215,6 +215,21 @@ bool takenAtMatches(const MpgTakenAt& t, TLiveActor* a)
 }
 
 bool appearedDuringStage(int i) { return i >= s_itemCount || !s_itemAlive[i]; }
+
+// A stage's own item is its own only until it goes. The coin a defeated
+// enemy, a box or a flower brings out is the first gone coin the game has
+// (TMapObjBaseManager::makeObjAppear), often one of the stage's own that a
+// player took. Back like that, it is an item that appeared during the stage.
+// (Kept as the stage's own, its take named the coin taken before, and the
+// host, which had counted that one, took the new one back.)
+void noteReusedItem(int i, TLiveActor* a)
+{
+	if (i < s_itemCount && s_itemAlive[i] && !s_itemLive[i] && a && !a->checkLiveFlag(LIVE_FLAG_DEAD)) {
+		s_itemAlive[i] = 0;
+		if (getenv("SMS_MULTIPLAYER_DEBUG"))
+			fprintf(stderr, "[multiplayer] item %d, one of the stage's own, is back: it appeared during the stage\n", i);
+	}
+}
 
 // Switches pressed in any game are pressed in every game (and for a player
 // who joins later): a red coin switch, or a switch that throws out hidden
@@ -373,6 +388,7 @@ void syncTakenAt()
 	for (int i = 0; i < n; i++) {
 		TLiveActor* a   = mgr->getObj(i);
 		const bool live = a && !a->checkLiveFlag(LIVE_FLAG_DEAD);
+		noteReusedItem(i, a);
 		if (live && !s_itemLive[i] && appearedDuringStage(i))
 			for (int k = 0; mpg_taken_at(k, &t); k++)
 				if (takenAtMatches(t, a)) {
@@ -432,6 +448,9 @@ void takeRemovals()
 		TLiveActor* a = mgr->getObj(index);
 		if (!a || (uint32_t)(a->getActorType() & 0xFF) != (key >> 16) || (a->getActorType() & 0xFFFFFF00) != 0x20000000)
 			continue;
+		noteReusedItem(index, a);
+		if (appearedDuringStage(index))
+			continue; // the stage's own went here already; this is another (a drop)
 		removeItem(static_cast<TItem*>(a));
 	}
 	for (int k = 0; k < graffitiCount; k++)
@@ -2913,7 +2932,11 @@ void runTests(TMarDirector* dir, bool arrived)
 		// the same place in every game: the stage's start, a little ahead
 		const JGeometry::TVec3<f32>& at = gpMarioOriginal->mPosition;
 		TMapObjBase* coin = gpItemManager->makeObjAppear(6500.0f, at.y + 50.0f, -3500.0f, 0x2000000E, true);
-		fprintf(stderr, "[multiplayer] test: a coin appeared (%p)\n", (void*)coin);
+		int index = -1;
+		for (int i = 0; i < gpItemManager->getObjNum(); i++)
+			if (gpItemManager->getObj(i) == coin)
+				index = i;
+		fprintf(stderr, "[multiplayer] test: a coin appeared (%p, item %d)\n", (void*)coin, index);
 	}
 	if (s_test.takeDropAt >= 0 && !s_test.tookDrop && s_test.together >= s_test.takeDropAt) {
 		s_test.tookDrop   = true;
@@ -5119,6 +5142,10 @@ void itemTaken(void* item, void*)
 			// taken there), not taken from the others
 			if (dynamic_cast<TItemNozzle*>(a))
 				return;
+			noteReusedItem(i, a);
+			if (getenv("SMS_MULTIPLAYER_DEBUG"))
+				fprintf(stderr, "[multiplayer] item %d (type %02x) taken here: %s\n", i, (unsigned)(a->getActorType() & 0xFF),
+				        appearedDuringStage(i) ? "appeared during the stage" : "one of the stage's own");
 			if (!appearedDuringStage(i)) {
 				mpg_item_taken(itemKey(i, a));
 			} else {
