@@ -18,7 +18,9 @@
 //
 // The letters are taken from where they are on the US disc; when any of
 // those four pictures differs (a language pack, or a mod's), the item is the
-// file select's QUIT word as it is in that language, restyled the same way.
+// file select's QUIT word as it is in that language, restyled the same way:
+// the pack's picture of it when the pack has one (the UHD pack has the
+// European languages' at 8 times), else the disc's.
 
 #include <JSystem/JKernel/JKRFileLoader.hpp>
 #include <JSystem/ResTIMG.hpp>
@@ -282,18 +284,20 @@ int composeQuitGame(Ink& word, const Letters& in)
 }
 
 // The file select's QUIT, whatever its language: all its letters, narrowed.
-int composeQuit(Ink& word, const Ink& quit)
+int composeQuit(Ink& word, const Ink& quit, int scale)
 {
+	// a pack's upscale leaves a faint haze around the letters
+	const float faint = scale > 1 ? 0.02f : 0.0f;
 	int x0 = quit.w, x1 = 0;
 	for (int y = 0; y < quit.h; y++)
 		for (int x = 0; x < quit.w; x++)
-			if (quit.at(x, y) > 0.0f) {
+			if (quit.at(x, y) > faint) {
 				x0 = x < x0 ? x : x0;
 				x1 = x + 1 > x1 ? x + 1 : x1;
 			}
 	if (x1 <= x0)
 		return 0;
-	return kPad + place(word, kPad, quit, x0, x1, kNarrowX, 1) + kPad;
+	return kPad * scale + place(word, kPad * scale, quit, x0, x1, kNarrowX, scale) + kPad * scale;
 }
 
 // Squared distances along a line to the nearest zero of f (Felzenszwalb and
@@ -486,15 +490,16 @@ const ResTIMG* make(bool pack, int* layoutW)
 	memset(&in, 0, sizeof in);
 	in.scale = 1;
 	bool ok  = false;
-	if (pack && us) {
-		// the pack's pictures, all at the same scale as its EXIT AREA's
+	if (pack) {
+		// the pack's pictures, all at the same scale as its EXIT AREA's (in
+		// another language, only its QUIT, and EXIT AREA for the outline)
 		int w = 0, h = 0;
 		u8* probe = GXPC_TexturePackImage ? GXPC_TexturePackImage(tx3.img, GX_TF_IA4, tx3.w, tx3.h, &w, &h) : nullptr;
 		free(probe);
 		in.scale = w % tx3.w == 0 && h == tx3.h * (w / tx3.w) ? w / tx3.w : 0;
-		ok = in.scale >= 2 && in.scale <= kMaxScale && decodePack(tx1, in.scale, in.tx1)
-		     && decodePack(tx3, in.scale, in.tx3) && decodePack(quit, in.scale, in.quit)
-		     && decodePack(mono, in.scale, in.mono);
+		ok = in.scale >= 2 && in.scale <= kMaxScale && decodePack(tx3, in.scale, in.tx3)
+		     && decodePack(quit, in.scale, in.quit)
+		     && (!us || (decodePack(tx1, in.scale, in.tx1) && decodePack(mono, in.scale, in.mono)));
 	} else if (us) {
 		ok = decodeIA4(tx1, in.tx1) && decodeIA4(tx3, in.tx3) && decodeIA4(quit, in.quit) && decodeIA4(mono, in.mono);
 	} else {
@@ -507,7 +512,7 @@ const ResTIMG* make(bool pack, int* layoutW)
 	int w         = 0;
 	float outline = 0.0f;
 	if (ok && like && inkNew(word, kMaxW * in.scale, kH * in.scale)) {
-		w = us ? composeQuitGame(word, in) : composeQuit(word, in.quit);
+		w = us ? composeQuitGame(word, in) : composeQuit(word, in.quit, in.scale);
 		if (w > 0 && w <= word.w) {
 			// as wide as the word
 			Ink tight;
