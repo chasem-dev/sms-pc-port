@@ -59,6 +59,13 @@ The mods are built with clang and partially linked into one object ([lib/CMakeLi
 On Windows the mods are built with `-fno-addrsig`: GNU ld maps clang's `.llvm_addrsig` at 4 GiB, which Windows will not load.
 Windows is LLP64 (`long` is 32-bit); only the link-level names are adapted so far. The 64-bit Windows build has not yet been played through.
 
+### HD textures
+
+`python3 tools/mods/get.py eclipse-textures` installs [iZePlayzYT's Super Mario Eclipse HiRes Texture Pack](https://github.com/iZePlayzYT/SuperMarioEclipse-TexturePacks) (pinned in [eclipse-textures.json](../tools/mods/eclipse-textures.json)), a Dolphin pack for Eclipse's disc (`GMSE04`) in BC7 DDS files, into `mods/eclipse-textures/`.
+It is outside `mods/textures/`, so Super Mario Sunshine never loads it: name it in `SMS_TEXTURE_PACKS` ahead of the Sunshine pack when playing Eclipse, as SMS Launcher does (`SMS_TEXTURE_PACKS="mods/eclipse-textures;mods/textures"`), and Eclipse's textures win where both packs replace one.
+The release is a 9 GB zip of 16 GB of textures, so the installer never downloads the zip: it reads the zip's index with HTTP range requests (checked against the pinned `index_md5`; it holds every texture's CRC-32), fetches the textures in runs of about 64 MB and unpacks each as it arrives, checking its CRC-32.
+A stopped install keeps what it finished in `mods/eclipse-textures.part/` and carries on from there; the whole needs about 16 GB free.
+
 ## How the port runs it
 
 - **Patches.** Each `SMS_PATCH_BL`/`SMS_PATCH_B`/`SMS_WRITE_32` registers under its retail address in the port's registry ([modhooks.cpp](../platform/mods/modhooks.cpp)) instead of writing to memory, from the mods' static constructors, which run when the modules load (after `TApplication::initialize` has the heaps and DVD up), as Kuribo runs them.

@@ -7,6 +7,8 @@
     python3 tools/mods/get.py eclipse     Super Mario Eclipse (patched from your disc), and its maps
     python3 tools/mods/get.py eclipse-maps  only the radar's maps of Eclipse's stages;
                                           --if-outdated as for extras
+    python3 tools/mods/get.py eclipse-textures  Super Mario Eclipse's own HD textures (a 9 GB
+                                          download, 16 GB installed); --if-outdated as for extras
     python3 tools/mods/get.py achievement-icons  the achievements' icons (Eclipse's too), into assets/achievements/
     python3 tools/mods/get.py language fr the game's text in French (de, es, it, pl: German,
                                           Spanish, Italian, Polish); --if-outdated as for extras
@@ -31,6 +33,7 @@ Needs Python 3 and 7-Zip (7z, 7zz or 7za on PATH).
 import argparse
 import hashlib
 import http.client
+import io
 import json
 import os
 import shutil
@@ -39,6 +42,7 @@ import sys
 import time
 import urllib.request
 import zipfile
+import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -88,6 +92,15 @@ with open(os.path.join(HERE, "lua-mod.json"), encoding="utf-8") as f:
 # for SMS Launcher too.
 with open(os.path.join(HERE, "eclipse-maps.json"), encoding="utf-8") as f:
     ECLIPSE_MAPS = dict(json.load(f), install=os.path.join(MODS, "maps", "eclipse"))
+# Super Mario Eclipse's own HD textures: iZePlayzYT's SME HiRes Texture Pack, a
+# Dolphin pack for Eclipse's disc (GMSE04), in BC7 DDS files the texture loader
+# reads (platform/gx/src/gx_hires.cpp). Pinned in eclipse-textures.json, for
+# SMS Launcher too. Installed in mods/eclipse-textures, outside mods/textures,
+# so Super Mario Sunshine never loads it: SMS Launcher names that folder in
+# SMS_TEXTURE_PACKS, ahead of mods/textures, when it plays Eclipse with HD
+# textures, so Eclipse's textures win where both packs replace one.
+with open(os.path.join(HERE, "eclipse-textures.json"), encoding="utf-8") as f:
+    ECLIPSE_TEXTURES = dict(json.load(f), install=os.path.join(MODS, "eclipse-textures"))
 ECLIPSE = {
     "name": "Super Mario Eclipse v1.1.0 (Eclipse Team)",
     "page": "https://gamebanana.com/mods/536309",
@@ -481,6 +494,246 @@ def get_eclipse_maps(keep, if_outdated=False):
         % (count, os.path.relpath(mod["install"], ROOT)))
 
 
+# The Eclipse pack is a 9 GB zip of 16 GB of textures. Downloading the zip and
+# then unpacking it would need 25 GB at once, so the textures are unpacked as
+# they arrive instead: the zip's index (its central directory, which holds every
+# texture's size and CRC-32) is read with HTTP range requests and checked
+# against the pinned index_md5, then the textures are fetched in runs of about
+# RUN bytes, each unpacked and checked against its CRC-32 as it comes. They go
+# to mods/eclipse-textures.part/, where a stopped install's finished textures
+# are listed (.done) for the next one to carry on from.
+RUN = 64 << 20
+RUN_TRIES = 5
+
+
+def http_range(url, start, end):
+    """An open response with bytes start..end (inclusive) of url, and the file's size."""
+    req = urllib.request.Request(url, headers={"User-Agent": "sms-pc-port mod installer",
+                                               "Range": "bytes=%d-%d" % (start, end)})
+    r = urllib.request.urlopen(req)
+    span = (r.headers.get("Content-Range") or "").split("/")
+    if r.status != 206 or len(span) != 2 or not span[0].startswith("bytes %d-" % start):
+        r.close()
+        raise Failure("%s does not send parts of the file (an HTTP range request), which this"
+                      " download needs" % url.split("?")[0])
+    return r, int(span[1]) if span[1].isdigit() else None
+
+
+class RemoteFile(io.RawIOBase):
+    """A file on a server, read with range requests, for zipfile to read the index."""
+
+    def __init__(self, url, size):
+        self.url, self.size, self.pos = url, size, 0
+
+    def readable(self):
+        return True
+
+    def seekable(self):
+        return True
+
+    def tell(self):
+        return self.pos
+
+    def seek(self, offset, whence=0):
+        self.pos = offset if whence == 0 else self.pos + offset if whence == 1 else self.size + offset
+        return self.pos
+
+    def readinto(self, b):
+        n = min(len(b), self.size - self.pos)
+        if n <= 0:
+            return 0
+        r, _ = http_range(self.url, self.pos, self.pos + n - 1)
+        with r:
+            data = r.read(n)
+        b[:len(data)] = data
+        self.pos += len(data)
+        return len(data)
+
+
+def eclipse_textures_index(url, mod):
+    """The pack's textures (ZipInfo, in the zip's order) and where its index starts, checked
+    against the pin."""
+    r, size = http_range(url, 0, 0)
+    r.close()
+    if size != mod["size"]:
+        raise Failure("%s is %s bytes, not the pinned release's %d" % (url.split("?")[0], size, mod["size"]))
+    with zipfile.ZipFile(io.BufferedReader(RemoteFile(url, size), 1 << 20)) as z:
+        infos, start = z.infolist(), z.start_dir
+    r, _ = http_range(url, start, size - 1)
+    with r:
+        index = r.read()
+    got = hashlib.md5(index).hexdigest()
+    if len(index) != size - start or got != mod["index_md5"]:
+        raise Failure("the index of %s does not match the pinned release (MD5 %s, expected %s); see %s"
+                      % (mod["file"], got, mod["index_md5"], mod["page"]))
+    textures = []
+    for i in sorted(infos, key=lambda i: i.header_offset):
+        parts = i.filename.split("/")
+        if i.is_dir() or parts[0] != "GMSE04" or not parts[-1].lower().endswith((".dds", ".png")):
+            continue
+        if ".." in parts or "" in parts or "\\" in i.filename or i.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+            raise Failure("the archive is not laid out as expected (%s)" % i.filename)
+        textures.append(i)
+    if not textures:
+        raise Failure("the archive is not laid out as expected (no GMSE04/ textures)")
+    # Each texture's data ends where the next entry starts (a data descriptor
+    # may follow it), and the last one's where the index starts.
+    offsets = sorted([i.header_offset for i in infos] + [start])
+    ends = {o: offsets[k + 1] for k, o in enumerate(offsets[:-1])}
+    return textures, ends
+
+
+def eclipse_textures_current():
+    """Whether the installed Eclipse textures are the pinned release."""
+    try:
+        with open(os.path.join(ECLIPSE_TEXTURES["install"], EXTRAS_RECORD), encoding="utf-8") as f:
+            return json.load(f).get("md5") == ECLIPSE_TEXTURES["md5"]
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def unpack_run(url, run, ends, staging, done, report):
+    """Fetches the textures in run (consecutive in the zip) with one range request and
+    unpacks each into staging, checking its CRC-32; done records each one finished."""
+    first, last = run[0], run[-1]
+    r, _ = http_range(url, first.header_offset, ends[last.header_offset] - 1)
+    with r:
+        pos = first.header_offset
+        for i in run:
+            def read(n):
+                data = r.read(n)
+                if len(data) != n:
+                    raise OSError("the connection closed in %s" % i.filename)
+                return data
+            if pos != i.header_offset:
+                read(i.header_offset - pos)
+            head = read(30)
+            if head[:4] != b"PK\x03\x04":
+                raise Failure("the archive is not laid out as expected (%s)" % i.filename)
+            skip = int.from_bytes(head[26:28], "little") + int.from_bytes(head[28:30], "little")
+            read(skip)
+            dest = os.path.join(staging, *i.filename.split("/"))
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            inflate = zlib.decompressobj(-15) if i.compress_type == zipfile.ZIP_DEFLATED else None
+            crc, size, left = 0, 0, i.compress_size
+            with open(dest + ".tmp", "wb") as out:
+                while left:
+                    chunk = read(min(left, 1 << 20))
+                    left -= len(chunk)
+                    report(len(chunk))
+                    data = inflate.decompress(chunk) if inflate else chunk
+                    out.write(data)
+                    crc, size = zlib.crc32(data, crc), size + len(data)
+                if inflate:
+                    data = inflate.flush()
+                    out.write(data)
+                    crc, size = zlib.crc32(data, crc), size + len(data)
+            if crc != i.CRC or size != i.file_size:
+                remove(dest + ".tmp")
+                raise OSError("%s arrived damaged (CRC-32 %08x, expected %08x)" % (i.filename, crc, i.CRC))
+            os.replace(dest + ".tmp", dest)
+            done.write("%s\t%d\n" % (i.filename, i.file_size))
+            done.flush()
+            pos = i.header_offset + 30 + skip + i.compress_size
+
+
+def get_eclipse_textures(if_outdated=False):
+    mod = ECLIPSE_TEXTURES
+    if if_outdated and eclipse_textures_current():
+        say("The Eclipse HD textures are up to date (%s)." % mod["name"])
+        return
+    say("== Eclipse HD textures: %s" % mod["name"])
+    staging = mod["install"] + ".part"
+    record = os.path.join(staging, ".done")
+    # What an earlier install of this release finished; another release's goes.
+    finished = {}
+    try:
+        with open(record, encoding="utf-8") as f:
+            if f.readline().strip() == mod["md5"]:
+                for line in f:
+                    name, _, size = line.rstrip("\n").partition("\t")
+                    path = os.path.join(staging, *name.split("/"))
+                    if size.isdigit() and os.path.isfile(path) and os.path.getsize(path) == int(size):
+                        finished[name] = int(size)
+    except OSError:
+        pass
+    if not finished:
+        remove(staging)
+    if os.path.isdir(mod["install"]):
+        say("Removing the previous install, %s" % os.path.relpath(mod["install"], ROOT))
+        remove(mod["install"])
+    failed = []
+    for url in [mod["url"]] + mod.get("fallback_urls", []):
+        say("Downloading %s\n  from %s" % (mod["name"], url.split("?")[0]))
+        try:
+            textures, ends = eclipse_textures_index(url, mod)
+        except (OSError, http.client.HTTPException, zipfile.BadZipFile) as e:
+            failed.append("%s: %s" % (url.split("?")[0], e))
+            say("  failed: %s" % e)
+            continue
+        left = [i for i in textures if finished.get(i.filename) != i.file_size]
+        total = sum(i.compress_size for i in textures)
+        got = [total - sum(i.compress_size for i in left)]
+        if finished:
+            say("  carrying on: %d of %d textures were installed before" % (len(textures) - len(left), len(textures)))
+        need_space(MODS, sum(i.file_size for i in left) + (64 << 20))
+        last = [0.0]
+
+        def report(n, force=False):
+            got[0] += n
+            now = time.monotonic()
+            if force or now - last[0] >= 0.5:
+                last[0] = now
+                print("Eclipse texture download: %d/%d bytes (%d/%d textures)"
+                      % (got[0], total, len(textures) - len(left), len(textures)), flush=True)
+
+        os.makedirs(staging, exist_ok=True)
+        position = {i.filename: k for k, i in enumerate(textures)}
+        with open(record, "a" if finished else "w", encoding="utf-8") as done:
+            if not finished:
+                done.write(mod["md5"] + "\n")
+                done.flush()
+            report(0, force=True)
+            tries = 0
+            while left and tries < RUN_TRIES:
+                # A run: textures consecutive in the zip, up to RUN bytes.
+                run, span = [left[0]], left[0].compress_size
+                while len(run) < len(left) and span < RUN and \
+                        position[left[len(run)].filename] == position[run[-1].filename] + 1:
+                    span += left[len(run)].compress_size
+                    run.append(left[len(run)])
+                before = got[0]
+                try:
+                    unpack_run(url, run, ends, staging, done, report)
+                    error = None
+                except (OSError, http.client.HTTPException) as e:
+                    error = e
+                # The textures it finished stay finished, a stopped run's too.
+                with open(record, encoding="utf-8") as f:
+                    kept = {line.split("\t")[0] for line in f.read().splitlines()[1:]}
+                got[0] = before + sum(i.compress_size for i in run if i.filename in kept)
+                remaining = [i for i in left if i.filename not in kept]
+                tries = 0 if len(remaining) < len(left) else tries + 1
+                left = remaining
+                if error is not None and left and tries < RUN_TRIES:
+                    say("  the download stopped (%s); trying again" % error)
+                    time.sleep(min(30, 2 ** tries))
+                report(0, force=True)
+        if left:
+            failed.append("%s: the download kept stopping" % url.split("?")[0])
+            finished = {i.filename: i.file_size for i in textures if i.filename not in {j.filename for j in left}}
+            continue
+        report(0, force=True)
+        remove(record)
+        with open(os.path.join(staging, EXTRAS_RECORD), "w", encoding="utf-8") as f:
+            json.dump({"name": mod["name"], "file": mod["file"], "md5": mod["md5"]}, f, indent=2)
+        os.replace(staging, mod["install"])
+        say("Installed %d textures in %s; Super Mario Eclipse shows them with HD textures on."
+            % (len(textures), os.path.relpath(mod["install"], ROOT)))
+        return
+    raise Failure("download failed: %s; what was installed is kept for the next try" % "; ".join(failed))
+
+
 def get_eclipse(keep, iso_arg):
     mod = ECLIPSE
     say("== Eclipse: %s" % mod["name"])
@@ -607,7 +860,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter,
                                  epilog="\n\n".join(__doc__.split("\n\n")[1:]))
-    ap.add_argument("what", choices=["textures", "extras", "eclipse", "eclipse-maps", "achievement-icons", "language", "lua", "all"])
+    ap.add_argument("what", choices=["textures", "extras", "eclipse", "eclipse-maps", "eclipse-textures",
+                                      "achievement-icons", "language", "lua", "all"])
     ap.add_argument("language", nargs="?", help="with language: fr, de, es, it or pl")
     ap.add_argument("--iso")
     ap.add_argument("--keep-download", action="store_true")
@@ -632,6 +886,8 @@ def main():
             get_lua(args.keep_download, args.if_outdated)
         if args.what == "eclipse-maps":
             get_eclipse_maps(args.keep_download, args.if_outdated)
+        if args.what == "eclipse-textures":
+            get_eclipse_textures(args.if_outdated)
         if args.what == "achievement-icons":
             get_achievement_icons(args.keep_download, args.if_outdated)
         if args.what in ("eclipse", "all"):
