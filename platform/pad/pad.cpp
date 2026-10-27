@@ -349,6 +349,12 @@ bool g_cstickOrbit;
 // mouse look (see above): its speed, and the motion not yet given to the camera
 float g_mouseSens = 1.0f;
 int g_mouseDX, g_mouseDY;
+// The PADRead at which a camera last took the mouse's motion. Motion no camera
+// takes (a fixed or talk camera, a cutscene, the pause menu) is dropped once
+// kMouseKeepReads go by without one, instead of turning the normal camera by
+// all of it at once when it is back.
+u32 g_mouseTaken;
+const u32 kMouseKeepReads = 2;
 // mouse wheel zoom: the share of the game's distance chosen, its limits, and
 // how much one notch changes it
 float g_zoomGoal = 1.0f;
@@ -1448,6 +1454,8 @@ extern "C" u32 PADRead(PADStatus* status)
 		autocontroller_init();
 	}
 	g_reads++;
+	if (g_reads - g_mouseTaken > kMouseKeepReads)
+		g_mouseDX = g_mouseDY = 0;
 	if (sms_gx_pump_events)
 		sms_gx_pump_events();
 	// GameCube adapter (gc_adapter.cpp): its first and second ports with a controller
@@ -1547,8 +1555,9 @@ extern "C" u32 PADRead(PADStatus* status)
 
 // Mouse look: the motion since the last call, in C-stick units (1.0 is full
 // deflection for one frame), with the camera's inversion applied. Returns 0
-// when the mouse has not moved. The normal camera calls it once a frame, which
-// also moves the wheel's zoom along.
+// when the mouse has not moved. The cameras the mouse turns (the normal, the Y
+// close-up and the coaster's) call it once a frame, which also moves the
+// wheel's zoom along; motion they leave is dropped (g_mouseTaken).
 // While split-screen co-op runs the second player's camera (ext/coop), the
 // mouse is the first player's: it gives that camera nothing.
 extern "C" int port_coop_in_p2 = 0;
@@ -1558,6 +1567,7 @@ extern "C" int port_camera_take_mouse(f32* dx, f32* dy)
 	*dx = *dy = 0.0f;
 	if (port_coop_in_p2)
 		return 0;
+	g_mouseTaken = g_reads;
 	if (port_camera_zoom != g_zoomGoal) {
 		port_camera_zoom += (g_zoomGoal - port_camera_zoom) * 0.25f;
 		if (fabsf(g_zoomGoal - port_camera_zoom) < 0.002f)
