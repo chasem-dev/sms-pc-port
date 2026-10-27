@@ -69,6 +69,10 @@ unsigned port_coop_take_events(void);
 int port_coop_can_join(void);
 void port_coop_join_virtual(void);
 extern int port_coop_in_p2;
+// platform/pad: the normal camera's mouse (and C-stick orbit) state, which
+// zzz-camera-02 applies to whichever camera is gpCamera
+extern f32 port_camera_mouse_pitch, port_camera_zoom;
+extern int port_camera_mouse_busy;
 // platform/gx
 void GXPC_SetSplitView(int on, float x, float y, float w, float h) __attribute__((weak));
 void GXPC_ExtOverlaySet(int panel, const char* text) __attribute__((weak));
@@ -101,6 +105,12 @@ struct Ctx {
 	// the cube the player is in, of the area cubes and fast cubes A, B and C
 	// (TMario::thinkCube sets them for whoever is gpMarioOriginal)
 	int cubes[4];
+	// the camera's PC look (platform/pad): its tilt (the mouse's or the
+	// C-stick orbit's), its wheel zoom, and whether it follows mouse look
+	// closely. One set of globals served both cameras, so player 1's mouse
+	// tilted, zoomed and tightened player 2's camera.
+	f32 camPitch, camZoom;
+	int camMouseBusy;
 };
 
 Ctx s_p1, s_p2;
@@ -163,6 +173,9 @@ void capture(Ctx& c)
 	TCubeManagerMarioIn* m[4] = { gpCubeArea, gpCubeFastA, gpCubeFastB, gpCubeFastC };
 	for (int i = 0; i < 4; i++)
 		c.cubes[i] = m[i] ? m[i]->unk1C : -1;
+	c.camPitch     = port_camera_mouse_pitch;
+	c.camZoom      = port_camera_zoom;
+	c.camMouseBusy = port_camera_mouse_busy;
 }
 
 void apply(const Ctx& c)
@@ -179,6 +192,9 @@ void apply(const Ctx& c)
 	for (int i = 0; i < 4; i++)
 		if (m[i])
 			m[i]->unk1C = c.cubes[i];
+	port_camera_mouse_pitch = c.camPitch;
+	port_camera_zoom        = c.camZoom;
+	port_camera_mouse_busy  = c.camMouseBusy;
 }
 
 // Player 2's globals for as long as it lives (nested: the outermost restores).
@@ -197,6 +213,10 @@ void leaveP2(const Ctx& saved)
 {
 	capture(s_p2); // what player 2's code changed (a camera's helpers) stays theirs
 	s_p2.mario = (TMario*)gpMarioOriginal;
+	// the mouse is player 1's (port_camera_take_mouse gives camera 2 nothing):
+	// camera 2 keeps the game's distance and its own pace
+	s_p2.camZoom      = 1.0f;
+	s_p2.camMouseBusy = 0;
 	apply(saved);
 	s_inP2          = false;
 	port_coop_in_p2 = 0;
@@ -480,7 +500,10 @@ void sceneLoaded()
 	// camera 2: its constructor makes the camera's helpers anew (gpCameraShake...)
 	TCoopCamera* cam = new TCoopCamera("camera 2");
 	capture(s_p2);
-	s_p2.cam = cam;
+	s_p2.cam          = cam;
+	s_p2.camPitch     = 0.0f; // level, at the game's distance
+	s_p2.camZoom      = 1.0f;
+	s_p2.camMouseBusy = 0;
 	apply(s_p1);
 	cam->mAspect = s_baseAspect;
 	cam->setGamePad(gpMarDirector->getGamePad(1));
@@ -1163,6 +1186,12 @@ void afterMovement()
 		fprintf(stderr, "[coop] %d object moves led by player 2 lately; player 2 health %d, water %d\n", s_swapCount,
 		        (int)m->mHealth, m->getFludd() ? (int)m->getFludd()->mCurrentWater : -1);
 		s_swapCount = 0;
+		if (s_p1.cam && s_p2.cam) {
+			const Vec& c1 = s_p1.cam->getUnk124Vec();
+			const Vec& c2 = s_p2.cam->getUnk124Vec();
+			fprintf(stderr, "[coop] camera 1 at %.0f %.0f %.0f tilt %.0f zoom %.2f; camera 2 at %.0f %.0f %.0f tilt %.0f\n", c1.x,
+			        c1.y, c1.z, port_camera_mouse_pitch, port_camera_zoom, c2.x, c2.y, c2.z, s_p2.camPitch);
+		}
 	}
 	// player 2 down (a lost life, a pit): a life from the shared count, as
 	// Mario's is; back beside player 1 a moment later, or out on the last one
