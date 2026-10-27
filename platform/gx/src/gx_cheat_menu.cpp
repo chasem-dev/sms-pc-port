@@ -23,8 +23,8 @@ const char* const kOnOffNames[] = {"OFF", "ON"};
 const int kOnOffValues[] = {0, 1};
 const char* const kMovementNames[] = {"OFF", "2x", "4x"};
 const int kMovementValues[] = {1, 2, 4};
-const char* const kJumpNames[] = {"OFF", "2x", "4x", "6x"};
-const int kJumpValues[] = {1, 2, 4, 6};
+const char* const kJumpNames[] = {"OFF", "2x", "4x", "6x", "8x"};
+const int kJumpValues[] = {1, 2, 4, 6, 8};
 const char* const kGravityNames[] = {"OFF", "1/2", "1/4"};
 const int kGravityValues[] = {1, 2, 4};
 const char* const kCoinNames[] = {"OFF", "2x", "5x", "10x"};
@@ -45,7 +45,7 @@ const Option kOptions[] = {
     {nullptr, "Infinite FLUDD", &port_cheat_infinite_fludd, kOnOffNames, kOnOffValues, 2},
     {nullptr, "Infinite Air", &port_cheat_infinite_air, kOnOffNames, kOnOffValues, 2},
     {"MOVEMENT", "Movement Speed", &port_cheat_movement_speed, kMovementNames, kMovementValues, 3},
-    {nullptr, "Jump Height", &port_cheat_jump_height, kJumpNames, kJumpValues, 4},
+    {nullptr, "Jump Height", &port_cheat_jump_height, kJumpNames, kJumpValues, 5},
     {nullptr, "Low Gravity", &port_cheat_low_gravity, kGravityNames, kGravityValues, 3},
     {"ITEMS", "Coin Multiplier", &port_cheat_coin_multiplier, kCoinNames, kCoinValues, 4},
 };

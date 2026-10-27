@@ -157,7 +157,7 @@ typedef struct PortSaveStateHint {
 } PortSaveStateHint;
 void port_savestate_hint(PortSaveStateHint* out);
 // platform/pad: SAVE_STATE's first binding as `style` names it (0 keyboard,
-// 1 Xbox, 2 PlayStation, 3 Steam Deck); the number of parts.
+// 1 Xbox, 2 PlayStation, 3 Steam Deck, 4 Nintendo); the number of parts.
 int port_pad_savestate_labels(int style, char labels[2][16]);
 
 #ifdef __cplusplus

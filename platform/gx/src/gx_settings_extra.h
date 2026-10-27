@@ -34,8 +34,8 @@ void hdrDisable();
 bool hdrCanEnable();
 
 // gx_prompts.cpp. The style is 0 the game's own (GameCube), 1 automatic, 2 Xbox, 3 PlayStation,
-// 4 Steam Deck, 5 keyboard; the pad (for automatic) is 0 matched to the controller, then GameCube,
-// Xbox, PlayStation, Steam Deck. The setters are false where the style's pictures cannot be read.
+// 4 Steam Deck, 5 Nintendo, 6 keyboard; the pad (for automatic) is 0 matched to the controller, then
+// GameCube, Xbox, PlayStation, Steam Deck, Nintendo. The setters are false where the style's pictures cannot be read.
 bool promptsAvailable();
 int promptsStyle();
 bool promptsSetStyle(int style);
