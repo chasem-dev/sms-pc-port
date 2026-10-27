@@ -9,6 +9,14 @@ ssize_t port_pread(int fd, void* buffer, size_t count, unsigned long long offset
 int port_setenv(const char* name, const char* value, int overwrite);
 int port_mkdir(const char* path, int mode);
 void port_sleep_until(const struct timespec* deadline);
+void port_timer_thread_priority(void);
+// Precise frame timing for port_sleep_until (precise_timer, the settings menu):
+// 1 on, 0 off (the default). Elsewhere sleeps are always precise.
+int port_precise_timer(void);
+void port_set_precise_timer(int on);
+// Always Windows' own Sleep(), whatever port_precise_timer says: for when frame
+// times need not be steady (fast-forward), so the spin costs nothing there.
+void port_sleep_until_coarse(const struct timespec* deadline);
 #else
 #include <unistd.h>
 #include <stdlib.h>
@@ -54,6 +62,10 @@ static inline void port_sleep_until(const struct timespec* deadline)
 	clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, deadline, NULL);
 #endif
 }
+static inline void port_timer_thread_priority(void) {}
+static inline void port_sleep_until_coarse(const struct timespec* deadline) { port_sleep_until(deadline); }
+static inline int port_precise_timer(void) { return 0; }
+static inline void port_set_precise_timer(int on) { (void)on; }
 #endif
 
 #endif

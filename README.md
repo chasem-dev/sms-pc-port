@@ -120,6 +120,7 @@ Options can be kept in [`settings.txt`](settings.txt) (`resolution = 2`, `textur
 | `SMS_FULLSCREEN=1` | borderless fullscreen at the desktop's resolution (on Windows, an undecorated normal window one row taller than the monitor, without an SDL fullscreen transition, so the driver does not promote it to a fullscreen flip that blanks the monitor); `exclusive` switches the display to `SMS_FULLSCREEN_MODE=WxH@Hz` (else the desktop's mode; on a monitor with Windows HDR on it stays borderless, since a mode switch can leave HDR's colours wrong). F11 or Alt+Enter toggles fullscreen while playing |
 | `SMS_DISPLAY=n` | the monitor to open on (0 is the primary one; by default, the one under the mouse) |
 | `SMS_VSYNC=1` | wait for the display's refresh; `adaptive` shows a late frame at once instead of waiting a whole refresh |
+| `SMS_PRECISE_TIMER=1` | Windows: precise frame timing, steadier frame times and less judder for a little more CPU use (see [Frame rate](#frame-rate)) |
 | `SMS_MSAA=n` | multisample anti-aliasing with 2, 4 or 8 samples (up to what the GPU supports) |
 | `SMS_GX_GL_THREAD=0` | keep OpenGL on the game's own thread instead of a thread of its own (for troubleshooting a graphics driver) |
 | `SMS_GX_BACKEND=vulkan` | draw with Vulkan instead of OpenGL (`renderer = vulkan` in `settings.txt`; see [docs/VULKAN.md](docs/VULKAN.md)); without a working Vulkan driver the game uses OpenGL |
@@ -149,6 +150,8 @@ Game speed stays the same. The title, file select and episode select run at the 
 120 fps is available on any display, but needs sufficient CPU/GPU performance; a display running at 120 Hz or faster shows its full benefit.
 With display vsync enabled (`vsync = on` / `SMS_VSYNC=1`), a slower refresh rate can limit presentation, so leave vsync off to avoid that limit.
 Like on the GameCube, missed retraces can reduce the achieved frame rate in steps.
+On Windows, frames normally come within a millisecond or two of their time (6-11 ms apart at 120 fps, 8.3 ms on average), as Windows' sleep wakes on its timer tick.
+Precise frame timing (`precise_timer = on`, `SMS_PRECISE_TIMER=1`, or the launcher's and the in-game settings) wakes for each frame within a fraction of a millisecond, for steadier frame times and less judder, at the cost of about 4% of one CPU core at 120 fps; it is off by default.
 The debug overlay (backtick) shows where each frame's time goes:
 
 - `game`: the game's own code (and the GX commands it writes).

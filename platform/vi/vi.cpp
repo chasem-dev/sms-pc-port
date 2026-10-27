@@ -133,6 +133,7 @@ extern "C" int GXPC_GetSpeed(void) __attribute__((weak));
 
 void* timer_thread(void*)
 {
+	port_timer_thread_priority();
 	// SMS_VI_HZ=<rate> overrides the actual retrace rate (benchmarking).
 	long period_ns = 16683350 / g_retrace_multiplier; // 59.94 or 119.88 Hz
 	if (const char* hz = getenv("SMS_VI_HZ"))
@@ -148,7 +149,12 @@ void* timer_thread(void*)
 			t.tv_nsec -= 1000000000;
 			t.tv_sec++;
 		}
-		port_sleep_until(&t);
+		// Fast-forward (the overlay's speed) needs no steady frame times, and its short periods
+		// are where precise timing's spin would cost the most: the plain sleep there.
+		if (speed > 1)
+			port_sleep_until_coarse(&t);
+		else
+			port_sleep_until(&t);
 		g_pending.fetch_add(1);
 		port_irq_kick();
 	}

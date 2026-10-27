@@ -189,7 +189,7 @@ const Words kWords[] = {
 // Off and On, as false and true.
 const char* const kSwitches[] = {"mpCollision", "fxaa", "heatHaze", "textures", "shaderWarmup", "fullscreen", "hudEdges", "overlay", "hdr",
                                  "hdrCalibration", "skipMovies", "invertCameraX", "invertCameraY", "freeCamera", "mouseCamera",
-                                 "closeCameraMouse", "cstickOrbit", "rawMouse", "invertFluddAimY"};
+                                 "closeCameraMouse", "cstickOrbit", "rawMouse", "invertFluddAimY", "preciseTimer"};
 // Whole numbers, as shown; Off is 0.
 const char* const kNumbers[] = {"sharpen", "brightness", "frameRate", "hdrPaperWhite", "hdrPeak", "hdrContrast", "hdrSaturation",
                                 "hdrHighlights", "volume", "musicVolume", "sfxVolume", "cameraSpeed", "mouseSensitivity",

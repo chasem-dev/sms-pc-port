@@ -835,6 +835,7 @@ static const struct {
 	{ "anisotropic", "SMS_ANISO" }, // 0, 2, 4, 8 or 16
 	{ "window_scale", "SMS_WINDOW_SCALE" },
 	{ "vsync", "SMS_VSYNC" },                     // on, off or adaptive
+	{ "precise_timer", "SMS_PRECISE_TIMER" }, // Windows: steadier frame times for a little CPU, off by default
 	{ "fullscreen", "SMS_FULLSCREEN" },           // off, on (desktop) or exclusive
 	{ "fullscreen_mode", "SMS_FULLSCREEN_MODE" }, // WxH@Hz, for exclusive
 	{ "fullscreen_type", "SMS_FULLSCREEN_TYPE" }, // desktop or exclusive: what F11 goes to from a window
@@ -980,6 +981,10 @@ extern "C" void port_init(int argc, char** argv)
 		port_skip_movies = *m && strcmp(m, "0") != 0;
 	if (const char* i = getenv("SMS_SKIP_INTRO"))
 		port_skip_intro = *i && strcmp(i, "0") != 0;
+	if (const char* p = getenv("SMS_PRECISE_TIMER"))
+		port_set_precise_timer(*p && strcmp(p, "0") != 0 && strcmp(p, "off") != 0);
+	if (port_precise_timer())
+		port_log("[port] precise frame timing on\n");
 	if (const char* h = getenv("SMS_HEAT_HAZE"))
 		port_heat_haze = !*h || strcmp(h, "0") != 0;
 	if (!port_heat_haze)
@@ -1034,7 +1039,7 @@ extern "C" void port_init(int argc, char** argv)
 }
 
 // --- Settings menu (port_settings.h) ---
-// All three options are plain ints that the game thread reads and the menu (also the game's thread,
+// All four options are plain ints that the game thread reads and the menu (also the game's thread,
 // while it is paused) writes.
 namespace {
 
@@ -1078,6 +1083,19 @@ int frame_rate_set(int i)
 	return 1;
 }
 
+// port_sleep_until (port_host.cpp) reads it at every sleep, so it counts from the next retrace. Only
+// Windows has the two ways of sleeping; elsewhere sleeps are always precise and the option is not shown.
+int precise_timer_available()
+{
+#ifdef _WIN32
+	return 1;
+#else
+	return 0;
+#endif
+}
+int precise_timer_get() { return port_precise_timer() != 0; }
+int precise_timer_set(int v) { port_set_precise_timer(v != 0); return 1; }
+
 const PortSetting kRuntimeSettings[] = {
 	{ "skipMovies", PORT_SETTINGS_PAGE_GAMEPLAY, 20, "Skip Cutscenes",
 	  "Skips story movies. Movies playing in the world, like the plaza's, still play.", 0, NULL, off_on_count,
@@ -1085,6 +1103,9 @@ const PortSetting kRuntimeSettings[] = {
 	{ "frameRate", PORT_SETTINGS_PAGE_DISPLAY, 80, "Frame Rate",
 	  "Gameplay frames per second, from the next area. 120 only if started at 120.", 1, NULL, frame_rate_count,
 	  frame_rate_name, frame_rate_get, frame_rate_set },
+	{ "preciseTimer", PORT_SETTINGS_PAGE_DISPLAY, 85, "Precise Frame Timing",
+	  "Steadier frame times and less judder, for a little more CPU use.", 0, precise_timer_available,
+	  off_on_count, off_on_name, precise_timer_get, precise_timer_set },
 	{ "heatHaze", PORT_SETTINGS_PAGE_GRAPHICS, 90, "Heat-Wave Effect",
 	  "The shimmer over hot, sunny areas. Off clears the picture and saves a little.", 0, NULL, off_on_count,
 	  off_on_name, heat_haze_get, heat_haze_set },
