@@ -24,6 +24,8 @@ int s_count;
 // The file chosen at file select, for fileStarting: as saveFile last said;
 // none (-1, a new game) for one played without a memory card.
 static int s_startFile = -1, s_startNew = 1;
+// The save file whose menu is open at file select, for fileMenu; -1 none.
+static int s_menuFile = -1, s_menuEmpty;
 
 extern "C" void port_ext_register(const PortExtension* ext)
 {
@@ -263,6 +265,22 @@ extern "C" int port_ext_file_starting(void)
 {
 	EACH(fileStarting) if (s_ext[i]->fileStarting(s_startFile, s_startNew)) return 1;
 	return 0;
+}
+
+extern "C" void port_ext_file_menu(int file, int isEmpty, int item)
+{
+	if (file == s_menuFile)
+		return;
+	if (s_menuFile >= 0) {
+		const int closed = s_menuFile;
+		s_menuFile       = -1;
+		EACH(fileMenu) s_ext[i]->fileMenu(closed, s_menuEmpty, 0, item);
+	}
+	if (file >= 0) {
+		s_menuFile  = file;
+		s_menuEmpty = isEmpty;
+		EACH(fileMenu) s_ext[i]->fileMenu(file, isEmpty, 1, item);
+	}
 }
 
 extern "C" int port_ext_nozzle_fire(void* mario, int nozzle, int how)

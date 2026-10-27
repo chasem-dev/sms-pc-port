@@ -278,6 +278,12 @@ typedef struct PortExtension {
 	// (PORT_PLAYER_PART_*, ORed; 0 none): a first-person camera, where the
 	// player sees his body looking down.
 	unsigned (*hiddenPlayerParts)(void* mario);
+	// A save file's menu at file select (START, COPY, ERASE, SCORE: TCardLoad's
+	// selectFunction) opened, taking the player's choice (`open` 1, `item` the
+	// cursor's), or closed (`open` 0, `item` the item chosen, -1 none: B or the
+	// card taken out), before the game acts on the choice. `isEmpty`: the file
+	// has no game ("New").
+	void (*fileMenu)(int file, int isEmpty, int open, int item);
 } PortExtension;
 
 // fluddRefill's `source`
@@ -394,6 +400,9 @@ void port_ext_yoshi_egg(int kind, void* egg, int* present);
 void port_ext_episode_shine(int shineStage, int episode, int* shine);
 // 1 while an extension keeps the chosen file from starting (fileStarting).
 int port_ext_file_starting(void);
+// Each step of the file select: the file whose menu takes the player's choice
+// (-1 none), and the item chosen or the cursor's; fileMenu as that changes.
+void port_ext_file_menu(int file, int isEmpty, int item);
 int port_ext_player_message(void* mario, void* sender, unsigned message);
 void port_ext_player_mount(void* mario, int mount, int on, void* object);
 void port_ext_player_water(void* mario, int entered, float surfaceY);
