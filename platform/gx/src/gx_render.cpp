@@ -363,6 +363,7 @@ static GrowBuf<uint8_t> s_bdata;  // the batch's packed vertices
 static uint32_t s_bcount = 0, s_bfmt = 0, s_bstride = 12;
 static GrowBuf<uint32_t> s_bidx;
 static PrimClass s_bclass = PRIM_TRIS;
+static bool s_bwidened = false;  // a line batch made into quads on the CPU (widenLines)
 // A batch that draws display-list runs from the arena is a sequence of
 // segments, drawn in order: index ranges of s_bidx (over s_bdata's vertices)
 // and arena runs. A batch without arena runs keeps s_segs empty.
@@ -1672,7 +1673,7 @@ static void applyGlState() {
         c.frontFace = GL_CCW;
         glFrontFace(GL_CCW);
     }
-    if (cull == 0 || s_bclass != PRIM_TRIS) glcCap(GL_CULL_FACE, c.cull, false);
+    if (cull == 0 || s_bclass != PRIM_TRIS || s_bwidened) glcCap(GL_CULL_FACE, c.cull, false);
     else {
         glcCap(GL_CULL_FACE, c.cull, true);
         GLenum cf = cull == 1 ? GL_BACK : cull == 2 ? GL_FRONT : GL_FRONT_AND_BACK;
@@ -1801,6 +1802,24 @@ static void applyGlState() {
     }
 }
 
+// The draw's viewport as the vertex shader's u_vp: scale (x, y, z), then centre
+// (x, y, z), in EFB pixels.
+static void drawViewport(float vp[8]) {
+    const float v[8] = {xff(XFR_VIEWPORT), xff(XFR_VIEWPORT + 1), xff(XFR_VIEWPORT + 2), 0.0f,
+                        xff(XFR_VIEWPORT + 3), xff(XFR_VIEWPORT + 4), xff(XFR_VIEWPORT + 5), 0.0f};
+    memcpy(vp, v, sizeof v);
+    if (s_efbW != EFB_W) {  // the draw's widescreen mapping (centre and half-width, clip x scale)
+        vp[4] = (vp[4] - 342.0f) * s_xmap.a + s_xmap.b + 342.0f;
+        vp[0] *= s_xmap.a * s_xmap.clip;
+    }
+    if (s_split.on) {  // the split view's part of the frame
+        vp[4] = splitX(vp[4] - 342.0f) + 342.0f;
+        vp[0] *= s_split.sx;
+        vp[5] = splitY(vp[5] - 342.0f) + 342.0f;
+        vp[1] *= s_split.sy;
+    }
+}
+
 static void uploadUniforms(const ShaderProgram* sp, float texW[8], float texH[8]) {
     UniformCache& uc = sp->uc;
     // uploads `value` (same size as the cached copy) only when it changed
@@ -1892,18 +1911,8 @@ static void uploadUniforms(const ShaderProgram* sp, float texW[8], float texH[8]
     float proj[8] = {xff(XFR_PROJ), xff(XFR_PROJ + 1), xff(XFR_PROJ + 2), xff(XFR_PROJ + 3),
                      xff(XFR_PROJ + 4), xff(XFR_PROJ + 5), float(g.xfReg[XFR_PROJ + 6] & 1), 0.0f};
     UNI(uProj, proj, proj, glUniform4fv(sp->uProj, 2, proj));
-    float vp[8] = {xff(XFR_VIEWPORT), xff(XFR_VIEWPORT + 1), xff(XFR_VIEWPORT + 2), 0.0f,
-                   xff(XFR_VIEWPORT + 3), xff(XFR_VIEWPORT + 4), xff(XFR_VIEWPORT + 5), 0.0f};
-    if (s_efbW != EFB_W) {  // the draw's widescreen mapping (centre and half-width, clip x scale)
-        vp[4] = (vp[4] - 342.0f) * s_xmap.a + s_xmap.b + 342.0f;
-        vp[0] *= s_xmap.a * s_xmap.clip;
-    }
-    if (s_split.on) {  // the split view's part of the frame
-        vp[4] = splitX(vp[4] - 342.0f) + 342.0f;
-        vp[0] *= s_split.sx;
-        vp[5] = splitY(vp[5] - 342.0f) + 342.0f;
-        vp[1] *= s_split.sy;
-    }
+    float vp[8];
+    drawViewport(vp);
     UNI(uViewport, vp, vp, glUniform4fv(sp->uViewport, 2, vp));
     float ch[16];
     const int regs[4] = {XFR_AMB0, XFR_AMB0 + 1, XFR_MAT0, XFR_MAT0 + 1};
@@ -2332,8 +2341,91 @@ static XMap drawXMap() {
 static void resetBatch() {
     s_bidx.size = s_bdata.size = 0;
     s_bcount = 0;
+    s_bwidened = false;
     s_segs.clear();
     s_barenaVerts = s_barenaIdx = 0;
+}
+
+// The line programs' geometry shader (gx_shader.cpp, genLineGS) done on the
+// CPU, for Vulkan without geometry shaders (MoltenVK): each line becomes a
+// quad GXSetLineWidth sixths of an EFB pixel wide, widened along its minor
+// axis on screen, as two triangles. Without it the lines were 1 pixel of the
+// scaled EFB, and the iris wipes' black field (one line per EFB row) was a
+// translucent grey stripe pattern above 1x. The corners move in view space
+// (x or y only, so depth and w stay), by the inverse of the position matrix;
+// a texgen from the position sees the moved corner, where the geometry
+// shader gave every corner its end's coordinates. Line batches are all
+// streamed then (no display-list arena runs, gx_fifo.cpp).
+static void widenLines() {
+    static GrowBuf<uint8_t> verts;
+    static GrowBuf<uint32_t> idx;
+    const VtxFmtLayout& l = vtxFmtLayout(s_bfmt);
+    const uint32_t st = s_bstride, defIdx = g.xfReg[XFR_MATIDX_A] & 63;
+    const float P[4] = {xff(XFR_PROJ), xff(XFR_PROJ + 1), xff(XFR_PROJ + 2), xff(XFR_PROJ + 3)};
+    const bool ortho = g.xfReg[XFR_PROJ + 6] & 1;
+    float vp[8];
+    drawViewport(vp);
+    const float lw = float(g.bp[BP_LPSIZE] & 0xFF) / 6.0f;  // EFB pixels
+    const uint32_t lines = uint32_t(s_bidx.size / 2);
+    verts.size = idx.size = 0;
+    uint8_t* vo = verts.reserve(size_t(lines) * 4 * st);
+    uint32_t* io = idx.reserve(size_t(lines) * 6);
+    for (uint32_t n = 0; n < lines; n++) {
+        const uint8_t* end[2] = {s_bdata.data + size_t(s_bidx.data[2 * n]) * st,
+                                 s_bdata.data + size_t(s_bidx.data[2 * n + 1]) * st};
+        float view[2][3], w[2], sx[2], sy[2], m[2][12];
+        for (int e = 0; e < 2; e++) {
+            float pos[3];
+            memcpy(pos, end[e], 12);
+            const uint32_t mi = (s_bfmt & VF_MTX) ? (end[e][l.mtx] & 63) : defIdx;
+            memcpy(m[e], &g.xfMem[mi * 4], 48);
+            for (int r = 0; r < 3; r++)
+                view[e][r] = m[e][4 * r] * pos[0] + m[e][4 * r + 1] * pos[1] + m[e][4 * r + 2] * pos[2] + m[e][4 * r + 3];
+            w[e] = ortho ? 1.0f : -view[e][2];
+            const float aw = std::max(fabsf(w[e]), 1e-6f);
+            sx[e] = vp[0] * (P[0] * view[e][0] + (ortho ? P[1] : P[1] * view[e][2])) / aw;
+            sy[e] = vp[1] * (P[2] * view[e][1] + (ortho ? P[3] : P[3] * view[e][2])) / aw;
+        }
+        // a mostly vertical line widens in x, others in y (the geometry shader's test)
+        const bool inX = fabsf(sy[1] - sy[0]) > fabsf(sx[1] - sx[0]);
+        for (int e = 0; e < 2; e++) {
+            // view-space move of half the width: gl_Position moves (lw / efb) * w in NDC
+            float d[3] = {0.0f, 0.0f, 0.0f};
+            const float k = inX ? vp[0] * P[0] : vp[1] * P[2];
+            if (k != 0.0f) d[inX ? 0 : 1] = 0.5f * lw * w[e] / k;
+            // to model space: the inverse of the matrix's 3x3
+            const float* a = m[e];
+            const float c00 = a[5] * a[10] - a[6] * a[9], c01 = a[2] * a[9] - a[1] * a[10], c02 = a[1] * a[6] - a[2] * a[5];
+            const float c10 = a[6] * a[8] - a[4] * a[10], c11 = a[0] * a[10] - a[2] * a[8], c12 = a[2] * a[4] - a[0] * a[6];
+            const float c20 = a[4] * a[9] - a[5] * a[8], c21 = a[1] * a[8] - a[0] * a[9], c22 = a[0] * a[5] - a[1] * a[4];
+            const float det = a[0] * c00 + a[1] * c10 + a[2] * c20;
+            float dp[3] = {0.0f, 0.0f, 0.0f};
+            if (fabsf(det) > 1e-20f) {
+                dp[0] = (c00 * d[0] + c01 * d[1] + c02 * d[2]) / det;
+                dp[1] = (c10 * d[0] + c11 * d[1] + c12 * d[2]) / det;
+                dp[2] = (c20 * d[0] + c21 * d[1] + c22 * d[2]) / det;
+            }
+            for (int side = 0; side < 2; side++) {
+                uint8_t* v = vo + size_t(4 * n + 2 * e + side) * st;
+                memcpy(v, end[e], st);
+                float pos[3];
+                memcpy(pos, v, 12);
+                const float sg = side ? 1.0f : -1.0f;
+                for (int c = 0; c < 3; c++) pos[c] += sg * dp[c];
+                memcpy(v, pos, 12);
+            }
+        }
+        const uint32_t b = 4 * n;  // corners: end 0 (- +), end 1 (- +)
+        const uint32_t q[6] = {b, b + 1, b + 3, b, b + 3, b + 2};
+        memcpy(io + 6 * n, q, sizeof q);
+    }
+    verts.size = size_t(lines) * 4 * st;
+    idx.size = size_t(lines) * 6;
+    std::swap(verts, s_bdata);
+    std::swap(idx, s_bidx);
+    s_bcount = lines * 4;
+    s_bclass = PRIM_TRIS;
+    s_bwidened = true;
 }
 
 void flushBatch() {
@@ -2344,6 +2436,7 @@ void flushBatch() {
     GxTimer timer;
     GxTimer tf(&g_flushSeconds);
     s_xmap = drawXMap();
+    if (s_bclass == PRIM_LINES && s_segs.empty() && !platformGeometryShaders()) widenLines();
     const ShaderProgram* sp = shaderForCurrentState(false, s_bclass == PRIM_LINES);
     glcUseProgram(sp->prog);
     applyGlState();
@@ -2492,7 +2585,7 @@ void flushBatch() {
     s_stats.draws++;
     s_flushes++;
     s_drawGen++;
-    if (s_pixActive && s_bclass == PRIM_TRIS) s_pixTris += uint32_t((s_bidx.size + s_barenaIdx) / 3);
+    if (s_pixActive && s_bclass == PRIM_TRIS && !s_bwidened) s_pixTris += uint32_t((s_bidx.size + s_barenaIdx) / 3);
     if (traceFile()) {
         static std::vector<HostVertex> hv;
         hv.resize(s_bcount);

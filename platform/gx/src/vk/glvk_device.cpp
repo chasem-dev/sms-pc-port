@@ -1204,7 +1204,7 @@ bool init(const InitInfo& info) {
            D.gpl ? ", pipeline libraries" : D.eds ? ", extended dynamic state" : "", D.depthClipControl ? ", depth clip control" : "",
            D.portability ? ", portability subset" : "", D.depthIsD24 ? "24-bit" : "32-bit float",
            validation ? ", validation on" : "");
-    if (!D.features.geometryShader) logmsg("Vulkan: no geometry shaders: wide lines are drawn 1 pixel wide");
+    if (!D.features.geometryShader) logmsg("Vulkan: no geometry shaders: lines are widened into quads on the CPU");
     if (!D.features.logicOp) logmsg("Vulkan: no logic ops: drawn as plain copies");
     return true;
 }
@@ -1285,6 +1285,8 @@ const char* libraryPath() {
     return s_libPath.empty() ? nullptr : s_libPath.c_str();
 }
 const char* deviceName() { return D.name; }
+
+bool geometryShaders() { return s_active && D.features.geometryShader; }
 
 void setDefaultFramebufferSize(int w, int h) {
     if (w < 1 || h < 1) return;

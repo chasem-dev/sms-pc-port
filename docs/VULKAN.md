@@ -95,7 +95,7 @@ Tried on an Apple M4 (macOS 15.7, MoltenVK 1.4.2, x86_64 game under Rosetta), ag
 - glvk loads that dylib directly (no Vulkan loader needed): `libMoltenVK.dylib` or `libvulkan.1.dylib` beside the executable or in `../Frameworks`, else `SMS_VK_LIBRARY`, else the loader. SDL is pointed at the same library before it makes the window.
 - MoltenVK has no graphics pipeline libraries: pipelines are made whole there (the first time a state is drawn, as before the libraries).
 - What Metal lacks, and what glvk does instead (each of these can be tried on a desktop GPU with `SMS_VK_PORTABILITY_TEST=1`, which gave the same pictures as the normal path in the runs above):
-  - no geometry shaders: wide lines are drawn 1 pixel wide (the line programs lose their geometry shader and keep their outputs' names);
+  - no geometry shaders: line batches are widened into quads on the CPU before they are drawn (`widenLines` in `gx_render.cpp`), as the line programs' geometry shader does elsewhere. Before, they were drawn 1 pixel of the scaled EFB wide, and the iris wipes' black field (one line per EFB row) came out as a see-through grey stripe pattern above 1x;
   - no sampler LOD bias: the fragment shaders add each texture's bias in `texture()` (push constants);
   - no 24-bit depth on Apple GPUs: 32-bit float depth, converted to GL's 24-bit values for peeks;
   - no logic ops: drawn as plain blending.

@@ -205,6 +205,10 @@ bool platformRawMouse();
 // Why the Vulkan renderer asked for (SMS_GX_BACKEND=vulkan) is not drawing, or
 // "" when it is or was not asked for (gx_platform.cpp).
 const char* vulkanMissing();
+// False on Vulkan without geometry shaders (MoltenVK): line batches are then
+// widened into quads on the CPU (gx_render.cpp, widenLines) instead of by the
+// line programs' geometry shader.
+bool platformGeometryShaders();
 bool platformRawMouseMatters();
 void platformRequestRawMouse(bool on);
 // FSR 1 and NIS modes (0 native, 1 quality, 2 balanced, 3 performance, 4 ultra performance): the one

@@ -43,6 +43,9 @@ void savePipelineCacheSoon();
 
 // "NVIDIA GeForce GTX 1060 6GB" and similar, for logs.
 const char* deviceName();
+// Whether programs can have geometry shaders (not on MoltenVK, nor with
+// SMS_VK_PORTABILITY_TEST=1); false before init.
+bool geometryShaders();
 
 // The Vulkan library glvk loads when it is not the system's loader: on macOS
 // the libMoltenVK.dylib beside the executable or in the app's Frameworks

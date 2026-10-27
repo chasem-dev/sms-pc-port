@@ -960,6 +960,12 @@ void onDisplayCopy(const void* xfb) {
 
 namespace gx {
 const char* vulkanMissing() { return s_vulkanMissing.c_str(); }
+bool platformGeometryShaders() {
+#ifdef SMS_GX_HAVE_VULKAN
+    if (s_vulkan) return glvk::geometryShaders();
+#endif
+    return true;  // OpenGL 3.3 core
+}
 
 // GXPC_Shutdown: the GL thread ends and the context is current on the
 // calling thread again, so the caller may destroy it.
