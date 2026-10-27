@@ -87,9 +87,14 @@ bool debug()
 }
 
 // How each player looks after their last splash (as every game was told).
+// (flushUntil counts only while flushing: the clock is milliseconds since the
+// computer started, in 32 bits, and on one up 24.8 to 49.7 days the wrapping
+// comparison takes a stage's fresh 0 for a time still to come, which flushed
+// everyone in every multiplayer game until their first splash.)
 struct Splashed {
 	unsigned flushUntil, meterUntil;
 	int meter, full;
+	bool flushing;
 };
 Splashed s_splashed[MPG_MAX_PLAYERS];
 
@@ -868,6 +873,7 @@ void MpPvpSplash(const MpgCmd& c)
 		// how long the flush lasts: the command's f[3] seconds, else a moment
 		const unsigned flush = c.f[3] > 0.0f ? (unsigned)(c.f[3] < 10.0f ? c.f[3] * 1000.0f : 10000.0f) : kFlushMs;
 		s.flushUntil         = now + flush;
+		s.flushing           = true;
 		JGeometry::TVec3<f32> at(c.f[0], c.f[1], c.f[2]);
 		if (gpMarioParticleManager)
 			gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &at, 0, nullptr);
@@ -884,7 +890,12 @@ void MpPvpSplash(const MpgCmd& c)
 
 bool MpPvpFlushed(int slot)
 {
-	return slot >= 0 && slot < MPG_MAX_PLAYERS && !after(clockMs(), s_splashed[slot].flushUntil);
+	if (slot < 0 || slot >= MPG_MAX_PLAYERS || !s_splashed[slot].flushing)
+		return false;
+	Splashed& s = s_splashed[slot];
+	if (after(clockMs(), s.flushUntil))
+		s.flushing = false; // over: long after, the wrapping comparison would say "to come" again
+	return s.flushing;
 }
 
 void MpPvpFog(J3DModelData* data, bool on, const f32* at, JDrama::TGraphics* graphics)

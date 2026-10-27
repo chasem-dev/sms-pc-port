@@ -976,6 +976,18 @@ int fileStarting(int file, int isNew)
 	return modh_dispatch(SMS_EV_FILE_STARTING, &ev, sizeof ev);
 }
 
+void fileMenu(int file, int isEmpty, int open, int item)
+{
+	if (!modh_wants(SMS_EV_FILE_MENU))
+		return;
+	SmsEvFileMenu ev;
+	ev.file     = file;
+	ev.is_empty = isEmpty;
+	ev.open     = open;
+	ev.item     = item;
+	modh_dispatch(SMS_EV_FILE_MENU, &ev, sizeof ev);
+}
+
 int nozzleFire(void* m, int nozzle, int how)
 {
 	if (!m || m != (void*)gpMarioOriginal || !modh_wants(SMS_EV_NOZZLE_FIRE))
@@ -1160,6 +1172,7 @@ struct Register {
 		e.yoshiEgg            = yoshiEgg;
 		e.episodeShine        = episodeShine;
 		e.fileStarting        = fileStarting;
+		e.fileMenu            = fileMenu;
 		e.playerAim           = playerAim;
 		e.hiddenPlayerParts   = hiddenPlayerParts;
 		port_ext_register(&s_extension);

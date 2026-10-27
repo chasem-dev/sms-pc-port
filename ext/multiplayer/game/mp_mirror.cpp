@@ -282,6 +282,11 @@ void takeNpc(TLiveActor* a, const u8* in, int size, int age, int* placed)
 	const f32 yaw                   = g.f();
 	if (!g.ok || a->mHolder) // one being carried goes with its carrier
 		return;
+	// this game's player talking (or a talk's camera): every NPC here stands
+	// still in its waiting pose (TBaseNPC::execWalk), so the host's, walking
+	// on, would slide it along standing; it catches up once the talk is over
+	if (*placed && gpMarDirector && gpMarDirector->isThing())
+		return;
 	const f32 ahead = (f32)(age < 10 ? age : 10); // ticks it has walked on since
 	const JGeometry::TVec3<f32> want(pos.x + vel.x * ahead, pos.y + vel.y * ahead, pos.z + vel.z * ahead);
 	if (!*placed) {

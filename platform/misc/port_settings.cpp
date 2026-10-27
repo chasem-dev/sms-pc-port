@@ -182,9 +182,9 @@ const Words kWords[] = {
     {"displayGamma", {{"sRGB", "\"srgb\""}, {"2.2", "\"2.2\""}, {"2.4", "\"2.4\""}}},
     {"vsync", {{"Off", "\"off\""}, {"On", "\"on\""}, {"Adaptive", "\"adaptive\""}}},
     {"buttonPrompts", {{"GameCube", "\"gamecube\""}, {"Auto", "\"auto\""}, {"Xbox", "\"xbox\""}, {"PlayStation", "\"playstation\""},
-                       {"Steam Deck", "\"steamdeck\""}, {"Keyboard", "\"keyboard\""}}},
+                       {"Steam Deck", "\"steamdeck\""}, {"Nintendo", "\"nintendo\""}, {"Keyboard", "\"keyboard\""}}},
     {"promptPad", {{"Match", "\"match\""}, {"GameCube", "\"gamecube\""}, {"Xbox", "\"xbox\""}, {"PlayStation", "\"playstation\""},
-                   {"Steam Deck", "\"steamdeck\""}}},
+                   {"Steam Deck", "\"steamdeck\""}, {"Nintendo", "\"nintendo\""}}},
 };
 // Off and On, as false and true.
 const char* const kSwitches[] = {"mpCollision", "fxaa", "heatHaze", "textures", "shaderWarmup", "fullscreen", "hudEdges", "overlay", "hdr",
@@ -193,7 +193,7 @@ const char* const kSwitches[] = {"mpCollision", "fxaa", "heatHaze", "textures", 
 // Whole numbers, as shown; Off is 0.
 const char* const kNumbers[] = {"sharpen", "brightness", "frameRate", "hdrPaperWhite", "hdrPeak", "hdrContrast", "hdrSaturation",
                                 "hdrHighlights", "volume", "musicVolume", "sfxVolume", "cameraSpeed", "mouseSensitivity",
-                                "softTrigger", "rumbleStrength"};
+                                "softTrigger", "stickDeadzone", "rumbleStrength"};
 // 2x and so on as the number; Native is 1 and Off 0.
 const char* const kTimes[] = {"resolution", "msaa", "anisotropic"};
 

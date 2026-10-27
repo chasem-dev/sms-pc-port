@@ -32,7 +32,8 @@ namespace {
 const int kMostRecords   = 4096;     // the stage's objects made from records
 const int kMostSpawned   = 128;      // copies and items a stage may get
 const int kMostSolid     = 12;       // copies with map collision (its pools are the map's, fixed)
-const u32 kHeapRoom      = 2u << 20; // free on the stage's heap before making one
+const u32 kHeapRoom      = 1u << 20; // free on the stage's heap before making one (a bottle takes 2 KB; a
+                                     // second player's Gelato Beach had 2.0 MB left, under a 2 MB floor)
 const u32 kCoinType      = 0x2000000E;
 
 struct Record {
@@ -215,6 +216,7 @@ TLiveActor* itemNamed(const char* name, const MpgCmd& c)
 			return nullptr;
 		coin->mPosition = at;
 		coin->mRotation = turn;
+		coin->onMapObjFlag(TMapObjBase::MAP_OBJ_FLAG_UNK10000000); // stays (below)
 		coin->appear(); // as the game brings one out: its sparkle, its sound
 		return coin;
 	}
@@ -237,8 +239,14 @@ TLiveActor* itemNamed(const char* name, const MpgCmd& c)
 		return nullptr;
 	}
 	TMapObjBase* item = TMapObjBaseManager::newAndRegisterObj(name, at, turn, size);
-	if (item)
+	if (item) {
+		// it stays, as the stage's own items do (TItem::load's flag), until
+		// taken or killed: one made during play otherwise flashes and goes
+		// after five seconds (TItem::perform), in each game on its own, while
+		// the mod that made it thinks it is still there
+		item->onMapObjFlag(TMapObjBase::MAP_OBJ_FLAG_UNK10000000);
 		item->appear();
+	}
 	return item;
 }
 

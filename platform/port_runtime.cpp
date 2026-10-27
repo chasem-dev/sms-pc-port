@@ -859,8 +859,9 @@ static const struct {
 	{ "radar_zoom", "SMS_RADAR_ZOOM" }, // world units from the radar's centre to its edge (2500, 25 m)
 	{ "radar_size", "SMS_RADAR_SIZE" }, // the radar's size, percent
 	{ "radar_place", "SMS_RADAR_PLACE" }, // how the radar makes room for the life meter: yield, beside, below, bottom_left or corner
-	{ "button_prompts", "SMS_BUTTON_PROMPTS" }, // gamecube, auto, xbox, playstation, steamdeck or keyboard
-	{ "button_prompt_pad", "SMS_BUTTON_PROMPT_PAD" }, // with auto: gamecube, xbox, playstation, steamdeck, or match the controller
+	{ "button_prompts", "SMS_BUTTON_PROMPTS" }, // gamecube, auto, xbox, playstation, steamdeck, nintendo or keyboard
+	{ "button_prompt_pad", "SMS_BUTTON_PROMPT_PAD" }, // with auto: gamecube, xbox, playstation, steamdeck, nintendo, or match the controller
+	{ "nintendo_layout", "SMS_NINTENDO_LAYOUT" }, // controllers are printed like Nintendo's: A right, B bottom
 	{ "button_prompt_dir", "SMS_BUTTON_PROMPT_DIR" }, // the folder of prompt images (<style>.png)
 	{ "hdr", "SMS_HDR" }, // HDR output on Windows, while Windows HDR is on
 	{ "hdr_paper_white", "SMS_HDR_PAPER_WHITE" }, // nits, or auto (Windows' SDR content brightness)
@@ -874,6 +875,7 @@ static const struct {
 	{ "music_volume", "SMS_MUSIC_VOLUME" }, // music (the BGM sequences, streams and movies), 0 to 100
 	{ "sfx_volume", "SMS_SFX_VOLUME" },     // sound effects and everything else the game's sound system plays, 0 to 100
 	{ "soft_trigger", "SMS_SOFT_TRIGGER" }, // L_SOFT / R_SOFT press depth, percent
+	{ "stick_deadzone", "SMS_STICK_DEADZONE" }, // controller sticks' dead zone, percent of their travel (15)
 	{ "overlay", "SMS_OVERLAY" },
 	{ "save_dir", "SMS_SAVE_DIR" },
 	{ "save_state_dir", "SMS_SAVE_STATE_DIR" },

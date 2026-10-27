@@ -100,6 +100,26 @@ struct SplitView {
 static SplitView s_split;
 static float splitX(float x) { return s_split.on ? s_split.x + x * s_split.sx : x; }
 static float splitY(float y) { return s_split.on ? s_split.y + y * s_split.sy : y; }
+// A scissor's columns (game x and width) in the EFB: into a draw's widescreen
+// mapping (the whole width stays whole), then a split view's part of the
+// frame, each rounded out to whole EFB pixels.
+static void scissorColumns(int& left, int& sw, const XMap& m) {
+    if (s_efbW != EFB_W) {
+        if (left <= 0 && left + sw >= EFB_W) {
+            left = 0;
+            sw = s_efbW;
+        } else {
+            int l = int(floorf(float(left) * m.a + m.b)), r = int(ceilf(float(left + sw) * m.a + m.b));
+            left = l;
+            sw = r - l;
+        }
+    }
+    if (s_split.on) {
+        int l = int(floorf(splitX(float(left)))), r = int(ceilf(splitX(float(left + sw))));
+        left = l;
+        sw = r - l;
+    }
+}
 static bool s_stretch2D = false;  // GXPC_SetStretch2D: the game's faders
 static bool s_wide2D = false;     // GXPC_SetWide2D: 2D the game laid out past the 4:3 edges (the map)
 // SMS_WIDESCREEN_HUD=edges: while the game draws its gameplay HUD
@@ -575,16 +595,18 @@ static int s_encRows = 0;
 // gamma it was decoded with (2.35), so only its colours change. With HDR the
 // display is Direct3D's expansion, which decodes with 2.2, so 2.2 it is.
 // Both are off by default, and then the picture is drawn as before.
-#define SMS_COLOR_CORRECT_GLSL R"(
-uniform vec4 u_cc[4];  // rows 0-2: the matrix to BT.709; 3: x the game's gamma (0: off), y the display's (0: sRGB)
-vec3 colorCorrect(vec3 c) {
-  if (u_cc[3].x == 0.0) return c;
-  c = pow(clamp(c, 0.0, 1.0), vec3(u_cc[3].x));
-  c = clamp(vec3(dot(u_cc[0].xyz, c), dot(u_cc[1].xyz, c), dot(u_cc[2].xyz, c)), 0.0, 1.0);
-  if (u_cc[3].y > 0.0) return pow(c, vec3(1.0 / u_cc[3].y));
-  return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));
-}
-)"
+// Plain strings, not a raw string: GCC 11 (Ubuntu 22.04, where sms-server
+// builds) ends a #define at the line's end even inside a raw string.
+#define SMS_COLOR_CORRECT_GLSL \
+  "\n" \
+  "uniform vec4 u_cc[4];  // rows 0-2: the matrix to BT.709; 3: x the game's gamma (0: off), y the display's (0: sRGB)\n" \
+  "vec3 colorCorrect(vec3 c) {\n" \
+  "  if (u_cc[3].x == 0.0) return c;\n" \
+  "  c = pow(clamp(c, 0.0, 1.0), vec3(u_cc[3].x));\n" \
+  "  c = clamp(vec3(dot(u_cc[0].xyz, c), dot(u_cc[1].xyz, c), dot(u_cc[2].xyz, c)), 0.0, 1.0);\n" \
+  "  if (u_cc[3].y > 0.0) return pow(c, vec3(1.0 / u_cc[3].y));\n" \
+  "  return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));\n" \
+  "}\n"
 static const char* kPostVs = R"(#version 330 core
 uniform int u_flip;
 out vec2 v_uv;
@@ -1631,21 +1653,9 @@ static void applyGlState() {
     if (sw < 0) sw = 0;
     if (sh < 0) sh = 0;
     glcCap(GL_SCISSOR_TEST, c.scissor, true);
-    if (s_efbW != EFB_W) {  // into the draw's widescreen mapping; the whole width stays whole
-        if (left <= 0 && left + sw >= EFB_W) {
-            left = 0;
-            sw = s_efbW;
-        } else {
-            int l = int(floorf(float(left) * s_xmap.a + s_xmap.b)), r = int(ceilf(float(left + sw) * s_xmap.a + s_xmap.b));
-            left = l;
-            sw = r - l;
-        }
-    }
+    scissorColumns(left, sw, s_xmap);
     if (s_split.on) {  // into the split view's part of the frame
-        int l = int(floorf(splitX(float(left)))), r = int(ceilf(splitX(float(left + sw))));
         int t = int(floorf(splitY(float(top)))), b = int(ceilf(splitY(float(top + sh))));
-        left = l;
-        sw = r - l;
         top = t;
         sh = b - t;
     }
@@ -2854,6 +2864,7 @@ static void copyEfb(uint32_t ctrl) {
     bool clear = (ctrl >> 11) & 1;
     if (traceFile()) traceCopy(disp, x, y, w, h, dest, ctrl);
     // widescreen: a full-width copy takes the whole EFB, others the centred 4:3 part
+    const int gx = x;
     int gw = w;
     bool stretched = false;
     if (s_efbW != EFB_W) {
@@ -2979,8 +2990,25 @@ static void copyEfb(uint32_t ctrl) {
         writeBackCopy(dest, tex, ow, oh, tw, th, map, copyLayout(fmt, zcopy));
     }
     if (clear) {
-        if (s_split.on && !disp) clearRect(x0, x1, int(floorf(fy)), int(ceilf(fy + fh)) - int(floorf(fy)));
-        else clearRect(x0, x1, y, h);
+        // The clear also takes the columns a scissor of the copied rectangle
+        // gives the draws it copies: the scissor is rounded out to whole EFB
+        // pixels after centring and splitting, and a pass's geometry reaches
+        // it past its viewport. Left out, those columns kept the pass's colour
+        // and depth, and the frame drawn after it failed the depth test there:
+        // the water's 256x256 mirror view left a line at each of its edges in
+        // the sky (two per view in split-screen co-op, one at some widescreen
+        // sizes and fractional resolutions).
+        int cx0 = x0, cx1 = x1;
+        if (!disp && !stretched) {
+            int l = gx, lw = gw;
+            XMap m;
+            m.b = pixelAligned(float(s_ox));  // where a centred draw lands (drawXMap)
+            scissorColumns(l, lw, m);
+            cx0 = std::min(cx0, scaled(l));
+            cx1 = std::max(cx1, scaled(l + lw));
+        }
+        if (s_split.on && !disp) clearRect(cx0, cx1, int(floorf(fy)), int(ceilf(fy + fh)) - int(floorf(fy)));
+        else clearRect(cx0, cx1, y, h);
     }
     glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
     if (clear) s_drawGen++;

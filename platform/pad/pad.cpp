@@ -188,6 +188,12 @@ bool is_port_action(int c) { return c == C_SAVESTATE || c == C_LOADSTATE || c ==
 // the click). R_SOFT is the middle mouse button by default; L_SOFT is unbound
 // unless bindings.txt gives it a key.
 int g_softTrigger = 95 * 255 / 100;
+// The sticks' dead zone, in percent of a stick's travel (SMS_STICK_DEADZONE, 0 to 50): how far a
+// controller's stick, either one, goes before it moves anything; for a stick that drifts, or one
+// that feels slow to start. Each axis on its own, as on the console. The default is PADClamp's
+// own (ClampRegion's minStick and minSubstick, 15 of a stick's 100), so the game plays as on hardware.
+const int kClampDeadzone = 15;
+int g_stickDeadzone = kClampDeadzone;
 
 struct KeyName {
 	const char* name;
@@ -343,6 +349,12 @@ bool g_cstickOrbit;
 // mouse look (see above): its speed, and the motion not yet given to the camera
 float g_mouseSens = 1.0f;
 int g_mouseDX, g_mouseDY;
+// The PADRead at which a camera last took the mouse's motion. Motion no camera
+// takes (a fixed or talk camera, a cutscene, the pause menu) is dropped once
+// kMouseKeepReads go by without one, instead of turning the normal camera by
+// all of it at once when it is back.
+u32 g_mouseTaken;
+const u32 kMouseKeepReads = 2;
 // mouse wheel zoom: the share of the game's distance chosen, its limits, and
 // how much one notch changes it
 float g_zoomGoal = 1.0f;
@@ -685,12 +697,20 @@ int analog_trigger(int c)
 	return held(c) ? 255 : v;
 }
 
-s8 axis8(int v, int range)
+// An SDL controller's axis, -32768..32767, as a GameCube stick reads: about -100..100 at the rim.
+int axis100(int v) { return std::max(v * 100 / 32767, -100); }
+
+// A stick's axis (axis100, or a GameCube adapter's) with the dead zone (g_stickDeadzone) taken off,
+// for PADClamp: what is left past it is spread over the travel past PADClamp's own dead zone, with
+// that dead zone added back, so PADClamp's taking it off leaves just that. The rim reads the same at
+// any setting, and the default changes nothing.
+int dead_zone(int x)
 {
-	int x = v * range / 32767;
-	if (x > -8 && x < 8)
-		x = 0; // dead zone
-	return (s8)(x > 127 ? 127 : x < -128 ? -128 : x);
+	const int m = x < 0 ? -x : x;
+	if (m <= g_stickDeadzone)
+		return 0;
+	const int v = kClampDeadzone + (m - g_stickDeadzone) * (100 - kClampDeadzone) / (100 - g_stickDeadzone);
+	return x < 0 ? -std::min(v, 128) : std::min(v, 127);
 }
 
 void autopress_init();
@@ -715,6 +735,12 @@ void init()
 			const int pct = atoi(e) < 5 ? 5 : atoi(e) > 95 ? 95 : atoi(e);
 			g_softTrigger = pct * 255 / 100;
 			port_log("[pad] soft L/R press: %d%%\n", pct);
+		}
+	if (const char* e = getenv("SMS_STICK_DEADZONE"))
+		if (*e) {
+			g_stickDeadzone = atoi(e) < 0 ? 0 : atoi(e) > 50 ? 50 : atoi(e);
+			if (g_stickDeadzone != kClampDeadzone)
+				port_log("[pad] stick dead zone: %d%%\n", g_stickDeadzone);
 		}
 	if (const char* e = getenv("SMS_RUMBLE"))
 		if (*e && !env_on("SMS_RUMBLE")) {
@@ -1005,6 +1031,11 @@ extern "C" int port_pad_savestate_labels(int style, char labels[2][16])
 		"A", "B", "X", "Y", "View", "Steam", "Menu", "L3", "R3", "L1", "R1", "Up", "Down", "Left", "Right",
 		"...", "L4", "R4", "L5", "R5", "Touchpad", "L2", "R2",
 	};
+	// by their letters, as SDL reads Switch controllers (and others with SMS_NINTENDO_LAYOUT)
+	static const char* const kNintendo[PAD_SRC_COUNT] = {
+		"A", "B", "X", "Y", "-", "Home", "+", "LS", "RS", "L", "R", "Up", "Down", "Left", "Right",
+		"Capture", "P1", "P2", "P3", "P4", "Touchpad", "ZL", "ZR",
+	};
 	init();
 	labels[0][0] = labels[1][0] = 0;
 	const bool keyboard = style == 0;
@@ -1020,7 +1051,7 @@ extern "C" int port_pad_savestate_labels(int style, char labels[2][16])
 				if (kKeys[k].code == parts[i])
 					name = kKeys[k].name;
 		} else if (parts[i] < PAD_SRC_COUNT) {
-			name = (style == 2 ? kPlayStation : style == 3 ? kSteamDeck : kXbox)[parts[i]];
+			name = (style == 2 ? kPlayStation : style == 3 ? kSteamDeck : style == 4 ? kNintendo : kXbox)[parts[i]];
 		}
 		if (name)
 			snprintf(labels[i], 16, "%s", name);
@@ -1127,8 +1158,9 @@ void fill_status(PADStatus& s, bool haveGc, const GcAdapterInput& gc)
 	s.button       = b;
 	// Sticks are reported raw (a real stick reads about +-100 at the rim);
 	// the decomp's PADClamp (libs/dolphin/src/pad/Padclamp.c) then applies the dead
-	// zone and the octagon exactly as on hardware. Keys give full deflection
-	// (half with HALF_TILT).
+	// zone and the octagon exactly as on hardware. A controller's sticks get the
+	// player's dead zone first (dead_zone), which PADClamp's then leaves alone.
+	// Keys give full deflection (half with HALF_TILT).
 	int full = held(C_HALF) ? 50 : 100;
 	int x = held(C_RIGHT) * full - held(C_LEFT) * full;
 	int y = held(C_UP) * full - held(C_DOWN) * full;
@@ -1136,12 +1168,14 @@ void fill_status(PADStatus& s, bool haveGc, const GcAdapterInput& gc)
 		x = x * 7 / 10;
 		y = y * 7 / 10;
 	}
-	int sx = axis8(g_axis[0], 100), sy = axis8(-g_axis[1], 100);
+	int sx = dead_zone(axis100(g_axis[0])), sy = dead_zone(axis100(-g_axis[1]));
 	int cx = held(C_CRIGHT) * 100 - held(C_CLEFT) * 100;
 	int cy = held(C_CUP) * 100 - held(C_CDOWN) * 100;
-	int pcx = axis8(g_axis[2], 100), pcy = axis8(-g_axis[3], 100);
-	if (haveGc && (gc.lx || gc.ly)) { sx = gc.lx; sy = gc.ly; }
-	if (haveGc && (gc.cx || gc.cy)) { pcx = gc.cx; pcy = gc.cy; }
+	int pcx = dead_zone(axis100(g_axis[2])), pcy = dead_zone(axis100(-g_axis[3]));
+	// An adapter's stick wins once it is past the dead zone, so one that drifts does not hide the other controller's.
+	const int gx = dead_zone(gc.lx), gy = dead_zone(gc.ly), gcx = dead_zone(gc.cx), gcy = dead_zone(gc.cy);
+	if (haveGc && (gx || gy)) { sx = gx; sy = gy; }
+	if (haveGc && (gcx || gcy)) { pcx = gcx; pcy = gcy; }
 	s.stickX    = (s8)(x ? x : sx);
 	s.stickY    = (s8)(y ? y : sy);
 	cx          = cx ? cx : pcx;
@@ -1425,6 +1459,8 @@ extern "C" u32 PADRead(PADStatus* status)
 		autocontroller_init();
 	}
 	g_reads++;
+	if (g_reads - g_mouseTaken > kMouseKeepReads)
+		g_mouseDX = g_mouseDY = 0;
 	if (sms_gx_pump_events)
 		sms_gx_pump_events();
 	// GameCube adapter (gc_adapter.cpp): its first and second ports with a controller
@@ -1524,8 +1560,9 @@ extern "C" u32 PADRead(PADStatus* status)
 
 // Mouse look: the motion since the last call, in C-stick units (1.0 is full
 // deflection for one frame), with the camera's inversion applied. Returns 0
-// when the mouse has not moved. The normal camera calls it once a frame, which
-// also moves the wheel's zoom along.
+// when the mouse has not moved. The cameras the mouse turns (the normal, the Y
+// close-up and the coaster's) call it once a frame, which also moves the
+// wheel's zoom along; motion they leave is dropped (g_mouseTaken).
 // While split-screen co-op runs the second player's camera (ext/coop), the
 // mouse is the first player's: it gives that camera nothing.
 extern "C" int port_coop_in_p2 = 0;
@@ -1535,6 +1572,7 @@ extern "C" int port_camera_take_mouse(f32* dx, f32* dy)
 	*dx = *dy = 0.0f;
 	if (port_coop_in_p2)
 		return 0;
+	g_mouseTaken = g_reads;
 	if (port_camera_zoom != g_zoomGoal) {
 		port_camera_zoom += (g_zoomGoal - port_camera_zoom) * 0.25f;
 		if (fabsf(g_zoomGoal - port_camera_zoom) < 0.002f)
@@ -1575,7 +1613,7 @@ const char* percent_name(const PortValueList& l, int i)
 }
 
 // The launcher's values come from the standard steps, plus the one the game started with.
-PortValueList g_cameraSpeedList, g_mouseSensList, g_softTriggerList, g_rumbleList;
+PortValueList g_cameraSpeedList, g_mouseSensList, g_softTriggerList, g_deadzoneList, g_rumbleList;
 
 int camera_speed_percent() { return (int)(port_camera_speed_x * 100.0f + 0.5f); }
 int mouse_sens_percent() { return (int)(g_mouseSens * 100.0f + 0.5f); }
@@ -1619,6 +1657,16 @@ const PortValueList& soft_trigger_list()
 		g_softTriggerList.build(steps, (int)(sizeof steps / sizeof steps[0]), soft_trigger_percent());
 	}
 	return g_softTriggerList;
+}
+
+const PortValueList& deadzone_list()
+{
+	static const int steps[] = { 0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50 };
+	if (!g_deadzoneList.built) {
+		init();
+		g_deadzoneList.build(steps, (int)(sizeof steps / sizeof steps[0]), g_stickDeadzone);
+	}
+	return g_deadzoneList;
 }
 
 const PortValueList& rumble_list()
@@ -1691,6 +1739,18 @@ int soft_trigger_set(int i)
 	return 1;
 }
 
+int deadzone_count() { return deadzone_list().n; }
+const char* deadzone_name(int i) { return percent_name(deadzone_list(), i); }
+int deadzone_get() { return deadzone_list().indexOf(g_stickDeadzone); }
+int deadzone_set(int i)
+{
+	const PortValueList& l = deadzone_list();
+	if (i < 0 || i >= l.n)
+		return 0;
+	g_stickDeadzone = l.v[i];
+	return 1;
+}
+
 int rumble_count() { return rumble_list().n; }
 const char* rumble_name(int i)
 {
@@ -1717,6 +1777,9 @@ const PortSetting kPadSettings[] = {
 	{ "softTrigger", PORT_SETTINGS_PAGE_CONTROLS, 10, "Soft Trigger Depth",
 	  "How far the soft L and R keys press, out of 100. Only if they are bound.", 0, NULL, soft_trigger_count,
 	  soft_trigger_name, soft_trigger_get, soft_trigger_set },
+	{ "stickDeadzone", PORT_SETTINGS_PAGE_CONTROLS, 15, "Stick Dead Zone",
+	  "How far a controller's sticks go before they move anything, out of 100. 15 is the console's.", 0, NULL,
+	  deadzone_count, deadzone_name, deadzone_get, deadzone_set },
 	{ "rumbleStrength", PORT_SETTINGS_PAGE_CONTROLS, 20, "Rumble Strength",
 	  "50 is the console's rumble, more runs it more often. Some adapters are on or off.", 0, NULL, rumble_count,
 	  rumble_name, rumble_get, rumble_set },

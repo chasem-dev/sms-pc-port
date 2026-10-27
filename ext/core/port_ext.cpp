@@ -4,11 +4,18 @@
 // arrays (no allocation: the game's operator new is its JKR heaps').
 #include "port_ext.h"
 
+#include <stdio.h>
 #include <string.h>
 
 namespace {
 
-enum { kMaxExtensions = 16 };
+// Room for every extension (ext/*/game has 19, co-op's only with SMS_COOP)
+// and more to come. A full registry says so on stderr: it once held 16 and
+// dropped the rest without a word, and which were dropped depended on the
+// order the platform runs static constructors in (link order on Linux, the
+// reverse with MinGW), so Windows lost the achievements' banner and Linux
+// Customize Mario's outfit.
+enum { kMaxExtensions = 64 };
 const PortExtension* s_ext[kMaxExtensions];
 int s_count;
 
@@ -17,14 +24,21 @@ int s_count;
 // The file chosen at file select, for fileStarting: as saveFile last said;
 // none (-1, a new game) for one played without a memory card.
 static int s_startFile = -1, s_startNew = 1;
+// The save file whose menu is open at file select, for fileMenu; -1 none.
+static int s_menuFile = -1, s_menuEmpty;
 
 extern "C" void port_ext_register(const PortExtension* ext)
 {
-	if (!ext || s_count >= kMaxExtensions)
+	if (!ext)
 		return;
 	for (int i = 0; i < s_count; i++)
 		if (s_ext[i] == ext)
 			return;
+	if (s_count >= kMaxExtensions) {
+		fprintf(stderr, "[ext] no room for extension %s: %d are registered, raise kMaxExtensions (ext/core/port_ext.cpp)\n",
+		        ext->name ? ext->name : "(unnamed)", s_count);
+		return;
+	}
 	s_ext[s_count++] = ext;
 }
 
@@ -251,6 +265,22 @@ extern "C" int port_ext_file_starting(void)
 {
 	EACH(fileStarting) if (s_ext[i]->fileStarting(s_startFile, s_startNew)) return 1;
 	return 0;
+}
+
+extern "C" void port_ext_file_menu(int file, int isEmpty, int item)
+{
+	if (file == s_menuFile)
+		return;
+	if (s_menuFile >= 0) {
+		const int closed = s_menuFile;
+		s_menuFile       = -1;
+		EACH(fileMenu) s_ext[i]->fileMenu(closed, s_menuEmpty, 0, item);
+	}
+	if (file >= 0) {
+		s_menuFile  = file;
+		s_menuEmpty = isEmpty;
+		EACH(fileMenu) s_ext[i]->fileMenu(file, isEmpty, 1, item);
+	}
 }
 
 extern "C" int port_ext_nozzle_fire(void* mario, int nozzle, int how)

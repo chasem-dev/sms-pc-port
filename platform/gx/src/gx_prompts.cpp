@@ -1,11 +1,19 @@
 // Button prompts for other controllers: the system font's eight button glyphs
 // (A B X Y Z L R and the C-stick) drawn as the buttons of the controller being
 // used. SMS_BUTTON_PROMPTS picks the style: gamecube (the game's own glyphs,
-// the default), xbox, playstation, steamdeck, keyboard, or auto, which follows
-// the last device used (keyboard and mouse, or the controller type SDL
-// reports). With auto, SMS_BUTTON_PROMPT_PAD (gamecube, xbox, playstation or
-// steamdeck) picks how every controller's prompts look, whatever the
-// controller; unset or match follows the controller. The glyph images come
+// the default), xbox, playstation, steamdeck, nintendo, keyboard, or auto,
+// which follows the last device used (keyboard and mouse, or the controller
+// type SDL reports). With auto, SMS_BUTTON_PROMPT_PAD (gamecube, xbox,
+// playstation, steamdeck or nintendo) picks how every controller's prompts
+// look, whatever the controller; unset or match follows the controller.
+//
+// Controller buttons go by the letters printed on them: SDL reads Switch
+// controllers that way (SDL_GAMECONTROLLER_USE_BUTTON_LABELS), so their A is
+// the right-hand button. SMS_NINTENDO_LAYOUT=1 says every controller is
+// printed like Nintendo's (A right, B bottom, X top, Y left), as some
+// controllers that SDL reads as an Xbox pad are: their A and B, and X and Y,
+// are swapped as they are read (gx_platform.cpp), and match shows Nintendo
+// prompts for them too. The glyph images come
 // from SMS_BUTTON_PROMPT_DIR/<style>.png: eight 64x64 cells in a row, in the
 // order A B X Y Z L R C, then (from newer launchers) the one or two keys or
 // buttons of SAVE_STATE, which the pause menu's save state hint draws in the
@@ -38,8 +46,8 @@ extern "C" __attribute__((weak)) void* port_low_alloc(unsigned long size) { retu
 
 namespace {
 
-enum Style { S_GAMECUBE, S_XBOX, S_PLAYSTATION, S_STEAMDECK, S_KEYBOARD, S_COUNT };
-const char* const kStyleNames[S_COUNT] = {"gamecube", "xbox", "playstation", "steamdeck", "keyboard"};
+enum Style { S_GAMECUBE, S_XBOX, S_PLAYSTATION, S_STEAMDECK, S_NINTENDO, S_KEYBOARD, S_COUNT };
+const char* const kStyleNames[S_COUNT] = {"gamecube", "xbox", "playstation", "steamdeck", "nintendo", "keyboard"};
 // The button glyphs, and the cells after them: SAVE_STATE's binding.
 const int kCell = 64, kGlyphs = 8, kCells = 10;
 
@@ -69,7 +77,7 @@ void init() {
     for (int i = 0; i < S_COUNT; i++)
         if (!strcmp(e, kStyleNames[i])) s_fixed = i;
     if (const char* p = getenv("SMS_BUTTON_PROMPT_PAD"))
-        for (int i = S_GAMECUBE; i <= S_STEAMDECK; i++)
+        for (int i = S_GAMECUBE; i <= S_NINTENDO; i++)
             if (!strcmp(p, kStyleNames[i])) s_pad = i;
     if (s_auto) gx::logmsg("button prompts: automatic, controllers as %s", s_pad < 0 ? "matched" : kStyleNames[s_pad]);
     else gx::logmsg("button prompts: %s", kStyleNames[s_fixed]);
@@ -177,8 +185,8 @@ const uint8_t* promptImage(int glyph, int* style) {
 // The settings menu's choices (gx_settings_extra.cpp), changed while the game runs. Every bind of a
 // button picture and every glyph the font draws asks for the style again, so a change shows at the
 // next draw. The style is 0 the game's own (GameCube), 1 automatic, then Xbox, PlayStation, Steam
-// Deck and keyboard; the pad is 0 matched to the controller, then GameCube, Xbox, PlayStation, Steam
-// Deck.
+// Deck, Nintendo and keyboard; the pad is 0 matched to the controller, then GameCube, Xbox,
+// PlayStation, Steam Deck and Nintendo.
 bool promptsAvailable() {
     init();
     return !s_dir.empty();
@@ -209,12 +217,25 @@ int promptsPad() {
 
 bool promptsSetPad(int pad) {
     init();
-    if (pad < 0 || pad > S_STEAMDECK + 1) return false;
+    if (pad < 0 || pad > S_NINTENDO + 1) return false;
     if (pad >= 2 && !atlas(pad - 1)) return false;
     s_pad = pad - 1;
     if (s_auto) logmsg("button prompts: automatic, controllers as %s", s_pad < 0 ? "matched" : kStyleNames[s_pad]);
     return true;
 }
+
+// SMS_NINTENDO_LAYOUT: every controller is printed like Nintendo's.
+bool nintendoLayout() {
+    static const bool on = [] {
+        const char* e = getenv("SMS_NINTENDO_LAYOUT");
+        return e && (!strcmp(e, "1") || !strcmp(e, "on") || !strcmp(e, "true"));
+    }();
+    return on;
+}
+
+// SDL_GameControllerType: 5 Switch Pro Controller, 11 to 13 Joy-Cons. SDL reads their buttons by
+// their letters already.
+bool nintendoController(int sdlType) { return sdlType == 5 || (sdlType >= 11 && sdlType <= 13); }
 
 }  // namespace gx
 
@@ -225,10 +246,12 @@ extern "C" {
 void GXPC_NoteInputDevice(int controller, int sdlType, const char* name) {
     int style = S_KEYBOARD;
     if (controller) {
-        // SDL_GameControllerType: 3 PS3, 4 PS4, 7 PS5; the rest use Xbox prompts.
+        // SDL_GameControllerType: 3 PS3, 4 PS4, 7 PS5; Switch controllers, or any other with
+        // SMS_NINTENDO_LAYOUT, use Nintendo prompts; the rest Xbox ones.
         // SDL 2 has no Steam Deck type, so the Deck's own controls go by name.
         if (sdlType == 3 || sdlType == 4 || sdlType == 7) style = S_PLAYSTATION;
         else if (name && strstr(name, "Steam Deck")) style = S_STEAMDECK;
+        else if (gx::nintendoController(sdlType) || gx::nintendoLayout()) style = S_NINTENDO;
         else style = S_XBOX;
     }
     if (style != s_device) {
@@ -238,12 +261,13 @@ void GXPC_NoteInputDevice(int controller, int sdlType, const char* name) {
 }
 
 // The device in use for the save state hint (port_savestate.h): 0 keyboard,
-// 1 Xbox, 2 PlayStation, 3 Steam Deck.
+// 1 Xbox, 2 PlayStation, 3 Steam Deck, 4 Nintendo.
 int GXPC_InputStyle(void) {
     switch (hintStyle()) {
     case S_XBOX: return 1;
     case S_PLAYSTATION: return 2;
     case S_STEAMDECK: return 3;
+    case S_NINTENDO: return 4;
     default: return 0;
     }
 }
