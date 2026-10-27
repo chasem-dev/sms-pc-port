@@ -183,6 +183,7 @@ The following are accepted, and their state is stored, but they have no or only 
 - a textured RGBA8 quad through a **2-stage TEV** (texture × rasterized colour, then × konst colour): exact 8-bit results
 - an **EFB → texture copy** (RGBA8, and I8 through the luma conversion) sampled back
 - Delfino's goop loop: an I8 texture drawn and copied back into itself 20 times, at whole and fractional internal resolutions, 4:3 and 16:9, comes back unchanged in RAM
+- the water's mirror view: a 256x256 pass whose geometry reaches past its viewport to the scissor, copied with a clear, leaves none of its pixels in the EFB at whole and fractional resolutions, 4:3 and 16:9, alone and in a split view (each edge column it left kept its depth, and the sky drawn after it showed a line there)
 - alpha blending, alpha compare, subtractive blending and scissor
 - an unclamped last TEV stage keeping its low 8 bits for the output and the alpha compare, as Bianco Hills' river surface needs (sms-launcher issue #60)
 - a quad exactly on an orthographic camera's far plane, as the episode select's gradient background is

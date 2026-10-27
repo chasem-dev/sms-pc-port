@@ -236,6 +236,68 @@ static int goopRoundTrips(float scale, float wide, int rounds, bool native = fal
     return differ;
 }
 
+// The water's mirror view (Bianco Hills, Delfino Plaza): a pass draws the stage
+// into the EFB's top-left 256x256, its geometry reaching past the viewport to
+// the scissor, and a copy with a clear takes it. Whatever the clear leaves of
+// it keeps the pass's depth, and the frame drawn after it fails the depth test
+// there: a line in the sky at each edge, in split-screen co-op (`split`, the
+// left view) and at fractional widths and resolutions. Returns the pass's
+// pixels left after the copy (`kept`: green pixels the pass's scissor kept out,
+// which the clear must leave too).
+static int mirrorPassLeft(float scale, float wide, bool split, int* kept) {
+    gx::rendererSetWide(wide);
+    gx::rendererResize(scale, 0);
+    GXSetViewport(0, 0, 640, 480, 0, 1);
+    GXSetScissor(0, 0, 640, 480);
+    setOrtho();
+    colorSetup();
+    GXSetZMode(GX_TRUE, GX_ALWAYS, GX_TRUE);
+    colorQuad(-200, 0, 840, 480, 0, 255, 0, 255, -0.5f);  // the frame before it, across the widened EFB
+    if (split) GXPC_SetSplitView(1, 0, 0, 0.5f, 1);
+    enum { W = 256, H = 64 };
+    GXSetViewport(0, 0, W, H, 0, 1);
+    GXSetScissor(0, 0, W, H);
+    Mtx44 m;  // 0 to W across, 0 to H down
+    memset(m, 0, sizeof(m));
+    m[0][0] = 2.0f / W;
+    m[0][3] = -1.0f;
+    m[1][1] = -2.0f / H;
+    m[1][3] = 1.0f;
+    m[2][2] = -1.0f / 10;
+    m[2][3] = -1.0f;
+    m[3][3] = 1.0f;
+    GXSetProjection(m, GX_ORTHOGRAPHIC);
+    colorQuad(-16, -16, W + 16, H + 16, 255, 0, 0, 255);  // past the viewport, to the scissor
+    static u8 copy[W * H * 4] __attribute__((aligned(32)));
+    const GXColor blue = {0, 0, 255, 255};
+    GXSetCopyClear(blue, 0xFFFFFF);
+    GXSetTexCopySrc(0, 0, W, H);
+    GXSetTexCopyDst(W, H, GX_TF_RGBA8, GX_FALSE);
+    GXCopyTex(copy, GX_TRUE);
+    GXPixModeSync();
+    if (split) GXPC_SetSplitView(0, 0, 0, 1, 1);
+    int w = 0, h = 0;
+    GXPC_ReadEFB(nullptr, &w, &h);
+    std::vector<u8> px(size_t(w) * h * 4);
+    GXPC_ReadEFB(px.data(), &w, &h);
+    int left = 0;
+    *kept = 0;
+    for (int i = 0; i < w * h; i++) {
+        const u8* p = &px[size_t(i) * 4];
+        left += p[0] > 128 && p[1] < 128 && p[2] < 128;
+        *kept += p[0] < 128 && p[1] > 128 && p[2] < 128;
+    }
+    const GXColor bg = {32, 48, 64, 255};
+    GXSetCopyClear(bg, 0xFFFFFF);
+    gx::rendererResize(1, 0);
+    gx::rendererSetWide(1);
+    GXSetViewport(0, 0, 640, 480, 0, 1);
+    GXSetScissor(0, 0, 640, 480);
+    GXSetZMode(GX_FALSE, GX_ALWAYS, GX_FALSE);
+    setOrtho();
+    return left;
+}
+
 // A mipmapped 8x8 RGBA8 texture (levels 8x8 and 4x4) and, in a texture pack
 // folder, its 32x32 replacement: an uncompressed DDS with every level, each
 // a flat colour (kLodColors), so a pixel shows which level was sampled.
@@ -887,6 +949,24 @@ int main(int argc, char** argv) {
             snprintf(what, sizeof what, "native goop copy at %gx, %s: %dx%d copy, %d of 4096 texels moved",
                      double(c.scale), c.wide > 1 ? "16:9" : "4:3", cw, ch, differ);
             expect(what, differ == 0 && cw == 64 && ch == 64);
+        }
+    }
+
+    // The water's mirror view through its copy and clear (mirrorPassLeft): its
+    // edges lie inside EFB pixels in a split view, and at fractional widths
+    // and resolutions, where the scissor's columns went past the clear's.
+    {
+        const float wide = (16.0f / 9.0f) / (4.0f / 3.0f);
+        const struct { float scale, wide; bool split; } cases[] = {
+            {1, 1, false}, {4, wide, false}, {2, wide, true}, {3, wide, true}, {4, wide, true},
+            {2, 1, true},  {1.5f, wide, false}, {1.46f, wide, false}, {1.46f, wide, true}};
+        for (const auto& c : cases) {
+            int kept = 0;
+            const int left = mirrorPassLeft(c.scale, c.wide, c.split, &kept);
+            char what[128];
+            snprintf(what, sizeof what, "mirror pass cleared at %gx, %s%s: %d of its pixels left, %d around it kept",
+                     double(c.scale), c.wide > 1 ? "16:9" : "4:3", c.split ? ", split" : "", left, kept);
+            expect(what, left == 0 && kept > 0);
         }
     }
 
