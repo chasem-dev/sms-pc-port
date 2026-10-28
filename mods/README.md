@@ -73,18 +73,28 @@ Mods that also change the game's code, such as Super Mario Eclipse, need that co
 
 ## characters/: other characters
 
-Each `<id>.szs` in `mods/characters/` is a whole replacement for Mario's archive (`/data/mario.szs`): his model (`bmd/ma_mdl1.bmd` on his skeleton), the hand and cap models and the animations, laid out as the disc's.
-The characters are Mario (the disc's archive, or a game-file mod's `data/mario.szs`) and then each archive, by file name; an `<id>.txt` beside one holds the name to show, otherwise its file name is shown with a capital.
+Each character is a pack, a folder `mods/characters/<id>/` with its model and its voice:
+
+```
+mods/characters/luigi/
+  model.szs     a whole replacement for Mario's archive (/data/mario.szs)
+  name.txt      the name to show (otherwise the id, with a capital)
+  voice/        WAV files for Mario's voice cues (optional)
+```
+
+`model.szs` holds his model (`bmd/ma_mdl1.bmd` on his skeleton), the hand and cap models and the animations, laid out as the disc's.
+The characters are Mario (the disc's archive, or a game-file mod's `data/mario.szs`) and then each pack, by id.
+A loose `<id>.szs`, with `<id>.txt` and `<id>.voice/` beside it, is read as a pack too.
 `character = <id>` in `settings.txt` (`SMS_CHARACTER`) plays as one from the start.
 
 In the game, F4 (`CHARACTER_NEXT` in `bindings.txt`) plays as the next character: in a stage, the area loads again at once with the new one (the coins and anything else done in the area start again, as with Exit Area), and outside a stage the next area brings it.
 It does nothing while the game is paused, in a cutscene or a conversation, or while the area is changing.
 The pause menu's settings have it too (Gameplay, Character), from the next area; started by SMS Launcher, that choice is kept for the next game.
 
-A folder `<id>.voice/` beside an archive gives the character a voice: WAV files (PCM, any rate, mono or stereo) named after Mario's voice cues, such as `MV21_JUMP_SMALL_01.wav` or `MV24_JUMP_SPECIAL_03.wav` (the names of `MSD_SE_MV*` in the decomp's `MSound/SoundEffects.hpp`, without `MSD_SE_`).
+A pack's `voice/` folder gives the character a voice: WAV files (PCM, any rate, mono or stereo) named after Mario's voice cues, such as `MV21_JUMP_SMALL_01.wav` or `MV24_JUMP_SPECIAL_03.wav` (the names of `MSD_SE_MV*` in the decomp's `MSound/SoundEffects.hpp`, without `MSD_SE_`).
 As a stage loads the character, each file plays wherever Mario's code plays that cue: it is encoded to Mario's own format and takes the place of his wave, at its own sample rate; a cue without a file keeps Mario's voice, and Mario's comes back when he is chosen again.
 The same sound under several cues is kept once, so a character needs no more room than Mario's voice has (about 860 KB of ADPCM, some 50 seconds of sound at 32 kHz).
-`tools/mp7-characters/mp7_voices.py` makes these folders for the Mario Party 7 characters.
+`tools/mp7-characters/mp7_voices.py` makes these for the Mario Party 7 characters.
 
 The archive is read into the stage's memory as the stage loads Mario and mounted in place of his, as Super Mario Eclipse mounts its characters; Shadow Mario, who loads from the same archive, wears the character too.
 With Eclipse, which has characters of its own, the option is not offered.

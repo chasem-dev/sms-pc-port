@@ -1,5 +1,5 @@
-// Character voices (src/port_include/port_character.h): a folder <id>.voice/
-// beside a character's archive in mods/characters/ holds WAV files named after
+// Character voices (src/port_include/port_character.h): a character pack's
+// voice/ folder in mods/characters/<id>/ holds WAV files named after
 // Mario's voice cues (MV21_JUMP_SMALL_01.wav, MV24_JUMP_SPECIAL_03.wav, ...).
 // As a stage loads the character (patch zzzzzz-character-02), each file takes
 // the place of the wave its cue plays: encoded to AFC ADPCM (the format of
@@ -21,7 +21,6 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
-#include <sys/stat.h>
 #include <unordered_map>
 #include <vector>
 
@@ -267,12 +266,6 @@ bool read_wav(const std::string& path, std::vector<int16_t>& pcm, uint32_t& rate
 	return false;
 }
 
-bool is_dir(const std::string& p)
-{
-	struct stat st;
-	return stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
-}
-
 struct Original {
 	PortCharacterVoiceWave entry;
 	std::vector<uint8_t> data;
@@ -322,12 +315,10 @@ void port_character_voice_apply(int index, PortCharacterVoiceWave* waves, int co
 	restore(waves, count);
 	g_applied = index;
 
-	const char* arc = port_character_path(index);
-	std::string dir = arc ? arc : "";
-	if (dir.size() > 4 && dir.compare(dir.size() - 4, 4, ".szs") == 0)
-		dir.replace(dir.size() - 4, 4, ".voice/");
-	if (!arc || !is_dir(dir))
+	const char* voice = port_character_voice_dir(index);
+	if (!voice)
 		return;
+	const std::string dir = voice;
 
 	// Each wave's file: the first of its cues that has one.
 	struct Clip {
