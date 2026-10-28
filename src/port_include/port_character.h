@@ -27,6 +27,23 @@ int port_character_available(void);
 // CHARACTER_NEXT presses (platform/pad), counted as the radar's MAP is.
 extern int port_character_presses;
 
+// Voices (platform/misc/port_character_voice.cpp): WAV files in <id>.voice/
+// beside the archive, named after Mario's voice cues, in place of his voice
+// waves. One entry per wave of wave bank 1 (w2ndLoad_0.aw) that a cue plays:
+// the game's side fills `id`, then `aram` (the wave group's ARAM base) and the
+// rest from the wave's entry, and writes the rest back after apply.
+#define PORT_CHARACTER_VOICE_MAX 128
+typedef struct PortCharacterVoiceWave {
+	unsigned int id, aram;
+	float rate;
+	unsigned int offset, size, loop, loopStart, loopEnd, count;
+	short last, penult;
+} PortCharacterVoiceWave;
+int port_character_voice_waves(PortCharacterVoiceWave* waves, int max); // fills the ids; returns how many
+// Puts the character's voice in place (Mario's for index 0 or no files): ARAM
+// and `waves`. Does nothing when that character's voice is already in place.
+void port_character_voice_apply(int index, PortCharacterVoiceWave* waves, int count);
+
 #ifdef __cplusplus
 }
 #endif
