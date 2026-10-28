@@ -4,9 +4,10 @@
 // Mario's skeleton, the hand and cap models, and the animations; voice/, WAV
 // files for Mario's voice cues (port_character_voice.cpp); and name.txt, the
 // name to show (otherwise the id with a capital). A loose <id>.szs with
-// <id>.txt and <id>.voice/ beside it is read as a pack too. The list, the choice and the settings menu's option are here; the
-// game mounts the chosen archive as each stage loads Mario and reloads the
-// area for CHARACTER_NEXT (patch zzzzzz-character-01).
+// <id>.txt and <id>.voice/ beside it is read as a pack too. The list, the
+// choice and the settings menu's option are here; the game mounts the chosen
+// archive as each stage loads Mario (patch zzzzzz-character-01) and swaps it
+// in place for CHARACTER_NEXT (zzzzzz-character-03).
 #include "port_character.h"
 #include "port_platform.h"
 #include "port_settings.h"
@@ -123,7 +124,7 @@ void list()
 }
 
 // The settings menu's option (Gameplay page). The change counts from the next
-// area, as frame rate's does; CHARACTER_NEXT reloads the area at once.
+// area, as frame rate's does; CHARACTER_NEXT switches at once.
 int option_available() { return port_character_available() && port_character_count() > 1; }
 int option_count() { return port_character_count(); }
 const char* option_name(int i) { return port_character_name(i); }
