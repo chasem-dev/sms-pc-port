@@ -1,7 +1,7 @@
 """Mario Party 7's character voices as Mario's voice cues, for the port's character voices.
 
 mp7_voices.py <MP7 iso> <mods/characters>
-Writes <id>.voice/<cue>.wav for each character pack_characters.py makes (mario-mp7, luigi, peach, ...):
+Writes <id>/voice/<cue>.wav into each character pack pack_characters.py makes (mario-mp7, luigi, peach, ...):
 one WAV per Mario voice cue (MV21_JUMP_SMALL_01.wav, ...; the names of MSound/SoundEffects.hpp),
 chosen from the character's Mario Party 7 voice lines by what each is said for. The port plays them
 in place of Mario's voice as the character (platform/misc/port_character_voice.cpp); a cue left
@@ -83,7 +83,7 @@ if __name__ == '__main__':
         for cue in range(24):
             sids = [s for s in g['sfx'][ids[ci * 24 + cue]] if s != ev.SILENT]
             if sids: lines[cue] = g['samples'][sids[0]]
-        folder = os.path.join(out, IDS.get(char, char) + '.voice')
+        folder = os.path.join(out, IDS.get(char, char), 'voice')
         os.makedirs(folder, exist_ok=True)
         pcm = {}
         n = 0

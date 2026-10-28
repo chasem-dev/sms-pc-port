@@ -1,9 +1,10 @@
-// Characters (src/port_include/port_character.h): archives in mods/characters/
-// that take the place of Mario's own. Each <id>.szs there is a whole
+// Characters (src/port_include/port_character.h): packs in mods/characters/
+// that take the place of Mario. Each is a folder <id>/ with model.szs, a whole
 // /data/mario.szs (Yaz0 or plain RARC) with the same files: ma_mdl1.bmd on
-// Mario's skeleton, the hand and cap models, and the animations. An optional
-// <id>.txt beside it holds the name to show; otherwise the id is shown with a
-// capital. The list, the choice and the settings menu's option are here; the
+// Mario's skeleton, the hand and cap models, and the animations; voice/, WAV
+// files for Mario's voice cues (port_character_voice.cpp); and name.txt, the
+// name to show (otherwise the id with a capital). A loose <id>.szs with
+// <id>.txt and <id>.voice/ beside it is read as a pack too. The list, the choice and the settings menu's option are here; the
 // game mounts the chosen archive as each stage loads Mario and reloads the
 // area for CHARACTER_NEXT (patch zzzzzz-character-01).
 #include "port_character.h"
@@ -24,7 +25,7 @@
 namespace {
 
 struct Character {
-	std::string id, name, path;
+	std::string id, name, path, voice;
 };
 
 std::vector<Character> g_list;
@@ -38,9 +39,16 @@ bool is_file(const std::string& p)
 	return stat(p.c_str(), &st) == 0 && S_ISREG(st.st_mode);
 }
 
-std::string display_name(const std::string& dir, const std::string& id)
+bool is_dir(const std::string& p)
 {
-	if (FILE* f = fopen((dir + id + ".txt").c_str(), "r")) {
+	struct stat st;
+	return stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+// The first line of `file`, or the id with a capital.
+std::string display_name(const std::string& file, const std::string& id)
+{
+	if (FILE* f = fopen(file.c_str(), "r")) {
 		char line[64] = {};
 		const bool got = fgets(line, sizeof line, f) != nullptr;
 		fclose(f);
@@ -71,13 +79,27 @@ void list()
 			continue;
 		std::vector<Character> found;
 		while (dirent* e = readdir(d)) {
-			std::string f = e->d_name;
-			if (f.size() <= 4 || f.compare(f.size() - 4, 4, ".szs") != 0 || !is_file(base + f))
+			const std::string f = e->d_name;
+			Character c;
+			if (f[0] != '.' && is_file(base + f + "/model.szs")) {
+				// a pack: <id>/model.szs, voice/, name.txt
+				const std::string dir = base + f + "/";
+				c = { f, display_name(dir + "name.txt", f), dir + "model.szs", dir + "voice/" };
+			} else if (f.size() > 4 && f.compare(f.size() - 4, 4, ".szs") == 0 && is_file(base + f)) {
+				// loose: <id>.szs, <id>.voice/, <id>.txt
+				const std::string id = f.substr(0, f.size() - 4);
+				c = { id, display_name(base + id + ".txt", id), base + f, base + id + ".voice/" };
+			} else
 				continue;
-			const std::string id = f.substr(0, f.size() - 4);
-			if (id == "mario")
+			if (c.id == "mario")
 				continue; // Mario is the disc's archive, or a game-file mod's
-			found.push_back({ id, display_name(base, id), base + f });
+			if (!is_dir(c.voice))
+				c.voice.clear();
+			bool dup = false;
+			for (const Character& o : found)
+				dup = dup || o.id == c.id;
+			if (!dup)
+				found.push_back(c);
 		}
 		closedir(d);
 		std::sort(found.begin(), found.end(), [](const Character& a, const Character& b) { return a.id < b.id; });
@@ -142,6 +164,13 @@ const char* port_character_path(int index)
 {
 	list();
 	return index > 0 && index < (int)g_list.size() ? g_list[index].path.c_str() : nullptr;
+}
+
+const char* port_character_voice_dir(int index)
+{
+	list();
+	return index > 0 && index < (int)g_list.size() && !g_list[index].voice.empty() ? g_list[index].voice.c_str()
+	                                                                                : nullptr;
 }
 
 int port_character_selected(void)

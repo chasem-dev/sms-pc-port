@@ -1,7 +1,8 @@
 """Pack converted characters into sms-pc-port character archives.
 
 pack_characters.py <Sunshine data/mario.szs> <converted chars folder> <sms-pc-port mods/characters>
-Writes <id>.szs (Sunshine's mario archive with the character's files in place) and <id>.txt (its name).
+Writes a character pack <id>/ for each: model.szs (Sunshine's mario archive with the character's files
+in place) and name.txt (its name). mp7_voices.py adds its voice/.
 """
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -27,6 +28,8 @@ if __name__ == '__main__':
         for root, _, fs in os.walk(folder):
             for f in fs:
                 p = os.path.join(root, f); reps[os.path.relpath(p, folder)] = open(p, 'rb').read()
-        open(os.path.join(out, cid + '.szs'), 'wb').write(rarcpack.repack(src, reps))
-        open(os.path.join(out, cid + '.txt'), 'w').write(name + '\n')
+        pack = os.path.join(out, cid)
+        os.makedirs(pack, exist_ok=True)
+        open(os.path.join(pack, 'model.szs'), 'wb').write(rarcpack.repack(src, reps))
+        open(os.path.join(pack, 'name.txt'), 'w').write(name + '\n')
         print(cid, name)

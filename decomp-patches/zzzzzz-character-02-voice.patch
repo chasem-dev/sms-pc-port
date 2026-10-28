@@ -1,4 +1,4 @@
-Reason: port: character voices (port_character.h): as a stage loads a character from mods/characters/, the WAV files in its <id>.voice/ folder take the place of Mario's voice waves (wave bank 1), and Mario's come back for him
+Reason: port: character voices (port_character.h): as a stage loads a character from mods/characters/, the WAV files in its pack's voice/ folder take the place of Mario's voice waves (wave bank 1), and Mario's come back for him
 --- a/src/System/Application.cpp
 +++ b/src/System/Application.cpp
 @@ -640,6 +640,10 @@

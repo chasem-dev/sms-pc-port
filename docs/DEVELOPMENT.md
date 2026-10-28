@@ -262,7 +262,7 @@ The everyday options are in the [README](../README.md#options); this is the full
 | `SMS_NO_AUDIO=1` | run with an empty JAudio configuration and an idle AI DMA; THP movies stall (their video waits for audio), so combine with `SMS_SKIP_MOVIES=1` |
 | `SMS_SKIP_MOVIES=1` | skip cutscenes; keep the plaza portals' looping movies |
 | `SMS_SKIP_INTRO=1` | start at the title: no Nintendo and Dolby logos, no opening movie (`zz-movie-skip-02`) |
-| `SMS_CHARACTER=<id>` | play as `mods/characters/<id>.szs` in place of Mario's archive ([mods/README.md](../mods/README.md#characters-other-characters)); `CHARACTER_NEXT` (F4) switches in the game |
+| `SMS_CHARACTER=<id>` | play as the pack `mods/characters/<id>/` (model and voice) in place of Mario ([mods/README.md](../mods/README.md#characters-other-characters)); `CHARACTER_NEXT` (F4) switches in the game |
 | `SMS_WARP=stage,scenario[,shines]` | debugging: loading a file goes to that area instead (`1,0,1` is Delfino Plaza right after the airstrip), optionally with that Shine count |
 | `SMS_WARP_LIST=1` | print the warp menu's list (`area,episode` as `SMS_WARP` takes them, the stage, the episode and its scene) when the menu first opens |
 | `SMS_WARP_MOVIE=n` | debugging: loading a file plays streaming movie `n` (0–19, `TMovieDirector::getStreamMovieName`) |
