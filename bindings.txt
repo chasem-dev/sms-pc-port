@@ -7,6 +7,7 @@
 #           MAP (open or close the radar's full map)
 #           CAMERA_ZOOM (held, with cstick_orbit on: the C-stick's up and
 #           down zoom as on the GameCube; PAD_RSTICK by default)
+#           CHARACTER_NEXT (play as the next character in mods/characters)
 #           L_SOFT R_SOFT (a light L or R press, no click; SMS_SOFT_TRIGGER
 #           sets how far, default 95%)
 # Keys: letters, digits, ENTER ESC SPACE TAB BACKSPACE UP DOWN LEFT RIGHT
@@ -59,3 +60,4 @@ QUIT = ESCAPE
 SAVE_STATE = F5
 LOAD_STATE = F6
 MAP = M
+CHARACTER_NEXT = F4

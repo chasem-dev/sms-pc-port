@@ -71,6 +71,19 @@ The log names each mod and how many files it replaced and added.
 This covers mods that only change data.
 Mods that also change the game's code, such as Super Mario Eclipse, need that code ported too; see [docs/ECLIPSE.md](../docs/ECLIPSE.md).
 
+## characters/: other characters
+
+Each `<id>.szs` in `mods/characters/` is a whole replacement for Mario's archive (`/data/mario.szs`): his model (`bmd/ma_mdl1.bmd` on his skeleton), the hand and cap models and the animations, laid out as the disc's.
+The characters are Mario (the disc's archive, or a game-file mod's `data/mario.szs`) and then each archive, by file name; an `<id>.txt` beside one holds the name to show, otherwise its file name is shown with a capital.
+`character = <id>` in `settings.txt` (`SMS_CHARACTER`) plays as one from the start.
+
+In the game, F4 (`CHARACTER_NEXT` in `bindings.txt`) plays as the next character: in a stage, the area loads again at once with the new one (the coins and anything else done in the area start again, as with Exit Area), and outside a stage the next area brings it.
+It does nothing while the game is paused, in a cutscene or a conversation, or while the area is changing.
+The pause menu's settings have it too (Gameplay, Character), from the next area; started by SMS Launcher, that choice is kept for the next game.
+
+The archive is read into the stage's memory as the stage loads Mario and mounted in place of his, as Super Mario Eclipse mounts its characters; Shadow Mario, who loads from the same archive, wears the character too.
+With Eclipse, which has characters of its own, the option is not offered.
+
 ## languages/: language packs
 
 `language = <code>` in `settings.txt` (`SMS_LANGUAGE`) plays the game in that language with the pack in `languages/<code>/`: `fr`, `de`, `es`, `it` or `pl`; `en`, the default, is the disc's own English.
