@@ -81,6 +81,11 @@ In the game, F4 (`CHARACTER_NEXT` in `bindings.txt`) plays as the next character
 It does nothing while the game is paused, in a cutscene or a conversation, or while the area is changing.
 The pause menu's settings have it too (Gameplay, Character), from the next area; started by SMS Launcher, that choice is kept for the next game.
 
+A folder `<id>.voice/` beside an archive gives the character a voice: WAV files (PCM, any rate, mono or stereo) named after Mario's voice cues, such as `MV21_JUMP_SMALL_01.wav` or `MV24_JUMP_SPECIAL_03.wav` (the names of `MSD_SE_MV*` in the decomp's `MSound/SoundEffects.hpp`, without `MSD_SE_`).
+As a stage loads the character, each file plays wherever Mario's code plays that cue: it is encoded to Mario's own format and takes the place of his wave, at its own sample rate; a cue without a file keeps Mario's voice, and Mario's comes back when he is chosen again.
+The same sound under several cues is kept once, so a character needs no more room than Mario's voice has (about 860 KB of ADPCM, some 50 seconds of sound at 32 kHz).
+`tools/mp7-characters/mp7_voices.py` makes these folders for the Mario Party 7 characters.
+
 The archive is read into the stage's memory as the stage loads Mario and mounted in place of his, as Super Mario Eclipse mounts its characters; Shadow Mario, who loads from the same archive, wears the character too.
 With Eclipse, which has characters of its own, the option is not offered.
 

@@ -1,0 +1,86 @@
+Reason: port: character voices (port_character.h): as a stage loads a character from mods/characters/, the WAV files in its <id>.voice/ folder take the place of Mario's voice waves (wave bank 1), and Mario's come back for him
+--- a/src/System/Application.cpp
++++ b/src/System/Application.cpp
+@@ -640,6 +640,10 @@
+ 
+ #ifdef TARGET_PC
+ #include "port_character.h"
++#include <JSystem/JAudio/JASystem/JASBasicWaveBank.hpp>
++#include <JSystem/JAudio/JASystem/JASSimpleWaveBank.hpp>
++#include <JSystem/JAudio/JASystem/JASWaveBankMgr.hpp>
++#include <stdint.h>
+ #include "port_savestate.h"
+ #include <Camera/Camera.hpp>
+ #include <Player/Mario.hpp>
+@@ -722,12 +726,71 @@
+ 	return out;
+ }
+ 
++// A wave's entry in a bank of either kind and its group's ARAM base, or null
++// while its waves are not in ARAM.
++template <class Bank>
++static JASystem::TWaveInfo* ApplicationCharacterVoiceWave(JASystem::TWaveBank* bank, u32 id, u32* aram)
++{
++	typename Bank::TWaveHandle* h = ((Bank*)bank)->getWaveHandle(id);
++	if (!h || !h->mHeap || !h->mHeap->getBase())
++		return nullptr;
++	*aram = (u32)(uintptr_t)h->mHeap->getBase();
++	return &h->mWaveInfo;
++}
++
++// The character's voice in place of Mario's (port_character.h), or Mario's
++// back: the entries of Mario's voice waves in wave bank 1 (w2ndLoad_0.aw)
++// and their ARAM. Left alone until that bank's waves are in ARAM.
++static void ApplicationCharacterVoice(int index)
++{
++	JASystem::TWaveBank* bank = JASystem::WaveBankMgr::getWaveBank(1);
++	const int type            = bank ? bank->getType() : 0;
++	if (type != 'SMPL' && type != 'BSIC')
++		return;
++	static PortCharacterVoiceWave waves[PORT_CHARACTER_VOICE_MAX];
++	static JASystem::TWaveInfo* infos[PORT_CHARACTER_VOICE_MAX];
++	const int count = port_character_voice_waves(waves, PORT_CHARACTER_VOICE_MAX);
++	for (int i = 0; i < count; i++) {
++		JASystem::TWaveInfo* info
++		    = type == 'SMPL'
++		          ? ApplicationCharacterVoiceWave<JASystem::TSimpleWaveBank>(bank, waves[i].id, &waves[i].aram)
++		          : ApplicationCharacterVoiceWave<JASystem::TBasicWaveBank>(bank, waves[i].id, &waves[i].aram);
++		if (!info)
++			return;
++		JASystem::TWaveInfo& w = *info;
++		infos[i]           = &w;
++		waves[i].rate      = w.unk4;
++		waves[i].offset    = w.mOffset;
++		waves[i].size      = w.unkC;
++		waves[i].loop      = w.unk10;
++		waves[i].loopStart = w.unk14;
++		waves[i].loopEnd   = w.unk18;
++		waves[i].count     = w.unk1c;
++		waves[i].last      = w.unk20;
++		waves[i].penult    = w.unk22;
++	}
++	port_character_voice_apply(index, waves, count);
++	for (int i = 0; i < count; i++) {
++		JASystem::TWaveInfo& w = *infos[i];
++		w.unk4    = waves[i].rate;
++		w.mOffset = waves[i].offset;
++		w.unkC    = waves[i].size;
++		w.unk10   = waves[i].loop;
++		w.unk14   = waves[i].loopStart;
++		w.unk18   = waves[i].loopEnd;
++		w.unk1c   = waves[i].count;
++		w.unk20   = waves[i].last;
++		w.unk22   = waves[i].penult;
++	}
++}
++
+ // Before Mario's actor loads (patch to TMario::load): the chosen character's
+ // archive in place of Mario's, once per stage (Shadow Mario loads as a TMario too).
+ void ApplicationCharacterMount()
+ {
+ 	if (sCharacterArc || ApplicationCharacterTaken())
+ 		return;
++	ApplicationCharacterVoice(port_character_selected());
+ 	const char* path = port_character_path(port_character_selected());
+ 	if (!path)
+ 		return;
