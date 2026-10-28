@@ -85,7 +85,9 @@ The characters are Mario (the disc's archive, or a game-file mod's `data/mario.s
 A loose `<id>.szs`, with `<id>.txt` and `<id>.voice/` beside it, is read as a pack too.
 `character = <id>` in `settings.txt` (`SMS_CHARACTER`) plays as one from the start.
 
-In the game, F4 (`CHARACTER_NEXT` in `bindings.txt`) plays as the next character: in a stage, the area loads again at once with the new one (the coins and anything else done in the area start again, as with Exit Area), and outside a stage the next area brings it.
+In the game, F4 (`CHARACTER_NEXT` in `bindings.txt`) plays as the next character: in a stage, at once and in place (the model, animations, caps and voice are made again from the pack where Mario stands, in the middle of what he is doing, and the area carries on), and outside a stage the next area brings it.
+Each switch takes about 2 MB of the stage's memory until the area ends; when too little is left, the area loads again with the new character instead (the coins and anything else done in the area start again, as with Exit Area).
+Shadow Mario keeps the look he loaded with until the next area.
 It does nothing while the game is paused, in a cutscene or a conversation, or while the area is changing.
 The pause menu's settings have it too (Gameplay, Character), from the next area; started by SMS Launcher, that choice is kept for the next game.
 
