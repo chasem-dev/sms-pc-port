@@ -133,6 +133,8 @@ void build() {
     add(t, n);
     t = port_runtime_settings(&n);
     add(t, n);
+    t = port_character_settings(&n);
+    add(t, n);
     s_all.push_back(&kPreset);
     // by page, then by order; a stable sort keeps a module's table order for ties
     std::stable_sort(s_all.begin(), s_all.end(), [](const PortSetting* a, const PortSetting* b) {

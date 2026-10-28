@@ -11,6 +11,7 @@
 #include "port_compat.h"
 #include "port_platform.h"
 #include "port_savestate.h"
+#include "port_character.h"
 #include "gc_adapter.h"
 #include "port_setting_list.h"
 #include "port_settings.h"
@@ -132,14 +133,14 @@ enum Control {
 	C_DUP, C_DDOWN, C_DLEFT, C_DRIGHT,
 	C_UP, C_DOWN, C_LEFT, C_RIGHT,
 	C_CUP, C_CDOWN, C_CLEFT, C_CRIGHT,
-	C_HALF, C_QUIT, C_LSOFT, C_RSOFT, C_SAVESTATE, C_LOADSTATE, C_MAP, C_COUNT
+	C_HALF, C_QUIT, C_LSOFT, C_RSOFT, C_SAVESTATE, C_LOADSTATE, C_MAP, C_CHARACTER, C_COUNT
 };
 const char* const kControlNames[C_COUNT] = {
 	"A", "B", "X", "Y", "Z", "L", "R", "START",
 	"DPAD_UP", "DPAD_DOWN", "DPAD_LEFT", "DPAD_RIGHT",
 	"STICK_UP", "STICK_DOWN", "STICK_LEFT", "STICK_RIGHT",
 	"CSTICK_UP", "CSTICK_DOWN", "CSTICK_LEFT", "CSTICK_RIGHT",
-	"HALF_TILT", "QUIT", "L_SOFT", "R_SOFT", "SAVE_STATE", "LOAD_STATE", "MAP",
+	"HALF_TILT", "QUIT", "L_SOFT", "R_SOFT", "SAVE_STATE", "LOAD_STATE", "MAP", "CHARACTER_NEXT",
 };
 // SAVE_STATE / LOAD_STATE are the port's, not the GameCube's: a press saves a
 // save state, or loads the newest (port_savestate.h). Their bindings are often
@@ -147,7 +148,9 @@ const char* const kControlNames[C_COUNT] = {
 // the other from the game (combo_masks below).
 // MAP is the port's too: a press opens or closes the radar's full map
 // (src/radar.cpp), counted in port_radar_map_presses.
-bool is_port_action(int c) { return c == C_SAVESTATE || c == C_LOADSTATE || c == C_MAP; }
+// CHARACTER_NEXT is the port's as well: a press plays as the next character
+// (port_character.h), counted in port_character_presses.
+bool is_port_action(int c) { return c == C_SAVESTATE || c == C_LOADSTATE || c == C_MAP || c == C_CHARACTER; }
 // L_SOFT / R_SOFT press L or R part of the way, analog only (no digital click):
 // a light press, as on a GameCube trigger before it clicks. How far, 0..255,
 // from SMS_SOFT_TRIGGER (percent, default 40). Unbound unless bindings.txt
@@ -208,7 +211,8 @@ const char* const kDefaultBindings =
     "QUIT = ESCAPE\n"
     "SAVE_STATE = F5\n"
     "LOAD_STATE = F6\n"
-    "MAP = M\n";
+    "MAP = M\n"
+    "CHARACTER_NEXT = F4\n";
 
 // A binding is one key or controller button, or two held together, written
 // FIRST+SECOND (PAD_LB+PAD_RB, LCTRL+S): the second's code plus one sits above
@@ -922,6 +926,11 @@ extern "C" u32 PADRead(PADStatus* status)
 	if (mapKey && !wasMap && !blocked)
 		port_radar_map_presses++;
 	wasMap = mapKey;
+	static bool wasCharacter;
+	const bool characterKey = held(C_CHARACTER);
+	if (characterKey && !wasCharacter && !hotkeysBlocked)
+		port_character_presses++;
+	wasCharacter = characterKey;
 	if (blocked)
 		return PAD_CHAN0_BIT;
 	PADStatus& s = status[0];

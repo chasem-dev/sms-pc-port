@@ -1,0 +1,201 @@
+Reason: port: characters (port_character.h): the archive chosen in mods/characters/ is mounted on the "mario" volume as each stage loads Mario, and CHARACTER_NEXT (F4) reloads the area as the next character
+--- a/src/System/Application.cpp
++++ b/src/System/Application.cpp
+@@ -638,6 +638,159 @@
+ 	return result;
+ }
+ 
++#ifdef TARGET_PC
++#include "port_character.h"
++#include "port_savestate.h"
++#include <Camera/Camera.hpp>
++#include <Player/Mario.hpp>
++#include <string.h>
++
++// Port: characters (port_character.h). Mario's archive stays where boot put
++// it (arcBufMario). Another character's is read into the heap in force while
++// the stage loads Mario (TMario::load calls ApplicationCharacterMount first),
++// which mHeap->freeAll() empties after the stage, and is mounted on the "mario"
++// volume in Mario's place, as Super Mario Eclipse mounts its characters. When
++// the stage's director ends, Mario's archive goes back on the volume before the
++// heap is emptied, so nothing between stages reads a freed archive.
++static void* sCharacterArc; // this stage's archive; null while Mario's is mounted
++
++// A code mod that loads the player's archive itself (Eclipse, at this site).
++static bool ApplicationCharacterTaken() { return SMS_MOD_SITE(0x80276BF0) != nullptr; }
++
++static void ApplicationCharacterRemount(void* buf)
++{
++	JKRMemArchive* arc = (JKRMemArchive*)JKRFileLoader::getVolume("mario");
++	if (!arc || !buf)
++		return;
++	arc->unmountFixed();
++	arc->mountFixed(buf, MBF_0);
++}
++
++// The archive at `path` (Yaz0 or a plain RARC), in the heap in force.
++static void* ApplicationCharacterRead(const char* path)
++{
++	FILE* f = fopen(path, "rb");
++	if (!f)
++		return nullptr;
++	fseek(f, 0, SEEK_END);
++	const long size = ftell(f);
++	fseek(f, 0, SEEK_SET);
++	u8* src       = size > 16 ? (u8*)malloc(size) : nullptr;
++	const bool ok = src && fread(src, 1, size, f) == (size_t)size;
++	fclose(f);
++	u8* out = nullptr;
++	const bool yaz0 = ok && !memcmp(src, "Yaz0", 4);
++	const u32 n = !ok ? 0 : yaz0 ? (u32)src[4] << 24 | (u32)src[5] << 16 | (u32)src[6] << 8 | src[7] : (u32)size;
++	if (ok && (yaz0 || !memcmp(src, "RARC", 4))) {
++		if (JKRGetCurrentHeap()->getFreeSize() < (s32)n + 0x1000)
++			OSReport("[character] %s: %u bytes, more than the stage's heap has free (%d)\n", path, n,
++			         (int)JKRGetCurrentHeap()->getFreeSize());
++		else
++			out = (u8*)JKRHeap::alloc(n, 0x20, nullptr);
++	}
++	if (out && !yaz0)
++		memcpy(out, src, n);
++	else if (out) {
++		const u8* p   = src + 16;
++		const u8* end = src + size;
++		u32 o         = 0;
++		while (o < n && p < end) {
++			const u8 code = *p++;
++			for (int bit = 0x80; bit && o < n && p < end; bit >>= 1) {
++				if (code & bit) {
++					out[o++] = *p++;
++					continue;
++				}
++				const u32 dist = ((p[0] & 0xF) << 8 | p[1]) + 1;
++				u32 len        = p[0] >> 4;
++				p += 2;
++				len = len ? len + 2 : *p++ + 0x12u;
++				if (dist > o) {
++					o = n + 1; // a reference before the start: not an archive
++					break;
++				}
++				for (; len && o < n; len--, o++)
++					out[o] = out[o - dist];
++			}
++		}
++		if (o != n || memcmp(out, "RARC", 4)) {
++			JKRHeap::free(out, nullptr);
++			out = nullptr;
++		}
++	}
++	free(src);
++	return out;
++}
++
++// Before Mario's actor loads (patch to TMario::load): the chosen character's
++// archive in place of Mario's, once per stage (Shadow Mario loads as a TMario too).
++void ApplicationCharacterMount()
++{
++	if (sCharacterArc || ApplicationCharacterTaken())
++		return;
++	const char* path = port_character_path(port_character_selected());
++	if (!path)
++		return;
++	void* arc = ApplicationCharacterRead(path);
++	if (!arc) {
++		OSReport("[character] %s: could not load it; playing as Mario\n", path);
++		return;
++	}
++	ApplicationCharacterRemount(arc);
++	sCharacterArc = arc;
++	OSReport("[character] %s mounted for this stage\n", port_character_name(port_character_selected()));
++}
++
++// The stage's director has ended: Mario's archive back on the volume while the
++// stage's heap still holds the character's.
++static void ApplicationCharacterStageEnd()
++{
++	if (!sCharacterArc)
++		return;
++	sCharacterArc = nullptr;
++	ApplicationCharacterRemount(arcBufMario);
++}
++
++// Once a frame: CHARACTER_NEXT. In a stage, while Mario plays (not paused, in a
++// cutscene or talking, not leaving), the next character and the area loaded
++// again for it, as the warp menu loads one; outside a stage, the next character
++// for the next area. Presses at other times are let go.
++static void ApplicationCharacterFrame(TApplication* app)
++{
++	static int sPresses = port_character_presses;
++	const bool taken    = ApplicationCharacterTaken();
++	port_character_set_available(!taken);
++	if (port_character_presses == sPresses)
++		return;
++	sPresses = port_character_presses;
++	const int count = port_character_count();
++	if (taken || count < 2)
++		return;
++	TMarDirector* dir
++	    = app->mAppState == TApplication::APP_STATE_GAMEPLAY ? gpMarDirector : nullptr;
++	const bool ready = dir && gpMarioOriginal && dir->mState == TMarDirector::STATE_UNK4
++	                   && !dir->checkUnk4CFlag(TMarDirector::DIRECTOR_FLAG_STAGE_TRANSITION_PENDING)
++	                   && !dir->checkFlag(TMarDirector::DIRECTOR_FLAG_DEMO_PENDING
++	                                      | TMarDirector::DIRECTOR_FLAG_SHINE_TAKEN)
++	                   && !dir->isTalkOrDemoModeNow() && !(gpCamera && gpCamera->isDemoCamera());
++	if (dir && !ready)
++		return;
++	const int next = (port_character_selected() + 1) % count;
++	port_character_select(next);
++	char text[96];
++	if (dir) {
++		snprintf(text, sizeof text, "%s", port_character_name(next));
++		const int area = app->mCurrArea.getStage(), episode = app->mCurrArea.getScenario();
++		OSReport("[character] %s: reloading area %d episode %d\n", port_character_name(next), area, episode);
++		TFlagManager::getInstance()->setFlag(0x40003, episode);
++		dir->setNextStage((u16)(((area + 1) << 8) | episode), nullptr);
++	} else {
++		snprintf(text, sizeof text, "%s, from the next area", port_character_name(next));
++	}
++	port_savestate_notify(text);
++}
++#endif
++
+ void TApplication::proc()
+ {
+ 	while (mAppState != APP_STATE_QUIT) {
+@@ -727,6 +880,9 @@
+ 		if (mDirector)
+ 			mDirector->~TDirector();
+ 		mDirector = nullptr;
++#ifdef TARGET_PC
++		ApplicationCharacterStageEnd();
++#endif
+ 
+ 		switch (mAppState) {
+ 		case APP_STATE_BOOT:
+@@ -1381,6 +1537,7 @@
+ #ifdef TARGET_PC
+ 		ApplicationPresenceFrame(this);
+ 		ApplicationWarpFrame(this);
++		ApplicationCharacterFrame(this);
+ #endif
+ 		TTimeRec::endTimer();
+ 
+--- a/src/Player/MarioInit.cpp
++++ b/src/Player/MarioInit.cpp
+@@ -316,8 +316,17 @@
+ 	unk390         = 0;
+ }
+ 
++#ifdef TARGET_PC
++// Port: the chosen character's archive on the "mario" volume before Mario's
++// model, hands and animations load from it (patch zzzzzz-character-01, Application.cpp).
++void ApplicationCharacterMount();
++#endif
++
+ void TMario::load(JSUMemoryInputStream& stream)
+ {
++#ifdef TARGET_PC
++	ApplicationCharacterMount();
++#endif
+ 	({ typedef __typeof__(TTakeActor::load(stream)) sms_mod_r_; void* sms_mod_t_ = SMS_MOD_SITE(0x80276BF0); if (sms_mod_t_) ((__typeof__(sms_mod_as_free(static_cast<sms_mod_r_ (JDrama::TActor::*)(JSUMemoryInputStream&)>(&JDrama::TActor::load))))sms_mod_t_)(this, stream); else TTakeActor::load(stream); });
+ 	mFaceAngle.x = 0;
+ 	mFaceAngle.y = DEG2SHORTANGLE(mRotation.y);

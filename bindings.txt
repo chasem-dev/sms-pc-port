@@ -5,6 +5,7 @@
 #           CSTICK_UP CSTICK_DOWN CSTICK_LEFT CSTICK_RIGHT HALF_TILT QUIT
 #           SAVE_STATE LOAD_STATE (save a save state, load the newest)
 #           MAP (open or close the radar's full map)
+#           CHARACTER_NEXT (play as the next character in mods/characters)
 #           L_SOFT R_SOFT (a light L or R press, no click; SMS_SOFT_TRIGGER
 #           sets how far, default 40%; no default keys)
 # Keys: letters, digits, ENTER ESC SPACE TAB BACKSPACE UP DOWN LEFT RIGHT
@@ -51,3 +52,4 @@ QUIT = ESCAPE
 SAVE_STATE = F5
 LOAD_STATE = F6
 MAP = M
+CHARACTER_NEXT = F4
