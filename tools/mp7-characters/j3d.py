@@ -94,11 +94,12 @@ class BCK:
             self.anims.append(comps)
         self.base = a; self.offsets = (jo, so, ro, to)
 
-    def _eval(self, table, key, t):
+    def _eval(self, table, key, t, time_scale=1.0):
         count, idx, tan = key
         if count == 1: return table[idx]
         stride = 4 if tan == 1 else 3
-        k = table[idx: idx + count*stride].reshape(count, stride)
+        k = table[idx: idx + count*stride].reshape(count, stride).copy()
+        k[:, 0] /= time_scale  # key times are frames, not scaled like the values
         if t <= k[0, 0]: return k[0, 1]
         if t >= k[-1, 0]: return k[-1, 1]
         n = np.searchsorted(k[:, 0], t, side='right') - 1
@@ -110,6 +111,6 @@ class BCK:
     def local(self, joint, t):
         c = self.anims[joint]
         s = [self._eval(self.scale, c[i][0], t) for i in range(3)]
-        r = [self._eval(self.rot, c[i][1], t) for i in range(3)]
+        r = [self._eval(self.rot, c[i][1], t, (2 ** self.ang) * 180 / 32768) for i in range(3)]
         tr = [self._eval(self.trans, c[i][2], t) for i in range(3)]
         return trs(tr, r, s)

@@ -2,12 +2,14 @@
 import numpy as np
 from PIL import Image
 
-def render(tris_pos, tris_uv, tris_tex, textures, tris_nrm, view_rot, size=512, tint=None):
-    """tris_pos: (n,3,3) world; tris_uv: (n,3,2); tris_tex: (n,) texture id or -1; tris_nrm: (n,3)."""
+def render(tris_pos, tris_uv, tris_tex, textures, tris_nrm, view_rot, size=512, tint=None, frame=None):
+    """tris_pos: (n,3,3) world; tris_uv: (n,3,2); tris_tex: (n,) texture id or -1; tris_nrm: (n,3).
+    frame: (cx, cy, scale) to place every picture alike (default: fit the model)."""
     P = tris_pos @ view_rot.T
     lo = P.reshape(-1, 3).min(0); hi = P.reshape(-1, 3).max(0)
     sc = (size * 0.9) / max(hi[0] - lo[0], hi[1] - lo[1])
     cx = (lo[0] + hi[0]) / 2; cy = (lo[1] + hi[1]) / 2
+    if frame is not None: cx, cy, sc = frame
     X = (P[..., 0] - cx) * sc + size / 2; Y = size / 2 - (P[..., 1] - cy) * sc; Z = P[..., 2]
     img = np.full((size, size, 3), 40, np.float32); zb = np.full((size, size), -1e9)
     N = tris_nrm @ view_rot.T

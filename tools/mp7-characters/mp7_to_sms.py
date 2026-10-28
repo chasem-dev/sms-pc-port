@@ -7,7 +7,7 @@ and retargets the body animations (.bck) to the character's proportions.
 import os, sys, struct, glob
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import numpy as np
-import hubin, hsf, hsfgeo, gxtex, j3d, bmdwrite, handfit
+import hubin, hsf, hsfgeo, gxtex, j3d, bmdwrite, handfit, refine
 
 FINGER_WORDS = ('fing', 'thumb', 'middle', 'first', 'ring', 'child')
 
@@ -587,7 +587,15 @@ def retarget_bck(ch, data):
     return bytes(out)
 
 
-def convert(mdl_path, sms_dir, out_dir, mot_path=None, hat=True, curl=75, lift=None):
+def sunshine_files(sms_dir):
+    """The files of Sunshine's own mario/ folder refine.refine compares with: the body, the hand models
+    and the animations."""
+    rels = (['bmd/ma_mdl1.bmd'] + ['bmd/' + os.path.basename(p) for p in glob.glob(os.path.join(sms_dir, 'bmd', 'ma_hnd*.bmd'))]
+            + ['bck/' + os.path.basename(p) for p in glob.glob(os.path.join(sms_dir, 'bck', '*.bck'))])
+    return {rel: open(os.path.join(sms_dir, rel), 'rb').read() for rel in rels}
+
+
+def convert(mdl_path, sms_dir, out_dir, mot_path=None, hat=True, curl=75, lift=None, cid=None):
     bmd = lambda n: open(os.path.join(sms_dir, 'bmd', n + '.bmd'), 'rb').read()
     tmpl = bmd('ma_mdl1')
     ch = Character(mdl_path, tmpl, mot_path, lift)
@@ -630,6 +638,8 @@ def convert(mdl_path, sms_dir, out_dir, mot_path=None, hat=True, curl=75, lift=N
         r = retarget_bck(ch, open(p, 'rb').read())
         if r is not None:
             files['bck/' + os.path.basename(p)] = r; nbck += 1
+    # the fixes on the finished files (refine.py): gowns, fists, the ground, the atlas's edges
+    refine.refine(files, sunshine_files(sms_dir), cid, log=lambda m: print(m))
     os.makedirs(out_dir, exist_ok=True)
     for rel, b in files.items():
         os.makedirs(os.path.dirname(os.path.join(out_dir, rel)), exist_ok=True)
@@ -643,7 +653,8 @@ def convert(mdl_path, sms_dir, out_dir, mot_path=None, hat=True, curl=75, lift=N
 if __name__ == '__main__':
     # mp7_to_sms.py <MP7 files/data> <Sunshine mario/ folder> <output folder> <character>...
     data, sms_dir, out = sys.argv[1:4]
+    import pack_characters
     for c in sys.argv[4:]:
         print(c)
         convert(os.path.join(data, c + 'mdl0.bin'), sms_dir, os.path.join(out, c),
-                os.path.join(data, c + 'mot.bin'))
+                os.path.join(data, c + 'mot.bin'), cid=pack_characters.CHARACTERS.get(c, (c,))[0])

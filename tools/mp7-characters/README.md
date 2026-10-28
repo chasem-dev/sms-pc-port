@@ -8,6 +8,19 @@ The arms and legs keep Sunshine's bone directions (the animations twist them abo
 What the character's motions start hidden (blink lids, spare eye frames) is left out; the textures go in one atlas (texture 0, which the hand and cap models share); characters with eye-only materials blink with Sunshine's eye animations.
 Luigi's hat is the cap model, so it comes off as Mario's cap does.
 
+The conversion ends with `refine.py`'s fixes on the finished files:
+- parts left on Sunshine's `center` joint for want of a counterpart (Peach's and Daisy's gowns, Dry Bones' shell) are bound to the waist and the chest by height, so they turn with the hips and the body;
+- in a gown, the legs swing less (the knees and ankles most) and the hem follows the thighs a little, so the legs stay under it and it sways as she walks;
+- in a gown, the somersaults (rolls, the triple jump's flip, the ground pound's, the U-turn jump's) become pirouettes, a turn about the vertical with a lean, since a gown upside down is a bell; any other turn that would tip the gown past lying down (slipping onto her back, the spin into a bottle) is turned back just that far;
+- every body animation is raised or lowered, frame by frame, so that while Mario stands the character's lowest point is where his is: nobody sinks into the floor or stands above it (the converter scales the hips' height, which left some in it and some over it; Boo, who has no legs, hovers a tenth of his height above it); between standing frames the correction eases from the one before to the one after; animations with no floor under the feet (the jumps, flips and bounces off enemies, climbing fences, trees and ladders, swimming) keep the character's standing correction throughout, so they keep their shape; it changes by at most 1.2% of the character's height a frame plus as fast as Mario's own body rises and falls in that animation (so a fall or getting up keeps up, and a walk does not bob), never leaves anything below the floor and lifts no more than that needs, and closes the seam of looping animations;
+- while Mario hangs from a ledge or a rope, the character is moved so its hands are where his are, and each arm is bent (shoulder and elbow, in the plane it bends in) to reach his hand, so long arms (Donkey Kong, Waluigi) hold the ledge rather than the air above it; arms too short to reach both his hands (Toad, Dry Bones) put the middle of the character's own grip where the middle of his is, and come as near his hands as they reach; toward standing, the hand's aim moves back to its own;
+- Peach's and Daisy's hands, whose rigs bend each finger at one joint (a hook rather than a fist), are their open hands with the fingers curved a little at three joints;
+- the open hand models are turned about the wrist to lie as Mario's do (fitted to his `ma_hnd2`, at most 60 degrees): they came with the turn that fitted the fist, and Donkey Kong's stood upright on a ledge;
+- triangles with no texture of their own (an object Birdo only shows at times, on her left hand) are left out;
+- the atlas's empty space takes the colours of the textures' edges, so texture coordinates clamped to an edge do not filter in black.
+
+`refine.py <Sunshine data/mario.szs> <character .szs> [<out .szs>]` applies them to an archive made before.
+
 Needs Python 3 with numpy and Pillow. From the repository's folder:
 
 ```sh
@@ -32,5 +45,6 @@ Mario's snores keep his voice. Any WAV can be swapped for another.
 `extract_voices.py "Mario Party 7 (USA).iso" out` writes every character's voice lines and movement sounds as they are, for listening.
 
 `preview_pose.py out.png yaw model.bmd anim.bck frame ...` renders a converted model posed by an animation, for checking one without the game.
+`refine.py` takes the character's id from its pack's folder (`peach/model.szs`, as `pack_characters.py` writes them) or from a loose archive's name (`peach.szs`).
 
 Each character keeps its Mario Party 7 size (Donkey Kong and Waluigi are much taller than Mario, with his collision); Yoshi, Koopa Kid, Donkey Kong and Boo, whose eyes are part of the face's texture, do not blink.
