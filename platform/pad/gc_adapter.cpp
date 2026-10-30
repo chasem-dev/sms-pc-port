@@ -10,8 +10,8 @@
 //   Windows  WinUSB (the driver Zadig or Dolphin installs, or that adapters
 //            such as the Lossless Adapter ask Windows for themselves), else the
 //            stock HID driver ("USB Input Device"), through winusb.dll / hid.dll
-//   Linux    /dev/hidraw*, else libusb (Steam's udev rule opens the adapter's
-//            USB device to the logged-in user)
+//   Linux    libusb (Steam's udev rule opens the adapter's USB device to the
+//            logged-in user), else /dev/hidraw*
 //   macOS    libusb, when it is installed (Homebrew)
 // Libraries are loaded at run time, so nothing extra is linked or required.
 // SMS_GC_ADAPTER=VVVV:PPPP (hex) adds another USB id; SMS_NO_GC_ADAPTER=1 turns
@@ -637,7 +637,15 @@ struct FdLink : Link {
 		}
 		return (int)n;
 	}
-	bool write(const unsigned char* buf, int len) override { return ::write(fd, buf, len) == len; }
+	// hidraw takes nothing shorter than 2 bytes (a report id and its data), so
+	// the 1-byte start command goes with a zero after it
+	bool write(const unsigned char* buf, int len) override
+	{
+		unsigned char pad[2] = { len > 0 ? buf[0] : (unsigned char)0, 0 };
+		if (len < 2)
+			return ::write(fd, pad, 2) == 2;
+		return ::write(fd, buf, len) == len;
+	}
 };
 
 #ifdef __linux__
@@ -818,18 +826,20 @@ Link* open_link(char* why, size_t cap, bool* seen)
 {
 #ifdef __linux__
 	// sysfs says whether it is plugged in; hidraw may not show it once libusb
-	// has detached the kernel's driver (Steam reading it, say)
+	// has detached the kernel's driver (Steam reading it, say). libusb first,
+	// as Dolphin reads it: it sends the start command as the adapter expects
+	// (1 byte), where hidraw needs it padded.
 	*seen = usb_present();
 	if (!*seen)
 		return NULL;
-	if (Link* link = open_hidraw(why, cap, seen))
+	if (Link* link = open_libusb(why, cap))
 		return link;
-	char usbWhy[200] = "";
-	Link* link       = open_libusb(usbWhy, sizeof usbWhy);
-	if (!link && usbWhy[0])
-		snprintf(why + strlen(why), cap - strlen(why), "%s%s", why[0] ? "; " : "", usbWhy);
-	else if (!link && libusb_ready())
-		snprintf(why + strlen(why), cap - strlen(why), "%slibusb could not open its USB device", why[0] ? "; " : "");
+	if (!why[0] && libusb_ready())
+		snprintf(why, cap, "libusb could not open its USB device");
+	char rawWhy[200] = "";
+	Link* link       = open_hidraw(rawWhy, sizeof rawWhy, seen);
+	if (!link && rawWhy[0])
+		snprintf(why + strlen(why), cap - strlen(why), "%s%s", why[0] ? "; " : "", rawWhy);
 	return link;
 #else
 	Link* link = open_libusb(why, cap);
