@@ -335,6 +335,12 @@ void GXPC_SetTexturePlain(const void* data, size_t bytes);
 // Whether the texture at `data` is still drawn plain (GXPC_SetTexturePlain): not
 // since dropped, or its data changed.
 int GXPC_TextureIsPlain(const void* data, size_t bytes);
+// While on, every texture is drawn from the game's own data: no texture pack's
+// picture, no Mario's look, no picture set for it (GXPC_SetTextureOverride).
+// For drawing what the game computes with rather than shows, such as the goop
+// map, where a pack's repainted clean stamp or height map changes the result
+// (FLUDD's water stopped cleaning). Applies to what is drawn after the call.
+void GXPC_SetRawTextures(int on);
 // Drops every such picture, and every plain texture (a stage's memory is let go).
 void GXPC_ClearTextureOverrides(void);
 

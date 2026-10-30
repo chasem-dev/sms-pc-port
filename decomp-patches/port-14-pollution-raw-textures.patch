@@ -1,0 +1,26 @@
+Reason: The goop map is computed on the GPU: each frame the game draws a layer's I8 map with FLUDD's clean stamps, the goop stamps (pollute, down_osen, the Gatekeeper's and Shadow Mario's stamp models) and the layer's height map, and copies the result back into the map it reads. A texture pack that repaints those textures (Super Mario Eclipse's HD pack replaces clean.bti, pollute.bti, down_osen.bti and the Airstrip's and Delfino Plaza's height maps) changes what the game computes: FLUDD's water stopped cleaning most goop. Draw these passes with the game's own textures, so packs only change how goop looks.
+--- a/src/Map/PollutionManager.cpp
++++ b/src/Map/PollutionManager.cpp
+@@ -98,16 +98,22 @@
+ 
+ void TPollutionManager::draw() { }
+ 
++extern "C" void GXPC_SetRawTextures(int on);
++
+ void TPollutionManager::perform(u32 cue, JDrama::TGraphics* graphics)
+ {
+ 	if (cue & CUE_UNK1000000) {
++		GXPC_SetRawTextures(1);
+ 		getCounterObj().countObjDegree();
++		GXPC_SetRawTextures(0);
+ 	} else if (cue & CUE_SEMITRANSPARENT_PRIO_2) {
+ 		u8 layer = cue >> CUE_OFFSET_POLLUTION_LAYER;
+ 		if (layer == 0)
+ 			getCounterLayer().calcViewMtx();
+ 
++		GXPC_SetRawTextures(1);
+ 		getCounterLayer().countTexDegree(layer);
++		GXPC_SetRawTextures(0);
+ 
+ 		int last = getJointModelNum() - 1;
+ 		if (layer == last)
