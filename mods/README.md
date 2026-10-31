@@ -83,6 +83,7 @@ mods/characters/luigi/
 ```
 
 `model.szs` holds his model (`bmd/ma_mdl1.bmd` on his skeleton), the hand and cap models and the animations, laid out as the disc's.
+A `character/fludd.bin` in `model.szs` (big-endian floats: scale, an offset in the chest joint's frame, where Sunshine's chest has x up the spine, y forward and z to the side, and a tilt back in degrees) has the character's FLUDD drawn at that size, that far from the chest and leaning back that much more than the game leans it: a small character wears a smaller one. SMS Launcher's Toads have FLUDD at 0.6 of its size, 8 lower, 7 forward and 35 degrees further back, the belt round the waist and the tank out from under the cap.
 A `look/` folder in `model.szs` (`look/default.bmd`, a model on Mario's 29 joints, and any `.btk`) makes the character drawn as that model in place of the body, hands and cap, posed by the body's joints, as the game draws Shadow Mario: fog on its materials, the screen's picture in its `H_kagemario_dummy` texture, its first `.btk` playing. SMS Launcher makes Shadow Mario this way, from the plaza's own Shadow Mario (`kagemario/default.bmd` and `kagemario_scroll.btk` in `data/scene/dolpic1.szs`) on the player's disc.
 The characters are Mario (the disc's archive, or a game-file mod's `data/mario.szs`) and then each pack, by id.
 A loose `<id>.szs`, with `<id>.txt` and `<id>.voice/` beside it, is read as a pack too.
