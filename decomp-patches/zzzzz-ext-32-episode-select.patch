@@ -1,0 +1,24 @@
+Reason: extensions (ext/, port_ext.h) may change how many episodes a world's episode select offers and the one its cursor starts on (episodeSelect, TSelectMenu::initData): the native mod API's SMS_EV_EPISODE_SELECT (API 1.6 beta 2). Where a BetterSunshineEngine mod fills the select's arrays itself (Super Mario Eclipse), only the cursor may change.
+--- a/src/GC2D/SelectMenu.cpp
++++ b/src/GC2D/SelectMenu.cpp
+@@ -703,6 +703,20 @@
+ 		mSelectedShine = lastShineIdx;
+ 
+ #ifdef TARGET_PC
++		{
++			// extensions may offer more episodes or fewer, and start the
++			// cursor on another (port_ext.h); not the count where a
++			// BetterSunshineEngine fills the select's arrays itself (the
++			// words at 0x80174DFC, 0x80174ED8, the clamp at 0x80174E8C)
++			const bool sms_ext_own = !sms_mod_word(0x80174DFC, &sms_mod_w_)
++			                         && !sms_mod_word(0x80174ED8, &sms_mod_w_) && !SMS_MOD_SITE(0x80174E8C);
++			int sms_ext_offered = mNumUnlockedShines;
++			int sms_ext_first   = mSelectedShine;
++			port_ext_episode_select(mStage, &sms_ext_offered, &sms_ext_first, sms_ext_own ? 8 : 0);
++			mNumUnlockedShines = (u8)sms_ext_offered;
++			mSelectedShine     = (u8)sms_ext_first;
++		}
++
+ 		// The word at 0x80174ED8 (`b 0x80174F4C`) skips this loop (the mod
+ 		// cleared the rest itself); its bound is the `cmpwi`/`subfic` words
+ 		// at 0x80174ED0 and 0x80174ED4.

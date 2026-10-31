@@ -311,6 +311,17 @@ extern "C" void port_ext_episode_shine(int shineStage, int episode, int* shine)
 	EACH(episodeShine) s_ext[i]->episodeShine(shineStage, episode, shine);
 }
 
+extern "C" void port_ext_episode_select(int area, int* offered, int* first, int maxOffered)
+{
+	EACH(episodeSelect) s_ext[i]->episodeSelect(area, offered, first, maxOffered);
+}
+
+extern "C" int port_ext_shine_touch(void* mario, void* shine)
+{
+	EACH(shineTouch) if (int take = s_ext[i]->shineTouch(mario, shine)) return take;
+	return PORT_SHINE_TOUCH_GET;
+}
+
 extern "C" int port_ext_player_message(void* mario, void* sender, unsigned message)
 {
 	EACH(playerMessage) if (s_ext[i]->playerMessage(mario, sender, message)) return 1;
@@ -423,3 +434,4 @@ extern "C" int port_ext_draw_stage(void* director, void* graphics)
 
 void* port_ext_damage_source; // C linkage: declared so in port_ext.h
 int port_ext_death_cause;      // C linkage: declared so in port_ext.h
+int port_ext_stage_change_by;  // C linkage: declared so in port_ext.h

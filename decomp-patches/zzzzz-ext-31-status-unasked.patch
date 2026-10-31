@@ -1,0 +1,67 @@
+Reason: extensions (ext/, port_ext.h) are asked about the statuses TMario sets without changePlayerStatus, a spin jump started in the air (considerJumpRotate) and a jump's throw landing (jumpingThrow), as about every other (playerStatus: changed or refused; refused, he stays as he is), and hear of them (playerStatusChanged): the native mod API's SMS_EV_PLAYER_STATUS (API 1.6 beta 2)
+--- a/src/Player/MarioJump.cpp
++++ b/src/Player/MarioJump.cpp
+@@ -23,6 +23,23 @@
+ 	return sms_ext_r;
+ }
+ 
++// port: a status the game sets without changePlayerStatus (a spin jump started
++// in the air, a jump's throw landing) is asked of extensions as that one's are,
++// and set the way the game sets it, with what they changed; 0 when refused,
++// and he stays as he is (port_ext.h)
++static BOOL portStatusUnasked(TMario* m, u32 status)
++{
++	const u32 from = m->mStatus;
++	u32 arg        = m->mStatusArg;
++	if (status != from && port_ext_player_status(m, &status, &arg, 0))
++		return FALSE;
++	m->mStatus    = status;
++	m->mStatusArg = arg;
++	if (status != from)
++		port_ext_player_status_changed(m, from, status, arg);
++	return TRUE;
++}
++
+ // checkBackTrig as retail inlines it into jumpMain's handlers, stayWall and
+ // landing: each inlined copy has its own setPlayerVelocity call, which a mod
+ // may redirect on its own (moveset's uncapDiveAirSpeed at 0x802496AC,
+@@ -383,8 +400,13 @@
+ 
+ 	if (({ typedef __typeof__(checkStickRotate(&spC)) sms_mod_r_; void* sms_mod_t_ = SMS_MOD_SITE(0x8024C3F8); sms_mod_t_ ? ((__typeof__(sms_mod_as_free(static_cast<sms_mod_r_ (TMario::*)(int*)>(&TMario::checkStickRotate))))sms_mod_t_)(this, &spC) : checkStickRotate(&spC); }) == 1) {
+ #ifdef TARGET_PC
+-		const u32 sms_ext_from = mStatus;
+-#endif
++		// a spin jump starts in the air: extensions may change or refuse it,
++		// and hear of it (refused, the jump goes on as it was)
++		if (!portStatusUnasked(this, spC == 2   ? (u32)MARIO_STATUS_RIGHT_ROTATE_JUMP
++		                             : spC == 3 ? (u32)MARIO_STATUS_LEFT_ROTATE_JUMP
++		                                        : mStatus))
++			return 0;
++#else
+ 		switch (spC) {
+ 		case 2:
+ 			mStatus = MARIO_STATUS_RIGHT_ROTATE_JUMP;
+@@ -393,10 +415,6 @@
+ 			mStatus = MARIO_STATUS_LEFT_ROTATE_JUMP;
+ 			break;
+ 		}
+-#ifdef TARGET_PC
+-		// a spin jump starts in the air: extensions hear of it (port_ext.h)
+-		if (mStatus != sms_ext_from)
+-			port_ext_player_status_changed(this, sms_ext_from, mStatus, mStatusArg);
+ #endif
+ 		return 1;
+ 	}
+@@ -668,7 +686,12 @@
+ 
+ 	switch (jumpProcess(0)) {
+ 	case 1:
++#ifdef TARGET_PC
++		// extensions may change or refuse it, and hear of it
++		portStatusUnasked(this, MARIO_STATUS_JUMP_THROW_END);
++#else
+ 		mStatus = MARIO_STATUS_JUMP_THROW_END;
++#endif
+ 		break;
+ 
+ 	case 2:
