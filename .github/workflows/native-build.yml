@@ -5,8 +5,7 @@ name: Native build
 # in. No disc image is used. The launcher's toolsets build every platform in
 # launcher-build.yml; this covers what those builds do not:
 #   - Linux: Sunshine and Eclipse, with Eclipse's SHI flag check;
-#   - Windows: Eclipse, kept as an artifact for testing a change on a Windows
-#     machine before it is released;
+#   - Windows: Eclipse (no artifact: it would contain the compiled game);
 #   - Apple Silicon: Sunshine and Eclipse natively (docs/MACOS-ARM64.md): the
 #     gameptr pass plugin's test, the Vulkan backend with MoltenVK, and the
 #     executable's signature.
@@ -171,20 +170,6 @@ jobs:
         run: python3 tools/mods/test_shi_flags.py build/linux-64-eclipse/eclipse-src/shi --compiler clang++ --arch 64
       - name: Check Eclipse starts with its mods linked in
         run: tools/tests/check_start.sh "build/${{ matrix.build }}-eclipse/${{ matrix.exe }}" 1
-      - name: Collect the Windows executable and its DLLs
-        if: runner.os == 'Windows'
-        run: |
-          mkdir -p windows-game
-          cp build/windows-64-eclipse/sms.exe windows-game/
-          ldd build/windows-64-eclipse/sms.exe | awk '$3 ~ /^\/mingw64\// { print $3 }' | xargs -r -I{} cp {} windows-game/
-          ls -l windows-game
-      # For testing a change on a Windows machine before it is released.
-      - uses: actions/upload-artifact@v4
-        if: runner.os == 'Windows'
-        with:
-          name: windows-64-eclipse
-          path: Native CI with spaces/port/windows-game
-          retention-days: 7
       # Only main saves: a pull request starts from main's cache, so the
       # repository keeps one archive per job (the Actions cache holds 10 GB).
       - name: Save compiler cache
