@@ -1,0 +1,156 @@
+Reason: port: characters: a character whose archive has a look/ folder (default.bmd on Mario's skeleton, and a .btk) is drawn as that model in the body's place, posed by the body's joints, as the game draws Shadow Mario (screen texture, fog, scrolling texture)
+--- a/src/Player/MarioDraw.cpp
++++ b/src/Player/MarioDraw.cpp
+@@ -30,6 +30,14 @@
+ #include <M3DUtil/InfectiousStrings.hpp>
+ #include <Player/MarioAnimeData.hpp>
+ 
++#ifdef TARGET_PC
++// Port: a character's look (patch zzzzzz-character-04), defined at the end of this file.
++void PortCharacterLookInit(TMario* mario);
++void PortCharacterLookCalc(TMario* mario);
++bool PortCharacterLookView(TMario* mario);
++bool PortCharacterLookEntry(TMario* mario);
++#endif
++
+ TMario* gpMarioForCallBack;
+ 
+ #include <Player/MarioDirtyStrings.hpp>
+@@ -1613,6 +1621,10 @@
+ 	mTrembleModelEffect->init(getM3UModel()->getModel());
+ 
+ 	unk3A4 = new SampleCtrlModelData(mBodyModelData);
++#ifdef TARGET_PC
++	if (isMario())
++		PortCharacterLookInit(this);
++#endif
+ }
+ 
+ void TMario::initMirrorModel()
+@@ -2339,6 +2351,9 @@
+ 			flagOnAllShapes(mRHand4ndModel->getModelData(), J3DShpFlag_Visible);
+ 		}
+ 	}
++#ifdef TARGET_PC
++	PortCharacterLookCalc(this);
++#endif
+ }
+ 
+ // Binding level worth +16 of low region, landing TMario::calcView's frame at
+@@ -2354,6 +2369,9 @@
+ 	// volatile u32 padding[4];
+ 	MTXCopy(graphics->mViewMtx, j3dSys.mViewMtx);
+ 	MarioDrawGetM3UModel(this)->unk8->viewCalc();
++#ifdef TARGET_PC
++	PortCharacterLookView(this);
++#endif
+ 	if (mHandModels[0][0] != nullptr) {
+ 		mHandModels[0][0]->viewCalc();
+ 		mHandModels[0][1]->viewCalc();
+@@ -2379,6 +2397,10 @@
+ // finalDrawInitialize).
+ void TMario::entryModels(JDrama::TGraphics* graphics)
+ {
++#ifdef TARGET_PC
++	// a character's look is drawn in place of the body, the hands and the cap
++	if (!PortCharacterLookEntry(this)) {
++#endif
+ 	mModel->perform(CUE_ENTRY, graphics);
+ 	if (mHandModels[0][0] != nullptr) {
+ 		mHandModels[0][0]->entry();
+@@ -2391,6 +2413,9 @@
+ 	if (mCap != nullptr) {
+ 		mCap->perform(CUE_ENTRY, graphics);
+ 	}
++#ifdef TARGET_PC
++	}
++#endif
+ 
+ 	if (checkStatusType(MARIO_STATUS_FLAG_UNK10000)) {
+ 		mSurfGesso->setLightData(mGroundPlane, mPosition);
+@@ -2806,6 +2831,85 @@
+ 	if (SMSGetMSound())
+ 		SMSGetMSound()->setPlayerInfo(&mario->mPosition, &mario->mPrevPosition, body->getAnmMtx(1),
+ 		                              mario->isMario() ? true : false);
++	PortCharacterLookInit(mario);
++	return true;
++}
++
++#include <M3DUtil/MActor.hpp>
++#include <MarioUtil/ScreenUtil.hpp>
++#include <Strategic/ObjModel.hpp>
++
++// Port: a character's look (patch zzzzzz-character-04). A character whose
++// archive has a look/ folder with a default.bmd on Mario's skeleton is drawn
++// as that model in the body's place, posed by the body's joints each frame, as
++// the game draws Shadow Mario (TEMario::init, TEnemyMario::perform): fog on
++// its materials, the screen's picture as H_kagemario_dummy (the see-through
++// look), the folder's first .btk playing. The body, hands and cap are still
++// posed, for everything that reads them, but not drawn. Made with the player's
++// model, in the heap in force then (the stage's), so a new stage or a swap
++// makes it again.
++static MActor* sPortLook;
++static TMario* sPortLookOwner;
++static bool sPortLookScreen; // the screen's picture is in it
++
++void PortCharacterLookInit(TMario* mario)
++{
++	sPortLook       = nullptr;
++	sPortLookOwner  = nullptr;
++	sPortLookScreen = false;
++	if (!mario || !mario->mModel || !JKRFileLoader::getGlbResource("/mario/look/default.bmd"))
++		return;
++	TMActorKeeper* keeper     = new TMActorKeeper(nullptr, 1);
++	keeper->mModelLoaderFlags = 0x11300000;
++	MActor* look              = keeper->createMActorFromDefaultBmd("/mario/look", 0);
++	if (!look)
++		return;
++	J3DModel* model = look->getModel();
++	if (model->getModelData()->getJointNum() != mario->mModel->getModel()->getModelData()->getJointNum()) {
++		OSReport("[character] look/default.bmd has %d joints, not the body's %d: left out\n",
++		         (int)model->getModelData()->getJointNum(),
++		         (int)mario->mModel->getModel()->getModelData()->getJointNum());
++		return;
++	}
++	for (u16 i = 0; i < model->getModelData()->getMaterialNum(); i++)
++		SMS_InitPacket_Fog(model, i);
++	look->setBtkFromIndex(0);
++	sPortLook      = look;
++	sPortLookOwner = mario;
++	OSReport("[character] drawn as its look model\n");
++}
++
++void PortCharacterLookCalc(TMario* mario)
++{
++	if (!sPortLook || mario != sPortLookOwner)
++		return;
++	J3DModel* look = sPortLook->getModel();
++	// the screen texture is made with the stage's scene, after Mario
++	if (!sPortLookScreen && gpScreenTexture) {
++		gpScreenTexture->replace(look->getModelData(), "H_kagemario_dummy");
++		sPortLookScreen = true;
++	}
++	sPortLook->calcAnm();
++	J3DModel* body = mario->mModel->getModel();
++	for (u16 i = 0; i < body->getModelData()->getJointNum(); ++i)
++		MTXCopy(body->getAnmMtx(i), look->getAnmMtx(i));
++	look->calcWeightEnvelopeMtx();
++}
++
++bool PortCharacterLookView(TMario* mario)
++{
++	if (!sPortLook || mario != sPortLookOwner)
++		return false;
++	sPortLook->viewCalc();
++	return true;
++}
++
++bool PortCharacterLookEntry(TMario* mario)
++{
++	if (!sPortLook || mario != sPortLookOwner)
++		return false;
++	SMS_ResetDamageFogEffect(sPortLook->getModel()->getModelData());
++	sPortLook->entry();
+ 	return true;
+ }
+ #endif
