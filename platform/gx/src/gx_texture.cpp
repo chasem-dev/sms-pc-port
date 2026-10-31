@@ -619,6 +619,7 @@ std::mutex& s_overrideMu = *new std::mutex;
 std::unordered_map<const void*, TexOverride>& s_overrides = *new std::unordered_map<const void*, TexOverride>;
 std::vector<GLuint>& s_overrideDead = *new std::vector<GLuint>;  // to delete on the GL thread
 std::atomic<int> s_overrideCount{0};
+static bool s_rawTextures = false;  // GXPC_SetRawTextures
 
 static GLuint overrideTexture(const uint8_t* ptr, int map, uint32_t w, uint64_t dataHash, int* scale, bool* plain) {
     *plain = false;
@@ -792,7 +793,7 @@ unsigned bindTextureMap(int map, float* outW, float* outH) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, GLint(levels - 1));
     }
     bool plain = false;  // not Mario's look (GXPC_SetTexturePlain)
-    {  // a picture set for this texture's data (GXPC_SetTextureOverride)
+    if (!s_rawTextures) {  // a picture set for this texture's data (GXPC_SetTextureOverride)
         int scale = 0;
         if (GLuint t = overrideTexture(ptr, map, w, e.dataHash, &scale, &plain)) {
             glcBindTexture(map, t);
@@ -801,6 +802,10 @@ unsigned bindTextureMap(int map, float* outW, float* outH) {
         }
     }
     if (upload) e.prompt = promptGlyph(ptr, fmt, w, h);
+    if (s_rawTextures) {  // the game's own image (GXPC_SetRawTextures)
+        glcBindSampler(map, samplerFor(mode0, mode1, levels, -1, e.arbitraryMips));
+        return e.tex;
+    }
     if (e.prompt >= 0) {  // a button picture, drawn as the button prompt in use
         if (GLuint t = promptTexture(e.prompt, map, w, h)) {
             glcBindTexture(map, t);
@@ -859,6 +864,12 @@ extern "C" void GXPC_SetTexturePlain(const void* data, size_t bytes) {
     o.bytes = bytes;
     o.hash = gx::hashBytes(data, bytes);
     gx::s_overrideCount = int(gx::s_overrides.size());
+}
+
+extern "C" void GXPC_SetRawTextures(int on) {
+    if (gx::s_rawTextures == (on != 0)) return;
+    gx::flushBatch();  // what was queued binds its textures as it was drawn
+    gx::s_rawTextures = on != 0;
 }
 
 extern "C" int GXPC_TextureIsPlain(const void* data, size_t bytes) {
