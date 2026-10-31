@@ -1,0 +1,21 @@
+Reason: extensions (ext/, port_ext.h) hear of a Shine touched before its Shine Get (shineTouch, TShine::touchPlayer) and may have the player leave it as it is, or take it with no Shine Get: it goes from the stage (TShine::kill) and Mario plays on. The native mod API's SMS_EV_SHINE_TOUCH (API 1.6 beta 2).
+--- a/src/MoveBG/Item.cpp
++++ b/src/MoveBG/Item.cpp
+@@ -813,6 +813,17 @@
+ 
+ void TShine::touchPlayer(THitActor* actor)
+ {
++#ifdef TARGET_PC
++	// extensions may have him leave it as it is (it is touched again), or
++	// take it with no Shine Get: it goes, and he plays on (port_ext.h)
++	switch (port_ext_shine_touch(actor, (THitActor*)this)) {
++	case PORT_SHINE_TOUCH_IGNORE:
++		return;
++	case PORT_SHINE_TOUCH_QUIET:
++		kill();
++		return;
++	}
++#endif
+ 	actor->receiveMessage(this, HIT_MESSAGE_ATTACK);
+ 	gpLightManager->setEffectLightPos2(200000.0f, 500000.0f, 200000.0f);
+ 	SMSGetMSound()->startSoundActor(MSD_SE_SY_GET_SHINE, &mPosition, 0, nullptr,

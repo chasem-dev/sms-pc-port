@@ -1,0 +1,25 @@
+Reason: the warp menu's and a save state's warps (TMarDirector::setNextStage from the frame loop) say so to extensions (port_ext_stage_change_by): they are not the stage's way out, which mods may refuse or redirect; the native mod API reports them as SMS_LEAVE_WARP and SMS_LEAVE_STATE_LOAD (API 1.6 beta 2)
+--- a/src/System/Application.cpp
++++ b/src/System/Application.cpp
+@@ -1004,7 +1004,10 @@
+ 		return;
+ 	OSReport("[warp] area %d episode %d\n", area, episode);
+ 	TFlagManager::getInstance()->setFlag(0x40003, episode);
++	// the warp menu's, not the stage's way out (port_ext.h)
++	port_ext_stage_change_by = PORT_STAGE_CHANGE_WARP_MENU;
+ 	dir->setNextStage((u16)(((area + 1) << 8) | episode), nullptr);
++	port_ext_stage_change_by = PORT_STAGE_CHANGE_GAME;
+ }
+ #endif
+ 
+@@ -1196,7 +1199,10 @@
+ 	ApplicationStateSyncConsole(dir);
+ 	OSReport("[savestate] warping to area %d episode %d\n", (int)sStateLoad.area, (int)sStateLoad.episode);
+ 	TFlagManager::getInstance()->setFlag(0x40003, sStateLoad.episode);
++	// a save state's, not the stage's way out (port_ext.h)
++	port_ext_stage_change_by = PORT_STAGE_CHANGE_STATE_LOAD;
+ 	dir->setNextStage((u16)(((sStateLoad.area + 1) << 8) | sStateLoad.episode), nullptr);
++	port_ext_stage_change_by = PORT_STAGE_CHANGE_GAME;
+ }
+ 
+ // The game remembers when its file was last saved (TFlagManager's save time)
