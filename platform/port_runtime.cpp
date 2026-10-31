@@ -52,6 +52,54 @@ __attribute__((dllexport)) int AmdPowerXpressRequestHighPerformance = 1;
 }
 #endif
 
+#ifdef _WIN32
+// Windows 11 can run a program at reduced speed (power throttling, EcoQoS):
+// lower clocks, its threads kept on a hybrid CPU's efficiency cores, and its
+// timer requests ignored while its window is covered. Windows decides that
+// from heuristics, and on a laptop on battery or in a balanced power mode it
+// can choose the game: the game's and the renderer's time per frame then
+// doubles or more, in any build, and the port skips showing frames to keep the
+// game at speed. So the game asks to be left out (SetProcessInformation,
+// ProcessPowerThrottling). Windows before 10 1709 has no such request, and
+// Windows 10 doesn't know the timer flag (asked again without it); either way
+// the game runs as before. SMS_POWER_THROTTLING=1 lets Windows throttle it, as
+// before, for comparing.
+static void windows_power_requests()
+{
+	if (const char* e = getenv("SMS_POWER_THROTTLING"))
+		if (*e && strcmp(e, "0") != 0) {
+			port_log("[port] Windows power throttling: left to Windows (SMS_POWER_THROTTLING)\n");
+			return;
+		}
+	struct PowerThrottling {  // PROCESS_POWER_THROTTLING_STATE, which older MinGW headers lack
+		ULONG Version, ControlMask, StateMask;
+	};
+	const int kProcessPowerThrottling = 4;            // PROCESS_INFORMATION_CLASS
+	const ULONG kVersion = 1, kExecutionSpeed = 0x1,  // PROCESS_POWER_THROTTLING_*
+	    kIgnoreTimerResolution = 0x4;
+	typedef BOOL(WINAPI * SetProcessInformationFn)(HANDLE, int, LPVOID, DWORD);
+	HMODULE kernel = GetModuleHandleA("kernel32.dll");
+	auto set = kernel ? reinterpret_cast<SetProcessInformationFn>(
+	                        reinterpret_cast<void*>(GetProcAddress(kernel, "SetProcessInformation")))
+	                  : nullptr;
+	if (!set) {
+		port_log("[port] Windows power throttling: this Windows can't be asked to leave the game alone\n");
+		return;
+	}
+	// Control the flags, with their state off: never throttle, never ignore the timer.
+	PowerThrottling state = { kVersion, kExecutionSpeed | kIgnoreTimerResolution, 0 };
+	if (set(GetCurrentProcess(), kProcessPowerThrottling, &state, sizeof state)) {
+		port_log("[port] Windows power throttling: off for the game (full speed, timer kept)\n");
+		return;
+	}
+	state.ControlMask = kExecutionSpeed;
+	if (set(GetCurrentProcess(), kProcessPowerThrottling, &state, sizeof state))
+		port_log("[port] Windows power throttling: off for the game (full speed)\n");
+	else
+		port_log("[port] Windows power throttling: not changed (error %lu)\n", (unsigned long)GetLastError());
+}
+#endif
+
 // Game source named by a bare argument or SMS_DISC_ROOT (a disc image or an
 // extracted files/ folder); SMS_DISC_IMAGE overrides it. With none of them,
 // the image bundled into the executable (tools/bundle_disc.py) is used, else
@@ -976,6 +1024,9 @@ extern "C" void port_init(int argc, char** argv)
 #endif
 	load_settings();
 	pick_glx_vendor();
+#ifdef _WIN32
+	windows_power_requests();
+#endif
 	if (const char* m = getenv("SMS_SKIP_MOVIES"))
 		port_skip_movies = *m && strcmp(m, "0") != 0;
 	if (const char* i = getenv("SMS_SKIP_INTRO"))
