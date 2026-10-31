@@ -96,6 +96,9 @@ typedef struct PortExtension {
 	// TMario::changePlayerStatus(*status, *arg, force) on any TMario (the
 	// player's, or Shadow Mario's): the hook may change the status asked
 	// for and its argument, or return 1 to refuse it (the call returns 0).
+	// Also the statuses TMario sets without it (a spin jump started in the
+	// air, considerJumpRotate; a jump's throw landing, jumpingThrow): set as
+	// the game sets them, with the changes; refused, he stays as he is.
 	int (*playerStatus)(void* mario, unsigned* status, unsigned* arg, int force);
 	// TMario::decHP(*amount) on any TMario: the hook may change the amount
 	// (health, or air under water), or return 1 to stop it.
@@ -123,7 +126,8 @@ typedef struct PortExtension {
 	// TMario::changePlayerStatus on any TMario took a new status: `from` is
 	// the one he had, `to` the one he has now (after the game's own rewrite,
 	// a jump on a bouncy floor, say), with its argument. Also when a spin
-	// jump starts in the air (TMario::considerJumpRotate).
+	// jump starts in the air (TMario::considerJumpRotate), and a jump's
+	// throw lands (TMario::jumpingThrow).
 	void (*playerStatusChanged)(void* mario, unsigned from, unsigned to, unsigned arg);
 	// TMario::incHP(*amount) on any TMario, or a pickup that fills his health
 	// at once (a 1-up, a Shine, his cap): the hook may change the amount, or
@@ -284,7 +288,30 @@ typedef struct PortExtension {
 	// card taken out), before the game acts on the choice. `isEmpty`: the file
 	// has no game ("New").
 	void (*fileMenu)(int file, int isEmpty, int open, int item);
+	// A world's episode select is opening (TSelectMenu::initData): `area` the
+	// world's, `*offered` the episodes it offers from the first and `*first`
+	// the one its cursor starts on, which the hook may change; `maxOffered`
+	// the most it can offer, 0 when the count can't change (a
+	// BetterSunshineEngine select: its code fills the select's arrays).
+	void (*episodeSelect)(int area, int* offered, int* first, int maxOffered);
+	// A TMario touched a TShine he is about to take (TMario::receiveMessage),
+	// before its Shine Get: return PORT_SHINE_TOUCH_* (GET as the game does).
+	int (*shineTouch)(void* mario, void* shine);
 } PortExtension;
+
+// shineTouch's answers
+enum {
+	PORT_SHINE_TOUCH_GET,    // the game's: the Shine Get
+	PORT_SHINE_TOUCH_IGNORE, // he leaves it as it is (the touch comes again)
+	PORT_SHINE_TOUCH_QUIET   // it goes from the stage; he plays on, no Shine Get
+};
+
+// port_ext_stage_change_by: who asked for the stage change under way
+enum {
+	PORT_STAGE_CHANGE_GAME,      // the game (a pipe, a painting, a script), or an extension's own
+	PORT_STAGE_CHANGE_WARP_MENU, // the port's warp menu (decomp-patches/zzz-warp-01-menu.patch)
+	PORT_STAGE_CHANGE_STATE_LOAD // a save state's load, warping to its stage (zzzz-savestate-01-frame.patch)
+};
 
 // fluddRefill's `source`
 enum {
@@ -403,6 +430,8 @@ int port_ext_file_starting(void);
 // Each step of the file select: the file whose menu takes the player's choice
 // (-1 none), and the item chosen or the cursor's; fileMenu as that changes.
 void port_ext_file_menu(int file, int isEmpty, int item);
+void port_ext_episode_select(int area, int* offered, int* first, int maxOffered);
+int port_ext_shine_touch(void* mario, void* shine);
 int port_ext_player_message(void* mario, void* sender, unsigned message);
 void port_ext_player_mount(void* mario, int mount, int on, void* object);
 void port_ext_player_water(void* mario, int entered, float surfaceY);
@@ -445,6 +474,10 @@ extern void* port_ext_damage_source;
 // TMario::loserExec by a caller that knows it (sinking goop); OTHER: worked
 // out from Mario as he dies.
 extern int port_ext_death_cause;
+// Who asks for the stage change (PORT_STAGE_CHANGE_*), set around a
+// TMarDirector::setNextStage the port makes itself, so allowNextStage and
+// what follows know it is not the game's way out; GAME otherwise.
+extern int port_ext_stage_change_by;
 
 // ------------------------------------------------------------------ the HUD
 // Parts of the game's own HUD (TGCConsole2) left out of its drawing. Each

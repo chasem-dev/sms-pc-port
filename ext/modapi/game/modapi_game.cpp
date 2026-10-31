@@ -53,7 +53,7 @@ bool s_started;    // SMS_EV_STAGE_START sent for this stage
 
 // Why the game leaves (SmsEvStage.reason): what asked since the stage was set
 // up, read when it goes (chooseNextStage); kept for the next stage's events.
-bool s_wayOutAsked, s_warpAsked, s_missAsked;
+bool s_wayOutAsked, s_warpAsked, s_missAsked, s_stateLoadAsked;
 int s_lastReason = SMS_LEAVE_OTHER, s_lastShine = -1;
 int s_stageShine = -1; // the last Shine collected in this stage
 
@@ -139,7 +139,7 @@ void stageSetup()
 	s_stageReady  = true;
 	s_tick        = 0;
 	s_started     = false;
-	s_wayOutAsked = s_warpAsked = s_missAsked = false;
+	s_wayOutAsked = s_warpAsked = s_missAsked = s_stateLoadAsked = false;
 	s_stageShine  = -1;
 	SmsEvStage ev;
 	ev.area    = gpApplication.mCurrArea.unk0;
@@ -167,6 +167,16 @@ void stageStart()
 
 int allowNextStage(unsigned code, void* actor)
 {
+	// the port's warp menu and a save state's load are not the stage's way
+	// out: mods neither refuse them nor see them as one
+	if (port_ext_stage_change_by == PORT_STAGE_CHANGE_WARP_MENU) {
+		s_warpAsked = true;
+		return 1;
+	}
+	if (port_ext_stage_change_by == PORT_STAGE_CHANGE_STATE_LOAD) {
+		s_stateLoadAsked = true;
+		return 1;
+	}
 	if (modh_wants(SMS_EV_STAGE_EXIT_REQUEST)) {
 		SmsEvStageExit ev;
 		ev.code    = code;
@@ -194,6 +204,8 @@ int stageShine()
 int leaveReason()
 {
 	TMarDirector* d = gpMarDirector;
+	if (s_stateLoadAsked)
+		return SMS_LEAVE_STATE_LOAD;
 	if (s_missAsked)
 		return SMS_LEAVE_LIFE_LOST;
 	if (d && (d->mState == TMarDirector::STATE_UNK7 || (d->mState == TMarDirector::STATE_CARD_SAVE && d->unk261 == 7)))
@@ -239,7 +251,11 @@ void chooseNextStage()
 	const int reason = leaveReason();
 	const int shine  = reason == SMS_LEAVE_SHINE ? stageShine() : -1;
 	TGameSequence& next = gpApplication.mNextArea;
-	if (stageEvent(SMS_EV_STAGE_LEAVING, next, reason, shine) && next.unk1 != 0xFF && isWorldEntry(next.unk0)) {
+	if (reason == SMS_LEAVE_STATE_LOAD) {
+		// a save state goes back to its own stage: told, not changed
+		TGameSequence told = next;
+		stageEvent(SMS_EV_STAGE_LEAVING, told, reason, shine);
+	} else if (stageEvent(SMS_EV_STAGE_LEAVING, next, reason, shine) && next.unk1 != 0xFF && isWorldEntry(next.unk0)) {
 		// a mod named a world's episode: as its episode select would have
 		// (TSelectDir records the choice), and as a new visit starts, with no coins
 		// (TMarDirector::moveStage resets them only on going to another world)
@@ -270,6 +286,8 @@ void chooseStageLoad()
 	ev.from_area    = prev.unk0;
 	ev.from_episode = prev.unk1;
 	modh_dispatch(SMS_EV_STAGE_LOADING, &ev, sizeof ev);
+	if (s_lastReason == SMS_LEAVE_STATE_LOAD)
+		return; // a save state's own stage: told, not changed
 	if (!port_ext_load_instead(ev.area, ev.episode))
 		fprintf(stderr, "[mods] SMS_EV_STAGE_LOADING: area %d, episode %d not taken (no such stage, or the title); "
 		                "loading area %d, episode %d\n",
@@ -976,6 +994,42 @@ int fileStarting(int file, int isNew)
 	return modh_dispatch(SMS_EV_FILE_STARTING, &ev, sizeof ev);
 }
 
+void episodeSelect(int area, int* offered, int* first, int maxOffered)
+{
+	if (!modh_wants(SMS_EV_EPISODE_SELECT))
+		return;
+	SmsEvEpisodeSelect ev;
+	ev.area        = area;
+	ev.offered     = *offered;
+	ev.first       = *first;
+	ev.max_offered = maxOffered;
+	modh_dispatch(SMS_EV_EPISODE_SELECT, &ev, sizeof ev);
+	if (maxOffered > 0 && ev.offered >= 1 && ev.offered <= maxOffered)
+		*offered = ev.offered;
+	// the cursor on an episode offered: the mod's, else the game's as near
+	if (ev.first >= 0 && ev.first < *offered)
+		*first = ev.first;
+	else if (*first >= *offered)
+		*first = *offered - 1;
+}
+
+// SMS_SHINE_TAKE_QUIET: TShine::touchPlayer kills it instead of the Shine Get
+int shineTouch(void* m, void* p)
+{
+	if (!p || m != (void*)mario() || !modh_wants(SMS_EV_SHINE_TOUCH))
+		return PORT_SHINE_TOUCH_GET;
+	TShine* sh = (TShine*)(THitActor*)p;
+	SmsEvShineTouch ev;
+	ev.object = obj(sh);
+	ev.shine  = (int)sh->getEventId();
+	ev.had    = TFlagManager::getInstance()->getShineFlag((u8)ev.shine) ? 1 : 0;
+	vecOf(&ev.position, sh->mPosition);
+	ev.take = SMS_SHINE_TAKE_GET;
+	if (modh_dispatch(SMS_EV_SHINE_TOUCH, &ev, sizeof ev))
+		return PORT_SHINE_TOUCH_IGNORE;
+	return ev.take == SMS_SHINE_TAKE_QUIET ? PORT_SHINE_TOUCH_QUIET : PORT_SHINE_TOUCH_GET;
+}
+
 void fileMenu(int file, int isEmpty, int open, int item)
 {
 	if (!modh_wants(SMS_EV_FILE_MENU))
@@ -1173,6 +1227,8 @@ struct Register {
 		e.episodeShine        = episodeShine;
 		e.fileStarting        = fileStarting;
 		e.fileMenu            = fileMenu;
+		e.episodeSelect       = episodeSelect;
+		e.shineTouch          = shineTouch;
 		e.playerAim           = playerAim;
 		e.hiddenPlayerParts   = hiddenPlayerParts;
 		port_ext_register(&s_extension);

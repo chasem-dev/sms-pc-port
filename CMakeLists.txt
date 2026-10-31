@@ -381,7 +381,7 @@ file(WRITE ${CMAKE_BINARY_DIR}/game_new_syms.txt
   "${_object_prefix}_Znw${_sz} __sms_game_new\n${_object_prefix}_Zna${_sz} __sms_game_new_array\n${_object_prefix}_ZdlPv __sms_game_delete\n${_object_prefix}_ZdaPv __sms_game_delete_array\n")
 add_custom_command(TARGET sms_game POST_BUILD
   COMMAND ${SMS_OBJCOPY} --redefine-syms=${CMAKE_BINARY_DIR}/game_new_syms.txt $<TARGET_FILE:sms_game>
-  COMMENT "Renaming the game's global operator new/delete")
+  COMMENT "Renaming the game's global operator new/delete" VERBATIM)
 
 # --- Platform layer ---------------------------------------------------------
 file(GLOB_RECURSE SMS_PLATFORM_SOURCES CONFIGURE_DEPENDS
@@ -498,12 +498,12 @@ add_custom_command(TARGET sms POST_BUILD
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/savestate_ranges.py
     --map ${CMAKE_BINARY_DIR}/sms.map --exe $<TARGET_FILE:sms>
     --archive libsms_game.a --archive libsms_eclipse.a
-  COMMENT "Recording the game's data for save states")
+  COMMENT "Recording the game's data for save states" VERBATIM)
 if(SMS_MAC_ARM64)
   # That rewrote the executable after the linker signed it, and arm64 macOS
   # kills a process whose signature does not match: sign it again (ad hoc).
   add_custom_command(TARGET sms POST_BUILD COMMAND codesign -f -s - $<TARGET_FILE:sms>
-    COMMENT "Signing sms (ad hoc)")
+    COMMENT "Signing sms (ad hoc)" VERBATIM)
 endif()
 find_package(Threads REQUIRED)
 if(WIN32 AND SMS_ARCH STREQUAL "64")
