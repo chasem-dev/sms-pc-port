@@ -1,0 +1,93 @@
+Reason: port: characters: a character archive's character/fludd.bin (scale, offset, tilt) sizes and places the player's FLUDD, so a small character wears a smaller one
+--- a/src/Player/MarioDraw.cpp
++++ b/src/Player/MarioDraw.cpp
+@@ -2852,8 +2852,63 @@
+ static TMario* sPortLookOwner;
+ static bool sPortLookScreen; // the screen's picture is in it
+ 
++// Port: a character's FLUDD (patch zzzzzz-character-05). FLUDD is made for
++// Mario and hangs from the chest joint; a character archive with
++// character/fludd.bin (big-endian floats: scale, an x y z offset in the chest
++// joint's frame -- Sunshine's chest has x up the spine, y forward and z to the
++// side -- and optionally a tilt back in degrees, about z as TWaterGun's own roll)
++// has the player's FLUDD drawn that size, that far from the joint and leaning
++// back that much more, so a small character (a Toad) wears a smaller one, its
++// belt round the body and its tank out from under a big head.
++static TMario* sPortFluddOwner;
++static f32 sPortFluddScale = 1.0f;
++static f32 sPortFluddOffset[3];
++static f32 sPortFluddTilt;
++
++static void PortCharacterFluddInit(TMario* mario)
++{
++	sPortFluddOwner = mario;
++	sPortFluddScale = 1.0f;
++	sPortFluddOffset[0] = sPortFluddOffset[1] = sPortFluddOffset[2] = 0.0f;
++	sPortFluddTilt = 0.0f;
++	const u8* data = (const u8*)JKRFileLoader::getGlbResource("/mario/character/fludd.bin");
++	const long size = data ? JKRFileLoader::getResSize((void*)data, nullptr) : 0;
++	if (size < 16)
++		return;
++	f32 v[5] = {};
++	for (int i = 0; i < (size >= 20 ? 5 : 4); i++) {
++		u32 bits = (u32)data[i * 4] << 24 | (u32)data[i * 4 + 1] << 16 | (u32)data[i * 4 + 2] << 8 | data[i * 4 + 3];
++		memcpy(&v[i], &bits, 4);
++	}
++	if (v[0] > 0.1f && v[0] < 4.0f)
++		sPortFluddScale = v[0];
++	for (int i = 0; i < 3; i++)
++		sPortFluddOffset[i] = v[i + 1];
++	sPortFluddTilt = v[4];
++	OSReport("[character] FLUDD at %.2f of its size, %.1f %.1f %.1f from the chest, tilted %.0f\n", sPortFluddScale,
++	         sPortFluddOffset[0], sPortFluddOffset[1], sPortFluddOffset[2], sPortFluddTilt);
++}
++
++// In place of fludd->setBaseTRMtx(chest) (TMario::perform, patch to MarioMain.cpp).
++void PortCharacterFluddPlace(TMario* mario, TWaterGun* fludd, MtxPtr chest)
++{
++	if (mario != sPortFluddOwner) {
++		fludd->setBaseTRMtx(chest);
++		return;
++	}
++	Mtx at, tilt;
++	MTXTrans(at, sPortFluddOffset[0], sPortFluddOffset[1], sPortFluddOffset[2]);
++	MTXConcat(chest, at, at);
++	MTXRotRad(tilt, 'z', -sPortFluddTilt * 3.14159265f / 180.0f);
++	MTXConcat(at, tilt, at);
++	fludd->setBaseTRMtx(at);
++	Vec scale = { sPortFluddScale, sPortFluddScale, sPortFluddScale };
++	fludd->mFluddModel->getModel()->setBaseScale(scale);
++}
++
+ void PortCharacterLookInit(TMario* mario)
+ {
++	PortCharacterFluddInit(mario);
+ 	sPortLook       = nullptr;
+ 	sPortLookOwner  = nullptr;
+ 	sPortLookScreen = false;
+--- a/src/Player/MarioMain.cpp
++++ b/src/Player/MarioMain.cpp
+@@ -4,6 +4,9 @@
+ #endif
+ #include <Player/MarioCap.hpp>
+ #include <Player/WaterGun.hpp>
++#ifdef TARGET_PC
++void PortCharacterFluddPlace(TMario* mario, TWaterGun* fludd, MtxPtr chest);
++#endif
+ #include <Player/Yoshi.hpp>
+ #include <System/Resolution.hpp>
+ #include <System/MarDirector.hpp>
+@@ -172,8 +175,13 @@
+ 		animSound();
+ 
+ 		if (MarioMainGetFludd(this) != nullptr) {
++#ifdef TARGET_PC
++			// a character's own FLUDD size and place (patch zzzzzz-character-05, MarioDraw.cpp)
++			PortCharacterFluddPlace(this, MarioMainGetFludd(this), getM3UModel()->getModel()->getAnmMtx(mJointIdChest));
++#else
+ 			MarioMainGetFludd(this)->setBaseTRMtx(
+ 			    getM3UModel()->getModel()->getAnmMtx(mJointIdChest));
++#endif
+ 			MarioMainGetFludd(this)->perform(CUE_CALC_ANIM, graphics);
+ 		}
+ 
