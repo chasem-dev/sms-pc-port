@@ -17,6 +17,8 @@ extern "C" {
 
 int port_character_count(void);              // Mario and every archive found (1: none found)
 const char* port_character_name(int index);  // "Mario", "Luigi", ...
+const char* port_character_id(int index);    // "mario", the pack's folder name ("luigi"), ...
+int port_character_find(const char* id);     // the index of the character with this id; -1 when there is none
 const char* port_character_path(int index);  // the archive's file; NULL for Mario
 const char* port_character_voice_dir(int index); // its voice folder (ends in /); NULL without one
 int port_character_selected(void);

@@ -161,6 +161,21 @@ const char* port_character_name(int index)
 	return index >= 0 && index < (int)g_list.size() ? g_list[index].name.c_str() : "";
 }
 
+const char* port_character_id(int index)
+{
+	list();
+	return index >= 0 && index < (int)g_list.size() ? g_list[index].id.c_str() : "";
+}
+
+int port_character_find(const char* id)
+{
+	list();
+	for (size_t i = 0; id && i < g_list.size(); i++)
+		if (!strcasecmp(g_list[i].id.c_str(), id))
+			return (int)i;
+	return -1;
+}
+
 const char* port_character_path(int index)
 {
 	list();

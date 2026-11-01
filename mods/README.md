@@ -92,6 +92,7 @@ A loose `<id>.szs`, with `<id>.txt` and `<id>.voice/` beside it, is read as a pa
 In the game, F4 (`CHARACTER_NEXT` in `bindings.txt`) plays as the next character, in single player only (not in an online game or split-screen co-op, as the settings menu's Character option is not): in a stage, at once and in place (the model, animations, caps and voice are made again from the pack where Mario stands, in the middle of what he is doing, and the area carries on), and outside a stage the next area brings it.
 Each switch takes about 2 MB of the stage's memory until the area ends; when too little is left, the area loads again with the new character instead (the coins and anything else done in the area start again, as with Exit Area).
 Shadow Mario keeps the look he loaded with until the next area.
+Playing together ([ext/multiplayer](../ext/multiplayer/README.md)), the others see a player as their character when their game has a pack of the same id.
 It does nothing while the game is paused, in a cutscene or a conversation, or while the area is changing.
 The pause menu's settings have it too (Gameplay, Character), from the next area; started by SMS Launcher, that choice is kept for the next game.
 

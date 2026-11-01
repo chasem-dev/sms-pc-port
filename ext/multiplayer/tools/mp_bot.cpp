@@ -21,6 +21,8 @@
 // --body N wears Eclipse character N's model (MPG_BODY_*: 0 Mario, 1 Luigi,
 // 2 Il Piantissimo, 3 Shadow Mario), whatever the host plays.
 // --sunglasses wears the sunglasses; --no-sunglasses never does.
+// --character ID plays as the launcher's character ID (a pack in
+// mods/characters), as the others draw it.
 #include "../mp_game_api.h"
 
 #include <chrono>
@@ -35,7 +37,7 @@
 int main(int argc, char** argv)
 {
 	if (argc < 2) {
-		fprintf(stderr, "usage: mp_bot ADDRESS[:PORT] [--name NAME] [--offset X,Z] [--seconds N] [--coins N]\n");
+		fprintf(stderr, "usage: mp_bot ADDRESS[:PORT] [--name NAME] [--offset X,Z] [--seconds N] [--coins N] [--character ID]\n");
 		return 2;
 	}
 	const char* name = "Bot";
@@ -50,6 +52,7 @@ int main(int argc, char** argv)
 	float circle   = 0.0f;
 	int body       = -1;
 	int sunglasses = -1;
+	const char* character = ""; // a pack in mods/characters the others draw it as
 	for (int i = 2; i < argc; i++) {
 		if (!strcmp(argv[i], "--name") && i + 1 < argc)
 			name = argv[++i];
@@ -79,6 +82,8 @@ int main(int argc, char** argv)
 			sunglasses = 1;
 		else if (!strcmp(argv[i], "--no-sunglasses"))
 			sunglasses = 0;
+		else if (!strcmp(argv[i], "--character") && i + 1 < argc)
+			character = argv[++i];
 	}
 	setenv("SMS_MULTIPLAYER", "join", 1);
 	setenv("SMS_MULTIPLAYER_ADDRESS", argv[1], 1);
@@ -88,6 +93,7 @@ int main(int argc, char** argv)
 		mpg_set_build(build);
 	if (mpg_start() != MPG_ROLE_CLIENT)
 		return 1;
+	mpg_set_character(character);
 
 	std::vector<int32_t> flags(mpg_flag_count(), 0);
 	int coinIndex = -1;
