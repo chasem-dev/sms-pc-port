@@ -271,7 +271,6 @@ struct Original {
 	std::vector<uint8_t> data;
 };
 std::vector<Original> g_original; // Mario's, kept the first time
-int g_applied = 0;                 // the character whose voice is in place (0: Mario)
 
 void restore(PortCharacterVoiceWave* waves, int count)
 {
@@ -300,24 +299,23 @@ int port_character_voice_waves(PortCharacterVoiceWave* waves, int max)
 	return n;
 }
 
-void port_character_voice_apply(int index, PortCharacterVoiceWave* waves, int count)
+int port_character_voice_apply(int index, int applied, PortCharacterVoiceWave* waves, int count)
 {
 	if (g_original.empty()) {
 		for (int i = 0; i < count; i++) {
 			const uint8_t* p = port_aram_ptr(waves[i].aram + waves[i].offset);
 			if (!p)
-				return;
+				return 0;
 			g_original.push_back({ waves[i], std::vector<uint8_t>(p, p + waves[i].size) });
 		}
 	}
-	if (index == g_applied || (int)g_original.size() != count)
-		return;
+	if (index == applied || (int)g_original.size() != count)
+		return index == applied;
 	restore(waves, count);
-	g_applied = index;
 
 	const char* voice = port_character_voice_dir(index);
 	if (!voice)
-		return;
+		return 1;
 	const std::string dir = voice;
 
 	// Each wave's file: the first of its cues that has one.
@@ -406,6 +404,7 @@ void port_character_voice_apply(int index, PortCharacterVoiceWave* waves, int co
 	}
 	port_log("[character] %s's voice: %d of %d voice waves from %d sounds in %s%s\n", port_character_name(index),
 	         replaced, count, placed, dir.c_str(), cut ? " (the last cut short: no more room)" : "");
+	return 1;
 }
 
 } // extern "C"

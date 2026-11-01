@@ -33,6 +33,10 @@ int port_character_switching(void);
 
 // CHARACTER_NEXT presses (platform/pad), counted as the radar's MAP is.
 extern int port_character_presses;
+// Whether CHARACTER_NEXT was pressed since the last call. The count of presses
+// taken stays here, out of game memory, so loading a save state (which puts
+// game memory back) never turns an old press into a new one.
+int port_character_take_press(void);
 
 // Voices (platform/misc/port_character_voice.cpp): WAV files in the pack's
 // voice folder, named after Mario's voice cues, in place of his voice
@@ -48,8 +52,11 @@ typedef struct PortCharacterVoiceWave {
 } PortCharacterVoiceWave;
 int port_character_voice_waves(PortCharacterVoiceWave* waves, int max); // fills the ids; returns how many
 // Puts the character's voice in place (Mario's for index 0 or no files): ARAM
-// and `waves`. Does nothing when that character's voice is already in place.
-void port_character_voice_apply(int index, PortCharacterVoiceWave* waves, int count);
+// and `waves`. `applied` is the character whose voice is in place now (-1:
+// one not in the list); the game keeps it in its own memory, as ARAM and the
+// waves' entries are, so a save state brings back all three together. Does
+// nothing when `index` is `applied`. Returns whether `index`'s voice is in place.
+int port_character_voice_apply(int index, int applied, PortCharacterVoiceWave* waves, int count);
 
 #ifdef __cplusplus
 }

@@ -149,6 +149,15 @@ extern "C" {
 
 int port_character_presses = 0;
 
+int port_character_take_press(void)
+{
+	static int taken;
+	if (port_character_presses == taken)
+		return 0;
+	taken = port_character_presses;
+	return 1;
+}
+
 int port_character_count(void)
 {
 	list();
