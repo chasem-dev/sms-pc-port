@@ -16,7 +16,10 @@
 // in this game's own Mario's look (mpg_dress_plain). With Super Mario Eclipse,
 // a player who chose another character (Luigi, Il Piantissimo, Shadow Mario)
 // wears that character's model, from its archive on the disc, in its own
-// colours; and everyone wears the sunglasses when theirs are on.
+// colours; and everyone wears the sunglasses when theirs are on. A player who
+// plays as one of the launcher's characters (a pack in mods/characters, told
+// by mpg_player_character) wears that pack's model the same way, from this
+// game's copy of it, with its own animations and FLUDD place.
 
 #include "../mp_game_api.h"
 #include <Strategic/HitActor.hpp>
@@ -43,6 +46,12 @@ unsigned MpStageNumber();
 void MpEmitWater(int slot, const MpgPose& pose, f32* carry);
 // A rotation matrix's quaternion (x, y, z, w).
 void MpMtxToQuat(const f32 (*m)[4], f32 q[4]);
+
+// Whose model a puppet wears: Eclipse's characters (MPG_BODY_*), then the
+// launcher's, body MPG_BODIES - 1 + n for character n (port_character.h's
+// index, from 1).
+const int kMpPacks  = 28;
+const int kMpBodies = MPG_BODIES + kMpPacks;
 
 class TMpPuppet : public THitActor {
 public:
@@ -75,6 +84,7 @@ private:
 	void applyPose(JDrama::TGraphics* graphics);
 	void blendPoses(const MpgPose& a, const MpgPose& b, f32 t, MpgPose* out);
 	void showHands(int hand);
+	int wantedBody(const MpgPose* pose);
 	bool buildBody(int body);
 	void keepBody();
 	void takeBody(int body);
@@ -114,7 +124,7 @@ private:
 	J3DModel* mHands[2][2];  // [ma_hnd2, ma_hnd3][right, left]
 	J3DModel* mCap[2];       // ma_cap1 (cap), ma_cap3 (hair, capless)
 	J3DModel* mGlasses;      // ma_glass1 (the sunglasses), or null
-	int mBody;               // whose model it wears (MPG_BODY_*)
+	int mBody;               // whose model it wears (kMpBodies)
 	// each body made in this stage (keepBody), the one worn in the members above
 	struct Body {
 		M3UModelMario* model;
@@ -123,9 +133,13 @@ private:
 		J3DModel* cap[2];
 		J3DModel* glasses;
 		u16 joints[5]; // chest, hands R and L, head, M_head
+		f32 fludd[5];  // its FLUDD's size, offset from the chest and tilt (character/fludd.bin)
 	};
-	Body mBodies[MPG_BODIES];
-	u8 mNoBody;              // bodies that could not be made in this stage (bit n: body n)
+	Body mBodies[kMpBodies];
+	u32 mNoBody;             // bodies that could not be made in this stage (bit n: body n)
+	f32 mFluddPlace[5];      // the worn body's FLUDD place (Body::fludd)
+	u32 mPackVersion;        // mpg_characters_version when mPackBody was found
+	int mPackBody;           // their launcher character's body, or -1 (none, or not in this game)
 	JKRHeap* mHeap;          // the stage's, where its models are made
 	MActor* mFludd;
 	J3DModelData* mFluddData; // this puppet's own copy of FLUDD's, or null when it shares Mario's

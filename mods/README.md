@@ -71,6 +71,39 @@ The log names each mod and how many files it replaced and added.
 This covers mods that only change data.
 Mods that also change the game's code, such as Super Mario Eclipse, need that code ported too; see [docs/ECLIPSE.md](../docs/ECLIPSE.md).
 
+## characters/: other characters
+
+Each character is a pack, a folder `mods/characters/<id>/` with its model and its voice:
+
+```
+mods/characters/luigi/
+  model.szs     a whole replacement for Mario's archive (/data/mario.szs)
+  name.txt      the name to show (otherwise the id, with a capital)
+  voice/        WAV files for Mario's voice cues (optional)
+```
+
+`model.szs` holds his model (`bmd/ma_mdl1.bmd` on his skeleton), the hand and cap models and the animations, laid out as the disc's.
+A `character/fludd.bin` in `model.szs` (big-endian floats: scale, an offset in the chest joint's frame, where Sunshine's chest has x up the spine, y forward and z to the side, and a tilt back in degrees) has the character's FLUDD drawn at that size, that far from the chest and leaning back that much more than the game leans it: a small character wears a smaller one. SMS Launcher's Toads have FLUDD at 0.6 of its size, 8 lower, 7 forward and 35 degrees further back, the belt round the waist and the tank out from under the cap.
+A `look/` folder in `model.szs` (`look/default.bmd`, a model on Mario's 29 joints, and any `.btk`) makes the character drawn as that model in place of the body, hands and cap, posed by the body's joints, as the game draws Shadow Mario: fog on its materials, the screen's picture in its `H_kagemario_dummy` texture, its first `.btk` playing. SMS Launcher makes Shadow Mario this way, from the plaza's own Shadow Mario (`kagemario/default.bmd` and `kagemario_scroll.btk` in `data/scene/dolpic1.szs`) on the player's disc.
+The characters are Mario (the disc's archive, or a game-file mod's `data/mario.szs`) and then each pack, by id.
+A loose `<id>.szs`, with `<id>.txt` and `<id>.voice/` beside it, is read as a pack too.
+`character = <id>` in `settings.txt` (`SMS_CHARACTER`) plays as one from the start.
+
+In the game, F4 (`CHARACTER_NEXT` in `bindings.txt`) plays as the next character, in single player only (not in an online game or split-screen co-op, as the settings menu's Character option is not): in a stage, at once and in place (the model, animations, caps and voice are made again from the pack where Mario stands, in the middle of what he is doing, and the area carries on), and outside a stage the next area brings it.
+Each switch takes about 2 MB of the stage's memory until the area ends; when too little is left, the area loads again with the new character instead (the coins and anything else done in the area start again, as with Exit Area).
+Shadow Mario keeps the look he loaded with until the next area.
+Playing together ([ext/multiplayer](../ext/multiplayer/README.md)), the others see a player as their character when their game has a pack of the same id.
+It does nothing while the game is paused, in a cutscene or a conversation, or while the area is changing.
+The pause menu's settings have it too (Gameplay, Character), from the next area; started by SMS Launcher, that choice is kept for the next game.
+
+A pack's `voice/` folder gives the character a voice: WAV files (PCM, any rate, mono or stereo) named after Mario's voice cues, such as `MV21_JUMP_SMALL_01.wav` or `MV24_JUMP_SPECIAL_03.wav` (the names of `MSD_SE_MV*` in the decomp's `MSound/SoundEffects.hpp`, without `MSD_SE_`).
+As a stage loads the character, each file plays wherever Mario's code plays that cue: it is encoded to Mario's own format and takes the place of his wave, at its own sample rate; a cue without a file keeps Mario's voice, and Mario's comes back when he is chosen again.
+The same sound under several cues is kept once, so a character needs no more room than Mario's voice has (about 860 KB of ADPCM, some 50 seconds of sound at 32 kHz).
+SMS Launcher makes these for its characters from the player's own disc (their voice clips from the game's wave banks).
+
+The archive is read into the stage's memory as the stage loads Mario and mounted in place of his, as Super Mario Eclipse mounts its characters; Shadow Mario, who loads from the same archive, wears the character too.
+With Eclipse, which has characters of its own, the option is not offered.
+
 ## languages/: language packs
 
 `language = <code>` in `settings.txt` (`SMS_LANGUAGE`) plays the game in that language with the pack in `languages/<code>/`: `fr`, `de`, `es`, `it` or `pl`; `en`, the default, is the disc's own English.

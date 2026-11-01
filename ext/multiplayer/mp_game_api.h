@@ -502,6 +502,14 @@ const char* mpg_display_name(int slot);
 // or "" (0) for Mario's own; mpg_looks_version changes whenever one does.
 uint32_t mpg_looks_version(void);
 int mpg_look(int slot, char* out, int size);
+// Players' characters (the launcher's, mods/characters): each player's own,
+// which they send the host and the host passes on. mpg_set_character says
+// ours (a pack's id, "" or null for Mario), each frame or when it changes;
+// mpg_player_character gives `slot`'s (1), or "" (0) for Mario;
+// mpg_characters_version changes whenever one does.
+void mpg_set_character(const char* id);
+int mpg_player_character(int slot, char* out, int size);
+uint32_t mpg_characters_version(void);
 // Host: `slot`'s look forced by a server mod, in every game (theirs too) and
 // for newcomers, until set again; null gives them their own back.
 int mpg_server_set_look(int slot, const char* look);

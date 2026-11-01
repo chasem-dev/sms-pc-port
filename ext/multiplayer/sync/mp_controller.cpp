@@ -71,9 +71,14 @@ enum Kind : uint8_t {
 	                // mod's); first to a newcomer, so the characters are known
 	K_CMD,          // host -> client: a server command (cmdMessage: type, flags, delay, numbers, text)
 	K_SPLASH,       // client -> host: session, the player its player's water hit, drops, where (MPG_RULE_WATER_HITS)
+	K_CHARACTER,    // either way: slot, the character a player plays as (the id of a pack in mods/characters,
+	                // as the launcher names it; empty: Mario), in lookMessage's form: a client's own to the host,
+	                // which passes everyone's on to everyone (a game without it ignores it)
 };
 // The longest look kept (every region chosen takes 14 bytes).
 const size_t kMaxLook = 400;
+// The longest character id kept (a pack's folder name).
+const size_t kMaxCharacter = 48;
 // The host's boss rides at the end of the world snapshot, after the enemies.
 const size_t kMaxBoss = 200;
 // Items that appear during a stage (from a box, a defeated enemy, a red coin
@@ -124,6 +129,12 @@ struct Controller {
 		float x = 0, y = 0, z = 0, yaw = 0;
 	} respawn[MP_MAX_PLAYERS];
 	uint32_t looksVersion = 0;
+	// each player's character (K_CHARACTER: a pack's id, "" for Mario), ours
+	// from the game (mpg_set_character); charactersVersion counts their
+	// changes, for puppets to be made again as the new one
+	std::string characters[MP_MAX_PLAYERS];
+	std::string myCharacter;
+	uint32_t charactersVersion = 0;
 	MpgGame game{};
 	bool wasPlaying = false;
 	unsigned arrivedLoads = 0; // the stage load last arrived in (MpgGame::loads)
@@ -968,6 +979,34 @@ std::vector<uint8_t> lookMessage(int slot, const std::string& look)
 	return buf;
 }
 
+// A character's id as received or given: a pack's folder name (letters,
+// digits, '-', '_', '.'), cut to kMaxCharacter.
+std::string cleanCharacter(const char* s, size_t n)
+{
+	std::string out;
+	for (size_t i = 0; i < n && s[i] && out.size() < kMaxCharacter; i++)
+		if (isalnum((unsigned char)s[i]) || s[i] == '-' || s[i] == '_' || s[i] == '.')
+			out += s[i];
+	return out;
+}
+
+void setCharacter(int slot, const std::string& id)
+{
+	if (slot < 0 || slot >= MP_MAX_PLAYERS || g.characters[slot] == id)
+		return;
+	g.characters[slot] = id;
+	g.charactersVersion++;
+	if (g_debug)
+		fprintf(stderr, "[multiplayer] player %d plays as %s\n", slot + 1, id.empty() ? "Mario" : id.c_str());
+}
+
+std::string readCharacter(Reader& r)
+{
+	const size_t n       = r.u16();
+	const uint8_t* bytes = r.skip(n);
+	return bytes ? cleanCharacter((const char*)bytes, n) : std::string();
+}
+
 std::string readLook(Reader& r)
 {
 	const size_t n          = r.u16();
@@ -989,6 +1028,15 @@ void hostMessage(const MpEvent& ev)
 			break; // a server mod's look stands
 		setLook(ev.slot, look);
 		send(-1, K_LOOK, lookMessage(ev.slot, look));
+		break;
+	}
+	case K_CHARACTER: {
+		r.u8(); // a client speaks for itself only
+		const std::string id = readCharacter(r);
+		if (!r.ok || ev.slot < 0 || ev.slot >= MP_MAX_PLAYERS)
+			break;
+		setCharacter(ev.slot, id);
+		send(-1, K_CHARACTER, lookMessage(ev.slot, id));
 		break;
 	}
 	case K_TRIP: {
@@ -1244,6 +1292,14 @@ void clientMessage(const MpEvent& ev)
 			setLook(slot, look);
 		break;
 	}
+	case K_CHARACTER: {
+		// any player's, ours too (as the host passes ours back)
+		const int slot       = r.u8();
+		const std::string id = readCharacter(r);
+		if (r.ok)
+			setCharacter(slot, id);
+		break;
+	}
 	case K_FLAGS:
 		if (g.updateReader.add(ev.data, ev.size))
 			g.clientFlags.hostUpdate(g.updateReader.u);
@@ -1321,6 +1377,9 @@ void events()
 			// our colours, for the host to pass on
 			setLook(ev.slot, g.myLook);
 			send(0, K_LOOK, lookMessage(ev.slot, g.myLook));
+			// and who we play as
+			setCharacter(ev.slot, g.myCharacter);
+			send(0, K_CHARACTER, lookMessage(ev.slot, g.myCharacter));
 			break;
 		case MP_EV_FAILED: {
 			char msg[256];
@@ -1351,6 +1410,7 @@ void events()
 		case MP_EV_PLAYER_JOINED:
 			notice(std::string(ev.name[0] ? ev.name : "A player") + " joined as " + kCharacters[characterOf(ev.slot)]);
 			setLook(ev.slot, ""); // theirs comes next
+			setCharacter(ev.slot, ""); // so does who they play as
 			if (ev.slot >= 0 && ev.slot < MP_MAX_PLAYERS) {
 				g.lookForced[ev.slot] = false; // a new player in the slot
 				g.reportedLook[ev.slot].clear();
@@ -1364,6 +1424,10 @@ void events()
 				for (int i = 0; i < MP_MAX_PLAYERS; i++)
 					if (i != ev.slot && !g.looks[i].empty())
 						send(ev.slot, K_LOOK, lookMessage(i, g.looks[i]));
+				// and everyone's characters
+				for (int i = 0; i < MP_MAX_PLAYERS; i++)
+					if (i != ev.slot && !g.characters[i].empty())
+						send(ev.slot, K_CHARACTER, lookMessage(i, g.characters[i]));
 				g.hostFlags.forget(ev.slot);
 				g.reportReaders[ev.slot] = FlagReportReader();
 				// the newcomer's flags first, then where to go: not while the
@@ -2775,6 +2839,36 @@ extern "C" int mpg_pose(int slot, MpgPose* pose, float* age)
 }
 
 extern "C" uint32_t mpg_looks_version(void) { return g.looksVersion; }
+
+extern "C" void mpg_set_character(const char* id)
+{
+	if (g.role == MPG_ROLE_OFF)
+		return;
+	std::lock_guard<std::mutex> hold(g_lock);
+	const std::string now = id ? cleanCharacter(id, strlen(id)) : std::string();
+	if (now == g.myCharacter)
+		return;
+	g.myCharacter = now;
+	// not in a game yet: the host hears it as we connect (MP_EV_CONNECTED)
+	const int me = mp_local_slot();
+	if (me < 0 || me >= MP_MAX_PLAYERS)
+		return;
+	setCharacter(me, now);
+	send(g.role == MPG_ROLE_HOST ? -1 : 0, K_CHARACTER, lookMessage(me, now));
+}
+
+extern "C" int mpg_player_character(int slot, char* out, int size)
+{
+	if (size <= 0)
+		return 0;
+	out[0] = 0;
+	if (g.role == MPG_ROLE_OFF || slot < 0 || slot >= MP_MAX_PLAYERS)
+		return 0;
+	snprintf(out, (size_t)size, "%s", g.characters[slot].c_str());
+	return out[0] != 0;
+}
+
+extern "C" uint32_t mpg_characters_version(void) { return g.charactersVersion; }
 
 extern "C" int mpg_server_set_look(int slot, const char* look)
 {

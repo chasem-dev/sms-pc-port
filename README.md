@@ -210,6 +210,7 @@ The default keys are laid out for keyboard and mouse, with mouse look on:
 | Load the newest save state | F6 |
 | Radar's full map, open / close (`radar = on`) | M, or a controller's Back/Select button |
 | Radar's zoom, next step (`radar = on`) | D-pad up (1) |
+| Next character (archives in `mods/characters/`) | F4 |
 | Quit (asks first: Y, or Enter on Quit, quits; Esc, N or B stays) | Esc, or the pause menu's Quit Game |
 
 Esc asks before quitting, so a stray press does not lose unsaved progress: Cancel is picked to begin with, Left/Right (or the d-pad) moves between Quit and Cancel, and the mouse works too; the game keeps running behind the prompt but reads no input. Closing the window still quits straight away.

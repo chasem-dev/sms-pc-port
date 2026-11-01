@@ -1,0 +1,21 @@
+Reason: port: characters in multiplayer (ext/multiplayer): a character's archive read into the heap, or Mario's own, so each other player is drawn as their own character while this game's stays mounted
+--- a/src/System/Application.cpp
++++ b/src/System/Application.cpp
+@@ -818,6 +818,17 @@
+ 	ApplicationCharacterRemount(arcBufMario);
+ }
+ 
++// Multiplayer draws each other player as their own character (ext/multiplayer,
++// patch zzzzzz-character-06): that character's archive read into the heap in
++// force, or Mario's own (the disc's, read at boot) for index 0, for the
++// player's models to be loaded from while this game's own stays on the
++// "mario" volume.
++void* ApplicationCharacterArchive(int index)
++{
++	const char* path = port_character_path(index);
++	return path ? ApplicationCharacterRead(path) : arcBufMario;
++}
++
+ // Mario's model, hands, caps and animations made again in place from the
+ // archive on the "mario" volume (patch zzzzzz-character-03, MarioDraw.cpp).
+ bool PortCharacterSwapModel(TMario* mario);

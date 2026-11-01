@@ -19,6 +19,7 @@
 #include "mp_server.hpp"
 #include "port_ext.h"
 #include "port_framerate.h"
+#include "port_character.h"
 
 #include <Enemy/BossPakkun.hpp>
 #include <Enemy/Conductor.hpp>
@@ -4509,6 +4510,11 @@ void frame()
 		return;
 	s_clock++;
 	dressSelf();
+	// who we play as (the launcher's characters), for the others to draw us
+	// as; Mario when this game can't switch (a code mod's own characters)
+	mpg_set_character(port_character_available() && port_character_selected() > 0
+	                      ? port_character_id(port_character_selected())
+	                      : "");
 	if (getenv("SMS_MULTIPLAYER_SPEEDLOG") && s_clock % 600 == 0) {
 		static unsigned lastMs, lastMoves;
 		const unsigned ms = mp_clock_ms_game();

@@ -1,0 +1,232 @@
+Reason: port: characters (port_character.h): CHARACTER_NEXT (F4) puts the next character in Mario's place at once, his model, hands, caps, animations and voice made again in place from its archive, rather than loading the area again
+--- a/src/System/Application.cpp
++++ b/src/System/Application.cpp
+@@ -814,10 +814,47 @@
+ 	ApplicationCharacterRemount(arcBufMario);
+ }
+ 
++// Mario's model, hands, caps and animations made again in place from the
++// archive on the "mario" volume (patch zzzzzz-character-03, MarioDraw.cpp).
++bool PortCharacterSwapModel(TMario* mario);
++
++// What a character's models and tables take beyond its archive, with room to
++// spare (Mario's own come to about 0.6 MB).
++static const s32 kCharacterModelRoom = 0x180000;
++
++// CHARACTER_NEXT in a stage: the character's archive (Mario's own for him) on
++// the "mario" volume and Mario's model, animations and voice made again from
++// it in place, in the stage's heap, without loading the area. False, with the
++// model as it was, when the heap has no room for them.
++static bool ApplicationCharacterSwap(TApplication* app, int index)
++{
++	TMario* mario = gpMarioOriginal;
++	if (!mario || !app->mHeap)
++		return false;
++	JKRHeap* prev     = JKRGetCurrentHeap();
++	const char* path  = port_character_path(index);
++	const s32 before  = app->mHeap->getFreeSize();
++	app->mHeap->becomeCurrentHeap();
++	void* arc = path ? ApplicationCharacterRead(path) : arcBufMario;
++	bool ok   = arc && app->mHeap->getFreeSize() >= kCharacterModelRoom;
++	if (ok) {
++		ApplicationCharacterRemount(arc);
++		sCharacterArc = path ? arc : nullptr;
++		ok            = PortCharacterSwapModel(mario);
++		ApplicationCharacterVoice(index);
++	}
++	prev->becomeCurrentHeap();
++	OSReport("[character] %s %s in place (%d KB of the stage's heap, %d KB left)\n", port_character_name(index),
++	         ok ? "swapped" : "not swapped", (int)((before - app->mHeap->getFreeSize()) >> 10),
++	         (int)(app->mHeap->getFreeSize() >> 10));
++	return ok;
++}
++
+ // Once a frame: CHARACTER_NEXT. In a stage, while Mario plays (not paused, in a
+-// cutscene or talking, not leaving), the next character and the area loaded
+-// again for it, as the warp menu loads one; outside a stage, the next character
+-// for the next area. Presses at other times are let go.
++// cutscene or talking, not leaving), the next character in Mario's place at
++// once; when the stage's heap has no room for it, the area loaded again for
++// it, as the warp menu loads one. Outside a stage, the next character for the
++// next area. Presses at other times are let go.
+ static void ApplicationCharacterFrame(TApplication* app)
+ {
+ 	static int sPresses = port_character_presses;
+@@ -841,8 +878,10 @@
+ 	const int next = (port_character_selected() + 1) % count;
+ 	port_character_select(next);
+ 	char text[96];
+-	if (dir) {
++	if (dir && ApplicationCharacterSwap(app, next)) {
+ 		snprintf(text, sizeof text, "%s", port_character_name(next));
++	} else if (dir) {
++		snprintf(text, sizeof text, "%s", port_character_name(next));
+ 		const int area = app->mCurrArea.getStage(), episode = app->mCurrArea.getScenario();
+ 		OSReport("[character] %s: reloading area %d episode %d\n", port_character_name(next), area, episode);
+ 		TFlagManager::getInstance()->setFlag(0x40003, episode);
+--- a/src/Player/MarioDraw.cpp
++++ b/src/Player/MarioDraw.cpp
+@@ -2649,3 +2649,163 @@
+ // member that holds the blend: no existing field fits, and inventing one in
+ // Mario.hpp on this evidence alone is not justified. 63 instructions.
+ void TMario::thinkDashEffect() { }
++
++#ifdef TARGET_PC
++#include <MSound/MSound.hpp>
++#include <Strategic/MirrorActor.hpp>
++#include <string.h>
++#include <JSystem/JDrama/JDRNameRefGen.hpp>
++#include <JSystem/JDrama/JDRViewObjPtrList.hpp>
++
++// Port: characters (port_character.h, patch zzzzzz-character-03). Mario's
++// body, hands, caps and animation tables made again from the archive now on
++// the "mario" volume, in place while he plays, for CHARACTER_NEXT without
++// loading the area again. M3UModelMario keeps its motion state (the indices
++// of the animations playing, the frame controllers and the blend), which
++// reads the tables by index each frame, so the new character takes up the
++// motion where the old one was. The old models and tables stay in the heap
++// (the stage's, which is emptied after it), so anything still pointing at
++// them for a frame reads stale data rather than freed memory.
++
++// The mirror scene's copies of `from` follow `to` instead.
++static void PortCharacterMirrorRetarget(J3DModel* from, J3DModel* to)
++{
++	if (!from || !to)
++		return;
++	JDrama::TViewObjPtrListT<JDrama::TViewObj>* scene
++	    = JDrama::TNameRefGen::search<JDrama::TViewObjPtrListT<JDrama::TViewObj> >("鏡シーン");
++	if (!scene)
++		return;
++	JGadget::TList_pointer<JDrama::TViewObj*>& list = scene->getChildren();
++	for (JGadget::TList_pointer<JDrama::TViewObj*>::iterator it = list.begin(); it != list.end(); ++it) {
++		const char* name = (*it)->getName();
++		if (!name
++		    || (strcmp(name, "マリオin鏡") && strcmp(name, "マリオ手in鏡")
++		        && strcmp(name, "マリオ帽子in鏡")))
++			continue;
++		TMirrorActor* actor = (TMirrorActor*)*it;
++		if (actor->unk10 != from)
++			continue;
++		actor->unk10 = to;
++		actor->unk14 = new J3DModel(to->getModelData(), 0, 1);
++	}
++}
++
++bool PortCharacterSwapModel(TMario* mario)
++{
++	const u32 flags = J3DMLF_MaterialPEFull | (16 << J3DMLF_TevStageNumShift);
++	M3UModelMario* model = mario->mModel;
++	void* bmd            = JKRFileLoader::getGlbResource("/mario/bmd/ma_mdl1.bmd");
++	if (!model || !bmd || !mario->mHandModels[0][0])
++		return false;
++	J3DModel* oldBody     = model->getModel();
++	J3DModel* oldHands[5] = { mario->mHandModels[0][0], mario->mHandModels[0][1], mario->mHandModels[1][0],
++		                      mario->mHandModels[1][1], mario->mRHand4ndModel };
++
++	J3DModelData* data     = J3DModelLoaderDataBase::load(bmd, flags);
++	mario->mBodyModelData  = data;
++	mario->mJointIdCenter   = data->getJointName()->getIndex("center");
++	mario->mJointIdChnChest = data->getJointName()->getIndex("chn_chest");
++	mario->mJointIdChest    = data->getJointName()->getIndex("jnt_chest");
++	mario->mJointIdArmR1    = data->getJointName()->getIndex("jnt_arm_R1");
++	mario->mJointIdArmL1    = data->getJointName()->getIndex("jnt_arm_L1");
++	mario->mJointIdHandR    = data->getJointName()->getIndex("jnt_hand_R");
++	mario->mJointIdHandL    = data->getJointName()->getIndex("jnt_hand_L");
++	mario->mJointIdChnFootR = data->getJointName()->getIndex("chn_foot_R");
++	mario->mJointIdFootR    = data->getJointName()->getIndex("jnt_foot_R");
++	mario->mJointIdChnFootL = data->getJointName()->getIndex("chn_foot_L");
++	mario->mJointIdFootL    = data->getJointName()->getIndex("jnt_foot_L");
++	mario->mJointIdHead     = data->getJointName()->getIndex("jnt_head");
++	mario->mJointIdMHead    = data->getJointName()->getIndex("M_head");
++
++	mario->mBodyPollutionTex = (ResTIMG*)JKRFileLoader::getGlbResource(cDirtyFileName);
++	if (mario->mBodyPollutionTex)
++		SMS_ChangeTextureAll(data, cDirtyTexName, *mario->mBodyPollutionTex);
++	J3DModel* body = new J3DModel(data, 0, 1);
++
++	static const char* const kHands[5] = { "/mario/bmd/ma_hnd2r.bmd", "/mario/bmd/ma_hnd2l.bmd",
++		                                   "/mario/bmd/ma_hnd3r.bmd", "/mario/bmd/ma_hnd3l.bmd",
++		                                   "/mario/bmd/ma_hnd4r.bmd" };
++	J3DModel* hands[5];
++	for (int i = 0; i < 5; i++) {
++		hands[i]              = SMS_CreatePartsModel((char*)kHands[i], flags);
++		J3DModelData* handData = hands[i]->getModelData();
++		handData->getTexture()->setResTIMG(0, *data->getTexture()->getResTIMG(0));
++		DCFlushRange(handData->getTexture()->getResTIMG(0), 0x20);
++		if (mario->mBodyPollutionTex && i < 4)
++			SMS_ChangeTextureAll(handData, cDirtyTexName, *mario->mBodyPollutionTex);
++	}
++	data->getShapeNodePointer(4)->onFlag(J3DShpFlag_Visible);
++	mario->mHandModels[0][0] = hands[0];
++	mario->mHandModels[0][1] = hands[1];
++	mario->mHandModels[1][0] = hands[2];
++	mario->mHandModels[1][1] = hands[3];
++	mario->mRHand4ndModel    = hands[4];
++
++	// The animation tables, in the places the motion state reads them from.
++	J3DAnmTransform** anmTransform = new J3DAnmTransform*[199];
++	JAIAnimeSound** anmSound       = new JAIAnimeSound*[199];
++	char path[0x10C];
++	for (int i = 0; i < 199; ++i) {
++		anmTransform[i] = nullptr;
++		anmSound[i]     = nullptr;
++		snprintf(path, 0xff, "/mario/bck/ma_%s.bck", marioAnimeFiles[i].unk4);
++		mario->loadAnm(&anmTransform[i], path);
++		snprintf(path, 0xff, "/mario/bas/ma_%s.bas", marioAnimeFiles[i].unk4);
++		mario->loadBas((void**)&anmSound[i], path);
++	}
++	J3DAnmTexPattern** anmTexPattern = new J3DAnmTexPattern*[0x18];
++	J3DTexNoAnm** anmTexNoAnm        = new J3DTexNoAnm*[0x18];
++	for (int i = 0; i < 0x18; ++i) {
++		mario->loadAnmTexPattern(&anmTexPattern[i], marioAnimeTexPatternFilenames[i], data);
++		anmTexNoAnm[i] = new J3DTexNoAnm[anmTexPattern[i]->getUpdateMaterialNum()];
++		for (int j = 0; j < anmTexPattern[i]->getUpdateMaterialNum(); ++j) {
++			anmTexNoAnm[i][j].setAnmIndex(j);
++			anmTexNoAnm[i][j].setAnmTexPattern(anmTexPattern[i]);
++		}
++	}
++	u16 eyeL = data->getMaterialName()->getIndex("_mat_eye_L");
++	u16 eyeR = data->getMaterialName()->getIndex("_mat_eye_R");
++	data->getMaterialNodePointer(eyeL)->change();
++	data->getMaterialNodePointer(eyeL)->setMaterialAnm(new J3DMaterialAnm());
++	data->getMaterialNodePointer(eyeR)->change();
++	data->getMaterialNodePointer(eyeR)->setMaterialAnm(new J3DMaterialAnm());
++	mario->mMaterialIdEyeL = eyeL;
++	mario->mMaterialIdEyeR = eyeR;
++
++	M3UModelCommonMario* common = model->unk20;
++	common->unk4                = anmTransform;
++	common->unk8                = anmTexPattern;
++	common->unkC                = anmTexNoAnm;
++	mario->mAnmSoundTbl         = anmSound;
++
++	// The new body where the old one stood, posed by the motion as it is.
++	body->setBaseTRMtx(oldBody->getBaseTRMtx());
++	model->updateOut();
++	model->unk8 = body;
++	model->updateInMotion();
++	body->calc();
++	mario->calcAnimHands();
++	mario->finalDrawInitialize();
++
++	if (TMarioCap* old = mario->mCap) {
++		TMarioCap* cap = new TMarioCap(mario);
++		cap->unk4      = old->unk4;
++		cap->unk6      = old->unk6;
++		cap->unk34     = old->unk34;
++		cap->unk28[0]  = old->unk28[0];
++		cap->unk28[1]  = old->unk28[1];
++		PortCharacterMirrorRetarget(old->unk10[0], cap->unk10[0]);
++		PortCharacterMirrorRetarget(old->unk10[1], cap->unk10[1]);
++		mario->mCap = cap;
++	}
++	PortCharacterMirrorRetarget(oldBody, body);
++	for (int i = 0; i < 4; i++)
++		PortCharacterMirrorRetarget(oldHands[i], hands[i]);
++
++	if (SMSGetMSound())
++		SMSGetMSound()->setPlayerInfo(&mario->mPosition, &mario->mPrevPosition, body->getAnmMtx(1),
++		                              mario->isMario() ? true : false);
++	return true;
++}
++#endif

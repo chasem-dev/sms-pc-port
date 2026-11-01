@@ -43,6 +43,7 @@
 #include <Player/Yoshi.hpp>
 #include <System/EmitterViewObj.hpp>
 #include <System/MarDirector.hpp>
+#include "port_character.h"
 #include <dolphin/dvd.h>
 #include <dolphin/gx.h>
 #include <dolphin/mtx.h>
@@ -112,15 +113,57 @@ public:
 	}
 };
 
+// The launcher's characters (port_character.h): body MPG_BODIES - 1 + n is
+// character n. Another player's comes from this game's copy of its archive in
+// mods/characters, read once a stage like Eclipse's; so does Mario's for the
+// others while we play as one of them (ours is then on the "mario" volume).
+const int kPacks  = kMpPacks;
+const int kBodies = kMpBodies;
+int packOfBody(int body) { return body >= MPG_BODIES && body < kBodies ? body - MPG_BODIES + 1 : 0; }
+int bodyOfPack(int pack) { return pack > 0 && pack <= kPacks ? MPG_BODIES - 1 + pack : -1; }
+
+// We play as one of the launcher's characters (never with Eclipse, whose own they would be).
+int localPack()
+{
+	return port_character_available() ? port_character_selected() : 0;
+}
+
+// A character's archive, or Mario's own for 0 (patch zzzzzz-character-06).
+void* ApplicationCharacterArchiveAt(int index);
+
 // A body's archive and its face's texture patterns (TMario::initModel's, for
-// its own model's materials and textures), shared by the stage's puppets.
+// its own model's materials and textures), shared by the stage's puppets; a
+// launcher character's (and Mario's own beside one) has its animations too
+// (each is fitted to its own body), and its FLUDD place.
 struct BodyFiles {
 	JKRArchive* archive;
 	J3DAnmTexPattern** patterns;
 	J3DTexNoAnm** texNo;
+	J3DAnmTransform** animations;
+	f32 fludd[5];
 };
-BodyFiles s_bodyFiles[MPG_BODIES];
+BodyFiles s_bodyFiles[kBodies];
 unsigned s_bodyFilesStage;
+
+// A character archive's FLUDD size and place (character/fludd.bin, as patch
+// zzzzzz-character-05 reads it): scale, an x y z offset in the chest joint's
+// frame and a tilt back in degrees; Mario's own without one.
+void readFluddPlace(const u8* data, long size, f32 out[5])
+{
+	out[0] = 1.0f;
+	out[1] = out[2] = out[3] = out[4] = 0.0f;
+	if (!data || size < 16)
+		return;
+	f32 v[5] = {};
+	for (int i = 0; i < (size >= 20 ? 5 : 4); i++) {
+		const u32 bits = (u32)data[i * 4] << 24 | (u32)data[i * 4 + 1] << 16 | (u32)data[i * 4 + 2] << 8 | data[i * 4 + 3];
+		memcpy(&v[i], &bits, 4);
+	}
+	if (v[0] > 0.1f && v[0] < 4.0f)
+		out[0] = v[0];
+	for (int i = 1; i < 5; i++)
+		out[i] = v[i];
+}
 
 BodyFiles* bodyFiles(int body)
 {
@@ -130,17 +173,39 @@ BodyFiles* bodyFiles(int body)
 	}
 	BodyFiles& f = s_bodyFiles[body];
 	if (!f.archive) {
-		void* data = JKRDvdRipper::loadToMainRAM(kBodyArchives[body], nullptr, EXPAND_SWITCH_DECOMPRESS, 0, nullptr,
-		                                         JKRDvdRipper::ALLOC_DIRECTION_FORWARD, 0, nullptr);
+		// Eclipse's from the disc; a launcher character's (or Mario's own beside one) from its archive
+		const bool launcher = body >= MPG_BODIES || !eclipseBodies();
+		void* data = launcher ? ApplicationCharacterArchiveAt(packOfBody(body))
+		                      : JKRDvdRipper::loadToMainRAM(kBodyArchives[body], nullptr, EXPAND_SWITCH_DECOMPRESS, 0,
+		                                                    nullptr, JKRDvdRipper::ALLOC_DIRECTION_FORWARD, 0, nullptr);
 		if (!data) {
-			fprintf(stderr, "[multiplayer] could not read %s\n", kBodyArchives[body]);
+			fprintf(stderr, "[multiplayer] could not read %s\n",
+			        launcher ? port_character_name(packOfBody(body)) : kBodyArchives[body]);
 			return nullptr;
 		}
-		f.archive = new TMpBodyArchive(data);
+		f.archive   = new TMpBodyArchive(data);
+		void* place = f.archive->getResource("/character/fludd.bin");
+		readFluddPlace((const u8*)place, place ? f.archive->getResSize(place) : 0, f.fludd);
+		if (launcher) {
+			// its own animations, as patch zzzzzz-character-03 loads them (Mario's where it has none)
+			J3DAnmTransform** ours = gpMarioOriginal ? gpMarioOriginal->getM3UModel()->unk4->unk4 : nullptr;
+			f.animations = new J3DAnmTransform*[kMarioAnims];
+			char file[0x40];
+			for (int i = 0; i < kMarioAnims; i++) {
+				snprintf(file, sizeof file, "/bck/ma_%s.bck", marioAnimeFiles[i].unk4);
+				void* anm       = f.archive->getResource(file);
+				f.animations[i] = anm ? (J3DAnmTransform*)J3DAnmLoaderDataBase::load(anm) : ours ? ours[i] : nullptr;
+			}
+		}
 	}
 	return &f;
 }
 
+} // namespace
+
+void* ApplicationCharacterArchive(int index); // patch zzzzzz-character-06
+namespace {
+void* ApplicationCharacterArchiveAt(int index) { return ApplicationCharacterArchive(index); }
 } // namespace
 
 int MpLocalBody()
@@ -586,6 +651,8 @@ TMpPuppet::TMpPuppet(int slot, bool self)
     , mGlasses(nullptr)
     , mBody(MPG_BODY_MARIO)
     , mNoBody(0)
+    , mPackVersion(0xFFFFFFFFu)
+    , mPackBody(-1)
     , mHeap(nullptr)
     , mFludd(nullptr)
     , mFluddData(nullptr)
@@ -613,6 +680,8 @@ TMpPuppet::TMpPuppet(int slot, bool self)
 	memset(mHands, 0, sizeof mHands);
 	memset(mCap, 0, sizeof mCap);
 	memset(mBodies, 0, sizeof mBodies);
+	mFluddPlace[0] = 1.0f;
+	mFluddPlace[1] = mFluddPlace[2] = mFluddPlace[3] = mFluddPlace[4] = 0.0f;
 	memset(mNozzles, 0, sizeof mNozzles);
 	memset(mSurfColor, 0, sizeof mSurfColor);
 	mSaved[0] = mSaved[1] = nullptr;
@@ -623,15 +692,38 @@ TMpPuppet::TMpPuppet(int slot, bool self)
 	onHitFlag(HIT_FLAG_NO_COLLISION);
 }
 
-// The models of `body` (MPG_BODY_*): ours from our own Mario's files, another
-// player's from their character's archive with Eclipse (else Mario's, ours).
+// Whose model they wear: the launcher's character they play as, when this
+// game has it (mpg_player_character); else Eclipse's, as their pose says;
+// else Mario.
+int TMpPuppet::wantedBody(const MpgPose* pose)
+{
+	if (mPackVersion != mpg_characters_version()) {
+		mPackVersion = mpg_characters_version();
+		mPackBody    = -1;
+		char id[64];
+		if (port_character_available() && mpg_player_character(mSlot, id, sizeof id)) {
+			const int pack = port_character_find(id);
+			mPackBody      = bodyOfPack(pack);
+			if (mPackBody < 0)
+				fprintf(stderr, "[multiplayer] %s plays as %s, which this game has not got (mods/characters): drawn as %s\n",
+				        mpg_display_name(mSlot), id, mpg_character_name(mSlot));
+		}
+	}
+	if (mPackBody >= 0)
+		return mPackBody;
+	return pose && eclipseBodies() && pose->body < MPG_BODIES ? pose->body : MPG_BODY_MARIO;
+}
+
+// The models of `body`: ours from our own Mario's files, another player's from
+// their character's archive (Eclipse's, or the launcher's), else Mario's: ours,
+// or his own beside our launcher character.
 bool TMpPuppet::buildBody(int body)
 {
 	TMario* orig = gpMarioOriginal;
 	if (!orig || !orig->getM3UModel())
 		return false;
 	BodyFiles* files = nullptr;
-	if (!mSelf && eclipseBodies()) {
+	if (!mSelf && (eclipseBodies() || body >= MPG_BODIES || localPack() > 0)) {
 		files = bodyFiles(body);
 		if (!files)
 			return false;
@@ -650,9 +742,16 @@ bool TMpPuppet::buildBody(int body)
 	ResTIMG* pollution = (ResTIMG*)JKRFileLoader::getGlbResource(cDirtyFileName);
 	if (pollution)
 		SMS_ChangeTextureAll(mBodyData, cDirtyTexName, *pollution);
-	// a character's colours are Mario's recoloured; Eclipse's others are their own
+	// a character's colours are Mario's recoloured; Eclipse's others and the launcher's are their own
 	if (body == MPG_BODY_MARIO)
 		recolourTexture(mainTexture(mBodyData), mCharacter);
+	// its FLUDD's size and place (ours from our own archive)
+	if (files)
+		memcpy(mFluddPlace, files->fludd, sizeof mFluddPlace);
+	else {
+		void* place = JKRFileLoader::getGlbResource("/mario/character/fludd.bin");
+		readFluddPlace((const u8*)place, place ? JKRFileLoader::getResSize(place, nullptr) : 0, mFluddPlace);
+	}
 	J3DModel* model = new J3DModel(mBodyData, 0, 1);
 
 	// hands and cap: their own copies, wearing the body's texture
@@ -709,7 +808,7 @@ bool TMpPuppet::buildBody(int body)
 	blend[1].mMotionBlendRatio      = 0.0f;
 	J3DFrameCtrl* frames            = new J3DFrameCtrl[3];
 	M3UModelCommonMario* common     = new M3UModelCommonMario;
-	common->unk4                    = origCommon->unk4;
+	common->unk4                    = files && files->animations ? files->animations : origCommon->unk4;
 	common->unk8                    = files ? files->patterns : origCommon->unk8;
 	common->unkC                    = files ? files->texNo : origCommon->unkC;
 	common->unk18                   = blend;
@@ -739,7 +838,8 @@ bool TMpPuppet::buildBody(int body)
 
 	// as Mario's finalDrawInitialize: the hidden extra shape, his bare
 	// hands, display lists, and no goop on him (the dirt colour's alpha)
-	mBodyData->getShapeNodePointer(4)->onFlag(J3DShpFlag_Visible);
+	if (mBodyData->getShapeNum() > 4)
+		mBodyData->getShapeNodePointer(4)->onFlag(J3DShpFlag_Visible);
 	showHands(0);
 	clearDirt(mBodyData);
 	SMS_MakeDLAndLock(model);
@@ -765,6 +865,7 @@ void TMpPuppet::keepBody()
 	b.glasses   = mGlasses;
 	b.joints[0] = mJointChest, b.joints[1] = mJointHandR, b.joints[2] = mJointHandL;
 	b.joints[3] = mJointHead, b.joints[4] = mJointMHead;
+	memcpy(b.fludd, mFluddPlace, sizeof b.fludd);
 }
 
 // Draws the models kept for `body` (keepBody).
@@ -778,6 +879,7 @@ void TMpPuppet::takeBody(int body)
 	mGlasses    = b.glasses;
 	mJointChest = b.joints[0], mJointHandR = b.joints[1], mJointHandL = b.joints[2];
 	mJointHead = b.joints[3], mJointMHead = b.joints[4];
+	memcpy(mFluddPlace, b.fludd, sizeof mFluddPlace);
 	mBody = body;
 }
 
@@ -786,7 +888,9 @@ void TMpPuppet::takeBody(int body)
 // again. False, keeping the one it has, when it cannot be made.
 bool TMpPuppet::wearBody(int body)
 {
-	if (body == mBody || body < 0 || body >= MPG_BODIES || !eclipseBodies() || (mNoBody & (1u << body)))
+	// Mario always; Eclipse's with Eclipse; the launcher's without
+	const bool known = body == MPG_BODY_MARIO || (body < MPG_BODIES ? eclipseBodies() : body < kBodies);
+	if (body == mBody || body < 0 || !known || (mNoBody & (1u << body)))
 		return false;
 	keepBody();
 	const int was = mBody;
@@ -918,11 +1022,11 @@ bool TMpPuppet::init()
 	mHeap         = heap;
 	s32 free0     = heap->getTotalFreeSize();
 	// ours as we are; theirs as they were last seen (it changes with them: wearBody)
-	int body = mSelf ? MpLocalBody() : MPG_BODY_MARIO;
 	MpgPose last;
 	float age;
-	if (!mSelf && eclipseBodies() && mpg_pose(mSlot, &last, &age) && last.body < MPG_BODIES)
-		body = last.body;
+	const bool seen = !mSelf && mpg_pose(mSlot, &last, &age);
+	int body        = mSelf ? (localPack() > 0 && bodyOfPack(localPack()) >= 0 ? bodyOfPack(localPack()) : MpLocalBody())
+	                        : wantedBody(seen ? &last : nullptr);
 	if (!buildBody(body) && (body == MPG_BODY_MARIO || !buildBody(MPG_BODY_MARIO)))
 		return false;
 	s32 free1 = heap->getTotalFreeSize();
@@ -1104,9 +1208,16 @@ void TMpPuppet::applyPose(JDrama::TGraphics* graphics)
 	}
 
 	if (mFludd && (p.flags & MPG_POSE_FLUDD)) {
-		// on the back, tilted as TWaterGun::setBaseTRMtx tilts it
-		Mtx chest;
+		// on the back, tilted as TWaterGun::setBaseTRMtx tilts it, at their
+		// character's own size and place (patch zzzzzz-character-05)
+		Mtx chest, at, tilt;
 		MTXCopy(bodyModel->getAnmMtx(mJointChest), chest);
+		MTXTrans(at, mFluddPlace[1], mFluddPlace[2], mFluddPlace[3]);
+		MTXConcat(chest, at, chest);
+		MTXRotRad(tilt, 'z', -mFluddPlace[4] * 3.14159265f / 180.0f);
+		MTXConcat(chest, tilt, chest);
+		const Vec size = {mFluddPlace[0], mFluddPlace[0], mFluddPlace[0]};
+		mFludd->getModel()->setBaseScale(size);
 		f32 lean     = chest[1][0] < 0.0f ? -chest[1][0] : chest[1][0];
 		s16 angle    = (s16)(lean * (0 - -0x1800) + -0x1800);
 		Mtx roll, gun;
@@ -1388,10 +1499,13 @@ void TMpPuppet::perform(u32 cue, JDrama::TGraphics* graphics)
 			mGoneFrames++;
 		if (!mActive)
 			mDrawn = false;
-		// in their character's model (Eclipse's character select), then in
-		// their colours, once they are here (not for empty slots)
-		if (mActive && !mSelf && pose.body != mBody)
-			wearBody(pose.body);
+		// in their character's model (the launcher's, or Eclipse's character
+		// select), then in their colours, once they are here (not for empty slots)
+		if (mActive && !mSelf) {
+			const int body = wantedBody(&pose);
+			if (body != mBody)
+				wearBody(body);
+		}
 		if (mActive && mDressedVersion != mpg_looks_version())
 			dress();
 		if (mActive) {

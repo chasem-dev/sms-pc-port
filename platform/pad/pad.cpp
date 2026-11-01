@@ -12,6 +12,7 @@
 #include "port_compat.h"
 #include "port_platform.h"
 #include "port_savestate.h"
+#include "port_character.h"
 #include "gc_adapter.h"
 #include "port_setting_list.h"
 #include "port_settings.h"
@@ -174,7 +175,7 @@ enum Control {
 	C_DUP, C_DDOWN, C_DLEFT, C_DRIGHT,
 	C_UP, C_DOWN, C_LEFT, C_RIGHT,
 	C_CUP, C_CDOWN, C_CLEFT, C_CRIGHT,
-	C_HALF, C_QUIT, C_LSOFT, C_RSOFT, C_SAVESTATE, C_LOADSTATE, C_MAP, C_CZOOM, C_HUD, C_COUNT
+	C_HALF, C_QUIT, C_LSOFT, C_RSOFT, C_SAVESTATE, C_LOADSTATE, C_MAP, C_CZOOM, C_HUD, C_CHARACTER, C_COUNT
 };
 const char* const kControlNames[C_COUNT] = {
 	"A", "B", "X", "Y", "Z", "L", "R", "START",
@@ -182,7 +183,7 @@ const char* const kControlNames[C_COUNT] = {
 	"STICK_UP", "STICK_DOWN", "STICK_LEFT", "STICK_RIGHT",
 	"CSTICK_UP", "CSTICK_DOWN", "CSTICK_LEFT", "CSTICK_RIGHT",
 	"HALF_TILT", "QUIT", "L_SOFT", "R_SOFT", "SAVE_STATE", "LOAD_STATE", "MAP", "CAMERA_ZOOM",
-	"HUD_TOGGLE",
+	"HUD_TOGGLE", "CHARACTER_NEXT",
 };
 // SAVE_STATE / LOAD_STATE are the port's, not the GameCube's: a press saves a
 // save state, or loads the newest (port_savestate.h). Their bindings are often
@@ -192,7 +193,9 @@ const char* const kControlNames[C_COUNT] = {
 // (src/radar.cpp), counted in port_radar_map_presses.
 // HUD_TOGGLE is the port's too: a press hides or shows the game's HUD, the settings menu's
 // HUD page's Hide HUD (port_hud_settings.h). H by default.
-bool is_port_action(int c) { return c == C_SAVESTATE || c == C_LOADSTATE || c == C_MAP || c == C_HUD; }
+// CHARACTER_NEXT is the port's as well: a press plays as the next character
+// (port_character.h), counted in port_character_presses.
+bool is_port_action(int c) { return c == C_SAVESTATE || c == C_LOADSTATE || c == C_MAP || c == C_HUD || c == C_CHARACTER; }
 // CAMERA_ZOOM is the port's as well, and no button of the game's: with C-stick
 // orbit on (SMS_CSTICK_ORBIT), holding it gives the C-stick's up and down back
 // its own job of moving the camera nearer or further. The right stick's press
@@ -275,7 +278,8 @@ const char* const kDefaultBindings =
     "SAVE_STATE = F5\n"
     "LOAD_STATE = F6\n"
     "MAP = M\n"
-    "HUD_TOGGLE = H\n";
+    "HUD_TOGGLE = H\n"
+    "CHARACTER_NEXT = F4\n";
 
 // A binding is one key or controller button, or two held together, written
 // FIRST+SECOND (PAD_LB+PAD_RB, LCTRL+S): the second's code plus one sits above
@@ -1554,6 +1558,19 @@ extern "C" u32 PADRead(PADStatus* status)
 	if (hudKey && !wasHud && !hotkeysBlocked)
 		port_hud_settings_toggle();
 	wasHud = hudKey;
+	static bool wasCharacter;
+	const bool characterKey = held(C_CHARACTER);
+	if (characterKey && !wasCharacter && !hotkeysBlocked) {
+		// one player alone only (port_character_switching)
+		static bool told;
+		if (port_character_switching())
+			port_character_presses++;
+		else if (!told) {
+			told = true;
+			port_log("[character] CHARACTER_NEXT switches characters in single player only\n");
+		}
+	}
+	wasCharacter = characterKey;
 	update_fludd_trigger(blocked);
 	if (blocked)
 		return PAD_CHAN0_BIT;
