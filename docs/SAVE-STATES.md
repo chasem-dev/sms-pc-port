@@ -48,7 +48,9 @@ Saving and loading happen in `ApplicationSaveStateFrame` (patch `zzzz-savestate-
 - No disc read or interrupt work is outstanding (`port_dvd_busy`, `port_os_irq_work_pending`).
 
 Saves happen only in a level, while it plays (`TMarDirector` state 4, no stage change pending). In the pause
-menu `SAVE_STATE` opens the state menu instead, and loads happen there too.
+menu `SAVE_STATE` opens the state menu instead, and loads happen there too. A save that finds a disc read,
+interrupt work or the audio DSP under way keeps the press for the next frames, up to about half a second,
+before it gives up with "the game is busy"; the log names what was busy.
 
 The state menu (`src/savestate_menu.cpp`) is game code, built into the game library and drawn by the game:
 the system font, and the HUD's art from `game_6` (the brushstroke behind its counters, the Shine, coin and
@@ -123,6 +125,15 @@ renamed.
 - Super Mario Eclipse's music streams from the disc (`platform/audio/dtk.cpp`), host-side, and is not in
   a state, so after a load the stream playing may not be the state's until the music next changes. Save
   states in Eclipse builds have not been tested yet.
+- **Characters** (`mods/characters`, patch `zzzzzz-character-07`): a state holds whoever Mario was when it
+  was saved, his models in the stage's heap and his voice in ARAM. Who he is and whose voice is in ARAM are
+  kept in game memory beside them (`sCharacterModel`, `sCharacterVoiceId`), so an exact load brings all of
+  it back together. Once Mario plays after an exact load, the character chosen now takes his place again
+  as `CHARACTER_NEXT` swaps one, so loading a state, someone else's included, never changes who the player
+  plays as; with no room left in the stage's heap the state's character stays until the next area.
+  `CHARACTER_NEXT`'s presses are counted outside game memory (`port_character_take_press`), so a load
+  never turns an old press into a new one. A portable load reloads the area, which brings the chosen
+  character as every area does.
 - Loading a state brings its progress. Saving to the memory card afterwards saves that progress, over the
   file's latest save even when that save came after the state. The game saves only over a file the card
   says was saved when the game last saved it (its guard against a swapped card), and a state keeps the

@@ -556,13 +556,21 @@ void port_savestate_hint(PortSaveStateHint* out)
 // of its frame (a frame has a handful).
 static bool game_busy()
 {
-	for (int i = 0; i < 32 && (port_audio_dsp_busy() || port_thp_video_decode_busy()); i++) {
+	for (int i = 0; i < 32 && (port_audio_dsp_busy() || port_thp_video_decode_busy() || port_os_irq_work_pending());
+	     i++) {
 		port_audio_dsp_settle();
 		port_thp_video_decode_settle();
 		port_irq_check();
 	}
 	return port_dvd_busy() || port_os_irq_work_pending() || port_audio_dsp_busy() || port_thp_video_decode_busy();
 }
+
+// A save that finds the game busy waits for it: the press stays pending for the
+// next frames, up to about half a second, before the save gives up. A disc read
+// (the drive's simulated time, platform/dvd) or a voice's interrupt work most
+// often ends within a frame or two.
+static int g_busyFrames;
+static const int kBusyFrames = 30;
 
 int port_savestate_save(const PortSaveStatePortable* portable)
 {
@@ -572,9 +580,20 @@ int port_savestate_save(const PortSaveStatePortable* portable)
 	}
 	if (game_busy()) {
 		g_writing = false;
+		if (++g_busyFrames < kBusyFrames) {
+			std::lock_guard<std::mutex> l(g_lock);
+			if (g_pending == PORT_SAVESTATE_NONE)
+				g_pending = PORT_SAVESTATE_SAVE;
+			return 0;
+		}
+		g_busyFrames = 0;
+		port_log("[savestate] could not save: busy for %d frames:%s%s%s%s\n", kBusyFrames,
+		         port_dvd_busy() ? " a disc read" : "", port_os_irq_work_pending() ? " interrupt work" : "",
+		         port_audio_dsp_busy() ? " the audio DSP" : "", port_thp_video_decode_busy() ? " a movie frame" : "");
 		set_message("Could not save the state: the game is busy");
 		return 0;
 	}
+	g_busyFrames = 0;
 	const Info info = current_info();
 	const bool exact = info.rangeCount && has_fingerprint();
 	Pending* job = new Pending;

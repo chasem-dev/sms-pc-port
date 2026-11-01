@@ -1,0 +1,139 @@
+Reason: port: characters and save states (port_character.h): who Mario is and whose voice is in ARAM kept in game memory with the models and ARAM a state brings back; after an exact load the chosen character takes Mario's place again, and CHARACTER_NEXT's presses are counted outside game memory, so a load never replays one
+--- a/src/System/Application.cpp
++++ b/src/System/Application.cpp
+@@ -662,6 +662,24 @@
+ // heap is emptied, so nothing between stages reads a freed archive.
+ static void* sCharacterArc; // this stage's archive; null while Mario's is mounted
+ 
++// Who Mario is in this stage, and whose voice is in ARAM, by id ("" for Mario
++// himself). They are kept here in game memory with the models, ARAM and wave
++// entries they describe, so a save state brings them back together.
++static char sCharacterModel[64];
++static char sCharacterVoiceId[64];
++
++static void ApplicationCharacterKeep(char* out, int index)
++{
++	snprintf(out, 64, "%s", index > 0 ? port_character_id(index) : "");
++}
++
++// The index of a kept id: 0 for Mario, -1 for a character not in the list.
++static int ApplicationCharacterKept(const char* id) { return *id ? port_character_find(id) : 0; }
++
++// A save state was loaded exactly (ApplicationStateLoad): Mario is the
++// character he was when it was saved, who may not be the one chosen now.
++static bool sCharacterAfterLoad;
++
+ // A code mod that loads the player's archive itself (Eclipse, at this site).
+ static bool ApplicationCharacterTaken() { return SMS_MOD_SITE(0x80276BF0) != nullptr; }
+ 
+@@ -773,7 +791,8 @@
+ 		waves[i].last      = w.unk20;
+ 		waves[i].penult    = w.unk22;
+ 	}
+-	port_character_voice_apply(index, waves, count);
++	if (port_character_voice_apply(index, ApplicationCharacterKept(sCharacterVoiceId), waves, count))
++		ApplicationCharacterKeep(sCharacterVoiceId, index);
+ 	for (int i = 0; i < count; i++) {
+ 		JASystem::TWaveInfo& w = *infos[i];
+ 		w.unk4    = waves[i].rate;
+@@ -794,6 +813,7 @@
+ {
+ 	if (sCharacterArc || ApplicationCharacterTaken())
+ 		return;
++	sCharacterModel[0] = '\0';
+ 	ApplicationCharacterVoice(port_character_selected());
+ 	const char* path = port_character_path(port_character_selected());
+ 	if (!path)
+@@ -805,6 +825,7 @@
+ 	}
+ 	ApplicationCharacterRemount(arc);
+ 	sCharacterArc = arc;
++	ApplicationCharacterKeep(sCharacterModel, port_character_selected());
+ 	OSReport("[character] %s mounted for this stage\n", port_character_name(port_character_selected()));
+ }
+ 
+@@ -812,6 +833,7 @@
+ // stage's heap still holds the character's.
+ static void ApplicationCharacterStageEnd()
+ {
++	sCharacterModel[0] = '\0';
+ 	if (!sCharacterArc)
+ 		return;
+ 	sCharacterArc = nullptr;
+@@ -857,6 +879,8 @@
+ 		sCharacterArc = path ? arc : nullptr;
+ 		ok            = PortCharacterSwapModel(mario);
+ 		ApplicationCharacterVoice(index);
++		if (ok)
++			ApplicationCharacterKeep(sCharacterModel, index);
+ 	}
+ 	prev->becomeCurrentHeap();
+ 	OSReport("[character] %s %s in place (%d KB of the stage's heap, %d KB left)\n", port_character_name(index),
+@@ -865,6 +889,25 @@
+ 	return ok;
+ }
+ 
++// After an exact save state load, once Mario plays: the character chosen now
++// in his place, if the state's is another, so loading a state never changes
++// who the player plays as. Without room in the stage's heap the state's
++// character stays until the next area brings the chosen one.
++static void ApplicationCharacterAfterLoad(TApplication* app)
++{
++	sCharacterAfterLoad = false;
++	const int chosen    = port_character_selected();
++	if (ApplicationCharacterKept(sCharacterModel) == chosen)
++		return;
++	if (!port_character_switching()) {
++		OSReport("[character] the state's character stays until the next area (single player only)\n");
++		return;
++	}
++	OSReport("[character] the state was saved as %s\n", *sCharacterModel ? sCharacterModel : "mario");
++	if (!ApplicationCharacterSwap(app, chosen))
++		OSReport("[character] the state's character stays until the next area\n");
++}
++
+ // Once a frame: CHARACTER_NEXT. In a stage, while Mario plays (not paused, in a
+ // cutscene or talking, not leaving), the next character in Mario's place at
+ // once; when the stage's heap has no room for it, the area loaded again for
+@@ -872,15 +915,16 @@
+ // next area. Presses at other times are let go.
+ static void ApplicationCharacterFrame(TApplication* app)
+ {
+-	static int sPresses = port_character_presses;
+-	const bool taken    = ApplicationCharacterTaken();
++	const bool taken   = ApplicationCharacterTaken();
+ 	port_character_set_available(!taken);
+-	if (port_character_presses == sPresses)
++	const bool pressed = port_character_take_press() != 0;
++	if (taken) {
++		sCharacterAfterLoad = false;
+ 		return;
+-	sPresses = port_character_presses;
+-	const int count = port_character_count();
+-	if (taken || count < 2)
++	}
++	if (!pressed && !sCharacterAfterLoad)
+ 		return;
++	const int count = port_character_count();
+ 	TMarDirector* dir
+ 	    = app->mAppState == TApplication::APP_STATE_GAMEPLAY ? gpMarDirector : nullptr;
+ 	const bool ready = dir && gpMarioOriginal && dir->mState == TMarDirector::STATE_UNK4
+@@ -888,7 +932,9 @@
+ 	                   && !dir->checkFlag(TMarDirector::DIRECTOR_FLAG_DEMO_PENDING
+ 	                                      | TMarDirector::DIRECTOR_FLAG_SHINE_TAKEN)
+ 	                   && !dir->isTalkOrDemoModeNow() && !(gpCamera && gpCamera->isDemoCamera());
+-	if (dir && !ready)
++	if (sCharacterAfterLoad && ready)
++		ApplicationCharacterAfterLoad(app);
++	if (!pressed || count < 2 || (dir && !ready))
+ 		return;
+ 	const int next = (port_character_selected() + 1) % count;
+ 	port_character_select(next);
+@@ -1553,6 +1599,7 @@
+ 		}
+ 		port_savestate_notify("State loaded");
+ 		sStateFileUnknown = false;
++		sCharacterAfterLoad = true; // after the memory: the load put back the state's
+ 		ApplicationStateCardStart();
+ 		return;
+ 	}
