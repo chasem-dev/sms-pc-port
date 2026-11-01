@@ -50,7 +50,8 @@ Saving and loading happen in `ApplicationSaveStateFrame` (patch `zzzz-savestate-
 Saves happen only in a level, while it plays (`TMarDirector` state 4, no stage change pending). In the pause
 menu `SAVE_STATE` opens the state menu instead, and loads happen there too. A save that finds a disc read,
 interrupt work or the audio DSP under way keeps the press for the next frames, up to about half a second,
-before it gives up with "the game is busy"; the log names what was busy.
+before it gives up with "the game is busy", naming what was (disc, interrupts, audio or movie) in the
+message and the log.
 
 The state menu (`src/savestate_menu.cpp`) is game code, built into the game library and drawn by the game:
 the system font, and the HUD's art from `game_6` (the brushstroke behind its counters, the Shine, coin and

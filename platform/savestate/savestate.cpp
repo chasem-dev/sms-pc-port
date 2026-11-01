@@ -554,7 +554,7 @@ void port_savestate_hint(PortSaveStateHint* out)
 // (platform/thp/thp_decode.cpp) end in a moment, so those are waited for:
 // their interrupts run, and JAudio's audio thread may send the next subframe
 // of its frame (a frame has a handful).
-static bool game_busy()
+static bool game_busy(std::string* why = nullptr)
 {
 	for (int i = 0; i < 32 && (port_audio_dsp_busy() || port_thp_video_decode_busy() || port_os_irq_work_pending());
 	     i++) {
@@ -562,7 +562,16 @@ static bool game_busy()
 		port_thp_video_decode_settle();
 		port_irq_check();
 	}
-	return port_dvd_busy() || port_os_irq_work_pending() || port_audio_dsp_busy() || port_thp_video_decode_busy();
+	const bool disc = port_dvd_busy(), irq = port_os_irq_work_pending(), audio = port_audio_dsp_busy(),
+	           movie = port_thp_video_decode_busy();
+	if (why) {
+		why->clear();
+		for (const auto& r : { std::make_pair(disc, "disc"), std::make_pair(irq, "interrupts"),
+		                       std::make_pair(audio, "audio"), std::make_pair(movie, "movie") })
+			if (r.first)
+				*why += (why->empty() ? "" : ", ") + std::string(r.second);
+	}
+	return disc || irq || audio || movie;
 }
 
 // A save that finds the game busy waits for it: the press stays pending for the
@@ -578,7 +587,8 @@ int port_savestate_save(const PortSaveStatePortable* portable)
 		set_message("Still saving the last state");
 		return 0;
 	}
-	if (game_busy()) {
+	std::string why;
+	if (game_busy(&why)) {
 		g_writing = false;
 		if (++g_busyFrames < kBusyFrames) {
 			std::lock_guard<std::mutex> l(g_lock);
@@ -587,10 +597,9 @@ int port_savestate_save(const PortSaveStatePortable* portable)
 			return 0;
 		}
 		g_busyFrames = 0;
-		port_log("[savestate] could not save: busy for %d frames:%s%s%s%s\n", kBusyFrames,
-		         port_dvd_busy() ? " a disc read" : "", port_os_irq_work_pending() ? " interrupt work" : "",
-		         port_audio_dsp_busy() ? " the audio DSP" : "", port_thp_video_decode_busy() ? " a movie frame" : "");
-		set_message("Could not save the state: the game is busy");
+		// what was busy, in the message too: players report it by screenshot
+		port_log("[savestate] could not save: busy for %d frames (%s)\n", kBusyFrames, why.c_str());
+		set_message(("Could not save the state: the game is busy (" + why + ")").c_str());
 		return 0;
 	}
 	g_busyFrames = 0;
