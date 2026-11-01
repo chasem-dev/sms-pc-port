@@ -26,6 +26,8 @@ void port_character_select(int index);
 // such as Super Mario Eclipse, that loads its own character archives).
 void port_character_set_available(int available);
 int port_character_available(void);
+// Whether switching characters is on: one player alone (not an online game, not split-screen co-op).
+int port_character_switching(void);
 
 // CHARACTER_NEXT presses (platform/pad), counted as the radar's MAP is.
 extern int port_character_presses;

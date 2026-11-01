@@ -1560,8 +1560,16 @@ extern "C" u32 PADRead(PADStatus* status)
 	wasHud = hudKey;
 	static bool wasCharacter;
 	const bool characterKey = held(C_CHARACTER);
-	if (characterKey && !wasCharacter && !hotkeysBlocked)
-		port_character_presses++;
+	if (characterKey && !wasCharacter && !hotkeysBlocked) {
+		// one player alone only (port_character_switching)
+		static bool told;
+		if (port_character_switching())
+			port_character_presses++;
+		else if (!told) {
+			told = true;
+			port_log("[character] CHARACTER_NEXT switches characters in single player only\n");
+		}
+	}
 	wasCharacter = characterKey;
 	update_fludd_trigger(blocked);
 	if (blocked)

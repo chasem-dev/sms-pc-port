@@ -125,7 +125,7 @@ void list()
 
 // The settings menu's option (Gameplay page). The change counts from the next
 // area, as frame rate's does; CHARACTER_NEXT switches at once.
-int option_available() { return port_character_available() && port_character_count() > 1; }
+int option_available() { return port_character_available() && port_character_count() > 1 && port_character_switching(); }
 int option_count() { return port_character_count(); }
 const char* option_name(int i) { return port_character_name(i); }
 int option_get() { return port_character_selected(); }
@@ -139,7 +139,7 @@ int option_set(int i)
 
 const PortSetting kSettings[] = {
 	{ "character", PORT_SETTINGS_PAGE_GAMEPLAY, 90, "Character",
-	  "Who you play as, from the next area. F4 switches at once.", 1, option_available,
+	  "Who you play as, from the next area. F4 switches at once. Single player only.", 1, option_available,
 	  option_count, option_name, option_get, option_set },
 };
 
@@ -187,6 +187,19 @@ void port_character_select(int index)
 		return;
 	g_selected = index;
 	port_log("[character] %s\n", g_list[index].name.c_str());
+}
+
+// Switching (F4, the settings menu's Character) is for one player alone: not in an online game
+// (SMS_MULTIPLAYER host or join), whose players see each other as Mario, nor in split-screen co-op,
+// whose second player is made from the same archive as the first.
+int port_coop_enabled(void);
+int port_character_switching(void)
+{
+	static const int alone = [] {
+		const char* mode = getenv("SMS_MULTIPLAYER");
+		return !mode || !*mode || !strcmp(mode, "0") || !strcmp(mode, "off");
+	}();
+	return alone && !port_coop_enabled();
 }
 
 void port_character_set_available(int available) { g_available = available != 0; }

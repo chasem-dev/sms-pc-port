@@ -89,7 +89,7 @@ The characters are Mario (the disc's archive, or a game-file mod's `data/mario.s
 A loose `<id>.szs`, with `<id>.txt` and `<id>.voice/` beside it, is read as a pack too.
 `character = <id>` in `settings.txt` (`SMS_CHARACTER`) plays as one from the start.
 
-In the game, F4 (`CHARACTER_NEXT` in `bindings.txt`) plays as the next character: in a stage, at once and in place (the model, animations, caps and voice are made again from the pack where Mario stands, in the middle of what he is doing, and the area carries on), and outside a stage the next area brings it.
+In the game, F4 (`CHARACTER_NEXT` in `bindings.txt`) plays as the next character, in single player only (not in an online game or split-screen co-op, as the settings menu's Character option is not): in a stage, at once and in place (the model, animations, caps and voice are made again from the pack where Mario stands, in the middle of what he is doing, and the area carries on), and outside a stage the next area brings it.
 Each switch takes about 2 MB of the stage's memory until the area ends; when too little is left, the area loads again with the new character instead (the coins and anything else done in the area start again, as with Exit Area).
 Shadow Mario keeps the look he loaded with until the next area.
 It does nothing while the game is paused, in a cutscene or a conversation, or while the area is changing.
@@ -98,7 +98,7 @@ The pause menu's settings have it too (Gameplay, Character), from the next area;
 A pack's `voice/` folder gives the character a voice: WAV files (PCM, any rate, mono or stereo) named after Mario's voice cues, such as `MV21_JUMP_SMALL_01.wav` or `MV24_JUMP_SPECIAL_03.wav` (the names of `MSD_SE_MV*` in the decomp's `MSound/SoundEffects.hpp`, without `MSD_SE_`).
 As a stage loads the character, each file plays wherever Mario's code plays that cue: it is encoded to Mario's own format and takes the place of his wave, at its own sample rate; a cue without a file keeps Mario's voice, and Mario's comes back when he is chosen again.
 The same sound under several cues is kept once, so a character needs no more room than Mario's voice has (about 860 KB of ADPCM, some 50 seconds of sound at 32 kHz).
-`tools/mp7-characters/mp7_voices.py` makes these for the Mario Party 7 characters.
+SMS Launcher makes these for its characters from the player's own disc (their voice clips from the game's wave banks).
 
 The archive is read into the stage's memory as the stage loads Mario and mounted in place of his, as Super Mario Eclipse mounts its characters; Shadow Mario, who loads from the same archive, wears the character too.
 With Eclipse, which has characters of its own, the option is not offered.
