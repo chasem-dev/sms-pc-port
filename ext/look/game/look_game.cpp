@@ -2,7 +2,9 @@
 // SMS_MARIO_LOOK pack) stay on Mario. The game finds the pack's pictures by
 // the texture's hash, and Super Mario Eclipse's Luigi and Il Piantissimo draw
 // one of Mario's textures, his mouth (H_ma_mouse1_s3tc), so a player who
-// chose either would wear Mario's skin around their mouth. When this game's
+// chose either would wear Mario's skin around their mouth; so does the
+// launcher's Luigi (a pack in mods/characters, made from Eclipse's) in
+// Sunshine, and any pack made from Mario's own textures. When this game's
 // player isn't Mario, every texture of their body model is drawn plain
 // (GXPC_SetTexturePlain): their own, never Mario's look. Their cap and hands
 // draw the body's texture data, so the body's textures are all of them.
@@ -12,6 +14,7 @@
 // (mpg_undress_all), as it may our own when looks change: each tick checks
 // the marks are still there.
 #include "port_ext.h"
+#include "port_character.h"
 #include "../../multiplayer/mp_game_api.h"
 #include "../../multiplayer/game/mp_puppet.hpp"
 
@@ -36,12 +39,20 @@ const void* textureData(ResTIMG* timg, size_t* bytes)
 	return (const void*)(uintptr_t)(u32)((uintptr_t)timg + timg->imageDataOffset);
 }
 
-int s_body = MPG_BODY_MARIO; // this stage's player's (Eclipse mounts the archive as a stage starts)
+bool s_look = false;         // Customize Mario's colours on, and the game can keep textures out of them
+int s_body  = MPG_BODY_MARIO; // this stage's player's (Eclipse mounts the archive as a stage starts)
+
+// This game's player isn't Mario: Eclipse's character, or a pack of mods/characters (which F4 changes in
+// place, so asked each tick).
+bool otherThanMario()
+{
+	return s_body != MPG_BODY_MARIO || (port_character_available() && port_character_selected() > 0);
+}
 
 void keepOwnTextures()
 {
 	TMario* mario = gpMarioOriginal;
-	if (s_body == MPG_BODY_MARIO || !mario || !mario->mBodyModelData)
+	if (!s_look || !otherThanMario() || !mario || !mario->mBodyModelData)
 		return;
 	J3DTexture* textures = mario->mBodyModelData->getTexture();
 	if (!textures || !textures->getNum() || !textures->getResTIMG(0))
@@ -66,7 +77,8 @@ void keepOwnTextures()
 void stageSetup()
 {
 	static const bool look = getenv("SMS_MARIO_LOOK") && *getenv("SMS_MARIO_LOOK");
-	s_body = look && GXPC_SetTexturePlain && GXPC_TextureIsPlain ? MpLocalBody() : MPG_BODY_MARIO;
+	s_look = look && GXPC_SetTexturePlain && GXPC_TextureIsPlain;
+	s_body = s_look ? MpLocalBody() : MPG_BODY_MARIO;
 	keepOwnTextures();
 }
 
