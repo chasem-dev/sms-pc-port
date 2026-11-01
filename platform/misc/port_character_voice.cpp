@@ -361,29 +361,47 @@ int port_character_voice_apply(int index, int applied, PortCharacterVoiceWave* w
 		else
 			spans.push_back(r);
 	}
+	// Largest first, each in the smallest span it fits: Mario's voice waves lie between other waves of
+	// the archive, so taken in wave order a long clip could find only gaps too small left, even when
+	// the clips take less room than his waves did (the same sound under several cues is stored once).
+	std::vector<int> order(clips.size());
+	for (size_t i = 0; i < order.size(); i++)
+		order[i] = (int)i;
+	std::stable_sort(order.begin(), order.end(),
+	                 [&](int a, int b) { return clips[a].afc.size() > clips[b].afc.size(); });
 	int placed = 0, cut = 0;
-	for (Clip& c : clips) {
+	for (int ci : order) {
+		Clip& c       = clips[ci];
+		const uint32_t size = (uint32_t)c.afc.size();
+		std::pair<uint32_t, uint32_t>* best = nullptr;
 		for (auto& f : spans) {
 			const uint32_t at = (f.first + 31) & ~31u;
-			if (at >= f.second)
-				continue;
-			uint32_t size = (uint32_t)c.afc.size();
-			if (at + size > f.second) {
-				// The last place left: as much of it as fits.
-				if (&f != &spans.back() || at + 9 > f.second)
-					continue;
-				size      = (f.second - at) / 9 * 9;
-				c.samples = std::min(c.samples, size / 9 * 16);
-				cut++;
-			}
-			memcpy(port_aram_ptr(waves[0].aram + at), c.afc.data(), size);
-			c.afc.resize(size);
-			c.offset = at;
-			c.placed = true;
-			f.first  = at + size;
-			placed++;
-			break;
+			if (at < f.second && at + size <= f.second
+			    && (!best || f.second - at < best->second - ((best->first + 31) & ~31u)))
+				best = &f;
 		}
+		uint32_t fit = size;
+		if (!best) {
+			// No span holds it whole: as much of it as fits in the largest left.
+			for (auto& f : spans) {
+				const uint32_t at = (f.first + 31) & ~31u;
+				if (at + 9 <= f.second && (!best || f.second - at > best->second - ((best->first + 31) & ~31u)))
+					best = &f;
+			}
+			if (!best)
+				continue;
+			const uint32_t at = (best->first + 31) & ~31u;
+			fit               = (best->second - at) / 9 * 9;
+			c.samples         = std::min(c.samples, fit / 9 * 16);
+			cut++;
+		}
+		const uint32_t at = (best->first + 31) & ~31u;
+		memcpy(port_aram_ptr(waves[0].aram + at), c.afc.data(), fit);
+		c.afc.resize(fit);
+		c.offset     = at;
+		c.placed     = true;
+		best->first  = at + fit;
+		placed++;
 	}
 	int replaced = 0;
 	for (int i = 0; i < count; i++) {
@@ -403,7 +421,7 @@ int port_character_voice_apply(int index, int applied, PortCharacterVoiceWave* w
 		replaced += c.placed;
 	}
 	port_log("[character] %s's voice: %d of %d voice waves from %d sounds in %s%s\n", port_character_name(index),
-	         replaced, count, placed, dir.c_str(), cut ? " (the last cut short: no more room)" : "");
+	         replaced, count, placed, dir.c_str(), cut ? " (some cut short: no more room)" : "");
 	return 1;
 }
 
