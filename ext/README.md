@@ -7,7 +7,7 @@ They are the start of a code-mod framework for the port: a new feature that need
 | --- | --- |
 | [`core/`](core/port_ext.cpp) | the registry: the game's hooks call each registered extension in turn |
 | [`multiplayer/`](multiplayer/README.md) | up to eight players in one game over the network |
-| [`coop/`](coop/README.md) | split-screen co-op: a second player on another controller, as Luigi, with a camera and half of the screen of their own |
+| [`coop/`](coop/README.md) | split-screen co-op: a second player on another controller, as Luigi or the character the launcher chose for them, with a camera and half of the screen of their own |
 | [`demo/`](demo/README.md) | plays Mario from a script, as a player holds the controller, for trailers and footage |
 | [`autosave/`](autosave/README.md) | saves by itself where the game would ask to save, with an indicator and the save sound |
 | [`dualsense/`](dualsense/README.md) | a DualSense's R2 gets harder to pull while it is FLUDD's trigger |

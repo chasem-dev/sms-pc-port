@@ -1,0 +1,193 @@
+Reason: port: split-screen co-op (ext/coop): player 2 as a character of their own, their archive put on the "mario" volume while they load, and a character's look and FLUDD place kept for each player
+--- a/src/System/Application.cpp
++++ b/src/System/Application.cpp
+@@ -851,6 +851,19 @@
+ 	return path ? ApplicationCharacterRead(path) : arcBufMario;
+ }
+ 
++// Split-screen co-op's player 2 as a character of their own (ext/coop,
++// patch zzzzzz-coop-12): the archive on the "mario" volume now (player 1's),
++// and another put there while player 2 loads, then player 1's back.
++void* ApplicationCharacterMounted()
++{
++	return sCharacterArc ? sCharacterArc : arcBufMario;
++}
++
++void ApplicationCharacterPut(void* arc)
++{
++	ApplicationCharacterRemount(arc);
++}
++
+ // Mario's model, hands, caps and animations made again in place from the
+ // archive on the "mario" volume (patch zzzzzz-character-03, MarioDraw.cpp).
+ bool PortCharacterSwapModel(TMario* mario);
+--- a/src/Player/MarioDraw.cpp
++++ b/src/Player/MarioDraw.cpp
+@@ -2866,10 +2866,30 @@
+ // posed, for everything that reads them, but not drawn. Made with the player's
+ // model, in the heap in force then (the stage's), so a new stage or a swap
+ // makes it again.
+-static MActor* sPortLook;
+-static TMario* sPortLookOwner;
+-static bool sPortLookScreen; // the screen's picture is in it
++// Each player's own (patch zzzzzz-coop-12): split-screen co-op's player 2
++// (ext/coop) is a second TMario, made while port_coop_in_p2 is set, who may
++// be another character than player 1 and has a look and a FLUDD place of
++// their own.
++struct PortCharacterOwn {
++	TMario* owner;
++	MActor* look;
++	bool lookScreen; // the screen's picture is in it
++	f32 fluddScale;
++	f32 fluddOffset[3];
++	f32 fluddTilt;
++};
++static PortCharacterOwn sPortOwn[2];
++extern "C" int port_coop_in_p2; // platform/pad: player 2's globals are in force
+ 
++// The player's own, or null for a TMario that is no player (Shadow Mario).
++static PortCharacterOwn* PortCharacterOwnOf(TMario* mario)
++{
++	for (int i = 0; i < 2; i++)
++		if (mario && sPortOwn[i].owner == mario)
++			return &sPortOwn[i];
++	return nullptr;
++}
++
+ // Port: a character's FLUDD (patch zzzzzz-character-05). FLUDD is made for
+ // Mario and hangs from the chest joint; a character archive with
+ // character/fludd.bin (big-endian floats: scale, an x y z offset in the chest
+@@ -2878,17 +2898,11 @@
+ // has the player's FLUDD drawn that size, that far from the joint and leaning
+ // back that much more, so a small character (a Toad) wears a smaller one, its
+ // belt round the body and its tank out from under a big head.
+-static TMario* sPortFluddOwner;
+-static f32 sPortFluddScale = 1.0f;
+-static f32 sPortFluddOffset[3];
+-static f32 sPortFluddTilt;
+-
+-static void PortCharacterFluddInit(TMario* mario)
++static void PortCharacterFluddInit(PortCharacterOwn& own)
+ {
+-	sPortFluddOwner = mario;
+-	sPortFluddScale = 1.0f;
+-	sPortFluddOffset[0] = sPortFluddOffset[1] = sPortFluddOffset[2] = 0.0f;
+-	sPortFluddTilt = 0.0f;
++	own.fluddScale = 1.0f;
++	own.fluddOffset[0] = own.fluddOffset[1] = own.fluddOffset[2] = 0.0f;
++	own.fluddTilt = 0.0f;
+ 	const u8* data = (const u8*)JKRFileLoader::getGlbResource("/mario/character/fludd.bin");
+ 	const long size = data ? JKRFileLoader::getResSize((void*)data, nullptr) : 0;
+ 	if (size < 16)
+@@ -2899,37 +2913,42 @@
+ 		memcpy(&v[i], &bits, 4);
+ 	}
+ 	if (v[0] > 0.1f && v[0] < 4.0f)
+-		sPortFluddScale = v[0];
++		own.fluddScale = v[0];
+ 	for (int i = 0; i < 3; i++)
+-		sPortFluddOffset[i] = v[i + 1];
+-	sPortFluddTilt = v[4];
+-	OSReport("[character] FLUDD at %.2f of its size, %.1f %.1f %.1f from the chest, tilted %.0f\n", sPortFluddScale,
+-	         sPortFluddOffset[0], sPortFluddOffset[1], sPortFluddOffset[2], sPortFluddTilt);
++		own.fluddOffset[i] = v[i + 1];
++	own.fluddTilt = v[4];
++	OSReport("[character] FLUDD at %.2f of its size, %.1f %.1f %.1f from the chest, tilted %.0f\n", own.fluddScale,
++	         own.fluddOffset[0], own.fluddOffset[1], own.fluddOffset[2], own.fluddTilt);
+ }
+ 
+ // In place of fludd->setBaseTRMtx(chest) (TMario::perform, patch to MarioMain.cpp).
+ void PortCharacterFluddPlace(TMario* mario, TWaterGun* fludd, MtxPtr chest)
+ {
+-	if (mario != sPortFluddOwner) {
++	PortCharacterOwn* own = PortCharacterOwnOf(mario);
++	if (!own) {
+ 		fludd->setBaseTRMtx(chest);
+ 		return;
+ 	}
+ 	Mtx at, tilt;
+-	MTXTrans(at, sPortFluddOffset[0], sPortFluddOffset[1], sPortFluddOffset[2]);
++	MTXTrans(at, own->fluddOffset[0], own->fluddOffset[1], own->fluddOffset[2]);
+ 	MTXConcat(chest, at, at);
+-	MTXRotRad(tilt, 'z', -sPortFluddTilt * 3.14159265f / 180.0f);
++	MTXRotRad(tilt, 'z', -own->fluddTilt * 3.14159265f / 180.0f);
+ 	MTXConcat(at, tilt, at);
+ 	fludd->setBaseTRMtx(at);
+-	Vec scale = { sPortFluddScale, sPortFluddScale, sPortFluddScale };
++	Vec scale = { own->fluddScale, own->fluddScale, own->fluddScale };
+ 	fludd->mFluddModel->getModel()->setBaseScale(scale);
+ }
+ 
+ void PortCharacterLookInit(TMario* mario)
+ {
+-	PortCharacterFluddInit(mario);
+-	sPortLook       = nullptr;
+-	sPortLookOwner  = nullptr;
+-	sPortLookScreen = false;
++	PortCharacterOwn& own = sPortOwn[port_coop_in_p2 ? 1 : 0];
++	// player 1 is made first in each stage: the last stage's player 2 is gone
++	if (!port_coop_in_p2)
++		memset(&sPortOwn[1], 0, sizeof sPortOwn[1]);
++	own.owner      = mario;
++	own.look       = nullptr;
++	own.lookScreen = false;
++	PortCharacterFluddInit(own);
+ 	if (!mario || !mario->mModel || !JKRFileLoader::getGlbResource("/mario/look/default.bmd"))
+ 		return;
+ 	TMActorKeeper* keeper     = new TMActorKeeper(nullptr, 1);
+@@ -2947,22 +2966,22 @@
+ 	for (u16 i = 0; i < model->getModelData()->getMaterialNum(); i++)
+ 		SMS_InitPacket_Fog(model, i);
+ 	look->setBtkFromIndex(0);
+-	sPortLook      = look;
+-	sPortLookOwner = mario;
++	own.look = look;
+ 	OSReport("[character] drawn as its look model\n");
+ }
+ 
+ void PortCharacterLookCalc(TMario* mario)
+ {
+-	if (!sPortLook || mario != sPortLookOwner)
++	PortCharacterOwn* own = PortCharacterOwnOf(mario);
++	if (!own || !own->look)
+ 		return;
+-	J3DModel* look = sPortLook->getModel();
++	J3DModel* look = own->look->getModel();
+ 	// the screen texture is made with the stage's scene, after Mario
+-	if (!sPortLookScreen && gpScreenTexture) {
++	if (!own->lookScreen && gpScreenTexture) {
+ 		gpScreenTexture->replace(look->getModelData(), "H_kagemario_dummy");
+-		sPortLookScreen = true;
++		own->lookScreen = true;
+ 	}
+-	sPortLook->calcAnm();
++	own->look->calcAnm();
+ 	J3DModel* body = mario->mModel->getModel();
+ 	for (u16 i = 0; i < body->getModelData()->getJointNum(); ++i)
+ 		MTXCopy(body->getAnmMtx(i), look->getAnmMtx(i));
+@@ -2971,18 +2990,20 @@
+ 
+ bool PortCharacterLookView(TMario* mario)
+ {
+-	if (!sPortLook || mario != sPortLookOwner)
++	PortCharacterOwn* own = PortCharacterOwnOf(mario);
++	if (!own || !own->look)
+ 		return false;
+-	sPortLook->viewCalc();
++	own->look->viewCalc();
+ 	return true;
+ }
+ 
+ bool PortCharacterLookEntry(TMario* mario)
+ {
+-	if (!sPortLook || mario != sPortLookOwner)
++	PortCharacterOwn* own = PortCharacterOwnOf(mario);
++	if (!own || !own->look)
+ 		return false;
+-	SMS_ResetDamageFogEffect(sPortLook->getModel()->getModelData());
+-	sPortLook->entry();
++	SMS_ResetDamageFogEffect(own->look->getModel()->getModelData());
++	own->look->entry();
+ 	return true;
+ }
+ #endif
