@@ -1,0 +1,333 @@
+Reason: port: characters (port_character.h): CHARACTER_NEXT's swaps get room of their own in the stage's heap, each a group there, and the swap worn before is let go a second or two later, so switching again and again (F4 over and over) never fills the stage's heap and loads the area again; presses while the room is still held choose who comes, and the swap waits for it
+--- a/src/System/Application.cpp
++++ b/src/System/Application.cpp
+@@ -650,6 +650,7 @@
+ #include <stdint.h>
+ #include "port_savestate.h"
+ #include <Camera/Camera.hpp>
++#include <Enemy/Conductor.hpp>
+ #include <Player/Mario.hpp>
+ #include <string.h>
+ 
+@@ -831,9 +832,11 @@
+ 
+ // The stage's director has ended: Mario's archive back on the volume while the
+ // stage's heap still holds the character's.
++static void ApplicationCharacterSwapForget();
+ static void ApplicationCharacterStageEnd()
+ {
+ 	sCharacterModel[0] = '\0';
++	ApplicationCharacterSwapForget();
+ 	if (!sCharacterArc)
+ 		return;
+ 	sCharacterArc = nullptr;
+@@ -859,33 +862,178 @@
+ // spare (Mario's own come to about 0.6 MB).
+ static const s32 kCharacterModelRoom = 0x180000;
+ 
++// The swaps' own room (zzzzzz-character-08). Each swap's archive, models and
++// tables are made in a heap of their own, carved from the stage's at the first
++// swap, as a group of its own there; the swap worn before is let go
++// kCharacterSwapGrace frames later, once nothing reads it any more (particles
++// bound to its joints die out; the swap restarts the animation's sounds from
++// the new tables; the conductor's list of SDL model data loses its own). So switching characters again and again
++// reuses the same room: before, every swap stayed in the stage's heap until the
++// stage ended, and enough of them (pressing F4 over and over) left no room, so
++// the next press loaded the area again. The stage's heap is a solid heap, which
++// frees nothing, hence the room of its own. Like the stage's heap it is game
++// memory, so a save state brings it back with the models in it.
++static JKRExpHeap* sCharacterSwapHeap;
++// The group of the swap worn now (0: the stage's own Mario, or no swap room).
++static u8 sCharacterSwapGroup;
++// Swaps worn before, waiting to be let go: their group, and frames left.
++static const int kCharacterSwapsOld = 8;
++static u8 sCharacterSwapOld[kCharacterSwapsOld];
++static s16 sCharacterSwapOldLeft[kCharacterSwapsOld];
++// A press waiting for an old swap's room, to switch to the character chosen.
++static bool sCharacterSwapWaiting;
++static const int kCharacterSwapGrace = 60;
++// The room asked of the stage's heap, and what is left to the stage.
++static const s32 kCharacterSwapRoom    = PORT_HEAP64(0x600000);
++static const s32 kCharacterStageRoom   = PORT_HEAP64(0x100000);
++
++// The stage has ended: its heap, the swap room with it, is emptied.
++static void ApplicationCharacterSwapForget()
++{
++	sCharacterSwapHeap    = nullptr;
++	sCharacterSwapGroup   = 0;
++	sCharacterSwapWaiting = false;
++	memset(sCharacterSwapOld, 0, sizeof sCharacterSwapOld);
++}
++
++// The swap room, made at the first swap, or null when the stage's heap can't
++// spare it (the swap is then made in the stage's heap, as before).
++static JKRExpHeap* ApplicationCharacterSwapHeap(TApplication* app)
++{
++	if (sCharacterSwapHeap)
++		return sCharacterSwapHeap;
++	const s32 free = app->mHeap->getFreeSize() - kCharacterStageRoom;
++	const s32 size = free < kCharacterSwapRoom ? free : kCharacterSwapRoom;
++	if (size < kCharacterModelRoom * 2)
++		return nullptr;
++	sCharacterSwapHeap = JKRExpHeap::create(size, app->mHeap, false);
++	if (sCharacterSwapHeap)
++		OSReport("[character] %d KB of the stage's heap kept for switching characters\n", (int)(size >> 10));
++	return sCharacterSwapHeap;
++}
++
++static bool ApplicationCharacterSwapsOld()
++{
++	for (int i = 0; i < kCharacterSwapsOld; i++)
++		if (sCharacterSwapOld[i])
++			return true;
++	return false;
++}
++
++// Whether `p` is in memory the swap of `group` holds.
++static bool ApplicationCharacterSwapHolds(u8 group, const void* p)
++{
++	for (JKRExpHeap::CMemBlock* b = sCharacterSwapHeap->getHeadUsedList(); b; b = b->getNextBlock())
++		if (b->getGroupId() == group && p >= b->getContent() && p < (u8*)b->getContent() + b->getSize())
++			return true;
++	return false;
++}
++
++// A swap let go. What the stage keeps a list of goes from the list first: the
++// conductor's SDL model data, which an MActor drawn as an SDL model makes (a
++// character's look model, TMActorKeeper), drawn from that list every frame.
++static void ApplicationCharacterSwapFree(u8 group)
++{
++	if (gpConductor) {
++		JGadget::TList<SDLModelData*>& list = gpConductor->unk70;
++		for (JGadget::TList<SDLModelData*>::iterator it = list.begin(); it != list.end();)
++			if (ApplicationCharacterSwapHolds(group, *it))
++				it = list.erase(it);
++			else
++				++it;
++	}
++	sCharacterSwapHeap->freeGroup(group);
++}
++
++// Once a frame: the old swaps past their time let go. True when one was.
++static bool ApplicationCharacterSwapTick()
++{
++	bool freed = false;
++	for (int i = 0; sCharacterSwapHeap && i < kCharacterSwapsOld; i++) {
++		if (!sCharacterSwapOld[i] || --sCharacterSwapOldLeft[i] > 0)
++			continue;
++		ApplicationCharacterSwapFree(sCharacterSwapOld[i]);
++		sCharacterSwapOld[i] = 0;
++		freed                = true;
++	}
++	return freed;
++}
++
++// The swap worn until now, to be let go; with no place left in the list, it
++// stays until the stage ends, as every swap did before.
++static void ApplicationCharacterSwapRetire(u8 group)
++{
++	for (int i = 0; group && i < kCharacterSwapsOld; i++)
++		if (!sCharacterSwapOld[i]) {
++			sCharacterSwapOld[i]     = group;
++			sCharacterSwapOldLeft[i] = kCharacterSwapGrace;
++			return;
++		}
++}
++
++// A group no swap waiting to be let go, or worn, has (1..0xFE; 0xFF is the
++// heap's own, and 0 none).
++static u8 ApplicationCharacterSwapNewGroup()
++{
++	u8 group = sCharacterSwapGroup;
++	for (int tries = 0; tries < 0xFE; tries++) {
++		group     = group % 0xFE + 1;
++		bool used = group == sCharacterSwapGroup;
++		for (int i = 0; i < kCharacterSwapsOld; i++)
++			used = used || sCharacterSwapOld[i] == group;
++		if (!used)
++			return group;
++	}
++	return 0;
++}
++
+ // CHARACTER_NEXT in a stage: the character's archive (Mario's own for him) on
+ // the "mario" volume and Mario's model, animations and voice made again from
+-// it in place, in the stage's heap, without loading the area. False, with the
+-// model as it was, when the heap has no room for them.
++// it in place, in the swap room (the stage's heap without one), without
++// loading the area. False, with the model as it was, when there is no room
++// for them (yet: ApplicationCharacterSwapsOld, when an old swap is still to
++// be let go).
+ static bool ApplicationCharacterSwap(TApplication* app, int index)
+ {
+ 	TMario* mario = gpMarioOriginal;
+ 	if (!mario || !app->mHeap)
+ 		return false;
++	JKRExpHeap* room  = ApplicationCharacterSwapHeap(app);
++	JKRHeap* heap     = room ? (JKRHeap*)room : app->mHeap;
++	const u8 group    = room ? ApplicationCharacterSwapNewGroup() : 0;
++	if (room && !group)
++		return false;
+ 	JKRHeap* prev     = JKRGetCurrentHeap();
+ 	const char* path  = port_character_path(index);
+-	const s32 before  = app->mHeap->getFreeSize();
+-	app->mHeap->becomeCurrentHeap();
+-	void* arc = path ? ApplicationCharacterRead(path) : arcBufMario;
+-	bool ok   = arc && app->mHeap->getFreeSize() >= kCharacterModelRoom;
+-	if (ok) {
++	const s32 before  = room ? room->getTotalFreeSize() : heap->getFreeSize();
++	const s32 heapGroup = room ? room->changeGroupID(group) : 0;
++	heap->becomeCurrentHeap();
++	void* arc    = path ? ApplicationCharacterRead(path) : arcBufMario;
++	bool mounted = arc && heap->getFreeSize() >= kCharacterModelRoom;
++	bool ok      = false;
++	if (mounted) {
+ 		ApplicationCharacterRemount(arc);
+ 		sCharacterArc = path ? arc : nullptr;
+ 		ok            = PortCharacterSwapModel(mario);
+ 		ApplicationCharacterVoice(index);
+ 		if (ok)
+ 			ApplicationCharacterKeep(sCharacterModel, index);
+-	}
++	} else if (arc && path)
++		JKRHeap::free(arc, heap); // read for nothing: no room for the models
++	if (room)
++		room->changeGroupID((u8)heapGroup);
+ 	prev->becomeCurrentHeap();
+-	OSReport("[character] %s %s in place (%d KB of the stage's heap, %d KB left)\n", port_character_name(index),
+-	         ok ? "swapped" : "not swapped", (int)((before - app->mHeap->getFreeSize()) >> 10),
+-	         (int)(app->mHeap->getFreeSize() >> 10));
++	if (room && mounted) {
++		// the old models are let go once the new are worn; if they couldn't be made, the
++		// new archive is on the volume and the old models still worn, so both stay
++		if (ok)
++			ApplicationCharacterSwapRetire(sCharacterSwapGroup);
++		sCharacterSwapGroup = group;
++	}
++	const s32 after = room ? room->getTotalFreeSize() : heap->getFreeSize();
++	OSReport("[character] %s %s in place (%d KB of the %s, %d KB left)\n", port_character_name(index),
++	         ok ? "swapped" : "not swapped", (int)((before - after) >> 10),
++	         room ? "room for switching" : "stage's heap", (int)(after >> 10));
+ 	return ok;
+ }
+ 
+@@ -908,21 +1056,36 @@
+ 		OSReport("[character] the state's character stays until the next area\n");
+ }
+ 
++// No room for the character even with every old swap let go (a character too
++// big for what the stage leaves): the area loaded again for it, as the warp
++// menu loads one.
++static void ApplicationCharacterReload(TApplication* app, TMarDirector* dir, int index)
++{
++	const int area = app->mCurrArea.getStage(), episode = app->mCurrArea.getScenario();
++	OSReport("[character] %s: reloading area %d episode %d\n", port_character_name(index), area, episode);
++	TFlagManager::getInstance()->setFlag(0x40003, episode);
++	dir->setNextStage((u16)(((area + 1) << 8) | episode), nullptr);
++}
++
+ // Once a frame: CHARACTER_NEXT. In a stage, while Mario plays (not paused, in a
+ // cutscene or talking, not leaving), the next character in Mario's place at
+-// once; when the stage's heap has no room for it, the area loaded again for
+-// it, as the warp menu loads one. Outside a stage, the next character for the
+-// next area. Presses at other times are let go.
++// once. When the swaps before still hold the room (presses in quick
++// succession), the presses choose who comes and the swap waits for the oldest
++// to be let go, a second or two; only with no room at all is the area loaded
++// again (ApplicationCharacterReload). Outside a stage, the next character for
++// the next area. Presses at other times are let go.
+ static void ApplicationCharacterFrame(TApplication* app)
+ {
+ 	const bool taken   = ApplicationCharacterTaken();
+ 	port_character_set_available(!taken);
+ 	const bool pressed = port_character_take_press() != 0;
++	// an old swap let go: room, perhaps, for the press waiting for it
++	const bool freed = ApplicationCharacterSwapTick();
+ 	if (taken) {
+ 		sCharacterAfterLoad = false;
+ 		return;
+ 	}
+-	if (!pressed && !sCharacterAfterLoad)
++	if (!pressed && !sCharacterAfterLoad && !(sCharacterSwapWaiting && (freed || !ApplicationCharacterSwapsOld())))
+ 		return;
+ 	const int count = port_character_count();
+ 	TMarDirector* dir
+@@ -934,19 +1097,39 @@
+ 	                   && !dir->isTalkOrDemoModeNow() && !(gpCamera && gpCamera->isDemoCamera());
+ 	if (sCharacterAfterLoad && ready)
+ 		ApplicationCharacterAfterLoad(app);
++	if (sCharacterSwapWaiting && !pressed) {
++		// the character chosen by the presses before, now an old swap has made room (or once
++		// Mario plays again); presses go on choosing meanwhile
++		if (!ready)
++			return;
++		sCharacterSwapWaiting = false;
++		const int chosen      = port_character_selected();
++		if (ApplicationCharacterKept(sCharacterModel) == chosen || ApplicationCharacterSwap(app, chosen))
++			return;
++		if (ApplicationCharacterSwapsOld()) {
++			sCharacterSwapWaiting = true;
++			return;
++		}
++		ApplicationCharacterReload(app, dir, chosen);
++		return;
++	}
+ 	if (!pressed || count < 2 || (dir && !ready))
+ 		return;
+ 	const int next = (port_character_selected() + 1) % count;
+ 	port_character_select(next);
+ 	char text[96];
+-	if (dir && ApplicationCharacterSwap(app, next)) {
++	if (dir && sCharacterSwapWaiting) {
++		// still waiting for room: this press only chooses who comes
++		snprintf(text, sizeof text, "%s", port_character_name(next));
++	} else if (dir && ApplicationCharacterSwap(app, next)) {
++		snprintf(text, sizeof text, "%s", port_character_name(next));
++	} else if (dir && ApplicationCharacterSwapsOld()) {
++		// the swaps before still hold the room: this one comes as soon as the oldest is let go
+ 		snprintf(text, sizeof text, "%s", port_character_name(next));
++		sCharacterSwapWaiting = true;
+ 	} else if (dir) {
+ 		snprintf(text, sizeof text, "%s", port_character_name(next));
+-		const int area = app->mCurrArea.getStage(), episode = app->mCurrArea.getScenario();
+-		OSReport("[character] %s: reloading area %d episode %d\n", port_character_name(next), area, episode);
+-		TFlagManager::getInstance()->setFlag(0x40003, episode);
+-		dir->setNextStage((u16)(((area + 1) << 8) | episode), nullptr);
++		ApplicationCharacterReload(app, dir, next);
+ 	} else {
+ 		snprintf(text, sizeof text, "%s, from the next area", port_character_name(next));
+ 	}
+--- a/src/Player/MarioDraw.cpp
++++ b/src/Player/MarioDraw.cpp
+@@ -2706,9 +2706,10 @@
+ // loading the area again. M3UModelMario keeps its motion state (the indices
+ // of the animations playing, the frame controllers and the blend), which
+ // reads the tables by index each frame, so the new character takes up the
+-// motion where the old one was. The old models and tables stay in the heap
+-// (the stage's, which is emptied after it), so anything still pointing at
+-// them for a frame reads stale data rather than freed memory.
++// motion where the old one was. The old models and tables stay in their heap
++// a while after (zzzzzz-character-08: a second or two, then the swap's room is
++// let go), so anything still pointing at them for a frame reads stale data
++// rather than freed memory.
+ 
+ // The mirror scene's copies of `from` follow `to` instead.
+ static void PortCharacterMirrorRetarget(J3DModel* from, J3DModel* to)
+@@ -2821,6 +2822,17 @@
+ 	common->unk8                = anmTexPattern;
+ 	common->unkC                = anmTexNoAnm;
+ 	mario->mAnmSoundTbl         = anmSound;
++	// The animation's sounds were read from the old archive's table, which goes once the swap that
++	// made it is let go (zzzzzz-character-08): the same animation's from the new one, from where
++	// the motion is, as setAnimation would start them; none on Yoshi, whose ride stops them.
++	if (MAnmSound* sound = mario->mAnmSound) {
++		TMarioAnimeData* datas = sms_mod_animeDatas_(SMS_MOD_SITE(0x8024786C));
++		const u16 anm          = mario->mAnimationId;
++		const u16 at           = datas != gMarioAnimeData || anm < 336 ? datas[anm].unk0 : 0xFFFF;
++		sound->stop();
++		sound->initAnmSound(!mario->onYoshi() && at < 199 ? anmSound[at] : nullptr, 1,
++		                    mario->getMotionFrameCtrl().getFrame());
++	}
+ 
+ 	// The new body where the old one stood, posed by the motion as it is.
+ 	body->setBaseTRMtx(oldBody->getBaseTRMtx());
