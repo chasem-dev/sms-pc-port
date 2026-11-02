@@ -22,14 +22,16 @@ nothing is drawn the map is a dark slate (BACKDROP).
 --style radar also greys the scenery away from the stage (distant hills, the
 volcano) and draws buildings Mario cannot stand on as a floor plan's blocks.
 
-Stages whose collision is the same share one map. Writes OUT/<scene>.jpg per
-map (named for the first scene with it; JPEG, full-resolution colour) and
-OUT/maps.txt, one line per map:
+Stages whose collision is the same share one map, unless they are courses
+of placed blocks with other blocks (look_key). Writes OUT/<scene>.jpg per map (named for the first scene with it; JPEG,
+full-resolution colour) and OUT/maps.txt, one line per map:
     <col key> <file> <x0> <z0> <pixels per unit> <width> <height> <scenes>
 where (x0, z0) is the world x and z of the image's top left corner, x to the
 right and z down, so world (x, z) is pixel ((x - x0) * ppu, (z - z0) * ppu).
 The key (col_key) is a hash of the collision's values, which the game can
-compute from the loaded map.col to find the map of the stage it is in. Needs
+compute from the loaded map.col to find the map of the stage it is in; when
+stages with the same collision have maps of their own, each has a line with
+that key and the game picks the one listing the scene it loaded. Needs
 numpy, scipy and Pillow.
 
 A mod's disc (Super Mario Eclipse's, GMSE04) makes a pack for the game's
@@ -38,6 +40,7 @@ the retail maps already have, by key, so the pack holds only the mod's own
 and those it changed. tools/mods/get.py installs Eclipse's.
 """
 import argparse
+import hashlib
 import os
 import struct
 import sys
@@ -290,12 +293,12 @@ def trs(pos, rot, scale):
     return M
 
 
-def placed(files):
-    """[(model, collision bytes or None, matrix)] of the stage's placed
-    scenery: the objects whose model is in the archive's mapobj folder"""
+def placements(files):
+    """[(model name, matrix)] of the stage's placed scenery: the objects
+    whose model is in the archive's mapobj folder"""
     if 'map/scene.bin' not in files:
         return []
-    models, out = {}, []
+    out = []
     for t, key, pos, rot, scale in scene_objects(files['map/scene.bin']):
         k = key.lower()
         k = MODEL_ALIASES.get(k, k)
@@ -303,6 +306,15 @@ def placed(files):
             continue
         if not all(np.isfinite(pos + rot + scale)) or max(abs(x) for x in pos) > 1e6:
             continue
+        out.append((k, trs(pos, rot, scale)))
+    return out
+
+
+def placed(files):
+    """[(model, collision bytes or None, matrix)] of the stage's placed
+    scenery (placements)"""
+    models, out = {}, []
+    for k, M in placements(files):
         if k not in models:
             try:
                 models[k] = bmd.BMD(files['mapobj/%s.bmd' % k])
@@ -311,8 +323,31 @@ def placed(files):
                 models[k] = None
         if models[k] is None:
             continue
-        out.append((models[k], files.get('mapobj/%s.col' % k), trs(pos, rot, scale)))
+        out.append((models[k], files.get('mapobj/%s.col' % k), M))
     return out
+
+
+def look_key(files):
+    """What tells apart stages whose collision is the same but whose maps are
+    not: a secret course's own collision is next to nothing and the course is
+    its placed blocks (Bianco's and Sirena's, coro_ex1 and coro_ex5, are the
+    same .col with other blocks on it), so where the placed scenery has more
+    floors than the stage's own, a hash of the placements; else None (the
+    episodes of a stage differ by a few props and share a map)."""
+    col = files['map/map.col']
+    own = floors(col)
+    if not len(own):
+        own = floors(col, flip=True)
+    objects = placements(files)
+    extra = sum(len(floors(files['mapobj/%s.col' % k], M=M)) for k, M in objects if 'mapobj/%s.col' % k in files)
+    if extra <= len(without_huge(own) if len(own) else own):
+        return None
+    h = hashlib.sha1()
+    for k, M in objects:
+        for b in (k.encode(), M.tobytes(), files['mapobj/%s.bmd' % k], files.get('mapobj/%s.col' % k, b'')):
+            h.update(struct.pack('<I', len(b)))
+            h.update(b)
+    return h.hexdigest()
 
 
 # --- drawing ---------------------------------------------------------------------
@@ -588,7 +623,8 @@ def main():
     ap.add_argument('--style', choices=('full', 'radar'), default='full',
                     help='full: the stage as it is; radar: scenery greyed and buildings as blocks')
     ap.add_argument('--except', dest='skip', default='',
-                    help="a maps.txt whose stages (by key) are left out: the retail maps, for a mod's pack")
+                    help="a maps.txt whose stages (by key; a course of placed blocks by key and scene) "
+                         "are left out: the retail maps, for a mod's pack")
     a = ap.parse_args()
     disc = Disc(a.disc)
     if disc.read(0, 6) not in (b'GMSE01', b'GMSE04'):  # retail; Super Mario Eclipse
@@ -596,54 +632,71 @@ def main():
     os.makedirs(a.out, exist_ok=True)
     only = set(x for x in a.only.split(',') if x)
     scenes = scene_files(disc)
-    skip = set()
+    skip = {}  # col hash -> the scenes listed with it
     if a.skip:
         for line in open(a.skip):
             if line.strip() and not line.startswith('#'):
-                skip.add(int(line.split()[0], 16))
-    maps = {}  # col hash -> [file, x0, z0, density, w, h, [scenes]]
+                f = line.split()
+                skip.setdefault(int(f[0], 16), set()).update(f[7].split(',') if len(f) > 7 else ())
+
+    def stage_files(name):
+        off, size = scenes[name]
+        files = rarc_files(yaz0(disc.read(off, size)))
+        return {k.split('/', 1)[1] if k.startswith('scene/') else k: v for k, v in files.items()}
+
+    # every stage's collision key and look (look_key), so stages share a map
+    # only when both match
+    groups = {}  # (col hash, look) -> [scenes]
+    for name in sorted(scenes):
+        stem = name.rsplit('.', 1)[0]
+        files = stage_files(name)
+        if 'map/map.col' not in files or 'map/map/map.bmd' not in files:
+            if not only or stem in only:
+                print('%-14s no map' % stem, flush=True)
+            continue
+        h = col_key(files['map/map.col'])
+        look = look_key(files)
+        # a mod's course of placed blocks on a retail stage's collision is
+        # its own stage, unless it is that stage
+        if h in skip and (look is None or stem in skip[h]):
+            if not only or stem in only:
+                print('%-14s in %s' % (stem, a.skip), flush=True)
+            continue
+        groups.setdefault((h, look), []).append(stem)
+
+    # with --only, the other maps are kept as they are in maps.txt
+    old = {}  # file -> [col hash, x0, z0, density, w, h, [scenes]]
     manifest = os.path.join(a.out, 'maps.txt')
-    if only and os.path.exists(manifest):  # add to the maps already made
+    if only and os.path.exists(manifest):
         for line in open(manifest):
             if line.startswith('#') or not line.strip():
                 continue
             h, fn, x0, z0, dens, w, hh, st = line.split()
-            maps[int(h, 16)] = [fn, float(x0), float(z0), float(dens), int(w), int(hh), st.split(',')]
-    for name in sorted(scenes):
-        stem = name.rsplit('.', 1)[0]
-        if only and stem not in only:
+            old[fn] = [int(h, 16), float(x0), float(z0), float(dens), int(w), int(hh), st.split(',')]
+    maps = []  # [col hash, file, x0, z0, density, w, h, [scenes]]
+    for (h, _), st in sorted(groups.items(), key=lambda kv: kv[1][0]):
+        fn = st[0] + '.jpg'  # named for the first scene with it
+        if only and not only.intersection(st):
+            if fn in old and old[fn][0] == h:
+                maps.append([h, fn] + old[fn][1:6] + [st])
+            else:
+                print('%-14s not made yet (add it to --only)' % st[0], flush=True)
             continue
-        off, size = scenes[name]
-        files = rarc_files(yaz0(disc.read(off, size)))
-        files = {k.split('/', 1)[1] if k.startswith('scene/') else k: v for k, v in files.items()}
-        if 'map/map.col' not in files or 'map/map/map.bmd' not in files:
-            print('%-14s no map' % stem, flush=True)
-            continue
-        h = col_key(files['map/map.col'])
-        if h in skip:
-            print('%-14s in %s' % (stem, a.skip), flush=True)
-            continue
-        if h in maps and stem in maps[h][6] and only:
-            pass  # made again below
-        elif h in maps:
-            maps[h][6].append(stem)
-            print('%-14s same as %s' % (stem, maps[h][6][0]), flush=True)
-            continue
+        for stem in st[1:]:
+            print('%-14s same as %s' % (stem, st[0]), flush=True)
         t = time.time()
-        r = render(files, a.style)
+        r = render(stage_files(st[0] + '.szs'), a.style)
         if r is None:
-            print('%-14s no floors' % stem, flush=True)
+            print('%-14s no floors' % st[0], flush=True)
             continue
         im, lo, dens = r
-        scenes_with = maps[h][6] if h in maps else [stem]
-        fn = scenes_with[0] + '.jpg'
         im.save(os.path.join(a.out, fn), quality=a.quality, subsampling=0, optimize=True)
-        maps[h] = [fn, float(lo[0]), float(lo[1]), float(dens), im.width, im.height, scenes_with]
-        print('%-14s %4dx%-4d %.1f s' % (stem, im.width, im.height, time.time() - t), flush=True)
+        maps.append([h, fn, float(lo[0]), float(lo[1]), float(dens), im.width, im.height, st])
+        print('%-14s %4dx%-4d %.1f s' % (st[0], im.width, im.height, time.time() - t), flush=True)
     with open(manifest, 'w') as f:
         f.write('# stage maps (tools/radar/gen_maps.py): col key, file, x0, z0, pixels per unit, '
                 'width, height, scenes\n')
-        for h, (fn, x0, z0, dens, w, hh, st) in sorted(maps.items(), key=lambda kv: kv[1][6][0]):
+        for h, fn, x0, z0, dens, w, hh, st in maps:
             f.write('%016x %s %.1f %.1f %.6f %d %d %s\n' % (h, fn, x0, z0, dens, w, hh, ','.join(st)))
     print('%d maps' % len(maps))
 

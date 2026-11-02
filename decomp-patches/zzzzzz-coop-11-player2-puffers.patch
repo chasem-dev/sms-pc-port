@@ -1,0 +1,103 @@
+Reason: port: split-screen co-op (ext/coop) - Puffers (Super Mario Eclipse's POINKs) stick to player 2's FLUDD as to Mario's: one stuck on player 2's nozzle sits on it (calcRootMatrix as player 2), pumps with their trigger and flies off it, and each player's nozzle takes one (the manager's single nozzle flag is asked per player while two play)
+--- a/src/Enemy/popo.cpp
++++ b/src/Enemy/popo.cpp
+@@ -54,6 +54,20 @@
+ 
+ TPopo* gpCurPopo;
+ 
++#ifdef TARGET_PC
++// Split-screen co-op (ext/coop): a Puffer on a nozzle is its player's. Its
++// grab and release are told; while two play, whether "Mario's" nozzle is free
++// is asked per player (the manager's flag is one for both), and the stuck
++// Puffer sits on, pumps with and flies off its own player's FLUDD.
++extern "C" void port_coop_popo_grab(void* popo, int on);
++extern "C" int port_coop_popo_nozzle_free(int managerFree);
++extern "C" int port_coop_enter_popo_player(void* popo);
++extern "C" void port_coop_leave_player2(void);
++#define POPO_NOZZLE_FREE(manager) port_coop_popo_nozzle_free((manager)->mIsNozzleFree)
++#else
++#define POPO_NOZZLE_FREE(manager) ((manager)->mIsNozzleFree)
++#endif
++
+ // Indexed by BCK animation index, so the holes are real: only slots 0, 5
+ // and 6 have a sound table.
+ static const char* popo_bastable[] = {
+@@ -403,6 +417,9 @@
+ 	gpCurPopo = this;
+ 	TWalkerEnemy::reset();
+ 	unk165            = 0;
++#ifdef TARGET_PC
++	port_coop_popo_grab(this, 0);
++#endif
+ 	mIsPossessed      = 0;
+ 	mPumpScale        = 1.0f;
+ 	mRollAngle        = 0.0f;
+@@ -568,7 +585,7 @@
+ void TPopo::behaveToFindMario()
+ {
+ 	TPopoManager* manager = (TPopoManager*)mManager;
+-	if (SMS_CheckMarioFlag(MARIO_FLAG_HAS_FLUDD) && manager->mIsNozzleFree
++	if (SMS_CheckMarioFlag(MARIO_FLAG_HAS_FLUDD) && POPO_NOZZLE_FREE(manager)
+ 	    && (s32)PopoWaterGun()->mCurrentNozzle == 0
+ 	    && !gpMarioOriginal->onYoshi()) {
+ 		setGoalPathMario();
+@@ -653,7 +670,7 @@
+ 	TPopoManager* manager = (TPopoManager*)mManager;
+ 	if ((getSpine()->getCurrentNerve() == &TNervePopoAttack::theNerve()
+ 	     || getSpine()->getCurrentNerve() == &TNervePopoWait::theNerve())
+-	    && manager->mIsNozzleFree) {
++	    && POPO_NOZZLE_FREE(manager)) {
+ 		mSpine->pushNerve(&TNervePopoPossessedNozzle::theNerve());
+ 	} else if (getSpine()->getCurrentNerve() == &TNerveWalkerEscape::theNerve()
+ 	    || getSpine()->getCurrentNerve()
+@@ -679,6 +696,14 @@
+ // PSMTXCopy through r30 before loading mCenterJntIndex.
+ void TPopo::calcRootMatrix()
+ {
++#ifdef TARGET_PC
++	// split-screen co-op: on player 2's nozzle, with player 2 as Mario
++	if (port_coop_enter_popo_player(this)) {
++		calcRootMatrix();
++		port_coop_leave_player2();
++		return;
++	}
++#endif
+ 	gpCurPopo = this;
+ 	MtxPtr centerMtx = getModel()->getAnmMtx(mCenterJntIndex);
+ 	mCollision->mPosition.set(centerMtx[0][3], centerMtx[1][3],
+@@ -886,6 +911,9 @@
+ void TPopo::releaseNozzle()
+ {
+ 	if (mIsPossessed) {
++#ifdef TARGET_PC
++		port_coop_popo_grab(this, 0);
++#endif
+ 		((TPopoManager*)mManager)->mIsNozzleFree = 1;
+ 		mIsPossessed                             = 0;
+ 	}
+@@ -1050,12 +1078,15 @@
+ 
+ 	if (spine->getTime() == 0) {
+ 		TPopoManager* manager = (TPopoManager*)popo->mManager;
+-		if (!manager->mIsNozzleFree) {
++		if (!POPO_NOZZLE_FREE(manager)) {
+ 			spine->pushAfterCurrent(&TNerveWalkerGraphWander::theNerve());
+ 			return TRUE;
+ 		}
+ 		manager->mIsNozzleFree = 0;
+ 		popo->possessedIn();
++#ifdef TARGET_PC
++		port_coop_popo_grab(popo, 1); // Mario's (player 2's while it moves with them)
++#endif
+ 	}
+ 
+ 	if (popo->checkCurAnmEnd(0)) {
+@@ -1100,7 +1131,7 @@
+ 		popo->setGoalPathMario();
+ 
+ 	if (!popo->isAirborne()) {
+-		if (!((TPopoManager*)popo->getManager())->mIsNozzleFree)
++		if (!POPO_NOZZLE_FREE((TPopoManager*)popo->getManager()))
+ 			return TRUE;
+ 		if (gpMarioOriginal->checkFlag(MARIO_FLAG_VISIBLE))
+ 			return TRUE;
