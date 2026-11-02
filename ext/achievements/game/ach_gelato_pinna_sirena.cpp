@@ -2,7 +2,8 @@
 // Pinna Park and Sirena Beach.
 //
 //   102 Palm Tree Blast: Gelato 1, open the sand castle while standing on a
-//       palm tree, then go in without touching the sand
+//       palm tree, then go in without touching the sand (the beach: the
+//       castle's own collision has the sand's material too, so it doesn't count)
 //   103 Grass Is for Losers: Gelato 5, beat Il Piantissimo under 35 seconds without
 //       touching grass or using F.L.U.D.D.
 //   104 Duck Parade: Gelato 8, 10 Cataquacks
@@ -223,7 +224,7 @@ void lookSandCastle(TMario* m)
 			ach::log("102: sand castle opened %s", s_castleFromTree ? "from a palm tree" : "not from a palm tree");
 	}
 	s_castleState = state;
-	if (s_castleFromTree && standsOn(m, GROUND_SAND)) {
+	if (s_castleFromTree && standsOn(m, GROUND_SAND) && m->mGroundPlane->getActor() != s_castle) {
 		s_castleFromTree = false;
 		if (ach::debug())
 			ach::log("102: touched the sand");
