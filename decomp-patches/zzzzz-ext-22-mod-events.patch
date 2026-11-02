@@ -177,6 +177,27 @@ Reason: extensions (ext/, port_ext.h) hear of the player's status taken, healing
  }
  
  f32 TSpineEnemy::calcMinimumTurnRadius(f32 param_1, f32 param_2) const
+--- a/src/Enemy/hinokuri2.cpp
++++ b/src/Enemy/hinokuri2.cpp
+@@ -33,6 +33,7 @@
+ #ifdef TARGET_PC
+ #include <sms_modhook.h>
+ #include <sms_modhook.h>
++#include "port_ext.h"
+ #endif
+ 
+ // NOTE: rodata ordering says this has to go here
+@@ -1666,6 +1667,10 @@
+ 		                             0x2000000E, false);
+ 		self->invalidateCollisionAll();
+ 		self->emitWaterParticle();
++#ifdef TARGET_PC
++		// extensions hear of the defeat as it leaves its coin (port_ext.h)
++		port_ext_actor_death((THitActor*)self, 0);
++#endif
+ 	}
+ 
+ 	if (Hino2CurAnmEndsNext(self)) {
 --- a/src/Enemy/smallEnemy.cpp
 +++ b/src/Enemy/smallEnemy.cpp
 @@ -41,6 +41,9 @@
@@ -524,7 +545,7 @@ Reason: extensions (ext/, port_ext.h) hear of the player's status taken, healing
  
  	if (getStatus() == MARIO_STATUS_BROAD_JUMP) {
  		changePlayerStatus(MARIO_STATUS_BACK_JUMP, 0, false);
-@@ -246,6 +266,25 @@
+@@ -246,6 +266,28 @@
  	    && getStatus() != MARIO_STATUS_ELEC_DOWN
  	    && getStatus() != MARIO_STATUS_SWIM_P_DOWN
  	    && mStatus != MARIO_STATUS_DOWN_LOSER) {
@@ -540,6 +561,9 @@ Reason: extensions (ext/, port_ext.h) hear of the player's status taken, healing
 +					cause = PORT_DEATH_ELECTRIC;
 +				else if (checkStatusType(0x10000))
 +					cause = PORT_DEATH_CRASH;
++				// sinking goop drains health as he sinks: its death is goop's
++				else if (mHealth <= 0 && isSinking())
++					cause = PORT_DEATH_GOOP;
 +				else if (mHealth <= 0)
 +					cause = PORT_DEATH_HEALTH;
 +			}
