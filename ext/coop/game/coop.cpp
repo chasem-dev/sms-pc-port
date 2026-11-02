@@ -21,6 +21,8 @@
 #include <Camera/CameraOption.hpp>
 #include <Camera/CameraShake.hpp>
 #include <Camera/CubeManagerBase.hpp>
+#include <Enemy/Conductor.hpp>
+#include <Enemy/Popo.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
 #include <JSystem/J3D/J3DGraphBase/J3DTexture.hpp>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
@@ -69,6 +71,8 @@ unsigned port_coop_take_events(void);
 int port_coop_can_join(void);
 void port_coop_join_virtual(void);
 extern int port_coop_in_p2;
+// zzzzzz-coop-11 (below): a Puffer stuck on or off a nozzle
+void port_coop_popo_grab(void* popo, int on);
 // platform/pad: the normal camera's mouse (and C-stick orbit) state, which
 // zzz-camera-02 applies to whichever camera is gpCamera
 extern f32 port_camera_mouse_pitch, port_camera_zoom;
@@ -234,6 +238,43 @@ struct InP2 {
 			leaveP2(saved);
 	}
 };
+
+// Puffers (TPopo) stuck on a FLUDD nozzle, and whose (zzzzzz-coop-11): one
+// on player 2's sits on their nozzle and moves with them as Mario, and each
+// player's nozzle takes one (the game's one flag let a single Puffer stick).
+struct PopoGrab {
+	void* popo;
+	TMario* player;
+};
+PopoGrab s_popos[8];
+int s_popoCount;
+
+TMario* popoPlayer(const void* popo)
+{
+	for (int i = 0; i < s_popoCount; i++)
+		if (s_popos[i].popo == popo)
+			return s_popos[i].player;
+	return nullptr;
+}
+
+// Player 2's Puffers come off (burst, as on getting on Yoshi) once they are
+// down or out of play; the game's flag is then player 1's again.
+void dropPopos()
+{
+	bool theirs = false;
+	for (int i = 0; i < s_popoCount; i++)
+		theirs = theirs || s_popos[i].player == s_p2.mario;
+	if (!theirs)
+		return;
+	for (int i = s_popoCount - 1; i >= 0; i--)
+		if (i < s_popoCount && s_popos[i].player == s_p2.mario) {
+			TPopo* popo = (TPopo*)s_popos[i].popo;
+			popo->kill();
+			port_coop_popo_grab(popo, 0); // (its releaseNozzle has, if it was on)
+		}
+	for (int i = 0; i < s_popoCount; i++)
+		((TPopoManager*)((TPopo*)s_popos[i].popo)->getManager())->mIsNozzleFree = 0;
+}
 
 // ------------------------------------------------------------ Luigi's colours
 
@@ -479,6 +520,7 @@ bool recordBody(const void* object, const u8** body, u32* size)
 // finds them (the player group, the cameras).
 void sceneLoaded()
 {
+	s_popoCount = 0;
 	s_made     = false;
 	s_split    = false;
 	s_active   = false; // a new stage's player 2 joins it once it plays (frame)
@@ -1035,6 +1077,8 @@ void frame()
 	const bool want = port_coop_player2() != 0 && !s_out;
 	if (want != s_active && (!want || playing()))
 		activate(want);
+	if (s_popoCount && (!s_active || p2()->checkFlag(MARIO_FLAG_GAME_OVER)))
+		dropPopos();
 	if (s_active && playing() && s_fluddSyncedFor != s_dir && p2()) {
 		s_fluddSyncedFor = s_dir;
 		syncFludd(p2());
@@ -1177,6 +1221,42 @@ void afterMovement()
 			// the item group's hit check gives it to them, as it does to Mario
 		}
 	}
+	// a Puffer brought out in front of player 2, frames after joining, and one
+	// in front of Mario too with ",1" (SMS_COOP_TEST_POPO=frames[,1]; a stage
+	// with Puffers, such as Bianco Hills' 4th episode)
+	// (Mario's a few frames later: the one just brought out reads as free until it has moved)
+	static int popoDone;
+	if (const char* t = getenv("SMS_COOP_TEST_POPO"))
+		if (popoDone < (strstr(t, ",1") ? 2 : 1) && s_testJoined && s_frame >= s_testJoinFrame + atoi(t) + popoDone * 5
+		    && gpConductor && playing()) {
+			TMario* at = popoDone++ ? p1() : m;
+			for (JGadget::TList<TEnemyManager*>::iterator it = gpConductor->unk20.begin(); it != gpConductor->unk20.end(); ++it)
+				if (TPopoManager* pm = dynamic_cast<TPopoManager*>(*it)) {
+					static TSpineEnemy* first;
+					TSpineEnemy* popo = nullptr;
+					for (int i = 0; i < pm->getObjNum() && !popo; i++)
+						if (pm->getObj(i) != first && pm->getObj(i)->checkLiveFlag(0x805)) // free, as makeOneEnemyAppear takes them
+							popo = (TSpineEnemy*)pm->getObj(i);
+					if (!popo)
+						break;
+					first = popo;
+					JGeometry::TVec3<f32> pos = at->mPosition;
+					pos.x += 250.0f * sinf(at->mFaceAngle.y * (3.14159265f / 32768.0f));
+					pos.z += 250.0f * cosf(at->mFaceAngle.y * (3.14159265f / 32768.0f));
+					popo->resetToPosition(pos);
+					fprintf(stderr, "[coop] test: a Puffer (%p) brought out at %.0f %.0f %.0f\n", (void*)popo, pos.x, pos.y, pos.z);
+					break;
+				}
+		}
+	if (getenv("SMS_COOP_DEBUG") && s_frame % 10 == 0)
+		for (int i = 0; i < s_popoCount; i++) {
+			TPopo* popo = (TPopo*)s_popos[i].popo;
+			TMario* who = s_popos[i].player;
+			MtxPtr e    = who->getFludd() ? who->getFludd()->getEmitMtx(0) : nullptr;
+			fprintf(stderr, "[coop] Puffer %p on player %d's nozzle at %.0f %.0f %.0f (nozzle %.0f %.0f %.0f), pumped %.2f\n",
+			        (void*)popo, who == m ? 2 : 1, popo->mPosition.x, popo->mPosition.y, popo->mPosition.z, e ? e[0][3] : 0.0f,
+			        e ? e[1][3] : 0.0f, e ? e[2][3] : 0.0f, popo->mPumpScale);
+		}
 	if (getenv("SMS_COOP_DEBUG") && s_frame % 30 == 0) {
 		TMarioGamePad* pad = m->getGamePad();
 		fprintf(stderr, "[coop] frame %d: player 2 at %.0f %.0f %.0f status %x stick %.2f,%.2f; player 1 at %.0f %.0f %.0f\n",
@@ -1240,11 +1320,13 @@ f32 dist2(const JGeometry::TVec3<f32>& a, const JGeometry::TVec3<f32>& b)
 	return x * x + y * y + z * z;
 }
 
-// Which player an object plays with this move: the one touching it (its hits
-// this frame, as the hit check found them) when only one is, else the one
-// standing on it, else the nearer.
+// Which player an object plays with this move: the Puffer's whose nozzle it is
+// on, else the one touching it (its hits this frame, as the hit check found
+// them) when only one is, else the one standing on it, else the nearer.
 TMario* playerFor(THitActor* a)
 {
+	if (TMario* owner = popoPlayer(a))
+		return owner;
 	bool touch1 = false, touch2 = false;
 	for (int i = 0; i < a->getColNum(); i++) {
 		THitActor* c = a->getCollision(i);
@@ -1510,6 +1592,45 @@ extern "C" void port_coop_leave_player2(void)
 		return;
 	s_gameP2Entered = false;
 	leaveP2(s_gameP2Saved);
+}
+// zzzzzz-coop-11: a Puffer stuck on (on 1) or off a nozzle: Mario's, player 2's
+// while it moves with them
+extern "C" void port_coop_popo_grab(void* popo, int on)
+{
+	int i = 0;
+	while (i < s_popoCount && s_popos[i].popo != popo)
+		i++;
+	if (!on) {
+		if (i < s_popoCount)
+			s_popos[i] = s_popos[--s_popoCount];
+		return;
+	}
+	if (!s_made || (i == s_popoCount && s_popoCount == 8))
+		return;
+	if (i == s_popoCount)
+		s_popoCount++;
+	s_popos[i].popo   = popo;
+	s_popos[i].player = (TMario*)gpMarioOriginal;
+}
+// ...whether Mario's nozzle is free: while two play, whether no Puffer is on
+// this player's
+extern "C" int port_coop_popo_nozzle_free(int managerFree)
+{
+	if (!s_active)
+		return managerFree;
+	for (int i = 0; i < s_popoCount; i++)
+		if (s_popos[i].player == gpMarioOriginal)
+			return 0;
+	return 1;
+}
+// ...and player 2 as Mario (true) for one stuck on their nozzle, until
+// port_coop_leave_player2
+extern "C" int port_coop_enter_popo_player(void* popo)
+{
+	if (s_gameP2Entered || !s_active || !s_p2.mario || popoPlayer(popo) != s_p2.mario || !enterP2(s_gameP2Saved))
+		return 0;
+	s_gameP2Entered = true;
+	return 1;
 }
 extern "C" const JGeometry::TVec3<f32>* port_coop_spawn_center(const JGeometry::TVec3<f32>* mario)
 {
