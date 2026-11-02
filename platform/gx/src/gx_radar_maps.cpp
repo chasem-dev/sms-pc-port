@@ -10,7 +10,10 @@
 // (Super Mario Eclipse's: tools/mods/get.py eclipse installs it in
 // mods/maps/eclipse); the keys tell the stages apart, so all are read.
 // The game hashes the stage's loaded collision (/scene/map/map.col) and asks
-// for that map; the picture is decoded on a thread of its own, so a stage
+// for that map, naming the scene it loaded too: stages with the same
+// collision can have maps of their own (Bianco's and Sirena's secret
+// courses, coro_ex1 and coro_ex5), each a line with that key, and the one
+// listing the scene is picked (else the first with the key); the picture is decoded on a thread of its own, so a stage
 // never waits for it, and only the last one asked for is kept, with an
 // overview of it (the whole picture at most 1536 pixels on a side, each
 // pixel the average of those under it) for the full map.
@@ -50,15 +53,16 @@ struct Entry {
     unsigned long long key;
     std::string path;  // the picture
     float x0, z0, density;
+    std::vector<std::string> scenes;
 };
 
 std::once_flag s_once;
 std::vector<Entry> s_entries;
 
 std::mutex s_lock;
-unsigned long long s_want;  // the map asked for last
-unsigned long long s_have;  // the map in s_pixels (or that failed)
-const Entry* s_haveEntry;   // null if it failed
+const Entry* s_want;  // the map asked for last
+const Entry* s_have;  // the map in s_pixels (or that failed)
+bool s_haveFailed;
 std::vector<uint8_t> s_pixels;
 int s_w, s_h;
 std::vector<uint8_t> s_overview;  // at most kOverview on its longest side
@@ -80,13 +84,19 @@ size_t readManifest(const std::string& dir) {
     char line[1024];
     while (fgets(line, sizeof line, f)) {
         if (line[0] == '#') continue;
-        char file[256];
+        char file[256], scenes[768] = "";
         unsigned long long key;
         int w, h;
         Entry e;
-        if (sscanf(line, "%llx %255s %f %f %f %d %d", &key, file, &e.x0, &e.z0, &e.density, &w, &h) != 7) continue;
+        if (sscanf(line, "%llx %255s %f %f %f %d %d %767s", &key, file, &e.x0, &e.z0, &e.density, &w, &h, scenes) < 7)
+            continue;
         e.key = key;
         e.path = dir + "/" + file;
+        for (char* c = scenes; *c;) {
+            char* end = strchr(c, ',');
+            e.scenes.emplace_back(c, end ? end : c + strlen(c));
+            c = end ? end + 1 : c + strlen(c);
+        }
         s_entries.push_back(e);
         n++;
     }
@@ -123,10 +133,14 @@ void init() {
     }
 }
 
-const Entry* find(unsigned long long key) {
-    for (const Entry& e : s_entries)
-        if (e.key == key) return &e;
-    return nullptr;
+const Entry* find(unsigned long long key, const char* scene) {
+    const Entry* first = nullptr;
+    for (const Entry& e : s_entries) {
+        if (e.key != key) continue;
+        if (scene && std::find(e.scenes.begin(), e.scenes.end(), scene) != e.scenes.end()) return &e;
+        if (!first) first = &e;
+    }
+    return first;
 }
 
 void load(const Entry* e) {
@@ -134,20 +148,20 @@ void load(const Entry* e) {
     uint8_t* px = stbi_load(e->path.c_str(), &w, &h, &n, 4);
     std::lock_guard<std::mutex> g(s_lock);
     s_loading = false;
-    if (s_want != e->key) {  // another stage by now: that one starts on the next ask
+    if (s_want != e) {  // another stage by now: that one starts on the next ask
         if (px) stbi_image_free(px);
         return;
     }
-    s_have = e->key;
+    s_have = e;
     if (!px) {
         gx::logmsg("radar: cannot read %s", e->path.c_str());
-        s_haveEntry = nullptr;
+        s_haveFailed = true;
         return;
     }
     s_pixels.assign(px, px + size_t(w) * h * 4);
     s_w = w;
     s_h = h;
-    s_haveEntry = e;
+    s_haveFailed = false;
     stbi_image_free(px);
     // the overview: each of its pixels the average of the picture's under it
     const int side = w > h ? w : h;
@@ -176,30 +190,30 @@ void load(const Entry* e) {
 }  // namespace
 
 // 1 with the stage's map in *out, 0 while it loads, -1 with no map for it.
-// The pixels stay until another map is asked for.
-extern "C" int port_radar_map(unsigned long long colKey, PortRadarMap* out) {
+// scene: the scene archive's name without .arc (null if not known). The
+// pixels stay until another map is asked for.
+extern "C" int port_radar_map(unsigned long long colKey, const char* scene, PortRadarMap* out) {
     std::call_once(s_once, init);
-    const Entry* e = find(colKey);
+    const Entry* e = find(colKey, scene);
     if (!e) return -1;
     std::lock_guard<std::mutex> g(s_lock);
-    if (s_have == colKey) {
-        if (!s_haveEntry) return -1;
+    if (s_have == e) {
+        if (s_haveFailed) return -1;
         out->rgba = s_pixels.data();
         out->w = s_w;
         out->h = s_h;
-        out->x0 = s_haveEntry->x0;
-        out->z0 = s_haveEntry->z0;
-        out->density = s_haveEntry->density;
+        out->x0 = e->x0;
+        out->z0 = e->z0;
+        out->density = e->density;
         out->overview = s_overview.data();
         out->ow = s_ow;
         out->oh = s_oh;
         return 1;
     }
-    s_want = colKey;
+    s_want = e;
     if (!s_loading) {  // one decode at a time
         s_loading = true;
-        s_have = 0;
-        s_haveEntry = nullptr;
+        s_have = nullptr;
         s_pixels.clear();
         s_pixels.shrink_to_fit();
         s_overview.clear();
