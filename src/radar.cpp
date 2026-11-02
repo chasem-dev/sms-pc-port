@@ -51,6 +51,9 @@
 #include <System/FlagManager.hpp>
 #include <System/Application.hpp>
 #include <System/MarDirector.hpp>
+#include <System/ScenarioArchiveName.hpp>
+#include <Strategic/NameRefAry.hpp>
+#include <Strategic/NameRefPtrAry.hpp>
 #include <System/MarioGamePad.hpp>
 #include <System/StageUtil.hpp>
 #include <dolphin/pad.h>
@@ -142,11 +145,13 @@ u8* sOverviewTex; // GX RGBA8 tiles, below 4 GiB
 size_t sOverviewBytes;
 unsigned long long sOverviewKey;
 
-// the stage: its collision, the key naming its map, and the map
+// the stage: its collision, its key and scene naming its map, and the map
 const void* sCol;
 u32 sColProbe[4];
 const void* sDirector;
-unsigned long long sKey;
+unsigned long long sColKey;
+char sScene[32];         // the scene archive's name, without .arc
+unsigned long long sKey; // which map: sColKey and sScene
 int sMapState = -1; // 1 the map is here, 0 it is loading, -1 none
 PortRadarMap sMap;
 
@@ -256,6 +261,28 @@ unsigned long long colKey(const void* col, long size)
 	return h;
 }
 
+// The scene archive the game loaded for this stage ("coro_ex5"), as
+// TApplication::mountStageArchive names it; "" if not known. Stages with the
+// same collision can still have maps of their own (Bianco's and Sirena's
+// secret courses).
+void sceneName(char* out, size_t size)
+{
+	out[0] = '\0';
+	TNameRefPtrAryT<TNameRefAryT<TScenarioArchiveName> >* areas = gpApplication.unk30;
+	const u8 area = gpApplication.mCurrArea.getStage(), scenario = gpApplication.mCurrArea.getScenario();
+	if (!areas || area >= areas->getChildren().size())
+		return;
+	TNameRefAryT<TScenarioArchiveName>* names = areas->getChildren()[area];
+	if (!names || scenario >= names->size())
+		return;
+	const char* name = names->getChildren()[scenario].mArcName;
+	if (!name)
+		return;
+	snprintf(out, size, "%s", name);
+	if (char* dot = strrchr(out, '.'))
+		*dot = '\0';
+}
+
 bool loadArt(JUTTexture& tex, const char* name)
 {
 	char path[64];
@@ -280,15 +307,19 @@ bool stage()
 		sCol      = col;
 		sDirector = gpMarDirector;
 		memcpy(sColProbe, probe, sizeof probe);
-		sKey      = colKey(col, JKRFileLoader::getResSize((void*)col, nullptr));
-		sMapState = sKey ? 0 : -1;
+		sColKey   = colKey(col, JKRFileLoader::getResSize((void*)col, nullptr));
+		sceneName(sScene, sizeof sScene);
+		sKey = sColKey;
+		for (const char* c = sScene; *c; c++)
+			feed(sKey, (u8)*c, 1);
+		sMapState = sColKey ? 0 : -1;
 		sFullOpen = false;
 		sFullAlpha = 0.0f;
 		sWinStale = true;
 		sHaveArt  = loadArt(sShineArt, "shine_icon") && loadArt(sBlueCoinArt, "bluecoin_icon");
 	}
 	if (sMapState == 0) {
-		sMapState = port_radar_map(sKey, &sMap);
+		sMapState = port_radar_map(sColKey, sScene[0] ? sScene : nullptr, &sMap);
 		if (sMapState == 1)
 			sWinStale = true;
 	}

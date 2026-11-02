@@ -236,7 +236,7 @@ It hides in cutscenes, conversations and the pause menu. `radar_zoom` sets how f
 D-pad up (1 on the keyboard) steps its zoom through 100%, 50%, 25% and 200% of `radar_zoom`, showing the reach under it for a moment.
 **M**, or a controller's Back (View, Select, Share) button, opens the full map: the whole stage over the dimmed game, as wide as the screen, with the area's name, Mario's arrow and the same Shines and blue coins, to the game's own map screen sounds. The game goes on under it, so Mario can still be steered; the same button closes it. It is the `MAP` control in `bindings.txt`.
 In multiplayer the other players are smaller white arrows, turning the way each faces; on the radar one beyond its reach waits at its edge, fainter, in their direction, and on the full map each has their name under their arrow.
-The maps are pictures of every stage from straight above, made from the disc by `tools/radar/gen_maps.py` (in `assets/maps`, one per stage, matched to the stage by its collision); a stage without one, a mod's, has no radar.
+The maps are pictures of every stage from straight above, made from the disc by `tools/radar/gen_maps.py` (in `assets/maps`, one per stage, matched to the stage by its collision, and by its scene where stages share one); a stage without one, a mod's, has no radar.
 Super Mario Eclipse's stages have theirs in a pack made from its disc, which `tools/mods/get.py eclipse` installs with it in `mods/maps/eclipse` (`get.py eclipse-maps` alone); the game reads every pack in `mods/maps` besides `assets/maps`.
 In Eclipse the radar and the full map show its Shines past the game's 120 as got or not, and the full map names its areas as its pause menu does.
 ### Settings menu

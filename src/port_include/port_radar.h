@@ -31,6 +31,8 @@ struct PortRadarMap {
 	const unsigned char* overview; // the whole picture smaller, for the full map: row-major RGBA
 	int ow, oh;
 };
-extern "C" int port_radar_map(unsigned long long colKey, PortRadarMap* out);
+// scene: the loaded scene archive's name without .arc, which picks between
+// stages with the same collision (null: the first map with the key)
+extern "C" int port_radar_map(unsigned long long colKey, const char* scene, PortRadarMap* out);
 
 #endif
