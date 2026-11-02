@@ -232,6 +232,8 @@ int mpg_target(int* area, int* episode);
 int mpg_in_target(void);
 // Host: a client got a Shine; leave as if we had (once per Shine).
 int mpg_take_shine_exit(void);
+// Host: whether that is waiting (mpg_take_shine_exit would take it), left waiting.
+int mpg_shine_exit_waiting(void);
 // Host: a client got a blue coin: its slot + 1 (the host is asked to save,
 // as the game asks the player who gets one), else 0. Once per report.
 int mpg_take_blue_save(void);
@@ -278,6 +280,8 @@ int mpg_next_clean(float* x, float* y, float* z, float* size);
 void mpg_shine_get(int eventId, const float pos[3], int yaw);
 // The next Shine another player touched; 0 when there is none.
 int mpg_next_shine_get(int* slot, int* eventId, float pos[3], int* yaw);
+// Whether one is waiting (mpg_next_shine_get would give it), left waiting.
+int mpg_shine_get_waiting(void);
 
 // Host: setting off for another area (episode 0xFF: the game decides on
 // arrival); the others start their own trip there at once.
@@ -301,6 +305,8 @@ void mpg_travel_done(void);
 // game started (its size; 0 when there is none).
 void mpg_demo(const void* data, size_t size);
 size_t mpg_next_demo(int* slot, void* data, size_t size);
+// Whether one is waiting (mpg_next_demo would give it), left waiting.
+int mpg_demo_waiting(void);
 
 // Bosses (game/mp_boss.cpp): the host's boss state, sent with the enemies
 // (at most 200 bytes), and the hits the others land on their copies (on which

@@ -32,6 +32,7 @@
 #include <GC2D/GCConsole2.hpp>
 #include <GC2D/ScrnFader.hpp>
 #include <GC2D/SelectMenu.hpp>
+#include <GC2D/Talk2D2.hpp>
 #include <MSound/MSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 #include <MSound/MSoundSE.hpp>
@@ -927,6 +928,32 @@ const char* worldName(int area)
 	return names[w < 10 ? w : 1];
 }
 
+// A talk this game's player is in (an NPC's, a sign's): another player's
+// Shine Get or cutscene, or the host's travel, is not put over it. The game
+// itself starts none of those in a talk (TMarDirector::updateGameMode takes
+// them only out of one), and a Shine Get started in one crashed the game
+// once the talk was read on (the next camera it started had no name). The
+// talk is closed as a stage's script closes one (TTalk2D2::forceCloseTalk),
+// and what came waits for it to be gone: true while it is still there.
+bool closeTalkFirst(TMarDirector* dir, const char* why)
+{
+	static TBaseNPC* told;
+	if (!dir || !(dir->isTalkModeNow() || dir->unk124 == 4)) // (4: a camera of the talk's own)
+		return false;
+	TTalk2D2* talk = dir->unkB0;
+	if (dir->unk124 == 2 && talk) {
+		const u32 mode = talk->getTalkMode();
+		if (mode != TTalk2D2::TALK_MODE_CLOSING && mode != TTalk2D2::TALK_MODE_IDLE) {
+			if (told != dir->getTalkingNPC()) {
+				told = dir->getTalkingNPC();
+				fprintf(stderr, "[multiplayer] a talk here closed: %s\n", why);
+			}
+			talk->forceCloseTalk(); // (one closed to wait for its next line closes for good the next time)
+		}
+	}
+	return true;
+}
+
 // The host's travel (TMarDirector::moveStage, as it went): the session
 // flags that shape how a stage starts (0x30000 on: this game came from an
 // event, a movie was seen) and the movie played on the way. A client takes
@@ -987,6 +1014,8 @@ void followHost(TMarDirector* dir)
 		s_travelWait++;
 		return;
 	}
+	if (closeTalkFirst(dir, "the host went on"))
+		return;
 	s_travelWait = 0;
 	takeTravel(dir);
 	// the host's flags are the game's now (synced this frame): load their stage
@@ -1232,8 +1261,9 @@ void hostShineExit(TMarDirector* dir)
 		}
 		return;
 	}
-	if (!mpg_take_shine_exit())
+	if (!mpg_shine_exit_waiting() || closeTalkFirst(dir, "another player got a Shine"))
 		return;
+	mpg_take_shine_exit();
 	// the Shine Get played here already (everyone was taken to it): the
 	// game's own sequence leads to the prompt
 	if (s_shineGetFrames > 0 || dir->checkFlag(TMarDirector::DIRECTOR_FLAG_SHINE_TAKEN))
@@ -1441,6 +1471,9 @@ void playOthersShineGets()
 	// all (the Shine Get would wait for him to land forever). The host's
 	// game then plays the Shine's exit without him (hostShineExit).
 	const bool out = m->checkFlag(MARIO_FLAG_GAME_OVER | MARIO_FLAG_IS_PERFORMING);
+	if (!win && !s_spectating && !out && mpg_shine_get_waiting()
+	    && closeTalkFirst(director(), "another player got a Shine"))
+		return; // it plays once the talk is gone
 	int slot, eventId, yaw;
 	float pos[3];
 	while (mpg_next_shine_get(&slot, &eventId, pos, &yaw)) {
@@ -2334,6 +2367,7 @@ struct TestPlan {
 	bool manholeDone;
 	int nearAt;              // stands before an NPC (presses of B talk to it), up to 1800 frames
 	bool talked;
+	int talkOnAt;            // talkon@N: from N on, A pressed now and then while a talk is open (reading it on)
 	bool tookAgain;
 	int warpAt, warpArea, warpEpisode;
 	int killAt, killCount;
@@ -2365,6 +2399,7 @@ struct TestPlan {
 };
 TestPlan s_test;
 int s_testPressA; // test aids: frames left to hold B down (padRead; B talks)
+int s_testTalkA;  // talkon@N: frames left to hold A down (padRead; A reads a talk on)
 int s_testAim;    // aim@N: frames left spraying in place (padRead: R down, the stick up, then down)
 
 void testPadRead(void* status)
@@ -2383,6 +2418,20 @@ void testPadRead(void* status)
 	if (s_testPressA > 0) {
 		static_cast<PADStatus*>(status)[0].button |= PAD_BUTTON_B;
 		s_testPressA--;
+	}
+	// talkon@N (counted in pad reads, which go on while the stage is left)
+	static int talkReads;
+	TMarDirector* talkDir = gpMarDirector;
+	if (s_test.parsed && s_test.talkOnAt >= 0 && s_test.frames >= s_test.talkOnAt && talkDir && talkDir->isTalkModeNow() && gpMarioOriginal
+	    && ++talkReads % 30 == 0) {
+		s_testTalkA = 3;
+		fprintf(stderr, "[multiplayer] test: A pressed in a talk (talk state %d, window %d, Mario status %x)\n",
+		        (int)talkDir->unk124, talkDir->unkB0 ? (int)talkDir->unkB0->getTalkMode() : -1,
+		        (unsigned)gpMarioOriginal->getStatus());
+	}
+	if (s_testTalkA > 0) {
+		static_cast<PADStatus*>(status)[0].button |= PAD_BUTTON_A;
+		s_testTalkA--;
 	}
 	if (s_testAim > 0) {
 		PADStatus& pad   = static_cast<PADStatus*>(status)[0];
@@ -2409,7 +2458,7 @@ void runTests(TMarDirector* dir, bool arrived)
 {
 	if (!s_test.parsed) {
 		s_test.parsed = true;
-		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.gateAt = s_test.flAt = s_test.demoAt = s_test.enemyAt = s_test.tearAt = s_test.blueAt = s_test.cornerAt = s_test.voidAt = s_test.aimAt = s_test.graffitiAt = s_test.graffitiCoinAt = s_test.shineOutAt = s_test.surfAt = s_test.routeAt = s_test.boatAt = s_test.sandAt = s_test.rideAt = s_test.titleQuitAt = s_test.quitAt = s_test.doorAt = s_test.mantaAt = -1;
+		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.gateAt = s_test.flAt = s_test.demoAt = s_test.enemyAt = s_test.tearAt = s_test.blueAt = s_test.cornerAt = s_test.voidAt = s_test.aimAt = s_test.graffitiAt = s_test.graffitiCoinAt = s_test.shineOutAt = s_test.surfAt = s_test.routeAt = s_test.boatAt = s_test.sandAt = s_test.rideAt = s_test.titleQuitAt = s_test.quitAt = s_test.doorAt = s_test.mantaAt = s_test.talkOnAt = -1;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
 		s_test.manholeAt = -1;
 		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = s_test.bossHitAt = s_test.setFlagAt = -1;
@@ -2489,6 +2538,8 @@ void runTests(TMarDirector* dir, bool arrived)
 				sscanf(rd, "redswitch@%d", &s_test.redAt);
 			if (const char* nr = strstr(plan, "nearnpc@"))
 				sscanf(nr, "nearnpc@%d", &s_test.nearAt);
+			if (const char* to = strstr(plan, "talkon@"))
+				sscanf(to, "talkon@%d", &s_test.talkOnAt);
 			if (const char* cl = strstr(plan, "claim@"))
 				sscanf(cl, "claim@%d", &s_test.claimAt);
 			if (const char* pd = strstr(plan, "pound@"))
@@ -3336,6 +3387,8 @@ void playOthersCutscenes(TMarDirector* dir)
 	uint8_t buf[256];
 	int slot;
 	size_t n;
+	if (mpg_demo_waiting() && gpMarioOriginal && !s_spectating && closeTalkFirst(dir, "another player's cutscene"))
+		return; // it plays once the talk is gone
 	while ((n = mpg_next_demo(&slot, buf, sizeof buf)) != 0) {
 		TMario* m = gpMarioOriginal;
 		if (!m || s_spectating || dir->isDemoModeNow() || m->mStatus == MARIO_STATUS_WIN_DEMO)
