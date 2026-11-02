@@ -1,0 +1,28 @@
+Reason: port: split-screen co-op (ext/coop) - a player co-op put beside the other after a doorway's warp (Delfino Plaza's buildings) is not warped back by the doorway's other warp floor a step away until they have stepped off it (port_coop_warp_held)
+--- a/src/Map/MapWarp.cpp
++++ b/src/Map/MapWarp.cpp
+@@ -91,6 +91,11 @@
+ // play and are not already, until port_coop_leave_player2.
+ extern "C" int port_coop_enter_player2(void);
+ extern "C" void port_coop_leave_player2(void);
++// ...and whether a warp floor under this pass's player (gpMarioOriginal) is
++// held from warping them: co-op put them there, beside the other, who went
++// through a doorway a step away, and it is held until they step off it
++// (zzzzzz-coop-13). Told every pass whether they are on one.
++extern "C" int port_coop_warp_held(int onWarp);
+ #endif
+ 
+ void TMapWarp::watchToWarp()
+@@ -111,7 +116,12 @@
+ 	fVar8 = gpMap->checkGroundExactY(gpMarioPos->x, gpMarioPos->y + 30.0f,
+ 	                                 gpMarioPos->z, &checkData);
+ 
++#ifdef TARGET_PC
++	const bool held = port_coop_warp_held(checkData->isWarp()) != 0;
++	if (checkData->isWarp() && !held) {
++#else
+ 	if (checkData->isWarp()) {
++#endif
+ 		int no   = checkData->getData();
+ 		int warp = unk4[no].unk0;
+ 		if (unk8 != warp) {

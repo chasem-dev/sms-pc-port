@@ -131,6 +131,7 @@ int s_layout;         // 0 side by side, 1 one above the other
 f32 s_baseAspect;     // the game camera's own aspect
 TMarDirector* s_dir;  // the director whose stage has them
 int s_respawnFrames;  // player 2 is down: the frame they are back on
+TMario* s_warpHeld[2]; // players co-op put somewhere, whose warp floor there is held (placeBeside)
 // Lives are shared, as in multiplayer: player 2's lost life is one of the
 // game's (TFlagManager 0x20001, the HUD's count). Lost on the last one,
 // player 2 is out until the next life comes (a 1-Up), which brings them back.
@@ -640,6 +641,7 @@ void makeConsole2()
 void stageSetup()
 {
 	s_camLinkCount = s_postCount = 0;
+	s_warpHeld[0] = s_warpHeld[1] = nullptr;
 	s_post3DEnd = s_postOverlayFrom = s_postOverlayTo = s_composite = -1;
 	s_respawnFrames = 0;
 	s_hintShown     = false;
@@ -907,6 +909,13 @@ void noticeP2(const char* format, int frames)
 }
 
 // Beside player 1, facing as they do, a little behind and to their right.
+// A warp floor there does not warp them until they have stepped off it
+// (port_coop_warp_held): Delfino Plaza's buildings are entered and left by
+// warp floors, and each puts you a step from the other, so the player put
+// beside the one who went through went straight back through, and the other
+// after them, each warp parting them or waking the map's model of the place
+// the other was not in (the camera then showed the sky, or the first player
+// was put up at the interior's height).
 int s_movedP2At = -100; // the frame co-op itself last put player 2 somewhere
 void placeBeside(TMario* m, TMario* a)
 {
@@ -919,6 +928,7 @@ void placeBeside(TMario* m, TMario* a)
 	m->mModelFaceAngle = a->mFaceAngle.y;
 	m->mVel.x = m->mVel.y = m->mVel.z = 0.0f;
 	m->mForwardVel = 0.0f;
+	s_warpHeld[m == s_p2.mario ? 1 : 0] = m;
 }
 void placeBesideP1(TMario* m)
 {
@@ -1279,10 +1289,12 @@ void afterMovement()
 		}
 	if (getenv("SMS_COOP_DEBUG") && s_frame % 30 == 0) {
 		TMarioGamePad* pad = m->getGamePad();
-		fprintf(stderr, "[coop] frame %d: player 2 at %.0f %.0f %.0f status %x stick %.2f,%.2f; player 1 at %.0f %.0f %.0f\n",
+		fprintf(stderr,
+		        "[coop] frame %d: player 2 at %.0f %.0f %.0f status %x stick %.2f,%.2f; player 1 at %.0f %.0f %.0f status %x "
+		        "(floor at %.0f)\n",
 		        s_frame, m->mPosition.x, m->mPosition.y, m->mPosition.z, (unsigned)m->mStatus,
 		        pad ? pad->getMainStickX() : 0.0f, pad ? pad->getMainStickY() : 0.0f, p1()->mPosition.x, p1()->mPosition.y,
-		        p1()->mPosition.z);
+		        p1()->mPosition.z, (unsigned)p1()->mStatus, p1()->mFloorPosition.y);
 		fprintf(stderr, "[coop] %d object moves led by player 2 lately; player 2 health %d, water %d\n", s_swapCount,
 		        (int)m->mHealth, m->getFludd() ? (int)m->getFludd()->mCurrentWater : -1);
 		s_swapCount = 0;
@@ -1565,6 +1577,23 @@ extern "C" void port_coop_stage_exit(void)
 	s_earMtx           = nullptr;
 	port_coop_ear_pos  = nullptr;
 	port_coop_views[0] = port_coop_views[1] = nullptr;
+}
+
+// TMapWarp::watchToWarp's pass for gpMarioOriginal (zzzzzz-coop-13): whether
+// the warp floor they are on (onWarp) is held, as one co-op put them on is
+// until they step off it (placeBeside).
+extern "C" int port_coop_warp_held(int onWarp)
+{
+	for (int i = 0; i < 2; i++)
+		if (s_warpHeld[i] && s_warpHeld[i] == gpMarioOriginal) {
+			if (onWarp) {
+				if (getenv("SMS_COOP_DEBUG") && s_frame % 30 == 0)
+					fprintf(stderr, "[coop] player %d stands on a warp floor co-op put them on: held till they step off\n", i + 1);
+				return 1;
+			}
+			s_warpHeld[i] = nullptr;
+		}
+	return 0;
 }
 
 // decomp-patches/zzzzzz-coop-03: the cube the other player is in (player 2's
