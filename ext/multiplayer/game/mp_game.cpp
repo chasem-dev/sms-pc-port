@@ -954,6 +954,29 @@ bool closeTalkFirst(TMarDirector* dir, const char* why)
 	return true;
 }
 
+// A cutscene this game is in, or one asked for (a Shine coming out, another
+// player's cutscene played here): another player's Shine Get waits for it to
+// be over. TMarDirector::updateGameMode takes a Shine Get only out of one.
+// Put over one (the Shine coming out that its collector, out of their own
+// cutscene sooner, then took), the Shine's camera (TMarDirector::fireGetStar,
+// as Mario lands with it) went in the cutscene's queue and played as its next
+// shot, with no "Shine Get!" banner, and once the cutscene was over the Shine
+// Get started the queue's next camera, which was none: a SIGSEGV
+// (MActorCalcKeyCode via startDemoCamera, as with a talk in closeTalkFirst).
+// True while it is on.
+bool cutsceneFirst(TMarDirector* dir, const char* why)
+{
+	if (!dir)
+		return false;
+	const bool on = dir->isDemoModeNow() || dir->unk126 == 3 || dir->unk126 == 4 || dir->unk24C != dir->unk24D
+	                || dir->checkFlag(TMarDirector::DIRECTOR_FLAG_DEMO_PENDING);
+	static bool told;
+	if (on && !told)
+		fprintf(stderr, "[multiplayer] %s: once this cutscene is over\n", why);
+	told = on;
+	return on;
+}
+
 // The host's travel (TMarDirector::moveStage, as it went): the session
 // flags that shape how a stage starts (0x30000 on: this game came from an
 // event, a movie was seen) and the movie played on the way. A client takes
@@ -1261,12 +1284,15 @@ void hostShineExit(TMarDirector* dir)
 		}
 		return;
 	}
-	if (!mpg_shine_exit_waiting() || closeTalkFirst(dir, "another player got a Shine"))
+	if (!mpg_shine_exit_waiting() || closeTalkFirst(dir, "another player got a Shine")
+	    || cutsceneFirst(dir, "another player got a Shine"))
 		return;
 	mpg_take_shine_exit();
-	// the Shine Get played here already (everyone was taken to it): the
+	// the Shine Get played here already (everyone was taken to it), or began
+	// this tick (it waited with this for a talk or a cutscene to end): the
 	// game's own sequence leads to the prompt
-	if (s_shineGetFrames > 0 || dir->checkFlag(TMarDirector::DIRECTOR_FLAG_SHINE_TAKEN))
+	if (s_shineGetFrames > 0 || dir->checkFlag(TMarDirector::DIRECTOR_FLAG_SHINE_TAKEN)
+	    || (gpMarioOriginal && gpMarioOriginal->mStatus == MARIO_STATUS_WIN_DEMO))
 		return;
 	if (TGCConsole2* console = dir->getConsole()) {
 		if (console->unk94)
@@ -1472,8 +1498,9 @@ void playOthersShineGets()
 	// game then plays the Shine's exit without him (hostShineExit).
 	const bool out = m->checkFlag(MARIO_FLAG_GAME_OVER | MARIO_FLAG_IS_PERFORMING);
 	if (!win && !s_spectating && !out && mpg_shine_get_waiting()
-	    && closeTalkFirst(director(), "another player got a Shine"))
-		return; // it plays once the talk is gone
+	    && (closeTalkFirst(director(), "another player got a Shine")
+	        || cutsceneFirst(director(), "another player got a Shine")))
+		return; // it plays once the talk or the cutscene is gone
 	int slot, eventId, yaw;
 	float pos[3];
 	while (mpg_next_shine_get(&slot, &eventId, pos, &yaw)) {
@@ -2368,6 +2395,7 @@ struct TestPlan {
 	int nearAt;              // stands before an NPC (presses of B talk to it), up to 1800 frames
 	bool talked;
 	int talkOnAt;            // talkon@N: from N on, A pressed now and then while a talk is open (reading it on)
+	int coinShineAt, coinTouch; // hundredcam@N[:T]: the 100-coin Shine comes out by this player, with its camera (and T frames on, they touch it)
 	bool tookAgain;
 	int warpAt, warpArea, warpEpisode;
 	int killAt, killCount;
@@ -2450,6 +2478,7 @@ void watchGraffiti();
 TWaterHitPictureHideObj* firstBlueGraffiti();
 TShine* testHiddenShine(const char** camera);
 TResetFruit* s_testFruit;
+TShine* s_testCoinShine; // hundredcam@N
 bool testPoundTub();
 bool testSpraySlot();
 void testCarry(bool take);
@@ -2458,7 +2487,7 @@ void runTests(TMarDirector* dir, bool arrived)
 {
 	if (!s_test.parsed) {
 		s_test.parsed = true;
-		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.gateAt = s_test.flAt = s_test.demoAt = s_test.enemyAt = s_test.tearAt = s_test.blueAt = s_test.cornerAt = s_test.voidAt = s_test.aimAt = s_test.graffitiAt = s_test.graffitiCoinAt = s_test.shineOutAt = s_test.surfAt = s_test.routeAt = s_test.boatAt = s_test.sandAt = s_test.rideAt = s_test.titleQuitAt = s_test.quitAt = s_test.doorAt = s_test.mantaAt = s_test.talkOnAt = -1;
+		s_test.againAt = s_test.hatchAt = s_test.tubAt = s_test.poundAt = s_test.claimAt = s_test.nearAt = s_test.redAt = s_test.redTakeAt = s_test.toRedAt = s_test.gateAt = s_test.flAt = s_test.demoAt = s_test.enemyAt = s_test.tearAt = s_test.blueAt = s_test.cornerAt = s_test.voidAt = s_test.aimAt = s_test.graffitiAt = s_test.graffitiCoinAt = s_test.shineOutAt = s_test.surfAt = s_test.routeAt = s_test.boatAt = s_test.sandAt = s_test.rideAt = s_test.titleQuitAt = s_test.quitAt = s_test.doorAt = s_test.mantaAt = s_test.talkOnAt = s_test.coinShineAt = -1;
 		s_test.takeAt = s_test.warpAt = s_test.killAt = s_test.dieAt = s_test.shineAt = s_test.flagsAt = -1;
 		s_test.manholeAt = -1;
 		s_test.livesAt = s_test.dropAt = s_test.takeDropAt = s_test.coinsAt = s_test.touchAt = s_test.bossWaterAt = s_test.bossDownAt = s_test.bossHitAt = s_test.setFlagAt = -1;
@@ -2540,6 +2569,8 @@ void runTests(TMarDirector* dir, bool arrived)
 				sscanf(nr, "nearnpc@%d", &s_test.nearAt);
 			if (const char* to = strstr(plan, "talkon@"))
 				sscanf(to, "talkon@%d", &s_test.talkOnAt);
+			if (const char* cs = strstr(plan, "hundredcam@"))
+				sscanf(cs, "hundredcam@%d:%d", &s_test.coinShineAt, &s_test.coinTouch);
 			if (const char* cl = strstr(plan, "claim@"))
 				sscanf(cl, "claim@%d", &s_test.claimAt);
 			if (const char* pd = strstr(plan, "pound@"))
@@ -2683,6 +2714,19 @@ void runTests(TMarDirector* dir, bool arrived)
 		testSprayGraffiti(s_test.frames - s_test.graffitiAt, s_test.graffitiQuiet);
 	if (getenv("SMS_MULTIPLAYER_TEST") && s_test.frames % 30 == 0)
 		watchGraffiti();
+	if (s_test.coinShineAt >= 0 && s_test.frames == s_test.coinShineAt && gpItemManager && gpMarioOriginal
+	    && JDrama::TNameRefGen::search2("シャイン（１００枚コイン用）")) {
+		// as TCoin::taken brings it out at 100 coins (its cutscene, this game's own)
+		const JGeometry::TVec3<f32>& at = gpMarioOriginal->mPosition;
+		fprintf(stderr, "[multiplayer] test: the 100-coin Shine comes out\n");
+		s_testCoinShine = gpItemManager->makeShineAppearWithDemo("シャイン（１００枚コイン用）",
+		                                                         "シャイン（１００枚コイン用）カメラ", at.x, at.y, at.z);
+	}
+	if (s_test.coinShineAt >= 0 && s_test.coinTouch > 0 && s_test.frames == s_test.coinShineAt + s_test.coinTouch
+	    && s_testCoinShine && gpMarioOriginal) {
+		fprintf(stderr, "[multiplayer] test: touching the 100-coin Shine (Shine %d)\n", (int)(s_testCoinShine->getEventId() & 0xFF));
+		s_testCoinShine->touchPlayer(gpMarioOriginal);
+	}
 	if (s_test.shineOutAt >= 0 && s_test.frames == s_test.shineOutAt) {
 		const char* camera = nullptr;
 		TShine* hidden     = testHiddenShine(&camera);
