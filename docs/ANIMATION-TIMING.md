@@ -70,6 +70,7 @@ Before values follow from the code (a step taken once per displayed frame, two o
 | `framerate-54` | Distance music cross-fade ramp as a stage starts (260 frames, 340 on stage 4, 90 in Pianta Village) | 8.7 / 4.3 / 2.2 s (default) | 8.7 s |
 | `framerate-55` | Rumble motor rest after continuous rumble; hold | after 30 / 15 / 7.5 s; hold 2.7 / 1.3 / 0.7 s | 30 s; 2.7 s |
 | `framerate-56` | 1-Up's blink before it vanishes | 10 Hz (2 frames on, 1 off) / 20 Hz / 20 Hz half on | 10 Hz, 2 on 1 off |
+| `framerate-57` | A held Chain Chomplet tail's spring pull (on its holder, Mario), taken on every call of `TFireWanwanTailHit::perform`: 120 movement ticks and 3 per-frame passes a frame | 210 / 300 / 480 steps a second (measured: 90 / 180 / 360 per-frame calls) | 210 a second |
 
 Port code (not retail, so the target is the look it was made at, 60 fps, or the stated time):
 

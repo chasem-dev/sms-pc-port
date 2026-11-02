@@ -1,0 +1,30 @@
+Reason: port: with frame_rate = 60 or 120 a Chain Chomplet's held tail pulled two or four times as often in the passes made once per displayed frame (TFireWanwanTailHit::perform binds the tail and its holder, Mario, on every call: 120 movement ticks and 90 per-frame calls a second at 30 fps, 180 or 360 of the latter at 60 or 120); take the per-frame calls' steps once per 30 fps frame
+--- a/src/Enemy/fireWanwan.cpp
++++ b/src/Enemy/fireWanwan.cpp
+@@ -33,6 +33,9 @@
+ #include <MSound/MSoundBGM.hpp>
+ #include <M3DUtil/InfectiousStrings.hpp>
+ #include <macros.h>
++#ifdef TARGET_PC
++#include "port_framerate.h"
++#endif
+ 
+ namespace {
+ const GXColorS10 cBodyColorOnFire   = { 400, -50, -100, 0 };
+@@ -643,6 +646,16 @@ void TFireWanwanTailHit::perform(u32 cue, JDrama::TGraphics* graphics)
+ 		SMS_CalcToDirMatrix(unk74, local_3c,
+ 		                    JGeometry::TVec3<f32>(0.0f, 1.0f, 0.0f));
+ 
++#ifdef TARGET_PC
++		// Port: this runs on every call, the movement ticks' (CUE_MOVE) and
++		// the calc-anim, pre-entry and draw passes', which come once per
++		// displayed frame. At 60 or 120 fps a held tail was pulled (and
++		// Mario with it) by its spring two or four times as often in those
++		// passes: 300 or 480 steps a second instead of 210. Take the
++		// per-frame passes' steps on one displayed frame of each 30 fps one.
++		if ((cue & CUE_MOVE) || gpMarDirector == nullptr
++		    || port_native_frame_step(gpMarDirector->unk5C))
++#endif
+ 		bindBody();
+ 
+ 		unk74.setTrans(getPosition());
