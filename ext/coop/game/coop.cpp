@@ -1,6 +1,7 @@
 // Split-screen co-op (SMS_COOP=1, ext/coop/README.md): a second player in the
 // same game, on the same screen. Player 2 is a second TMario, made from the
-// stage's own Mario record while the stage loads, green as Luigi, reading
+// stage's own Mario record while the stage loads, green as Luigi (or the
+// character the launcher chose for them, coop_character.cpp), reading
 // controller 2 (platform/pad: the controller that joined with Start). A
 // second CPolarSubCamera follows them. While player 2 runs (their move, their
 // camera's, and the drawing of their view), the game's player globals
@@ -14,6 +15,7 @@
 // Game code: C++03.
 #include "port_ext.h"
 #include "port_framerate.h"
+#include "coop_character.h"
 #include "../../multiplayer/mp_recolour.h"
 
 #include <Camera/Camera.hpp>
@@ -404,11 +406,12 @@ void luigiColours(ResTIMG* t)
 	DCFlushRange(data, imageBytes(*t));
 }
 
-// Player 2 in Luigi's colours: their body, hands and cap get textures of
-// their own (Mario's models share theirs with Mario), the body's main
-// texture recoloured. Before their loadAfter, which makes the body's display
-// lists with the textures it then has.
-void dressAsLuigi(TMario* m)
+// Player 2's body, hands and cap get textures of their own (Mario's models
+// share theirs with Mario), the body's main texture recoloured as Luigi's
+// when `luigi`; a chosen Mario's are then painted in their colours
+// (coop_character::dress). Before their loadAfter, which makes the body's
+// display lists with the textures it then has.
+void dressOwn(TMario* m, bool luigi)
 {
 	J3DModelData* body = m->mBodyModelData;
 	if (!body)
@@ -417,7 +420,8 @@ void dressAsLuigi(TMario* m)
 	if (own == body->getTexture())
 		return;
 	body->setTexture(own);
-	luigiColours(own->getResTIMG(0));
+	if (luigi)
+		luigiColours(own->getResTIMG(0));
 	const ResTIMG* main = own->getResTIMG(0);
 	for (int h = 0; h < 2; h++)
 		for (int s = 0; s < 2; s++)
@@ -449,12 +453,16 @@ public:
 	virtual void load(JSUMemoryInputStream& stream)
 	{
 		InP2 in;
+		coop_character::enter(); // their character's archive on the "mario" volume
 		TMario::load(stream);
+		coop_character::leave();
 	}
 	virtual void loadAfter()
 	{
 		InP2 in;
+		coop_character::enter();
 		TMario::loadAfter();
+		coop_character::leave();
 		// the sound's player is Mario, not this one (TMario::loadAfter set it while this was Mario)
 		if (s_p1.mario)
 			SMSGetMSound()->setPlayerInfo(&s_p1.mario->mPosition, &s_p1.mario->mPrevPosition,
@@ -551,13 +559,16 @@ void sceneLoaded()
 	cam->setGamePad(gpMarDirector->getGamePad(1));
 	cameras->getChildren().push_back(cam);
 
-	// player 2: Mario's record
+	// player 2: Mario's record, as Luigi or as their chosen character
+	coop_character::stageStart();
 	TCoopMario* m = new TCoopMario;
 	s_p2.mario    = m;
 	JSUMemoryInputStream body((void*)record, size);
 	m->load(body); // as player 2 (InP2): its parameters, models and FLUDD
 	m->setGamePad(gpMarDirector->getGamePad(1));
-	dressAsLuigi(m);
+	if (!coop_character::chosen() || coop_character::mario())
+		dressOwn(m, !coop_character::chosen());
+	coop_character::dress(m);
 	m->onHitFlag(HIT_FLAG_NO_COLLISION); // until they join
 	THitActor* actor = m;
 	players->add(actor);
@@ -886,6 +897,15 @@ void notice(const char* text, int frames)
 	fprintf(stderr, "[coop] %s\n", text);
 }
 
+// A notice about player 2: `format`'s first %s their name (Luigi, or their
+// chosen character's), the second "him" or "them".
+void noticeP2(const char* format, int frames)
+{
+	char text[160];
+	snprintf(text, sizeof text, format, coop_character::name(), coop_character::them());
+	notice(text, frames);
+}
+
 // Beside player 1, facing as they do, a little behind and to their right.
 int s_movedP2At = -100; // the frame co-op itself last put player 2 somewhere
 void placeBeside(TMario* m, TMario* a)
@@ -1057,11 +1077,11 @@ void frame()
 			port_coop_leave();
 	const unsigned events = port_coop_take_events();
 	if ((events & 1) && s_out)
-		notice("Luigi is out of lives. The next 1-Up brings him back.", kNoticeFrames);
+		noticeP2("%s is out of lives. The next 1-Up brings %s back.", kNoticeFrames);
 	else if (events & 1)
-		notice("Luigi joined! Hold START on their controller to leave.", kNoticeFrames);
+		noticeP2("%s joined! Hold START on their controller to leave.", kNoticeFrames);
 	if (events & 2)
-		notice("Luigi left. Press START on another controller to play again.", kNoticeFrames);
+		noticeP2("%s left. Press START on another controller to play again.", kNoticeFrames);
 	// out of lives: back with the next life that comes (it is theirs)
 	if (s_out && !s_active && playing()) {
 		TFlagManager* flags = TFlagManager::getInstance();
@@ -1069,7 +1089,7 @@ void frame()
 		if (lives > s_livesWhenOut) {
 			takeLife();
 			s_out = false;
-			notice("A 1-Up for Luigi: he's back!", kNoticeFrames / 2);
+			noticeP2(coop_character::chosen() ? "A 1-Up for %s: they're back!" : "A 1-Up for %s: he's back!", kNoticeFrames / 2);
 		} else if (lives < s_livesWhenOut) {
 			s_livesWhenOut = lives; // Mario lost one meanwhile
 		}
@@ -1085,11 +1105,11 @@ void frame()
 	}
 	if (!s_active && !s_hintShown && playing() && port_coop_can_join()) {
 		s_hintShown = true;
-		notice("Co-op: press START on another controller to join as Luigi.", kNoticeFrames);
+		noticeP2("Co-op: press START on another controller to join as %s.", kNoticeFrames);
 	} else if (!s_active && !s_hintShown && !s_connectHintShown && playing() && port_coop_player2() == 0) {
 		// no controller but the first player's (once a game: they may mean to play alone for now)
 		s_connectHintShown = true;
-		notice("Co-op: connect a second controller, then press its START to join as Luigi.", kNoticeFrames);
+		noticeP2("Co-op: connect a second controller, then press its START to join as %s.", kNoticeFrames);
 	}
 	if (s_noticeFrames > 0 && --s_noticeFrames == 0 && GXPC_ExtOverlaySet)
 		GXPC_ExtOverlaySet(kOverlayNotice, "");
@@ -1282,7 +1302,7 @@ void afterMovement()
 			s_respawnFrames = s_frame + fps * 3;
 			if (flags->getFlag(kLivesFlag) > 0) {
 				takeLife();
-				notice("Luigi lost a life.", kNoticeFrames / 2);
+				noticeP2("%s lost a life.", kNoticeFrames / 2);
 			} else {
 				s_lastLife = true; // the death plays out, then they leave the screen
 			}
@@ -1293,7 +1313,7 @@ void afterMovement()
 				s_out          = true;
 				s_livesWhenOut = flags->getFlag(kLivesFlag);
 				activate(false);
-				notice("Luigi is out of lives. The next 1-Up brings him back.", kNoticeFrames);
+				noticeP2("%s is out of lives. The next 1-Up brings %s back.", kNoticeFrames);
 				return;
 			}
 			revive(m);

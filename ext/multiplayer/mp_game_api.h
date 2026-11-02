@@ -552,6 +552,10 @@ int mpg_ground(float x, float y, float z, MpgGround* out);
 // set to show in place of the texture whose data is at `data` (`bytes` long).
 // 1 if this game has a picture for that texture, 0 to leave it as it is.
 int mpg_dress(int slot, int character, const char* textureName, const void* data, size_t bytes);
+// The same in the colours of `look` ("hat=2fa846;shirt=...", as mpg_look
+// gives them), for a player of this game's own: split-screen co-op's second
+// player in the outfit the launcher gave them (SMS_COOP_LOOK, ext/coop).
+int mpg_dress_look(const char* look, int character, const char* textureName, const void* data, size_t bytes);
 // A texture of another player's model with no picture from mpg_dress: drawn as
 // it is, never in this game's own Mario's look (the launcher's SMS_MARIO_LOOK
 // pack, which finds its textures by their data, so it would find a copy of

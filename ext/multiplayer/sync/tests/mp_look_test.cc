@@ -105,6 +105,15 @@ int main()
 	CHECK(mpg_dress(1, MPG_CHAR_LUIGI, "H_watergun_main_s3tc", data, sizeof data));
 	CHECK(!memcmp(g_shown.data(), fluddRgba, 8));
 
+	// a look given as it is (split-screen co-op's player 2, SMS_COOP_LOOK),
+	// whatever the slot's
+	g_look = "hat=d51c18";
+	g_shown.clear();
+	CHECK(mpg_dress_look("hat=2fa846", MPG_CHAR_MARIO, "H_ma_new_main_s3tc", data, sizeof data));
+	CHECK(g_shown.size() == 8 && abs(g_shown[0] - 0x2f) <= 3 && abs(g_shown[1] - 0xa8) <= 3 && abs(g_shown[2] - 0x46) <= 3);
+	CHECK(!mpg_dress_look("hat=2fa846", MPG_CHAR_MARIO, "H_ma_other_texture", data, sizeof data));
+	CHECK(!mpg_dress_look(nullptr, MPG_CHAR_MARIO, "H_ma_new_main_s3tc", data, sizeof data));
+
 	// a texture with no picture (none of this game's, or Eclipse's own
 	// characters' textures): kept plain, so this game's own look stays off it
 	CHECK(!mpg_dress(1, MPG_CHAR_MARIO, "H_ma_other_texture", data, sizeof data));

@@ -297,7 +297,14 @@ std::shared_ptr<std::vector<uint8_t>> paint(const Paint& p, const Picture& pic, 
 
 extern "C" int mpg_dress(int slot, int character, const char* textureName, const void* data, size_t bytes)
 {
-	if (!textureName || !data || !bytes || !GXPC_SetTextureOverride)
+	char look[512];
+	mpg_look(slot, look, sizeof look);
+	return mpg_dress_look(look, character, textureName, data, bytes);
+}
+
+extern "C" int mpg_dress_look(const char* look, int character, const char* textureName, const void* data, size_t bytes)
+{
+	if (!look || !textureName || !data || !bytes || !GXPC_SetTextureOverride)
 		return 0;
 	std::lock_guard<std::mutex> hold(s_lock);
 	Paint& p = s_paint;
@@ -311,8 +318,6 @@ extern "C" int mpg_dress(int slot, int character, const char* textureName, const
 	std::shared_ptr<Picture> pic = picture(p, file->second);
 	if (!pic)
 		return 0;
-	char look[512];
-	mpg_look(slot, look, sizeof look);
 	if (isFludd(textureName))
 		character = MPG_CHAR_MARIO;
 	bool chosen[kRegions];
