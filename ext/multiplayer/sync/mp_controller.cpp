@@ -2487,6 +2487,11 @@ extern "C" int mpg_take_shine_exit(void)
 	return 1;
 }
 
+extern "C" int mpg_shine_exit_waiting(void)
+{
+	return g.shineExit ? 1 : 0;
+}
+
 extern "C" void mpg_item_taken(uint32_t key)
 {
 	if (g.role == MPG_ROLE_OFF)
@@ -2729,6 +2734,12 @@ extern "C" int mpg_next_shine_get(int* slot, int* eventId, float pos[3], int* ya
 	return 1;
 }
 
+extern "C" int mpg_shine_get_waiting(void)
+{
+	std::lock_guard<std::mutex> hold(g_lock);
+	return g.shineGets.empty() ? 0 : 1;
+}
+
 extern "C" void mpg_demo(const void* data, size_t size)
 {
 	if (g.role == MPG_ROLE_OFF || size > 256)
@@ -2762,6 +2773,12 @@ extern "C" size_t mpg_next_demo(int* slot, void* data, size_t size)
 	memcpy(data, d.data.data(), n);
 	g.demos.pop_front();
 	return n ? n : 1;
+}
+
+extern "C" int mpg_demo_waiting(void)
+{
+	std::lock_guard<std::mutex> hold(g_lock);
+	return g.demos.empty() ? 0 : 1;
 }
 
 extern "C" int mpg_taken_at(int i, MpgTakenAt* out)
