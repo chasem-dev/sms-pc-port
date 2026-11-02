@@ -40,6 +40,8 @@
 #include <MSound/SoundEffects.hpp>
 #include <JSystem/JParticle/JPAEmitter.hpp>
 #include <M3DUtil/M3UModelMario.hpp>
+#include <M3DUtil/MActor.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DAnimation.hpp>
 #include <Player/Mario.hpp>
 #include <Player/MarioAccess.hpp>
 #include <Player/MarioCap.hpp>
@@ -168,6 +170,11 @@ bool s_testJoined;
 int s_testJoinFrame;
 int s_frame;
 int s_swapCount;      // object moves led by player 2 lately (SMS_COOP_DEBUG)
+// player 2's car on the roller coaster (rideCoaster)
+f32 s_carLag;         // track frames it is behind Mario's
+bool s_carLagSet;
+bool s_trackLooped;   // Mario's car has been round once: a frame behind its start is near its end
+f32 s_trackLast;
 
 void capture(Ctx& c)
 {
@@ -529,6 +536,8 @@ bool recordBody(const void* object, const u8** body, u32* size)
 void sceneLoaded()
 {
 	s_popoCount = 0;
+	s_carLagSet = s_trackLooped = false;
+	s_trackLast = 0.0f;
 	s_made     = false;
 	s_split    = false;
 	s_active   = false; // a new stage's player 2 joins it once it plays (frame)
@@ -1002,6 +1011,96 @@ void followP1(TMario* m)
 	gpCamera->warpPosAndAt(gpCamera->mCurrentTarget.unk28, *gpMarioAngleY + 0x8000);
 }
 
+// ------------------------------------------------------------ the roller coaster
+
+// Pinna Park's roller coaster stages (map 58: Mecha-Bowser's ride and the
+// coaster balloons) start Mario in his car (TMario::isUnUsualStageStart,
+// toroccoStart: MARIO_STATUS_TOROCCO, in which calcBaseMtx puts him where the
+// track's animation has the car). Every TMario made in those stages loads a
+// car and its own copy of the track (initModel), player 2's too, but only
+// Mario was ever put in his: player 2 walked about the stage. They ride theirs
+// now, a car's length behind Mario's on the same track: their track plays
+// Mario's frame, less the frames the cars take to cover that length (kept to
+// it as the speed changes), and they turn and spray from their car with their
+// controller and camera as Mario does from his.
+const f32 kCarGap = 520.0f; // a car's length (Torocco.bmd is about 500 units long), and a little
+
+MActor* coasterTrack(TMario* m)
+{
+	if (!m || !m->mTorocco)
+		return nullptr;
+	return m->mRailType == MARIO_RAIL_TYPE_PINNA_RAIL ? m->mPinaRail : m->mKoopaRail;
+}
+
+bool riding(TMario* m) { return m && m->mStatus == MARIO_STATUS_TOROCCO; }
+
+// A status set as revive sets it (changePlayerStatus refuses to leave a lost life's).
+void setStatus(TMario* m, u32 status)
+{
+	m->mPrevStatus  = status;
+	m->mStatus      = status;
+	m->mStatusArg   = 0;
+	m->mStatusState = 0;
+	m->mStatusTimer = 0;
+}
+
+void rideCoaster(TMario* m)
+{
+	TMario* a        = p1();
+	MActor* lead     = coasterTrack(a);
+	MActor* own      = coasterTrack(m);
+	J3DFrameCtrl* fl = lead ? lead->getFrameCtrl(ANM_TYPE_BCK) : nullptr;
+	if (!fl || !own || !riding(a) || m->checkFlag(MARIO_FLAG_GAME_OVER)) {
+		if (riding(m) && !m->checkFlag(MARIO_FLAG_GAME_OVER)) { // Mario is out of his car: they are out of theirs
+			setStatus(m, MARIO_STATUS_WAIT);
+			placeBesideP1(m);
+		}
+		s_carLagSet = false;
+		return;
+	}
+	const f32 frame = fl->getFrame();
+	if (frame < s_trackLast)
+		s_trackLooped = true;
+	s_trackLast = frame;
+	if (!riding(m)) { // in, as toroccoStart puts Mario in his
+		setStatus(m, MARIO_STATUS_TOROCCO);
+		m->mVel.x = m->mVel.y = m->mVel.z = 0.0f;
+		m->mForwardVel   = 0.0f;
+		m->mToroccoAngle = a->mToroccoAngle; // facing in the car as Mario does in his
+		own->setBckFromIndex(0);
+		s_carLagSet = false;
+		if (getenv("SMS_COOP_DEBUG"))
+			fprintf(stderr, "[coop] player 2 gets in their car behind Mario's (track frame %.1f)\n", frame);
+	}
+	J3DFrameCtrl* fo = own->getFrameCtrl(ANM_TYPE_BCK);
+	if (!fo)
+		return;
+	fo->setRate(fl->getRate());
+	// the track frames a car's length takes now: Mario's car's last move (it
+	// was at mToroccoPos before calcBaseMtx put him on it) at the track's rate
+	const f32 rate = fl->getRate() > 0.01f ? fl->getRate() : 0.01f;
+	const f32 step = sqrtf(dist2(a->mPosition, a->mToroccoPos)) / rate;
+	const f32 gap  = sqrtf(dist2(a->mPosition, m->mPosition));
+	if (!s_carLagSet) {
+		s_carLag    = step > 1.0f ? kCarGap / step : 0.0f;
+		s_carLagSet = true;
+	} else if (step > 1.0f && (s_trackLooped || frame - s_carLag >= fl->getStart())) {
+		// closer than a car's length: further behind; further: nearer
+		f32 d = 0.1f * (kCarGap - gap) / step;
+		d     = d > 2.0f ? 2.0f : d < -2.0f ? -2.0f : d;
+		s_carLag += d;
+	}
+	s_carLag = s_carLag < 0.0f ? 0.0f : s_carLag > 600.0f ? 600.0f : s_carLag;
+	f32 at   = frame - s_carLag;
+	if (at < fl->getStart()) // behind the track's start: its end once Mario has been round, else waiting at the start
+		at = s_trackLooped && fl->getAttribute() == J3DFrameCtrl::ATTR_LOOP ? at + (fl->getEnd() - fl->getLoop())
+		                                                                     : (f32)fl->getStart();
+	fo->setFrame(at);
+	if (getenv("SMS_COOP_DEBUG") && s_frame % 30 == 0)
+		fprintf(stderr, "[coop] coaster: Mario's car at track frame %.1f, player 2's at %.1f (%.1f behind), %.0f units apart\n",
+		        frame, at, s_carLag, gap);
+}
+
 void activate(bool on)
 {
 	TMario* m = p2();
@@ -1132,10 +1231,14 @@ void afterMovement()
 		p1LastFor = nullptr;
 		return;
 	}
+	// on the roller coaster: in their own car, behind Mario's
+	rideCoaster(m);
+	// (a car round the track's end is no warp)
+	const bool coaster = riding(p1()) || riding(m);
 	// Mario warped (moved further than any run, jump or rocket takes him in a
 	// frame): player 2 goes with him, as everyone does through a pipe
 	const JGeometry::TVec3<f32> p1Now = p1()->mPosition;
-	if (p1LastFor == s_dir && playing() && !m->checkFlag(MARIO_FLAG_GAME_OVER)
+	if (p1LastFor == s_dir && playing() && !coaster && !m->checkFlag(MARIO_FLAG_GAME_OVER)
 	    && dist2(p1Now, p1Last) > 1500.0f * 1500.0f && dist2(m->mPosition, p1Now) > 1500.0f * 1500.0f) {
 		if (getenv("SMS_COOP_DEBUG"))
 			fprintf(stderr, "[coop] Mario warped %.0f units: player 2 goes with him\n", sqrtf(dist2(p1Now, p1Last)));
@@ -1144,7 +1247,7 @@ void afterMovement()
 	// ...and Mario goes with player 2 when they are warped (a warp floor of theirs)
 	static JGeometry::TVec3<f32> p2Last;
 	const JGeometry::TVec3<f32> p2Now = m->mPosition;
-	if (p1LastFor == s_dir && playing() && !m->checkFlag(MARIO_FLAG_GAME_OVER) && s_frame - s_movedP2At > 2
+	if (p1LastFor == s_dir && playing() && !coaster && !m->checkFlag(MARIO_FLAG_GAME_OVER) && s_frame - s_movedP2At > 2
 	    && dist2(p2Now, p2Last) > 1500.0f * 1500.0f && dist2(p2Now, p1()->mPosition) > 1500.0f * 1500.0f) {
 		if (getenv("SMS_COOP_DEBUG"))
 			fprintf(stderr, "[coop] player 2 warped %.0f units: Mario goes with them\n", sqrtf(dist2(p2Now, p2Last)));
