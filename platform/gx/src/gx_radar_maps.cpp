@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <mutex>
+#include <ctype.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -133,11 +134,22 @@ void init() {
     }
 }
 
+// the disc's names in either case: Eclipse's stage list has lanciaPeaks_ex0.arc
+// for its lanciapeaks_ex0.szs
+bool sameName(const std::string& a, const char* b) {
+    size_t i = 0;
+    for (; i < a.size() && b[i]; i++)
+        if (tolower((unsigned char)a[i]) != tolower((unsigned char)b[i])) return false;
+    return i == a.size() && !b[i];
+}
+
 const Entry* find(unsigned long long key, const char* scene) {
     const Entry* first = nullptr;
     for (const Entry& e : s_entries) {
         if (e.key != key) continue;
-        if (scene && std::find(e.scenes.begin(), e.scenes.end(), scene) != e.scenes.end()) return &e;
+        if (scene)
+            for (const std::string& s : e.scenes)
+                if (sameName(s, scene)) return &e;
         if (!first) first = &e;
     }
     return first;
