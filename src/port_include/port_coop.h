@@ -48,8 +48,11 @@ typedef struct PortCoopStatus {
 	float p2Hold;       // player 2's Start held: how far to leaving (0..1)
 	float p2Gone;       // seconds left for player 2's controller to come back, or < 0
 	int ownerLost;      // player 1's controller went and no other is theirs yet
+	float ownerHold;    // player 1's controller's Start held: how far to joining as player 2 (0..1)
+	int ownerHint;      // the keyboard and player 1's controller are in use together: say how to join
 	char guestStart[12]; // the label on the guest's (or the queued controller's) Start: START, OPTIONS, +, MENU
 	char p2Start[12];    // ...on player 2's
+	char ownerStart[12]; // ...on player 1's controller
 } PortCoopStatus;
 
 int port_coop_enabled(void);

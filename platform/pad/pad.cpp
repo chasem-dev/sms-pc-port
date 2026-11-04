@@ -1253,9 +1253,12 @@ void fill_status(PADStatus& s, bool haveGc, const GcAdapterInput& gc)
 // controller 2 (channel 1).
 //
 // Whose controller is whose. The first player has the keyboard and mouse and
-// one controller, theirs (g_owner): the first one used in the game's menus
-// (the title, the file select), or in a stage before the keyboard has played
-// one. Every other controller is a guest. In the menus a guest plays as
+// at most one controller, theirs (g_owner): the first one used, in the menus
+// (the title, the file select) or a stage, while the keyboard has not been
+// used yet. Once the keyboard has, it is the first player's device and
+// controllers are guests, so one player on the keyboard and mouse and one on
+// a controller works whoever touched what first. Every other controller is a
+// guest. In the menus a guest plays as
 // controller 1 too, so anyone can pick a file; in a stage it moves no one
 // until it joins, so a second player picking one up never moves Mario, and
 // anything they press shows how to join (port_coop_status, ext/coop's card):
@@ -1268,7 +1271,12 @@ void fill_status(PADStatus& s, bool haveGc, const GcAdapterInput& gc)
 //   (they moved to it), and the one they had becomes a guest; a queued
 //   controller's held Start takes its join back;
 // - the second player's Start held for kHold leaves; pressed briefly, it is
-//   the pause menu (controller 1's Start).
+//   the pause menu (controller 1's Start);
+// - the first player's controller's Start held for kHold in a stage played,
+//   once the keyboard has been used and no one else is in, gives the first
+//   player to the keyboard and joins as the second (a controller that took
+//   the first player before the keyboard was used). Pressed briefly it is the
+//   pause menu, on its release. Both played with at once shows how (ownerHint).
 // Unplugging the second player's controller keeps their place for kP2Grace:
 // a guest used meanwhile takes it (the same controller plugged in again, or
 // another), else they leave. Unplugging the first player's makes the next
@@ -1284,6 +1292,9 @@ const double kHoldShown = 0.25; // seconds held before the card shows it
 const double kP2Grace   = 10.0; // seconds the second player's place waits for a controller
 const double kGuestShown = 4.0; // seconds the join card stays after a guest was last touched
 const double kTwinWindow = 0.15; // seconds apart two controllers' presses are one press
+const double kBothInUse = 5.0;   // seconds apart the keyboard and a controller look like two players
+const double kHintShown = 6.0;   // seconds that says so on the card
+const double kHintAgain = 60.0;  // seconds before it says so again
 s32 g_p2 = kNoCtl;
 double g_p2StartAt;   // when its Start went down (0: up, or the press that joined)
 bool g_p2StartWas;
@@ -1292,7 +1303,9 @@ int g_injectStart;     // PADReads left in which controller 1 has Start held for
 unsigned g_coopEvents; // PORT_COOP_EVENT_* since port_coop_take_events
 int g_mode;            // port_coop_set_mode: 0 the menus, 1 a stage not taking players now, 2 one played
 int g_built;           // ...and whether this stage has a second player made
-bool g_keyPlayed;      // the keyboard has played a stage (a game control's key in mode 2)
+bool g_keyUsed;        // the keyboard has been used (a game control's key, in the menus or a stage)
+double g_ownerPlayedAt; // when the first player's controller was last played with
+double g_ownerHintAt;   // when the keyboard and that controller were last seen in use together
 s32 g_owner = kNoCtl;  // the first player's controller (kNoCtl: the keyboard and mouse alone)
 bool g_ownerLost;      // theirs was unplugged: the next controller used is theirs
 s32 g_queued = kNoCtl; // a guest whose Start asked to join while the stage could not take them
@@ -1310,6 +1323,7 @@ struct Seat {
 	bool startWas;
 	double startAt;   // when its Start went down (0: up, or not to count)
 	bool waitRelease; // its Start did something already: nothing more until let go
+	bool holdBack;    // the first player's Start, kept from controller 1 until it is a press or a hold
 	u32 btnWas;       // its buttons at the last read
 	double edgeAt;    // when a button last went down
 	u32 edgeMask;     // its buttons then
@@ -1454,9 +1468,10 @@ void coop_update(const bool gcHave[2], const GcAdapterInput gc[2])
 	if (!g_coop)
 		return;
 	const double t = now_seconds();
-	if (g_mode == 2 && !g_keyPlayed && keys_play()) {
-		g_keyPlayed = true;
-		port_log("[pad] co-op: the keyboard plays: other controllers join\n");
+	const bool keysPlay = keys_play();
+	if (!g_keyUsed && keysPlay) {
+		g_keyUsed = true;
+		port_log("[pad] co-op: the keyboard is in use: it is player 1's, and other controllers join\n");
 	}
 
 	// the controllers there now
@@ -1538,14 +1553,35 @@ void coop_update(const bool gcHave[2], const GcAdapterInput gc[2])
 		const bool pressed   = d.id >= 0 ? (d.buttons & ~s->btnWas & ~(1u << kPadStart)) != 0 : d.held;
 		if (!d.start)
 			s->waitRelease = false;
+		if (d.id == g_owner && g_focused) { // their Start, held, gives the keyboard the first player
+			if (d.held)
+				g_ownerPlayedAt = t;
+			if (startDown && g_keyUsed && g_p2 == kNoCtl && g_mode == 2) {
+				s->holdBack = true;
+				s->startAt  = t;
+			}
+			if (s->holdBack && !d.start) { // a press: the pause menu
+				s->holdBack = false;
+				s->startAt  = 0;
+				g_injectStart = 4;
+			} else if (s->holdBack && t - s->startAt >= kHold) {
+				s->holdBack    = false;
+				s->startAt     = 0;
+				s->waitRelease = true;
+				port_log("[pad] co-op: controller %d leaves player 1 to the keyboard (held Start)\n", (int)d.id);
+				g_owner = kNoCtl;
+				ask_to_join(d.id);
+			}
+			continue;
+		}
 		if (d.id == g_owner || d.id == g_p2 || s->twinOf != kNoCtl || !g_focused)
 			continue;
-		if (g_mode == 0) { // the menus: the first player's, if they have none
-			if (g_owner == kNoCtl && (pressed || startDown))
+		if (g_mode == 0) { // the menus: the first player's, if they have none and the keyboard isn't it
+			if (g_owner == kNoCtl && (g_ownerLost || !g_keyUsed) && (pressed || startDown))
 				claim(d.id, g_ownerLost ? "theirs was unplugged" : "used in the menus");
 			continue;
 		}
-		if (g_owner == kNoCtl && (g_ownerLost || !g_keyPlayed) && (pressed || startDown) && g_p2GoneAt == 0
+		if (g_owner == kNoCtl && (g_ownerLost || !g_keyUsed) && (pressed || startDown) && g_p2GoneAt == 0
 		    && d.id != g_queued) {
 			if (g_ownerLost)
 				g_coopEvents |= PORT_COOP_EVENT_OWNER_BACK;
@@ -1589,6 +1625,10 @@ void coop_update(const bool gcHave[2], const GcAdapterInput gc[2])
 	}
 	if (g_queued != kNoCtl && g_p2 == kNoCtl && g_mode == 2 && g_built)
 		coop_join(g_queued);
+	// two players on the keyboard and the first player's controller, it looks like
+	if (keysPlay && g_owner != kNoCtl && g_p2 == kNoCtl && g_mode == 2 && g_ownerPlayedAt > 0
+	    && t - g_ownerPlayedAt < kBothInUse && (g_ownerHintAt == 0 || t - g_ownerHintAt >= kHintAgain))
+		g_ownerHintAt = t;
 	for (int i = 0; i < n; i++) {
 		devs[i].seat->startWas = devs[i].start;
 		devs[i].seat->btnWas   = devs[i].buttons;
@@ -1628,11 +1668,13 @@ bool feeds_p1(s32 which)
 }
 
 // Whether a controller's Start, still held, did something of co-op's already
-// (took Mario over, left): it is no pause until let go.
+// (took over, left), or may yet (the first player's, held back): no pause now.
 bool start_spent(s32 which)
 {
 	const Seat* s = g_coop ? seat_of(which, false) : nullptr;
-	return s && s->waitRelease;
+	if (s && s->twinOf != kNoCtl) // a second sight of a controller presses as it does
+		s = seat_of(s->twinOf, false);
+	return s && (s->waitRelease || s->holdBack);
 }
 
 // The label on a controller's Start, for the card.
@@ -1715,6 +1757,12 @@ extern "C" void port_coop_status(PortCoopStatus* out)
 			out->p2Hold = (float)std::min(1.0, (t - g_p2StartAt) / kHold);
 	}
 	out->ownerLost = g_ownerLost;
+	if (g_owner != kNoCtl) {
+		const Seat* owner = seat_of(g_owner, false);
+		snprintf(out->ownerStart, sizeof out->ownerStart, "%s", start_label(g_owner));
+		out->ownerHold = owner && owner->holdBack ? (float)hold_of(g_owner, t) : 0;
+		out->ownerHint = g_p2 == kNoCtl && g_ownerHintAt > 0 && t - g_ownerHintAt < kHintShown;
+	}
 }
 // Whether a controller other than the first player's is there, so a stage
 // loading now makes a second player (ext/coop): a solo player's stages stay
@@ -1733,10 +1781,12 @@ extern "C" int port_coop_armed(void)
 	for (int i = 0; i < kMaxSeats; i++) // twins are one controller
 		if (g_seats[i].used && g_seats[i].id >= 0 && g_seats[i].twinOf != kNoCtl)
 			controllers--;
-	if (controllers > (g_owner >= 0 ? 1 : 0))
+	// the keyboard in use is a seat too: one player on it, one on the only controller
+	if (controllers > (g_owner >= 0 && !g_keyUsed ? 1 : 0))
 		return 1;
 	GcAdapterInput gc;
-	return (gc_adapter_read(&gc) && g_owner != kGcFirst) || (gc_adapter_read_second(&gc) && g_owner != kGcSecond);
+	return (gc_adapter_read(&gc) && (g_keyUsed || g_owner != kGcFirst))
+	       || (gc_adapter_read_second(&gc) && (g_keyUsed || g_owner != kGcSecond));
 }
 // A test's second player (SMS_COOP_TEST_JOIN): joined without a controller,
 // its input given by the padRead hook.
@@ -1845,6 +1895,8 @@ extern "C" u32 PADRead(PADStatus* status)
 	const bool p2On  = g_p2 != kNoCtl;
 	const int p1Port = feeds_p1(kGcFirst) ? 0 : feeds_p1(kGcSecond) ? 1 : -1;
 	fill_status(status[0], p1Port >= 0 && gcHave[p1Port], gc[p1Port >= 0 ? p1Port : 0]);
+	if (p1Port >= 0 && start_spent(p1Port ? kGcSecond : kGcFirst))
+		status[0].button &= ~PAD_BUTTON_START;
 	if (g_injectStart > 0) {
 		g_injectStart--;
 		status[0].button |= PAD_BUTTON_START;

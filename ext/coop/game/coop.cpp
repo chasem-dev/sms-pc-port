@@ -897,6 +897,15 @@ bool playing()
 	       && !d->checkFlag(TMarDirector::DIRECTOR_FLAG_STAGE_TRANSITION_PENDING);
 }
 
+// A stage being played, whether it has a player 2 or not (playing() is one that
+// does): a controller can ask to join here and be told it joins from the next area.
+bool stagePlaying()
+{
+	TMarDirector* d = director();
+	return d && d->mState == TMarDirector::STATE_UNK4 && !d->checkFlag(TMarDirector::DIRECTOR_FLAG_STAGE_TRANSITION_PENDING)
+	       && (!s_made || d != s_dir || gpMarioOriginal == s_p1.mario);
+}
+
 // ------------------------------------------------------------ the card
 // What players see of joining and leaving (GXPC_CoopCard, platform/gx's
 // gx_coop_overlay.cpp): a card near the top of the picture, or while the
@@ -963,6 +972,9 @@ void showCard(bool split, bool built)
 	} else if (st.p2Hold > 0) {
 		setCard(c, 2, "Keep holding to leave", "The screen goes back to one", "", "");
 		c.progress = st.p2Hold;
+	} else if (st.ownerHold > 0) {
+		setCard(c, 2, "Keep holding to join as Player 2", "The keyboard stays Player 1", "", "");
+		c.progress = st.ownerHold;
 	} else if (st.queuedHold > 0) {
 		setCard(c, 2, "Keep holding to cancel", "This controller won't join", "", "");
 		c.progress = st.queuedHold;
@@ -977,6 +989,8 @@ void showCard(bool split, bool built)
 	} else if (st.guest) {
 		setCard(c, 2, "Join as Player 2", built ? "Press [%s] to join" : "Press [%s] to join from the next area",
 		        "Hold [%s] to take over as Player 1", guest);
+	} else if (st.ownerHint) {
+		setCard(c, 2, "Two players?", "Hold [%s] on the controller to join as Player 2", "The keyboard stays Player 1", st.ownerStart);
 	} else if (s_frame < s_eventUntil) {
 		c = s_event;
 	} else {
@@ -1270,7 +1284,17 @@ void frame()
 	// controller plays as controller 1; in a stage the others join
 	const bool inStage = d && gpApplication.mCurrArea.getStage() != 15;
 	const bool built   = here && s_builtCharacter == port_character_selected();
-	port_coop_set_mode(!inStage ? 0 : playing() ? 2 : 1, built);
+	port_coop_set_mode(!inStage ? 0 : stagePlaying() ? 2 : 1, built);
+	// a test aid (frames since the game started): the stage changes, with or
+	// without a player 2 in it (SMS_COOP_TEST_WARP=frame:area,episode)
+	if (const char* w = getenv("SMS_COOP_TEST_WARP")) {
+		static bool warped;
+		int at = 0, area = 0, episode = 0;
+		if (!warped && inStage && sscanf(w, "%d:%d,%d", &at, &area, &episode) == 3 && s_frame >= at) {
+			warped = true;
+			d->setNextStage((u16)(((area + 1) << 8) | episode), nullptr);
+		}
+	}
 	takeEvents();
 	if (!here) {
 		s_split = false;
@@ -1365,22 +1389,14 @@ void afterMovement()
 	p2Last    = m->mPosition;
 	p1Last    = p1()->mPosition;
 	p1LastFor = s_dir;
-	// test aids (frames since the game started): player 2 loses a life; the
-	// stage changes (SMS_COOP_TEST_WARP=frame:area,episode)
-	static bool killed, warped;
+	// test aids (frames since the game started): player 2 loses a life
+	static bool killed;
 	if (const char* k = getenv("SMS_COOP_TEST_KILL"))
 		if (!killed && s_frame >= atoi(k)) {
 			killed = true;
 			InP2 in;
 			m->loserExec();
 		}
-	if (const char* w = getenv("SMS_COOP_TEST_WARP")) {
-		int at = 0, area = 0, episode = 0;
-		if (!warped && sscanf(w, "%d:%d,%d", &at, &area, &episode) == 3 && s_frame >= at) {
-			warped = true;
-			s_dir->setNextStage((u16)(((area + 1) << 8) | episode), nullptr);
-		}
-	}
 	// player 2 put at x,y,z facing angle (SMS_COOP_TEST_AT), 10 frames after joining
 	if (const char* t = getenv("SMS_COOP_TEST_AT")) {
 		static bool placed;
