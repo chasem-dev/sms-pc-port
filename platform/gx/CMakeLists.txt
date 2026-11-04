@@ -110,9 +110,9 @@ if(TARGET SDL2::SDL2)
     target_link_libraries(sms_gx PUBLIC SDL2::SDL2)
     message(STATUS "sms_gx: SDL2 window support")
     # The cheat menu (F9), the warp menu (F8), the quit prompt (Escape), the save state messages, auto save's
-    # indicator and extensions' text in the window.
+    # indicator, co-op's card and extensions' text in the window.
     target_sources(sms_gx PRIVATE src/gx_cheat_menu.cpp src/gx_warp_menu.cpp src/gx_quit_prompt.cpp
-                   src/gx_savestate_overlay.cpp src/gx_autosave_overlay.cpp src/gx_ext_overlay.cpp)
+                   src/gx_savestate_overlay.cpp src/gx_autosave_overlay.cpp src/gx_coop_overlay.cpp src/gx_ext_overlay.cpp)
 else()
     message(STATUS "sms_gx: SDL2 not found - no window support")
 endif()

@@ -214,16 +214,17 @@ void port_character_select(int index)
 }
 
 // Switching (F4, the settings menu's Character) is for one player alone: not in an online game
-// (SMS_MULTIPLAYER host or join), whose players see each other as Mario, nor in split-screen co-op,
-// whose second player is made from the same archive as the first.
-int port_coop_enabled(void);
+// (SMS_MULTIPLAYER host or join), whose players see each other as Mario, nor while a second player
+// plays split-screen co-op, whose player 2 is made from the same archive as the first (one that
+// joins later waits for the next area: ext/coop).
+int port_coop_player2(void);
 int port_character_switching(void)
 {
 	static const int alone = [] {
 		const char* mode = getenv("SMS_MULTIPLAYER");
 		return !mode || !*mode || !strcmp(mode, "0") || !strcmp(mode, "off");
 	}();
-	return alone && !port_coop_enabled();
+	return alone && !port_coop_player2();
 }
 
 void port_character_set_available(int available) { g_available = available != 0; }

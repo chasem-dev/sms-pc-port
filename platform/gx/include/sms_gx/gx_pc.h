@@ -275,6 +275,26 @@ void GXPC_ExtOverlayScreen(uint32_t rgba);
 enum { GXPC_AUTOSAVE_OFF, GXPC_AUTOSAVE_SAVING, GXPC_AUTOSAVE_SAVED, GXPC_AUTOSAVE_FAILED };
 void GXPC_AutoSaveIndicator(int state);
 
+// Split-screen co-op's card (ext/coop, gx_coop_overlay.cpp): a badge in the
+// player's colour (`accent` 0xRRGGBBAA, `badge` its text), a title and up to
+// two lines, whose [WORD]s are drawn as buttons, and a bar when `progress` is
+// 0..1 (below 0 none). `view` 0 puts it near the top of the game's picture,
+// 1 of player 2's view and 2 of player 1's (side by side, or one above the
+// other when `stacked`). Set it each frame it shows; NULL fades it out. Any
+// thread; only a window shows it, not SMS_SHOTS. Text is ASCII.
+#ifndef GXPC_COOP_CARD_DEFINED
+#define GXPC_COOP_CARD_DEFINED
+typedef struct GXPCCoopCard {
+    char badge[4];
+    uint32_t accent;
+    char title[64];
+    char lines[2][96];
+    float progress;
+    int view, stacked;
+} GXPCCoopCard;
+#endif  // (also in src/port_include/port_coop.h, for the game's side)
+void GXPC_CoopCard(const GXPCCoopCard* card);
+
 // Names over other players (multiplayer, gx_ext_overlay.cpp): each label's
 // bottom centre at (x, y) across the game's picture (0..1 from its top left),
 // `alpha` 0..1. Replaces the last list; count 0 hides them all. Any thread;

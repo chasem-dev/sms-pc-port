@@ -387,6 +387,7 @@ enum OverlaySlot {
     OVERLAY_EXT_BOARD,
     OVERLAY_EXT_SCREEN,  // a colour over the window
     OVERLAY_AUTOSAVE,    // auto save's indicator (gx_autosave_overlay.cpp)
+    OVERLAY_COOP,        // split-screen co-op's card (gx_coop_overlay.cpp)
     OVERLAY_EXT_LABEL,   // names over players: GXPC_MAX_LABELS slots from here
     OVERLAY_EXT_MARKER = OVERLAY_EXT_LABEL + 8,  // a server mod's markers: GXPC_MAX_MARKERS slots
     OVERLAY_SLOTS = OVERLAY_EXT_MARKER + 8

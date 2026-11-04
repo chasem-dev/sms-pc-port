@@ -10,6 +10,7 @@
 #include "gx_quit_prompt.h"
 #include "gx_savestate_overlay.h"
 #include "gx_autosave_overlay.h"
+#include "gx_coop_overlay.h"
 #include "gx_ext_overlay.h"
 #include "gx_glthread.h"
 #include "gx_window_layout.h"
@@ -1351,6 +1352,7 @@ void GXPC_Present(const void* xfb) {
             quitPromptRender(w, h);
             savestateOverlayRender(w, h);
             autosaveOverlayRender(w, h);
+            coopOverlayRender(w, h);
             extOverlayRender(w, h);
             captureWindow(s_frame, w, h);
             t1 = nowSeconds();
@@ -1417,6 +1419,12 @@ extern "C" void GXPC_NoteInputDevice(int controller, int sdlType, const char* na
 
 // The controllers connected, pressed yet or not (split-screen co-op's hint, platform/pad).
 extern "C" int GXPC_ControllerCount(void) { return int(s_pads.size()); }
+// A connected controller's SDL_GameControllerType, or -1 (co-op's card names its Start).
+extern "C" int GXPC_ControllerType(int which) {
+    for (const Pad& p : s_pads)
+        if (p.id == which) return p.type;
+    return -1;
+}
 
 // A multiplayer guest (SMS_MULTIPLAYER=join): the warp and cheat menus are the
 // host's, as the stage and the game's rules are (a guest's warp left the others).
