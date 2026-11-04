@@ -1,0 +1,42 @@
+Reason: port: a one-frame movie (Eclipse's blank stolennozuru.thp and omakeB.thp, standing in for movies it took out) ends on its first frame, without the skip prompt or two seconds of black
+--- a/src/System/MovieDirector.cpp
++++ b/src/System/MovieDirector.cpp
+@@ -204,6 +204,14 @@
+ extern "C" float port_widescreen;
+ // SMS_SKIP_INTRO (platform): the opening movie ends as it starts (direct).
+ extern "C" int port_skip_intro;
++
++// A movie of one frame stands in for one a mod took out: Super Mario Eclipse
++// v1.1.0 keeps stolennozuru.thp (Shadow Mario taking FLUDD before a secret
++// stage) and omakeB.thp as single black frames, and a stage that still asks
++// for the first would show black under "(A) Skip". It ends on its first
++// frame, as an intro skipped by SMS_SKIP_INTRO does (direct), without the
++// prompt: retail fades in and out of black for two seconds.
++static bool placeholder_movie() { return THPPlayerGetTotalFrame() <= 1; }
+ #endif
+ 
+ #ifdef TARGET_PC
+@@ -234,7 +242,7 @@
+ 
+ void TMovieSkipPrompt::perform(u32 cue, JDrama::TGraphics* graphics)
+ {
+-	if ((cue & CUE_DRAW) && shown(mDirector))
++	if ((cue & CUE_DRAW) && shown(mDirector) && !placeholder_movie())
+ 		SMSDrawSkipPrompt(graphics, SMSGetGameRenderWidth(),
+ 		                  SMSGetGameRenderHeight());
+ }
+@@ -634,11 +642,12 @@
+ 	// site (retail 0x802B606C), where a mod such as Eclipse picks the next
+ 	// movie of its own chains and sets their flags. SMS_SKIP_INTRO skips the
+ 	// opening movie (9, Entrance.thp: the title's spray-painted M) the same
+-	// way on its first frame.
++	// way on its first frame, and so does a placeholder (placeholder_movie).
+ 	bool skipped = false;
+ 	if (TMovieSkipPrompt::shown(this)
+ 	    && (getGamePad()->checkFrameMeaning(0x20)
+-	        || (port_skip_intro && gpApplication.getMovie() == 9))) {
++	        || (port_skip_intro && gpApplication.getMovie() == 9)
++	        || placeholder_movie())) {
+ 		skipped = true;
+ 		THPPlayerStop();
+ 		gpApplication.getFader()->setFadeStatus(
