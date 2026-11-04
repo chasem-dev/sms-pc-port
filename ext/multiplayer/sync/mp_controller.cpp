@@ -74,6 +74,8 @@ enum Kind : uint8_t {
 	K_CHARACTER,    // either way: slot, the character a player plays as (the id of a pack in mods/characters,
 	                // as the launcher names it; empty: Mario), in lookMessage's form: a client's own to the host,
 	                // which passes everyone's on to everyone (a game without it ignores it)
+	K_GOOP,         // host -> client: session, count, a server mod's goop (MPG_CMD_GOOP's paints and cleans: x, y,
+	                // z halved, radius, what, tint, flags), in order with K_CLEAN's (a game without it ignores it)
 };
 // The longest look kept (every region chosen takes 14 bytes).
 const size_t kMaxLook = 400;
@@ -94,6 +96,7 @@ const uint32_t kReconnectMs = 6000;
 // again: spraying cleans the same few spots many times a second.
 const size_t kMaxCleanLog = 16384;
 const size_t kCleanBatch  = 120; // 8 bytes each, within a message
+const size_t kGoopBatch   = 80;  // 11 bytes each (K_GOOP)
 const uint32_t kCleanFresh = 2000;
 
 static_assert(MPG_MAX_PLAYERS == MP_MAX_PLAYERS, "the game's players are the session's slots");
@@ -258,7 +261,9 @@ struct Controller {
 	// the spots seen lately (64 by 128 by 64 units), widest size and when
 	struct Clean {
 		int16_t x, y, z;
-		uint16_t size;
+		uint16_t size;             // a server mod's: the radius
+		uint8_t op = 0;            // 0 a player's cleaning; 1 + MPG_GOOP_PAINT or MPG_GOOP_CLEAN a server mod's
+		uint8_t tint = 0, flags = 0;
 	};
 	struct Seen {
 		uint16_t size;
@@ -451,6 +456,8 @@ uint64_t stickyKey(const MpgCmd& c, uint32_t to)
 		sub = (uint32_t)c.i[3];
 	if (c.type == MPG_CMD_PLAYER || c.type == MPG_CMD_BOARD || c.type == MPG_CMD_MARKER) // what, the row, the marker
 		sub = (uint32_t)c.i[0];
+	if (c.type == MPG_CMD_GOOP) // each tint its own
+		sub = (uint32_t)c.i[0] << 8 | ((uint32_t)c.i[1] & 0xFF);
 	return ((uint64_t)c.type << 56) ^ ((uint64_t)to << 48) ^ (sub & 0xFFFFFFFFFFFFull);
 }
 
@@ -681,18 +688,45 @@ std::vector<uint8_t> cleanMessage(uint32_t session, const Controller::Clean* lis
 	return buf;
 }
 
-// `list` to `slot` (-1: every client but `except`), in batches.
+std::vector<uint8_t> goopMessage(uint32_t session, const Controller::Clean* list, size_t n)
+{
+	std::vector<uint8_t> buf(6 + n * 11);
+	Writer w(buf.data(), buf.size());
+	w.u32(session);
+	w.u16((uint16_t)n);
+	for (size_t i = 0; i < n; i++) {
+		w.s16(list[i].x);
+		w.s16(list[i].y);
+		w.s16(list[i].z);
+		w.u16(list[i].size);
+		w.u8(list[i].op);
+		w.u8(list[i].tint);
+		w.u8(list[i].flags);
+	}
+	return buf;
+}
+
+// `list` to `slot` (-1: every client but `except`), in batches: the players'
+// cleaning as K_CLEAN, a server mod's goop as K_GOOP, each run in turn so it
+// all comes in the order it was done.
 void sendCleans(int slot, int except, uint32_t session, const std::vector<Controller::Clean>& list)
 {
-	for (size_t at = 0; at < list.size(); at += kCleanBatch) {
-		const size_t n = list.size() - at < kCleanBatch ? list.size() - at : kCleanBatch;
-		const std::vector<uint8_t> buf = cleanMessage(session, list.data() + at, n);
+	for (size_t at = 0; at < list.size();) {
+		const bool goop = list[at].op != 0;
+		const size_t most = goop ? kGoopBatch : kCleanBatch;
+		size_t n = 0;
+		while (at + n < list.size() && n < most && (list[at + n].op != 0) == goop)
+			n++;
+		const std::vector<uint8_t> buf =
+		    goop ? goopMessage(session, list.data() + at, n) : cleanMessage(session, list.data() + at, n);
+		const Kind kind = goop ? K_GOOP : K_CLEAN;
 		if (slot >= 0)
-			send(slot, K_CLEAN, buf);
+			send(slot, kind, buf);
 		else
 			for (int i = 1; i < MP_MAX_PLAYERS; i++)
 				if (i != except && (mp_players() & (1u << i)))
-					send(i, K_CLEAN, buf);
+					send(i, kind, buf);
+		at += n;
 	}
 }
 
@@ -733,6 +767,29 @@ void readCleans(Reader& r, int from)
 	}
 	if (g.role == MPG_ROLE_HOST && !got.empty())
 		sendCleans(-1, from, s, got);
+}
+
+// The host's server mod's goop (K_GOOP): to do here, in order with the cleaning.
+void readGoop(Reader& r)
+{
+	const uint32_t s = r.u32();
+	const int n = r.u16();
+	if (!r.ok || !s || s != g.localSession || n > (int)kGoopBatch)
+		return;
+	for (int i = 0; i < n && r.ok; i++) {
+		Controller::Clean c;
+		c.x     = r.s16();
+		c.y     = r.s16();
+		c.z     = r.s16();
+		c.size  = r.u16();
+		c.op    = r.u8();
+		c.tint  = r.u8();
+		c.flags = r.u8();
+		if (!r.ok || c.op < 1 + MPG_GOOP_PAINT || c.op > 1 + MPG_GOOP_CLEAN)
+			break;
+		if (g.cleanIn.size() < kMaxCleanLog)
+			g.cleanIn.push_back(c);
+	}
 }
 
 // ------------------------------------------------------------------ hits on shared objects
@@ -1338,6 +1395,9 @@ void clientMessage(const MpEvent& ev)
 	case K_CLEAN:
 		readCleans(r, 0);
 		break;
+	case K_GOOP:
+		readGoop(r);
+		break;
 	case K_HIT:
 		readHits(r, 0);
 		break;
@@ -1914,6 +1974,31 @@ extern "C" const char* mpg_character_name(int slot) { return kCharacters[charact
 
 // ------------------------------------------------------------------- servers
 
+// A server mod's paint or clean (MPG_CMD_GOOP): the session's goop, so
+// everyone's whoever it was sent to, kept with the cleaning in the order it
+// was all done (a newcomer, or a game loading the stage again, does it all in
+// that order), and carried out at once (no delay). Under g_lock.
+static uint32_t serverGoop(const MpgCmd& c)
+{
+	if (!g.session || !(c.f[3] > 0.0f))
+		return 0;
+	Controller::Clean e;
+	e.x     = halved(c.f[0]);
+	e.y     = halved(c.f[1]);
+	e.z     = halved(c.f[2]);
+	e.size  = (uint16_t)(c.f[3] >= 65535.0f ? 65535.0f : c.f[3] + 0.5f);
+	e.op    = (uint8_t)(1 + c.i[0]);
+	e.tint  = (uint8_t)(c.i[1] >= 0 && c.i[1] < MPG_GOOP_TINTS ? c.i[1] : 0);
+	e.flags = (uint8_t)(c.i[3] & MPG_GOOP_AT_HEIGHT);
+	flushCleans(); // the cleaning done before it goes first
+	logClean(e);
+	if (g.cleanIn.size() < kMaxCleanLog) // the host's own game
+		g.cleanIn.push_back(e);
+	const std::vector<Controller::Clean> one(1, e);
+	sendCleans(-1, -1, g.session, one);
+	return mp_players() | 1u;
+}
+
 extern "C" uint32_t mpg_server_send(uint32_t to, const MpgCmd* cmd)
 {
 	if (g.role != MPG_ROLE_HOST || !cmd || cmd->type < 1 || cmd->type > MPG_CMD_LAST)
@@ -1921,6 +2006,8 @@ extern "C" uint32_t mpg_server_send(uint32_t to, const MpgCmd* cmd)
 	std::lock_guard<std::mutex> hold(g_lock);
 	MpgCmd c = *cmd;
 	c.text[MPG_CMD_TEXT - 1] = 0;
+	if (c.type == MPG_CMD_GOOP && (c.i[0] == MPG_GOOP_PAINT || c.i[0] == MPG_GOOP_CLEAN))
+		return serverGoop(c);
 	if (c.flags & MPG_CMD_UNSTICK) {
 		// the sticky command of this kind forgotten: newcomers get it no more
 		const uint64_t key = stickyKey(c, to);
@@ -2564,16 +2651,19 @@ extern "C" void mpg_clean(float x, float y, float z, float size)
 		flushCleans();
 }
 
-extern "C" int mpg_next_clean(float* x, float* y, float* z, float* size)
+extern "C" int mpg_next_goop(MpgGoop* out)
 {
 	std::lock_guard<std::mutex> hold(g_lock);
-	if (g.cleanIn.empty())
+	if (g.cleanIn.empty() || !out)
 		return 0;
 	const Controller::Clean& c = g.cleanIn.front();
-	*x    = c.x * 2.0f;
-	*y    = c.y * 2.0f;
-	*z    = c.z * 2.0f;
-	*size = c.size;
+	out->what   = (int)c.op - 1;
+	out->x      = c.x * 2.0f;
+	out->y      = c.y * 2.0f;
+	out->z      = c.z * 2.0f;
+	out->radius = c.size;
+	out->tint   = c.tint;
+	out->flags  = c.flags;
 	g.cleanIn.pop_front();
 	return 1;
 }

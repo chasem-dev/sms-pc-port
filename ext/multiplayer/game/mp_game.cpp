@@ -4760,6 +4760,10 @@ void frame()
 	updateText();
 }
 
+// a server mod's goop (MPG_CMD_GOOP) waiting for room in the stage's stamps (applyCleans)
+MpgGoop s_goopWaiting;
+bool s_goopWaits;
+
 void stageSetup()
 {
 	s_hostShineFrames = 0; // a Shine's exit belongs to the stage it was got in
@@ -4769,6 +4773,8 @@ void stageSetup()
 	s_winShine        = nullptr;
 	s_shineGetFrames  = 0;
 	MpSpawnStageSetup(); // the stage's records are in, multiplayer or not
+	MpGoopStageSetup();  // the last stage's goop layers are gone
+	s_goopWaits = false; // (a stage loaded again gets the session's goop again)
 	if (!enabled())
 		return;
 	MpServerStageSetup();
@@ -4847,18 +4853,33 @@ void pollutionClean(float x, float y, float z, float size)
 	mpg_clean(x, y, z, size);
 }
 
-// What the others cleaned, cleaned here: a few hundred a tick, so catching up
-// on a whole stage's cleaning does not hold up a frame.
+// What the others cleaned, cleaned here, and a server mod's goop
+// (MPG_CMD_GOOP), in the order it was all done: a few hundred a tick, so
+// catching up on a whole stage's cleaning does not hold up a frame. A server
+// paint the stage's stamps have no room for this frame waits for the next
+// (s_goopWaiting).
+
 void applyCleans()
 {
 	if (!gpPollution)
 		return;
-	float x, y, z, size;
+	MpgGoop g;
 	int n = 0;
-	for (; n < 400 && mpg_next_clean(&x, &y, &z, &size); n++) {
-		s_cleaning = true;
-		gpPollution->clean(x, y, z, size);
-		s_cleaning = false;
+	for (; n < 400; n++) {
+		if (s_goopWaits)
+			g = s_goopWaiting;
+		else if (!mpg_next_goop(&g))
+			break;
+		s_goopWaits = false;
+		if (g.what < 0) {
+			s_cleaning = true;
+			gpPollution->clean(g.x, g.y, g.z, g.radius);
+			s_cleaning = false;
+		} else if (!MpGoopApply(g)) {
+			s_goopWaiting = g;
+			s_goopWaits   = true;
+			break;
+		}
 	}
 	static int cleaned, reported;
 	cleaned += n;

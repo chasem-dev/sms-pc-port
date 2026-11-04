@@ -196,6 +196,7 @@ void resetSession()
 	if (GXPC_ExtOverlayScreen)
 		GXPC_ExtOverlayScreen(0);
 	s_shake = 0.0f;
+	MpGoopSessionStart();
 	if (s_watching) {
 		s_watching = false;
 		if (TMario* m = gpMarioOriginal) {
@@ -994,6 +995,17 @@ void run(TMarDirector* dir, const MpgCmd& c)
 	case MPG_CMD_SPLASH:
 		MpPvpSplash(c);
 		break;
+	case MPG_CMD_GOOP:
+		if (c.i[0] == MPG_GOOP_TINT) {
+			MpGoopTint(c.i[1], (u32)c.i[2]);
+		} else if (c.i[0] == MPG_GOOP_PAINT || c.i[0] == MPG_GOOP_CLEAN) {
+			// (paints and cleans come in order with the cleaning, mpg_next_goop)
+			MpgGoop g;
+			g.what = c.i[0], g.x = c.f[0], g.y = c.f[1], g.z = c.f[2], g.radius = c.f[3];
+			g.tint = c.i[1], g.flags = (unsigned)c.i[3];
+			MpGoopApply(g);
+		}
+		break;
 	case MPG_CMD_BOUNDS:
 		MpPvpBounds(c);
 		break;
@@ -1132,6 +1144,8 @@ void MpServerFrame(TMarDirector* dir, bool arrived, bool playing)
 		if (s_mountTries > 0 && s_mountTries < kMountTries && !surfing(gpMarioOriginal))
 			s_mountTries = mount(s_mount) ? 0 : s_mountTries + 1;
 	}
+	if (playing && dir)
+		MpGoopFrame();
 	hudFrame(playing && dir);
 	screenFrame();
 	const char* banner = playing || s_banner[0] == 0 ? s_banner : "";

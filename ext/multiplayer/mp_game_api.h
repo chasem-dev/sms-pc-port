@@ -271,8 +271,18 @@ int mpg_next_mirror(int* slot, int* manager, int* index, void* data, int* size);
 
 // Goop this game cleaned (TPollutionManager::clean): the others clean it too.
 void mpg_clean(float x, float y, float z, float size);
-// The next goop another game cleaned, for this game to clean; 0 when none.
-int mpg_next_clean(float* x, float* y, float* z, float* size);
+// What to do next to this game's goop, in the order it was done in the
+// session: another game's cleaning (what -1: TPollutionManager::clean with
+// `radius` the size it was given), or a server mod's paint or clean
+// (MPG_GOOP_PAINT, MPG_GOOP_CLEAN: a disc of `radius`, in `tint`, `flags`
+// MPG_GOOP_*). 0 when there is none.
+typedef struct MpgGoop {
+	int what;
+	float x, y, z, radius;
+	int tint;
+	unsigned flags;
+} MpgGoop;
+int mpg_next_goop(MpgGoop* out);
 
 // This game's player touched a Shine (its event id, where it is, the way
 // they face, Mario's 16-bit angle): every other game moves its player beside
@@ -381,8 +391,15 @@ enum {
 	MPG_CMD_SPLASH,     // slot i[0] splashed as Shadow Mario is: meter i[1] of i[2] (0 none), i[3] MPG_SPLASH_*, at f[0..2],
 	                    // flushed for f[3] seconds (0: 0.8)
 	MPG_CMD_BOUNDS,     // the player kept within f[3] of f[0..2]; i[0] MPG_BOUNDS_RING, i[1] its colour; f[4] seconds to glide
-	MPG_CMD_LAST = MPG_CMD_BOUNDS,
+	MPG_CMD_GOOP,       // the stage's goop: i[0] MPG_GOOP_*. PAINT/CLEAN a disc of f[3] about f[0..2] (PAINT in tint
+	                    // i[1]), i[3] MPG_GOOP_* bits, everyone's in order with the cleaning (K_GOOP, not K_CMD);
+	                    // TINT: tint i[1] in colour i[2] (0xRRGGBBAA, the alpha how strongly; 0 the goop's own)
+	MPG_CMD_LAST = MPG_CMD_GOOP,
 };
+// MPG_CMD_GOOP's i[0] (the mod SDK's SMS_GOOP_*)
+enum { MPG_GOOP_PAINT = 0, MPG_GOOP_CLEAN, MPG_GOOP_TINT };
+#define MPG_GOOP_TINTS 64       // tints 0 (the stage's own goop) to 63
+#define MPG_GOOP_AT_HEIGHT 1u   // MPG_CMD_GOOP's i[3]: only the surface near f[1], as the game's own stamps
 // Host only (not sent): forget the sticky command of this kind, as sticky
 // commands replace each other, without sending anything.
 #define MPG_CMD_UNSTICK 2

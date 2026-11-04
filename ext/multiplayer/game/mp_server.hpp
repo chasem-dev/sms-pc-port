@@ -46,6 +46,19 @@ bool MpServerMarker(int i, float* at);
 // The game camera's eye and the point it looks at, about to be used: shaken (MPG_CMD_SHAKE).
 void MpServerCamera(float* eye, float* at);
 
+// mp_goop.cpp: MPG_CMD_GOOP, the stage's goop painted, cleaned and tinted.
+struct MpgGoop;
+void MpGoopStageSetup();
+// A new session: every tint the goop's own colour again.
+void MpGoopSessionStart();
+// A server mod's paint or clean (MPG_GOOP_PAINT, MPG_GOOP_CLEAN) carried out;
+// false when the stage's stamps are full this frame (try it again next frame).
+bool MpGoopApply(const MpgGoop& op);
+// Tint `tint` (0..MPG_GOOP_TINTS-1) drawn in `colour` (0xRRGGBBAA; 0 the goop's own).
+void MpGoopTint(int tint, unsigned colour);
+// Each frame: the layers whose tints changed, to the renderer.
+void MpGoopFrame();
+
 // mp_spawn.cpp: MPG_CMD_SPAWN's copies of the stage's objects and its items.
 // The stage's records (scene.bin), as its loader made each object from one.
 void MpSpawnRecord(void* object, const void* record, unsigned size);

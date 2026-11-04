@@ -363,6 +363,17 @@ int GXPC_TextureIsPlain(const void* data, size_t bytes);
 void GXPC_SetRawTextures(int on);
 // Drops every such picture, and every plain texture (a stage's memory is let go).
 void GXPC_ClearTextureOverrides(void);
+// A goop layer in colours of its own: `mask` is the layer's goop map (the I8
+// texture the game draws its goop from and copies back each frame), `rgba`
+// its w x h tint map (row 0 = top, as the goop map's texels), each texel the
+// colour the goop there is drawn in, its alpha how strongly (0: as the game
+// draws it). The goop's shading is kept: its lightness over `lightness` (the
+// goop's typical lightness, 0..1) scales the colour. NULL `rgba` drops it.
+// Draws while GXPC_SetRawTextures is on (the goop's counting and stamping)
+// are left alone. Any thread: the map is copied, uploaded at the next draw.
+void GXPC_SetGoopTint(const void* mask, int w, int h, const uint8_t* rgba, float lightness);
+// Drops every goop layer's colours (a stage's memory is let go).
+void GXPC_ClearGoopTints(void);
 
 /* Statistics for the current frame (reset by GXCopyDisp). */
 typedef struct GXPCStats {

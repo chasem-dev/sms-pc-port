@@ -2456,6 +2456,12 @@ void flushBatch() {
         GxTimer tt(&s_texSeconds);
         bindTextureMap(m, &texW[m], &texH[m]);
     }
+    // a goop layer in colours of its own (GXPC_SetGoopTint): its tint map
+    if (sp->uGoopRef >= 0) {
+        const int gm = goopMapNow();
+        const float inv = bindGoopTint(gm >= 0 ? g.texImage[gm] : nullptr, kGoopUnit);
+        glUniform1f(sp->uGoopRef, inv);
+    }
 
     uploadUniforms(sp, texW, texH);
 

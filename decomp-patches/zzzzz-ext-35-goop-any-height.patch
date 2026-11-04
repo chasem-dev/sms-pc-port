@@ -1,0 +1,16 @@
+Reason: goop stamps of every height: a stamp task whose height is -0x8000 (PORT_POLLUTION_ANY_HEIGHT) paints or cleans the layer wherever it covers, whatever the height of the ground there, where the game's own stamps touch only the surface near their height. Server mods' SMS_CMD_GOOP paints and cleans an area this way (API 1.6 beta 3)
+--- a/src/Map/PollutionCount.cpp
++++ b/src/Map/PollutionCount.cpp
+@@ -455,6 +455,12 @@
+ 			iVar5 = 0;
+ 		if (iVar7 > 0xff)
+ 			iVar7 = 0xff;
++		// a stamp of every height (port_ext.h, PORT_POLLUTION_ANY_HEIGHT):
++		// all the layer's surface under it, as seen from above
++		if (tasks->mY == -0x8000) {
++			iVar5 = 0;
++			iVar7 = 0xff;
++		}
+ 
+ 		GXSetTevColor(GX_TEVREG0,
+ 		              (GXColor) { (u8)iVar5, (u8)iVar5, (u8)iVar5, (u8)iVar5 });

@@ -952,6 +952,55 @@ int main(int argc, char** argv) {
         }
     }
 
+    // A goop layer in colours of its own (GXPC_SetGoopTint): a draw sampling
+    // its goop map takes the tint map's colour where its alpha says, the
+    // lightness kept (the map's 200 over a typical 200 gives the colour
+    // itself); untinted texels, raw-texture draws (the goop's counting) and
+    // draws after the tint is dropped are as ever.
+    {
+        static u8 mask[8 * 8] __attribute__((aligned(32)));
+        u8 img[8 * 8];
+        memset(img, 200, sizeof img);
+        encodeI8(img, 8, 8, mask);
+        DCFlushRange(mask, sizeof mask);
+        u8 tint[8 * 8 * 4];
+        for (int y = 0; y < 8; y++)
+            for (int x = 0; x < 8; x++) {
+                u8* p = tint + (y * 8 + x) * 4;
+                const bool left = x < 4, top = y < 4;  // left: blue, all of it; right top: red, half
+                p[0] = left ? 0 : 255, p[1] = 0, p[2] = left ? 255 : 0, p[3] = left ? 255 : top ? 128 : 0;
+            }
+        auto draw = [&]() {
+            texSetup();
+            GXSetNumChans(1);
+            GXSetChanCtrl(GX_COLOR0A0, GX_FALSE, GX_SRC_REG, GX_SRC_VTX, GX_LIGHT_NULL, GX_DF_NONE, GX_AF_NONE);
+            GXSetNumTevStages(1);
+            GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR0A0);
+            GXSetTevOp(GX_TEVSTAGE0, GX_REPLACE);
+            GXSetBlendMode(GX_BM_NONE, GX_BL_ONE, GX_BL_ZERO, GX_LO_CLEAR);
+            GXSetAlphaCompare(GX_ALWAYS, 0, GX_AOP_AND, GX_ALWAYS, 0);
+            GXSetZMode(GX_FALSE, GX_ALWAYS, GX_FALSE);
+            GXTexObj to;
+            GXInitTexObj(&to, mask, 8, 8, GX_TF_I8, GX_CLAMP, GX_CLAMP, GX_FALSE);
+            GXInitTexObjLOD(&to, GX_NEAR, GX_NEAR, 0, 0, 0, GX_FALSE, GX_FALSE, GX_ANISO_1);
+            GXLoadTexObj(&to, GX_TEXMAP0);
+            texQuad(100, 320, 180, 400, 255, 255, 255, 255);
+        };
+        GXPC_SetGoopTint(mask, 8, 8, tint, 200.0f / 255.0f);
+        draw();
+        expectPixel("goop tint: a texel all blue", 110, 330, 0, 0, 255);
+        expectPixel("goop tint: half red, lightness kept", 170, 330, 228, 100, 100, 3);
+        expectPixel("goop tint: an untinted texel", 170, 390, 200, 200, 200);
+        GXPC_SetRawTextures(1);
+        draw();
+        GXPC_SetRawTextures(0);
+        expectPixel("goop tint: none in raw draws", 110, 330, 200, 200, 200);
+        GXPC_SetGoopTint(mask, 0, 0, nullptr, 0);
+        draw();
+        expectPixel("goop tint: none once dropped", 110, 330, 200, 200, 200);
+        colorSetup();
+    }
+
     // The water's mirror view through its copy and clear (mirrorPassLeft): its
     // edges lie inside EFB pixels in a split view, and at fractional widths
     // and resolutions, where the scissor's columns went past the clear's.

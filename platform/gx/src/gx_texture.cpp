@@ -829,7 +829,105 @@ unsigned bindTextureMap(int map, float* outW, float* outH) {
     return e.tex;
 }
 
+// GXPC_SetGoopTint: each goop layer's tint map, by the data of its goop map
+// (the layer's I8 texture, which the game draws and copies back each frame).
+struct GoopTint {
+    const void* mask = nullptr;
+    int w = 0, h = 0;
+    float invRef = 1.0f;
+    std::vector<uint8_t> pixels;  // waiting to be uploaded
+    GLuint tex = 0;
+};
+std::mutex& s_goopMu = *new std::mutex;
+std::vector<GoopTint>& s_goop = *new std::vector<GoopTint>;
+std::vector<GLuint>& s_goopDead = *new std::vector<GLuint>;  // to delete on the GL thread
+std::atomic<int> s_goopCount{0};
+static GLuint s_clearTex = 0;
+
+bool goopTinted(const void* mask) {
+    if (!mask || s_rawTextures || !s_goopCount.load(std::memory_order_relaxed)) return false;
+    std::lock_guard<std::mutex> hold(s_goopMu);
+    for (const GoopTint& t : s_goop)
+        if (t.mask == mask) return true;
+    return false;
+}
+
+float bindGoopTint(const void* mask, int unit) {
+    std::lock_guard<std::mutex> hold(s_goopMu);
+    if (!s_goopDead.empty()) {
+        for (GLuint t : s_goopDead) glcForgetTexture(t);
+        glDeleteTextures(GLsizei(s_goopDead.size()), s_goopDead.data());
+        s_goopDead.clear();
+    }
+    for (GoopTint& t : s_goop) {
+        if (t.mask != mask) continue;
+        if (!t.pixels.empty()) {
+            if (!t.tex) glGenTextures(1, &t.tex);
+            glcActiveUnit(unit);
+            glBindTexture(GL_TEXTURE_2D, t.tex);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, t.w, t.h, 0, GL_RGBA, GL_UNSIGNED_BYTE, t.pixels.data());
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            std::vector<uint8_t>().swap(t.pixels);
+        }
+        if (t.tex) {
+            glcActiveUnit(unit);
+            glBindTexture(GL_TEXTURE_2D, t.tex);
+            glBindSampler(GLuint(unit), 0);  // the texture's own filtering
+            return t.invRef;
+        }
+    }
+    if (!s_clearTex) {  // gone since the program was chosen: nothing tinted
+        glGenTextures(1, &s_clearTex);
+        glcActiveUnit(unit);
+        glBindTexture(GL_TEXTURE_2D, s_clearTex);
+        uint32_t px = 0;
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, &px);
+    }
+    glcActiveUnit(unit);
+    glBindTexture(GL_TEXTURE_2D, s_clearTex);
+    glBindSampler(GLuint(unit), 0);
+    return 1.0f;
+}
+
 }  // namespace gx
+
+extern "C" void GXPC_SetGoopTint(const void* mask, int w, int h, const uint8_t* rgba, float lightness) {
+    if (!mask) return;
+    std::lock_guard<std::mutex> hold(gx::s_goopMu);
+    auto it = gx::s_goop.begin();
+    while (it != gx::s_goop.end() && it->mask != mask) ++it;
+    if (!rgba || w <= 0 || h <= 0 || w > 4096 || h > 4096) {
+        if (it == gx::s_goop.end()) return;
+        if (it->tex) gx::s_goopDead.push_back(it->tex);
+        gx::s_goop.erase(it);
+        gx::s_goopCount = int(gx::s_goop.size());
+        return;
+    }
+    if (it == gx::s_goop.end()) {
+        gx::s_goop.emplace_back();
+        it = gx::s_goop.end() - 1;
+        it->mask = mask;
+    }
+    it->w = w;
+    it->h = h;
+    it->invRef = 1.0f / (lightness > 0.02f ? (lightness < 1.0f ? lightness : 1.0f) : 0.02f);
+    it->pixels.assign(rgba, rgba + size_t(w) * h * 4);
+    gx::s_goopCount = int(gx::s_goop.size());
+}
+
+extern "C" void GXPC_ClearGoopTints(void) {
+    std::lock_guard<std::mutex> hold(gx::s_goopMu);
+    for (const gx::GoopTint& t : gx::s_goop)
+        if (t.tex) gx::s_goopDead.push_back(t.tex);
+    gx::s_goop.clear();
+    gx::s_goopCount = 0;
+}
 
 extern "C" void GXPC_SetTextureOverride(const void* data, size_t bytes, const uint8_t* rgba, int w, int h) {
     if (!data) return;

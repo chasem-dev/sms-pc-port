@@ -401,6 +401,11 @@ void port_ext_pad_read(void* status);
 int port_ext_demo_camera(const char* name, const float* pos, int frames, float angle, int option, int hasCallback,
                          void* actor, unsigned flags);
 void port_ext_pollution_clean(float x, float y, float z, float size);
+// A goop stamp task's height (TPollutionCounterLayer::pushStampTask's y) for a
+// stamp of every height: all the layer's surface under it, as seen from
+// above, where a stamp of the game's touches only the surface near its own
+// height (zzzzz-ext-35, doTask).
+#define PORT_POLLUTION_ANY_HEIGHT (-0x8000)
 void port_ext_object_move(void* object, int after);
 int port_ext_object_hit(void* object, void* sender, unsigned message);
 void port_ext_particle_emit(int how, int id, const void* at, int rx, int ry, int rz, int group, const void* owner);
