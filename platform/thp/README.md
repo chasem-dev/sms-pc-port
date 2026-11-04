@@ -70,6 +70,7 @@ See [HD cutscenes](../../docs/HD-CUTSCENES.md) for conversion and playback.
 ## Portal movies and skipping cutscenes
 
 `SMS_SKIP_MOVIES=1` skips the non-looping movies used by MovieDirector.
+A movie of one frame ends on its first frame, without the "(A) Skip" prompt (`zz-movie-skip-03`): Super Mario Eclipse keeps `stolennozuru.thp` and `omakeB.thp` as such blanks for movies it took out.
 The plaza's looping portal movie still decodes and plays, since its frames are in-world textures.
 `thp-06` keeps each portal's authored placeholder dimensions until a decoded frame is bound, then resizes all three Y/U/V planes together.
 This prevents the host texture decoder from reading movie-sized images out of a small placeholder, especially with HD replacements.
