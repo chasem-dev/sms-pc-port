@@ -108,7 +108,8 @@ Compared against retail running under Dolphin with DSP LLE (the game's own micro
 - **Decoders are bit-exact against the disc** (all 449 ADPCM4 and 3 ADPCM2 loop histories; `tests/audio_test`).
 - FX returns use Q15 gains, mode-specific FIR ordering, and the game's RAM delay buffers. Auto-mixer wet sends use the front-effect buses and Sunshine's Q16 reverb factor (the highest game value is just under 0.5). Stop requests release gradually through zero. Asset-free impulse and release checks cover these rules in both word sizes; see PROTOCOL.md.
 - Slow frames: blocks are mixed on the emulated CPU, so when the game's thread holds it for longer than the output queue lasts (a load, a shader compile, a slow frame; three blocks, 52 ms), the output runs dry and clicks.
-  The queue then grows (up to eight blocks, 140 ms; one block back after each 30 s without) and the log says so.
+  The queue then grows (up to eight blocks, 140 ms; one block back after each 10 s without) and the log says so, as it does when a block is given back.
+  Dry spells longer than the extra blocks could cover (87.5 ms) are loads (the HD texture preload and the shader warm-up as a stage starts) and leave the queue as it was: every queued block delays sounds by 17.5 ms, and growing for loads kept sounds about 5 frames late after every stage start (`out_queue.h`, `tests/queue_test`).
   While the output catches up, a block starts only after the audio thread has handled the one before; catching up used to replay DAC buffers and drop others, which a steady low frame rate made lasting distortion.
 - Untested against retail: stream voices (not used in this segment), surround mode, FX lines (no fx sends in this segment), oscillator voices, per-voice filters (retail's IIR coefficients were identity here; the biquad and low-pass follow Dolphin's HLE, see PROTOCOL.md, Voice filters).
 
