@@ -901,25 +901,12 @@ bool playing()
 // What players see of joining and leaving (GXPC_CoopCard, platform/gx's
 // gx_coop_overlay.cpp): a card near the top of the picture, or while the
 // screen is split in the view of the player it is about, with a badge in
-// that player's colour. What
-// the controllers are doing now (a guest's Start held, player 2's controller
+// that player's colour. The text names players by number, not character:
+// either player may be any character (the Characters page, F4). What the
+// controllers are doing now (a guest's Start held, player 2's controller
 // gone...) comes first; else the last thing that happened, for a few seconds.
 
-const u32 kMarioRed = 0xe52521ffu;
-
-// Player 2's colour: their outfit's cap (SMS_COOP_LOOK hat=rrggbb), else Luigi's green.
-u32 p2Colour()
-{
-	static u32 colour;
-	if (!colour) {
-		unsigned rgb = 0x2fa846;
-		if (const char* look = getenv("SMS_COOP_LOOK"))
-			if (const char* hat = strstr(look, "hat="))
-				sscanf(hat + 4, "%6x", &rgb);
-		colour = (u32)(rgb << 8 | 0xff);
-	}
-	return colour;
-}
+const u32 kPlayerColour[2] = { 0xe5484dffu, 0x30a852ffu }; // player 1 red, player 2 green
 
 struct Card {
 	int who; // 1 or 2: whose badge and colour
@@ -927,42 +914,36 @@ struct Card {
 	char lines[2][96];
 	float progress;
 };
-Card s_event;       // the last thing that happened
-int s_eventUntil;   // ...shown until this frame (s_frame)
+Card s_event;     // the last thing that happened
+int s_eventUntil; // ...shown until this frame (s_frame)
 
-// `format`'s %1$s player 2's name (Luigi, or their chosen character's), %2$s
-// "him" or "them", %3$s player 1's name, %4$s the Start's label.
+// `format` with its %s the controller's Start as printed on it (START, OPTIONS, +).
 void cardText(char* out, size_t size, const char* format, const char* start)
 {
-	const char* p1Name = port_character_selected() > 0 ? port_character_name(port_character_selected()) : "Mario";
-	snprintf(out, size, format, coop_character::name(), coop_character::them(), p1Name, start && *start ? start : "START");
+	snprintf(out, size, format, start && *start ? start : "START");
+}
+
+void setCard(Card& c, int who, const char* title, const char* l1, const char* l2, const char* start)
+{
+	c.who = who;
+	cardText(c.title, sizeof c.title, title, start);
+	cardText(c.lines[0], sizeof c.lines[0], l1, start);
+	cardText(c.lines[1], sizeof c.lines[1], l2, start);
 }
 
 void notice(int who, int frames, const char* title, const char* line1 = "", const char* line2 = "",
             const char* start = "")
 {
-	Card& c   = s_event;
-	c.who     = who;
-	c.progress = -1;
-	cardText(c.title, sizeof c.title, title, start);
-	cardText(c.lines[0], sizeof c.lines[0], line1, start);
-	cardText(c.lines[1], sizeof c.lines[1], line2, start);
-	s_eventUntil = s_frame + frames;
-	fprintf(stderr, "[coop] %s %s %s\n", c.title, c.lines[0], c.lines[1]);
+	setCard(s_event, who, title, line1, line2, start);
+	s_event.progress = -1;
+	s_eventUntil     = s_frame + frames;
+	fprintf(stderr, "[coop] %s / %s / %s\n", s_event.title, s_event.lines[0], s_event.lines[1]);
 }
 
 // A notice about player 2 (lives), in their view.
 void noticeP2(const char* title, int frames, const char* line = "")
 {
 	notice(2, frames, title, line);
-}
-
-void setCard(Card& c, int who, const char* title, const char* l1, const char* l2, const char* start)
-{
-	c.who  = who;
-	cardText(c.title, sizeof c.title, title, start);
-	cardText(c.lines[0], sizeof c.lines[0], l1, start);
-	cardText(c.lines[1], sizeof c.lines[1], l2, start);
 }
 
 // The card for this frame.
@@ -972,30 +953,30 @@ void showCard(bool split, bool built)
 		return;
 	PortCoopStatus st;
 	port_coop_status(&st);
-	Card c = {};
+	Card c     = {};
 	c.progress = -1;
 	bool have  = true;
-	const char* p2Start = st.p2Start[0] ? st.p2Start : "START";
+	const char* guest = st.guestStart;
 	if (st.p2Gone >= 0) {
-		setCard(c, 2, "%1$s's controller disconnected", "Reconnect it, or press a button on another", "controller to keep playing", p2Start);
+		setCard(c, 2, "Player 2's controller disconnected", "Reconnect it, or press a button on", "another controller to keep playing", "");
 		c.progress = st.p2Gone / 10.0f;
 	} else if (st.p2Hold > 0) {
-		setCard(c, 2, "Keep holding to leave", "The screen goes back to one", "", p2Start);
+		setCard(c, 2, "Keep holding to leave", "The screen goes back to one", "", "");
 		c.progress = st.p2Hold;
 	} else if (st.queuedHold > 0) {
-		setCard(c, 2, "Keep holding to cancel", "%1$s won't join", "", st.guestStart);
+		setCard(c, 2, "Keep holding to cancel", "This controller won't join", "", "");
 		c.progress = st.queuedHold;
 	} else if (st.guestHold > 0) {
-		setCard(c, 1, "Keep holding to play as %3$s", "%3$s moves to this controller", "", st.guestStart);
+		setCard(c, 1, "Keep holding to take over", "This controller becomes Player 1's", "", "");
 		c.progress = st.guestHold;
 	} else if (st.queued) {
-		setCard(c, 2, "%1$s is ready!", built ? "Joins as soon as play starts" : "Joins when the next area loads",
-		    "Hold [%4$s] to cancel", st.guestStart);
+		setCard(c, 2, "Player 2 is ready", built ? "Joins as soon as play starts" : "Joins when the next area loads",
+		        "Hold [%s] to cancel", guest);
 	} else if (st.guest && port_coop_player2()) {
-		setCard(c, 1, "Two players are already in", "Hold [%4$s] to play as %3$s on this controller", "", st.guestStart);
+		setCard(c, 1, "Two players are already playing", "Hold [%s] to take over as Player 1", "", guest);
 	} else if (st.guest) {
-		setCard(c, 2, "Join in as %1$s!", built ? "Press [%4$s] on this controller" : "Press [%4$s] to join from the next area",
-		    "Hold [%4$s] to play as %3$s instead", st.guestStart);
+		setCard(c, 2, "Join as Player 2", built ? "Press [%s] to join" : "Press [%s] to join from the next area",
+		        "Hold [%s] to take over as Player 1", guest);
 	} else if (s_frame < s_eventUntil) {
 		c = s_event;
 	} else {
@@ -1007,7 +988,7 @@ void showCard(bool split, bool built)
 	}
 	GXPCCoopCard card = {};
 	snprintf(card.badge, sizeof card.badge, "P%d", c.who);
-	card.accent   = c.who == 1 ? kMarioRed : p2Colour();
+	card.accent = kPlayerColour[c.who == 2 ? 1 : 0];
 	memcpy(card.title, c.title, sizeof card.title);
 	memcpy(card.lines, c.lines, sizeof card.lines);
 	card.progress = c.progress;
@@ -1021,28 +1002,28 @@ void takeEvents()
 {
 	PortCoopStatus st;
 	port_coop_status(&st);
-	const char* start = st.p2Start[0] ? st.p2Start : st.guestStart;
-	const unsigned e  = port_coop_take_events();
+	const unsigned e = port_coop_take_events();
 	if (e & PORT_COOP_EVENT_LEFT) {
 		if (e & PORT_COOP_EVENT_LEFT_GONE)
-			notice(2, kNoticeFrames, "%1$s left", "Their controller didn't come back", "Press [START] on a controller to join again");
+			notice(2, kNoticeFrames, "Player 2 left", "Their controller didn't come back");
 		else
-			notice(2, kNoticeFrames, "%1$s left", "Press [%4$s] on their controller to join again", "", start);
+			notice(2, kNoticeFrames, "Player 2 left", "Press [%s] on another controller to join again", "", st.guestStart);
 	}
 	if ((e & PORT_COOP_EVENT_JOINED) && s_out)
-		notice(2, kNoticeFrames, "%1$s is out of lives", "The next 1-Up brings %2$s back");
+		notice(2, kNoticeFrames, "Player 2 is out of lives", "The next 1-Up brings them back");
 	else if (e & PORT_COOP_EVENT_JOINED)
-		notice(2, kNoticeFrames, "%1$s joined!", "Hold [%4$s] to leave", "", st.p2Start);
+		notice(2, kNoticeFrames, "Player 2 joined", "Hold [%s] to leave", "", st.p2Start);
 	if (e & PORT_COOP_EVENT_P2_BACK)
-		notice(2, kNoticeFrames / 2, "%1$s is back!", "", "", st.p2Start);
+		notice(2, kNoticeFrames / 2, "Player 2 is back");
 	if (e & PORT_COOP_EVENT_CANCELLED)
-		notice(2, kNoticeFrames / 2, "%1$s won't join", "Press [%4$s] if you change your mind", "", st.guestStart);
-	if (e & (PORT_COOP_EVENT_TAKEOVER | PORT_COOP_EVENT_OWNER_BACK))
-		notice(1, kNoticeFrames * 3 / 4, "%3$s is on this controller now",
-		       (e & PORT_COOP_EVENT_TAKEOVER) ? "The other one can join as %1$s" : "");
+		notice(2, kNoticeFrames / 2, "Player 2 won't join", "Press [%s] to join after all", "", st.guestStart);
+	if (e & PORT_COOP_EVENT_TAKEOVER)
+		notice(1, kNoticeFrames * 3 / 4, "Player 1 is on this controller", "The other one can join as Player 2");
+	else if (e & PORT_COOP_EVENT_OWNER_BACK)
+		notice(1, kNoticeFrames * 3 / 4, "Player 1 is on this controller");
 	if (e & PORT_COOP_EVENT_OWNER_LOST)
-		notice(1, kNoticeFrames * 2, "%3$s's controller disconnected", "Press a button on a controller to play on",
-		       "(the keyboard still works)");
+		notice(1, kNoticeFrames * 2, "Player 1's controller disconnected", "Press a button on a controller to play on",
+		       "The keyboard still works");
 }
 
 // Beside player 1, facing as they do, a little behind and to their right.
@@ -1324,7 +1305,7 @@ void frame()
 		if (lives > s_livesWhenOut) {
 			takeLife();
 			s_out = false;
-			noticeP2("A 1-Up for %1$s: back in!", kNoticeFrames / 2);
+			noticeP2("A 1-Up for Player 2: back in!", kNoticeFrames / 2);
 		} else if (lives < s_livesWhenOut) {
 			s_livesWhenOut = lives; // Mario lost one meanwhile
 		}
@@ -1534,7 +1515,7 @@ void afterMovement()
 			s_respawnFrames = s_frame + fps * 3;
 			if (flags->getFlag(kLivesFlag) > 0) {
 				takeLife();
-				noticeP2("%1$s lost a life", kNoticeFrames / 2);
+				noticeP2("Player 2 lost a life", kNoticeFrames / 2);
 			} else {
 				s_lastLife = true; // the death plays out, then they leave the screen
 			}
@@ -1545,7 +1526,7 @@ void afterMovement()
 				s_out          = true;
 				s_livesWhenOut = flags->getFlag(kLivesFlag);
 				activate(false);
-				noticeP2("%1$s is out of lives", kNoticeFrames, "The next 1-Up brings %2$s back");
+				noticeP2("Player 2 is out of lives", kNoticeFrames, "The next 1-Up brings them back");
 				return;
 			}
 			revive(m);
