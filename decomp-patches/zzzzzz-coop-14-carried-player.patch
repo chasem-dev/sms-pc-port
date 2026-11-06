@@ -1,0 +1,30 @@
+Reason: port: split-screen co-op (ext/coop) - a player carrying the other is not kept off them: TMario::checkCollision's second keepDistance for a player shoved the carrier sideways through every jump (port_coop_carrying)
+--- a/src/Player/MarioCheckCol.cpp
++++ b/src/Player/MarioCheckCol.cpp
+@@ -9,6 +9,12 @@
+ #include "port_ext.h"
+ #include <math.h>
+ 
++#ifdef TARGET_PC
++// Split-screen co-op (ext/coop): whether these two are the players and one
++// carries the other (zzzzzz-coop-14).
++extern "C" int port_coop_carrying(const void* player, const void* other);
++#endif
++
+ // rogue includes needed for matching sinit & bss
+ #include <MSound/MSSetSound.hpp>
+ #include <MSound/MSoundBGM.hpp>
+@@ -397,6 +403,13 @@
+ 		// Other mario (enemy mario?)
+ 		case 0x80000001:
+ 			hitMario(getCollision(i));
++#ifdef TARGET_PC
++			// hitMario keeps clear of no one held, but this kept the carrier
++			// off the player in their right hand: the jump's pose brings
++			// that hand in, and every frame in the air shoved them sideways
++			if (port_coop_carrying(this, getCollision(i)))
++				break;
++#endif
+ 			keepDistance(*getCollision(i), 0.0f);
+ 			break;
+ 

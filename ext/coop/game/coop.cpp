@@ -54,6 +54,7 @@
 #include <GC2D/BoundPane.hpp>
 #include <GC2D/ExPane.hpp>
 #include <GC2D/GCConsole2.hpp>
+#include <GC2D/Talk2D2.hpp>
 #include <JSystem/J2D/J2DPicture.hpp>
 #include <JSystem/JUtility/JUTTexture.hpp>
 #include <System/FlagManager.hpp>
@@ -119,6 +120,7 @@ Ctx s_p1, s_p2;
 bool s_inP2;          // player 2's globals are in force
 bool s_made;          // this stage has player 2 and their camera
 bool s_active;        // player 2 is playing
+bool s_talkP2;        // the talk now on is player 2's (else any talk is Mario's)
 bool s_split;         // the stage is drawn in two views this frame
 bool s_wanted;        // SMS_COOP: co-op is on
 TGCConsole2* s_console2; // player 2's HUD, for their health and FLUDD
@@ -645,10 +647,31 @@ void makeConsole2()
 	s_console2 = c;
 }
 
+// Player 2 left with their talk still on (held Start, a controller gone for
+// good): it goes on as Mario's, or the stage would wait for them for ever.
+void talkerLeft(TMarDirector* d)
+{
+	if (!s_talkP2 || s_active)
+		return;
+	s_talkP2 = false;
+	if (s_p2.mario && s_p2.mario->mStatus == MARIO_STATUS_READ_BILLBOARD)
+		s_p2.mario->mStatusState = 2; // turned or not: no more looking at the person
+	TMarioGamePad* pad = d->getGamePad(0);
+	if (TMarioGamePad* pad2 = d->getGamePad(1))
+		pad2->offFlag(TMarioGamePad::PAD_FLAG_0x8);
+	pad->onFlag(TMarioGamePad::PAD_FLAG_0x8);
+	d->unkB0->mGamePad = pad;
+	if (d->unk124 == 1)
+		d->unk126 = 2; // they were still turning to the person: the window opens for Mario
+	else if (d->unk124 == 2 && d->getTalkingNPC())
+		gpCamera->makeMtxForTalk(d->getTalkingNPC()); // the camera it waits for is Mario's now
+}
+
 void stageSetup()
 {
 	s_camLinkCount = s_postCount = 0;
 	s_warpHeld[0] = s_warpHeld[1] = nullptr;
+	s_talkP2      = false;
 	s_post3DEnd = s_postOverlayFrom = s_postOverlayTo = s_composite = -1;
 	s_respawnFrames = 0;
 	if (s_lastLife) { // the stage changed while their last life was being lost
@@ -1304,9 +1327,11 @@ void frame()
 	// controller 2 reads as controller 1 does in each of the stage's modes
 	// (the director sets controller 1's: play, talk, menus)
 	// (flag 4, B talks, is each controller's own: the director sets it for the
-	// player with someone to talk to, port_coop_find_talk_npc)
+	// player with someone to talk to, port_coop_find_talk_npc; so is flag 8, in
+	// a talk: the talker's alone, port_coop_talk_pad)
 	if (TMarioGamePad* pad2 = d->getGamePad(1))
-		pad2->mFlags = (d->getGamePad(0)->mFlags & ~4u) | (pad2->mFlags & 4u);
+		pad2->mFlags = (d->getGamePad(0)->mFlags & ~12u) | (pad2->mFlags & 12u);
+	talkerLeft(d);
 	// a test's player 2 (SMS_COOP_TEST_JOIN=frames into the stage)
 	if (const char* t = getenv("SMS_COOP_TEST_JOIN"))
 		if (!s_testJoined && playing() && ++s_hintFrames > atoi(t)) {
@@ -1410,6 +1435,76 @@ void afterMovement()
 			m->mModelFaceAngle = (s16)ang;
 			InP2 in;
 			gpCamera->warpPosAndAt(gpCamera->mCurrentTarget.unk28, *gpMarioAngleY + 0x8000);
+		}
+	}
+	// player 2 stood N units in front of player 1, facing them (SMS_COOP_TEST_FACE),
+	// 10 frames after joining: for what they do to each other
+	if (const char* t = getenv("SMS_COOP_TEST_FACE")) {
+		static bool faced;
+		if (!faced && s_testJoined && s_frame >= s_testJoinFrame + 10) {
+			faced = true;
+			s_movedP2At = s_frame;
+			const TMario* one = p1();
+			const f32 away    = (f32)atof(t);
+			m->mPosition.x    = one->mPosition.x + away * JMASSin(one->mFaceAngle.y);
+			m->mPosition.y    = one->mPosition.y;
+			m->mPosition.z    = one->mPosition.z + away * JMASCos(one->mFaceAngle.y);
+			m->mFaceAngle.y   = one->mFaceAngle.y + 0x8000;
+			m->mModelFaceAngle = m->mFaceAngle.y;
+			InP2 in;
+			gpCamera->warpPosAndAt(gpCamera->mCurrentTarget.unk28, *gpMarioAngleY + 0x8000);
+		}
+	}
+	// a player stood a step from the nearest person, facing them
+	// (SMS_COOP_TEST_NPC=1 or 2), 10 frames after joining
+	if (const char* t = getenv("SMS_COOP_TEST_NPC")) {
+		static bool stood;
+		if (!stood && s_testJoined && s_frame >= s_testJoinFrame + 10) {
+			stood = true;
+			TMario* who = atoi(t) == 2 ? m : p1();
+			TBaseNPC* best = nullptr;
+			f32 bestDist   = 1e12f;
+			for (JGadget::TVector_pointer<TBaseNPC*>::iterator it = gpMarDirector->unk88.begin(); it != gpMarDirector->unk88.end(); ++it) {
+				TBaseNPC* npc = *it;
+				const f32 far = dist2(npc->mPosition, who->mPosition);
+				if (far < bestDist)
+					bestDist = far, best = npc;
+			}
+			if (best) {
+				s_movedP2At        = s_frame;
+				who->mPosition     = best->mPosition;
+				who->mPosition.x  += 120.0f;
+				who->mFaceAngle.y  = (s16)-0x4000;
+				who->mModelFaceAngle = who->mFaceAngle.y;
+				fprintf(stderr, "[coop] test: player %d stood by %s at %.0f %.0f %.0f\n", who == m ? 2 : 1, best->getName(),
+				        best->mPosition.x, best->mPosition.y, best->mPosition.z);
+				if (who == m) {
+					InP2 in;
+					gpCamera->warpPosAndAt(gpCamera->mCurrentTarget.unk28, *gpMarioAngleY + 0x8000);
+				} else {
+					gpCamera->warpPosAndAt(gpCamera->mCurrentTarget.unk28, *gpMarioAngleY + 0x8000);
+				}
+			}
+		}
+	}
+	// each player's every change of status, with where they are and how fast
+	// they go (SMS_COOP_TRACE)
+	if (getenv("SMS_COOP_TRACE")) {
+		static u32 last[2];
+		TMario* both[2] = { p1(), m };
+		for (int i = 0; i < 2; i++)
+			if (both[i]->mStatus != last[i]) {
+				last[i] = both[i]->mStatus;
+				fprintf(stderr, "[coop] trace %d: player %d status %x at %.0f %.0f %.0f speed %.1f up %.1f holds %d held %d\n", s_frame,
+				        i + 1, (unsigned)both[i]->mStatus, both[i]->mPosition.x, both[i]->mPosition.y, both[i]->mPosition.z,
+				        both[i]->mForwardVel, both[i]->mVel.y, both[i]->mHeldObject != nullptr, both[i]->mHolder != nullptr);
+			}
+		static int lastMode = -1;
+		if (gpMarDirector->unk124 != lastMode) {
+			lastMode = gpMarDirector->unk124;
+			fprintf(stderr, "[coop] trace %d: stage mode %d, talk is player %d's, talking to %s, pad flags %x %x, cams %d %d\n", s_frame, lastMode,
+			        s_talkP2 ? 2 : 1, gpMarDirector->getTalkingNPC() ? gpMarDirector->getTalkingNPC()->getName() : "no one", gpMarDirector->getGamePad(0)->mFlags,
+			        gpMarDirector->getGamePad(1)->mFlags, s_p1.cam->isTalkCameraSpecifyMode(s_p1.cam->mMode), s_p2.cam->isTalkCameraSpecifyMode(s_p2.cam->mMode));
 		}
 	}
 	// FLUDD put on player 2's back mid-stage, frames after joining (as a stage
@@ -1576,6 +1671,8 @@ TMario* playerFor(THitActor* a)
 {
 	if (TMario* owner = popoPlayer(a))
 		return owner;
+	if (s_talkP2 && gpMarDirector && (THitActor*)gpMarDirector->getTalkingNPC() == a)
+		return s_p2.mario;
 	bool touch1 = false, touch2 = false;
 	for (int i = 0; i < a->getColNum(); i++) {
 		THitActor* c = a->getCollision(i);
@@ -1631,6 +1728,47 @@ struct TestPress {
 };
 TestPress s_test[32];
 int s_testCount = -1;
+TestPress s_test1[16]; // controller 1's (SMS_COOP_TEST_PAD1)
+int s_test1Count;
+
+// a test's presses: b@at+frames, x:y@at+frames (the stick), frames after joining
+int parseTestPad(const char* e, TestPress* out, int most)
+{
+	int count = 0;
+	char buf[512];
+	snprintf(buf, sizeof buf, "%s", e ? e : "");
+	for (char* tok = strtok(buf, ","); tok && count < most; tok = strtok(nullptr, ",")) {
+		TestPress p = { 0, 0, 0, 0, 0 };
+		int len     = 8;
+		if (strchr("abrxyzl", tok[0]) && tok[1] == '@') {
+			p.buttons = tok[0] == 'a' ? PAD_BUTTON_A : tok[0] == 'b' ? PAD_BUTTON_B : tok[0] == 'x' ? PAD_BUTTON_X
+			          : tok[0] == 'y' ? PAD_BUTTON_Y : tok[0] == 'z' ? PAD_TRIGGER_Z : tok[0] == 'l' ? PAD_TRIGGER_L
+			                                                                         : PAD_TRIGGER_R;
+			if (sscanf(tok + 1, "@%d+%d", &p.at, &len) < 1)
+				continue;
+		} else if (sscanf(tok, "%d:%d@%d+%d", &p.x, &p.y, &p.at, &len) < 3) {
+			continue;
+		}
+		p.until      = p.at + len;
+		out[count++] = p;
+	}
+	return count;
+}
+
+void playTestPad(const TestPress* list, int count, PADStatus& s)
+{
+	for (int i = 0; i < count; i++)
+		if (s_frame - s_testJoinFrame >= list[i].at && s_frame - s_testJoinFrame < list[i].until) {
+			if (list[i].buttons)
+				s.button |= list[i].buttons;
+			else
+				s.stickX = (s8)list[i].x, s.stickY = (s8)list[i].y;
+			if (list[i].buttons & PAD_TRIGGER_R)
+				s.triggerRight = 255;
+			if (list[i].buttons & PAD_TRIGGER_L)
+				s.triggerLeft = 255;
+		}
+}
 
 void padRead(void* statusv)
 {
@@ -1638,50 +1776,16 @@ void padRead(void* statusv)
 		return;
 	PADStatus* status = (PADStatus*)statusv;
 	if (s_testCount < 0) {
-		s_testCount = 0;
-		const char* e = getenv("SMS_COOP_TEST_PAD");
-		char buf[512];
-		snprintf(buf, sizeof buf, "%s", e ? e : "");
-		for (char* tok = strtok(buf, ","); tok && s_testCount < 32; tok = strtok(nullptr, ",")) {
-			TestPress p = { 0, 0, 0, 0, 0 };
-			int len     = 8;
-			if (strchr("abrxyzl", tok[0]) && tok[1] == '@') {
-				p.buttons = tok[0] == 'a' ? PAD_BUTTON_A : tok[0] == 'b' ? PAD_BUTTON_B : tok[0] == 'x' ? PAD_BUTTON_X
-				          : tok[0] == 'y' ? PAD_BUTTON_Y : tok[0] == 'z' ? PAD_TRIGGER_Z : tok[0] == 'l' ? PAD_TRIGGER_L
-				                                                                         : PAD_TRIGGER_R;
-				if (sscanf(tok + 1, "@%d+%d", &p.at, &len) < 1)
-					continue;
-			} else if (sscanf(tok, "%d:%d@%d+%d", &p.x, &p.y, &p.at, &len) < 3) {
-				continue;
-			}
-			p.until             = p.at + len;
-			s_test[s_testCount++] = p;
-		}
+		s_testCount  = parseTestPad(getenv("SMS_COOP_TEST_PAD"), s_test, 32);
+		s_test1Count = parseTestPad(getenv("SMS_COOP_TEST_PAD1"), s_test1, 16);
 	}
 	PADStatus& s = status[1];
 	if (s_testCount) {
 		s.err = PAD_ERR_NONE;
-		for (int i = 0; i < s_testCount; i++)
-			if (s_frame - s_testJoinFrame >= s_test[i].at && s_frame - s_testJoinFrame < s_test[i].until) {
-				if (s_test[i].buttons)
-					s.button |= s_test[i].buttons;
-				else
-					s.stickX = (s8)s_test[i].x, s.stickY = (s8)s_test[i].y;
-				if (s_test[i].buttons & PAD_TRIGGER_R)
-					s.triggerRight = 255;
-				if (s_test[i].buttons & PAD_TRIGGER_L)
-					s.triggerLeft = 255;
-			}
+		playTestPad(s_test, s_testCount, s);
 	}
-	// a talk (either player's) reads controller 1: player 2's A and B move it on too
-	TMarDirector* d = director();
-	if (s_active && d && d == s_dir && d->isTalkModeNow()) {
-		status[0].button |= s.button & (PAD_BUTTON_A | PAD_BUTTON_B);
-		if (s.analogA > status[0].analogA)
-			status[0].analogA = s.analogA;
-		if (s.analogB > status[0].analogB)
-			status[0].analogB = s.analogB;
-	}
+	if (s_test1Count && s_testJoined)
+		playTestPad(s_test1, s_test1Count, status[0]);
 }
 
 int allowSaveStates() { return !s_active; }
@@ -1917,7 +2021,52 @@ TBaseNPC* port_coop_find_talk_npc(TMarDirector* director)
 	if (!playingP2() || director != s_dir)
 		return nullptr;
 	InP2 in;
+	// as the director asks of Mario: nothing in their hands, not in their Y view
+	if (SMSGetMarioBound()->isHolding() || SMSGetCamera()->isLButtonCamera() || gpCamera->isDemoCamera())
+		return nullptr;
 	return director->findNearestTalkNPC();
+}
+
+// decomp-patches/zzzzzz-coop-15: a talk is its talker's. Player 2's press
+// starting one says so (port_coop_talk_taken); a talk that started any other
+// way (Mario's, a script's) is Mario's. Its controller is the talker's alone
+// (port_coop_talk_pad), and the game's globals are theirs in its script and
+// window (port_coop_enter_talker), so they turn to the person and it is their
+// camera that goes in. The other player plays on (port_coop_free_in_talk).
+extern "C" void port_coop_talk_taken(void)
+{
+	s_talkP2 = playingP2() != nullptr;
+}
+extern "C" void port_coop_talk_over(void)
+{
+	s_talkP2 = false;
+}
+TMarioGamePad* port_coop_talk_pad(TMarDirector* director)
+{
+	return director->getGamePad(s_talkP2 ? 1 : 0);
+}
+extern "C" int port_coop_enter_talker(void)
+{
+	return s_talkP2 ? port_coop_enter_player2() : 0;
+}
+extern "C" int port_coop_free_in_talk(const void* player)
+{
+	if (!s_active || !s_made)
+		return 0;
+	return player != (const void*)(s_talkP2 ? s_p2.mario : s_p1.mario);
+}
+
+// decomp-patches/zzzzzz-coop-14: one of the two players carrying the other
+extern "C" int port_coop_carrying(const void* player, const void* other)
+{
+	if (!s_active || !s_made || !s_p1.mario || !s_p2.mario)
+		return 0;
+	const TMario* a = (const TMario*)player;
+	const void* one = s_p1.mario;
+	const void* two = s_p2.mario;
+	if (!(player == one && other == two) && !(player == two && other == one))
+		return 0;
+	return (const void*)a->mHeldObject == other || (const void*)a->mHolder == other;
 }
 
 // decomp-patches/zzzzzz-coop-02: the camera a controller's player sees

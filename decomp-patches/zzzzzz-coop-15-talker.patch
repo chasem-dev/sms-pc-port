@@ -1,0 +1,281 @@
+Reason: port: split-screen co-op (ext/coop) - a talk is its talker's: their controller alone stops moving them and reads it, its script and camera are theirs, and the other player plays on (port_coop_talk_pad, port_coop_enter_talker, port_coop_free_in_talk)
+--- a/src/System/MarDirectorEvent.cpp
++++ b/src/System/MarDirectorEvent.cpp
+@@ -102,6 +102,29 @@
+ // Split-screen co-op (ext/coop): the person player 2 can talk to (as
+ // findNearestTalkNPC finds Mario's, with player 2 as Mario), or null.
+ TBaseNPC* port_coop_find_talk_npc(TMarDirector* director);
++// The talk about to start is player 2's (zzzzzz-coop-15).
++extern "C" void port_coop_talk_taken(void);
++
++// Player 2's turn at this frame's look for someone to talk to: the person
++// beside them, as the cursor's when Mario has no one, and controller 2's B
++// starts the talk with them.
++static void portCoopPlayer2Talk(TMarDirector* d, bool marioHasOne)
++{
++	TBaseNPC* npc = port_coop_find_talk_npc(d);
++	if (npc == nullptr)
++		return;
++	if (!marioHasOne) {
++		d->unkA0 = npc;
++		d->unk84->associateNPC(npc);
++	}
++	d->unk18[1]->onFlag(4);
++	d->unk128 |= 0x1;
++	if ((d->unk128 & 2) && (d->unk18[1]->mEnabledFrameMeaning & 0x800)) {
++		d->unkA0  = npc;
++		d->unk126 = 1;
++		port_coop_talk_taken();
++	}
++}
+ #endif
+ 
+ void TMarDirector::movement_game()
+@@ -115,14 +138,26 @@
+ 		if (unk18[1])
+ 			unk18[1]->offFlag(0x4);
+ #endif
++#ifdef TARGET_PC
++		// what Mario has in his hands or his Y view is no reason for player 2
++		if (SMSGetMarioBound()->isHolding() || SMSGetCamera()->isLButtonCamera()) {
++			if (!gpCamera->isDemoCamera())
++				portCoopPlayer2Talk(this, false);
++			return;
++		}
++#else
+ 		if (SMSGetMarioBound()->isHolding())
+ 			return;
+ 		if (SMSGetCamera()->isLButtonCamera())
+ 			return;
++#endif
+ 
+ 		if (!gpCamera->isDemoCamera()) {
+ 			if (TBaseNPC* takeNpc = findNearestTakeNPC()) {
+ 				MDECursor(this)->associateNPC(takeNpc);
++#ifdef TARGET_PC
++				portCoopPlayer2Talk(this, true);
++#endif
+ 			} else {
+ 				TBaseNPC* talkNpc = findNearestTalkNPC();
+ 				if (talkNpc != nullptr) {
+@@ -135,22 +170,8 @@
+ 						unk126 = 1;
+ 				}
+ #ifdef TARGET_PC
+-				// split-screen co-op: player 2 talks to the people beside
+-				// them, found as Mario's are (port_coop_find_talk_npc);
+-				// controller 2's B talks while they have someone to
+-				if (TBaseNPC* p2Npc = port_coop_find_talk_npc(this)) {
+-					if (talkNpc == nullptr) {
+-						unkA0 = p2Npc;
+-						unk84->associateNPC(p2Npc);
+-					}
+-					unk18[1]->onFlag(4);
+-					unk128 |= 0x1;
+-					if ((unk128 & 2)
+-					    && (unk18[1]->mEnabledFrameMeaning & 0x800)) {
+-						unkA0  = p2Npc;
+-						unk126 = 1;
+-					}
+-				}
++				// split-screen co-op: player 2 talks to the people beside them
++				portCoopPlayer2Talk(this, talkNpc != nullptr);
+ #endif
+ 			}
+ 		}
+--- a/src/System/MarDirectorDirect.cpp
++++ b/src/System/MarDirectorDirect.cpp
+@@ -1240,6 +1240,13 @@
+ // TODO: instructions exact; frame 0xf0 vs retail 0x130 (0xa8 before
+ // getGamePad() at the pad reads and getTalkMode()/getTalkingNPC() at the
+ // talk reads, research c-r29; 0xe0 before getCurrentMap() and getConsole(),
++#ifdef TARGET_PC
++// Split-screen co-op (ext/coop): the controller of the talk starting (the
++// talker's), and the talk being over (zzzzzz-coop-15).
++TMarioGamePad* port_coop_talk_pad(TMarDirector* director);
++extern "C" void port_coop_talk_over(void);
++#endif
++
+ // c-hs5; the NPC accessor as openTalkWindow's
+ // argument changes code). Body from upstream
+ // (its flag accessors fixed the r29/r30 swap, 99.8 -> 99.93), with the ROM's
+@@ -1538,6 +1545,13 @@
+ 				unkA0 = 0;
+ 				unkA4 = 0;
+ 				getGamePad()->offFlag(TMarioGamePad::PAD_FLAG_0x8);
++#ifdef TARGET_PC
++				// a talk read its talker's controller (split-screen co-op)
++				if (unk18[1])
++					unk18[1]->offFlag(TMarioGamePad::PAD_FLAG_0x8);
++				unkB0->mGamePad = getGamePad();
++				port_coop_talk_over();
++#endif
+ 				OSStartStopwatch(&unkE8);
+ 			}
+ 			break;
+@@ -1564,7 +1578,14 @@
+ #endif
+ 			getTalkingNPC()->onLiveFlag(LIVE_FLAG_UNK40000);
+ 			getTalkingNPC()->unkC.off(CUE_MOVE | CUE_CALC_ANIM);
++#ifdef TARGET_PC
++			// only the talker's controller stops moving them and reads the
++			// talk: the other player plays on (zzzzzz-coop-15)
++			unkB0->mGamePad = port_coop_talk_pad(this);
++			unkB0->mGamePad->onFlag(TMarioGamePad::PAD_FLAG_0x8);
++#else
+ 			getGamePad()->onFlag(TMarioGamePad::PAD_FLAG_0x8);
++#endif
+ 			OSStopStopwatch(&unkE8);
+ 			break;
+ 
+--- a/src/System/EventWatcher.cpp
++++ b/src/System/EventWatcher.cpp
+@@ -1716,8 +1716,25 @@
+ 	}
+ }
+ 
++#ifdef TARGET_PC
++// Split-screen co-op (ext/coop): the game's globals are the talker's for the
++// length of this, when the talk now on is player 2's (zzzzzz-coop-15).
++extern "C" int port_coop_enter_talker(void);
++extern "C" void port_coop_leave_player2(void);
++#endif
++
+ void TEventWatcher::perform(u32 cue, JDrama::TGraphics* graphics)
+ {
++#ifdef TARGET_PC
++	// a talk's script turns its talker to the person (startMarioTalking)
++	if ((cue & CUE_MOVE) && mInterp) {
++		const int asTalker = port_coop_enter_talker();
++		mInterp->update();
++		if (asTalker)
++			port_coop_leave_player2();
++	}
++#else
+ 	if ((cue & CUE_MOVE) && mInterp)
+ 		mInterp->update();
++#endif
+ }
+--- a/src/GC2D/Talk2D2.cpp
++++ b/src/GC2D/Talk2D2.cpp
+@@ -441,8 +441,31 @@
+ 	mIsTalking = true;
+ }
+ 
++#ifdef TARGET_PC
++// Split-screen co-op (ext/coop): a talk's camera is its talker's, so the game's
++// globals are theirs in the talk's own code, when the talk is player 2's
++// (zzzzzz-coop-15).
++extern "C" int port_coop_enter_talker(void);
++extern "C" void port_coop_leave_player2(void);
++struct PortCoopAsTalker {
++	int entered;
++	explicit PortCoopAsTalker(bool on = true)
++	    : entered(on ? port_coop_enter_talker() : 0)
++	{
++	}
++	~PortCoopAsTalker()
++	{
++		if (entered)
++			port_coop_leave_player2();
++	}
++};
++#endif
++
+ void TTalk2D2::forceCloseTalk()
+ {
++#ifdef TARGET_PC
++	PortCoopAsTalker asTalker;
++#endif
+ 	gpCamera->makeMtxForPrevTalk();
+ 
+ 	if (mIsBoard)
+@@ -461,6 +484,9 @@
+ 
+ void TTalk2D2::closeTalkWindow()
+ {
++#ifdef TARGET_PC
++	PortCoopAsTalker asTalker;
++#endif
+ 	if (mFlags & 1) {
+ 		if (mMessageID == 0x1e) {
+ 			SMSGetMSoundBound()->startSoundSystemSE(MSD_SE_SY_RACE_START, 0, nullptr, 0);
+@@ -480,6 +506,9 @@
+ 
+ void TTalk2D2::openTalkWindow(TBaseNPC* npc)
+ {
++#ifdef TARGET_PC
++	PortCoopAsTalker asTalker;
++#endif
+ 	if (npc != nullptr)
+ 		gpCamera->makeMtxForTalk(npc);
+ 
+@@ -1192,6 +1221,9 @@
+ // SMSGetMSoundBound() at the sound sites is inert here.
+ void TTalk2D2::perform(u32 cue, JDrama::TGraphics* graphics)
+ {
++#ifdef TARGET_PC
++	PortCoopAsTalker asTalker((cue & CUE_MOVE) != 0);
++#endif
+ 	if (cue & CUE_MOVE) {
+ 		// The one-case switch is the right shape and the field really is a
+ 		// u8: retail loads it with `lbz` and compares with `cmpwi 2`, which
+--- a/src/Player/WaterGun.cpp
++++ b/src/Player/WaterGun.cpp
+@@ -1979,14 +1979,26 @@
+ 	return nozzle;
+ }
+ 
++#ifdef TARGET_PC
++// Split-screen co-op (ext/coop): the talk now on is the other player's, this
++// one plays on (zzzzzz-coop-15).
++extern "C" int port_coop_free_in_talk(const void* player);
++#endif
++
+ bool TWaterGun::isEmitting()
+ {
+ 	if (getCurrentWater() == 0)
+ 		return false;
+ 
++#ifdef TARGET_PC
++	if (SMSGetMarDirectorBound()->isDemoMode3() || SMSGetMarDirectorBound()->isDemoMode4()
++	    || (SMSGetMarDirectorBound()->isTalkModeNow() && !port_coop_free_in_talk(mMario)))
++		return false;
++#else
+ 	if (SMSGetMarDirectorBound()->isDemoMode3() || SMSGetMarDirectorBound()->isDemoMode4()
+ 	    || SMSGetMarDirectorBound()->isTalkModeNow())
+ 		return false;
++#endif
+ 
+ 	if (WaterGunGetNozzle(this)->getNozzleKind() == 1) {
+ 		TNozzleTrigger* trig = (TNozzleTrigger*)WaterGunGetNozzle(this);
+--- a/src/Player/MarioMove.cpp
++++ b/src/Player/MarioMove.cpp
+@@ -2801,14 +2801,27 @@
+ 
+ // SMSGetMarDirector() at the first billboard test and the camera angle read
+ // through the MarioMoveCameraUnk258 binder give retail's slots.
++#ifdef TARGET_PC
++// Split-screen co-op (ext/coop): the talk now on is the other player's
++// (zzzzzz-coop-15).
++extern "C" int port_coop_free_in_talk(const void* player);
++#endif
++
+ void TMario::playerControl(JDrama::TGraphics* param_1)
+ {
+ 	unk9C         = mFaceAngle.y;
+ 	mPrevPosition = mPosition;
+ 	offUnk114(UNK114_FLAG_UNK8);
+ 
++#ifdef TARGET_PC
++	// a talk starting turns its talker to the person: the other player plays on
++	if (SMSGetMarDirector()->unk124 == 1 && getStatus() != MARIO_STATUS_READ_BILLBOARD
++	    && !port_coop_free_in_talk(this))
++		changePlayerStatus(MARIO_STATUS_READ_BILLBOARD, 0, false);
++#else
+ 	if (SMSGetMarDirector()->unk124 == 1 && getStatus() != MARIO_STATUS_READ_BILLBOARD)
+ 		changePlayerStatus(MARIO_STATUS_READ_BILLBOARD, 0, false);
++#endif
+ 
+ 	if (gpMarioOriginal == this) {
+ 		if (SMSGetCameraBound()->isLButtonCamera()
