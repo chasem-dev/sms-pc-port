@@ -5,6 +5,7 @@
 #include "port_ext.h"
 
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 
 namespace {
@@ -322,6 +323,12 @@ extern "C" int port_ext_shine_touch(void* mario, void* shine)
 	return PORT_SHINE_TOUCH_GET;
 }
 
+extern "C" const char* port_ext_object_model(void* object, void* keeper, const char* name)
+{
+	EACH(objectModel) if (const char* other = s_ext[i]->objectModel(object, keeper, name)) return other;
+	return 0;
+}
+
 extern "C" int port_ext_player_message(void* mario, void* sender, unsigned message)
 {
 	EACH(playerMessage) if (s_ext[i]->playerMessage(mario, sender, message)) return 1;
@@ -432,6 +439,65 @@ extern "C" int port_ext_draw_stage(void* director, void* graphics)
 	return 0;
 }
 
+// ------------------------------------------------------------------ one model's tint
+
+extern "C" void GXPC_SetObjectTint(uint32_t rgba) __attribute__((weak));
+
+namespace {
+// a fixed table (no allocation here): more tinted models than this are left untinted
+enum { kMaxTints = 512 };
+struct ModelTint {
+	const void* model;
+	const char *begin, *end; // its shape packets
+	unsigned rgba;
+};
+ModelTint s_tints[kMaxTints];
+int s_tintCount;
+} // namespace
+
+extern "C" void port_ext_set_model_tint(const void* model, const void* packets, unsigned bytes, unsigned rgba)
+{
+	for (int i = 0; i < s_tintCount; i++) {
+		if (s_tints[i].model != model)
+			continue;
+		if (rgba & 0xFF)
+			s_tints[i].rgba = rgba;
+		else
+			s_tints[i] = s_tints[--s_tintCount];
+		return;
+	}
+	if (!model || !packets || !bytes || !(rgba & 0xFF) || s_tintCount >= kMaxTints)
+		return;
+	ModelTint& t = s_tints[s_tintCount++];
+	t.model      = model;
+	t.begin      = (const char*)packets;
+	t.end        = t.begin + bytes;
+	t.rgba       = rgba;
+}
+
+extern "C" void port_ext_clear_model_tints(void) { s_tintCount = 0; }
+
+extern "C" int port_ext_shape_tint_begin(const void* packet)
+{
+	if (!s_tintCount || !GXPC_SetObjectTint)
+		return 0;
+	const char* p = (const char*)packet;
+	for (int i = 0; i < s_tintCount; i++) {
+		if (p >= s_tints[i].begin && p < s_tints[i].end) {
+			GXPC_SetObjectTint(s_tints[i].rgba);
+			return 1;
+		}
+	}
+	return 0;
+}
+
+extern "C" void port_ext_shape_tint_end(void)
+{
+	if (GXPC_SetObjectTint)
+		GXPC_SetObjectTint(0);
+}
+
 void* port_ext_damage_source; // C linkage: declared so in port_ext.h
 int port_ext_death_cause;      // C linkage: declared so in port_ext.h
 int port_ext_stage_change_by;  // C linkage: declared so in port_ext.h
+int port_ext_coin_event_id = -1; // C linkage: declared so in port_ext.h

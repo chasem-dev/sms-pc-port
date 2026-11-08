@@ -370,6 +370,7 @@ struct ShaderProgram {
     int uTevReg, uKonst, uTexScale, uAlphaRef, uFog, uFogColor, uIndMtx, uTexSize, uEfb,
         uProj, uViewport, uAmbMat, uDstAlpha, uLineWidth;
     int uGoopRef;  // a goop layer's colours (GXPC_SetGoopTint): -1 for every other program
+    int uObjTint;  // one object's colour (GXPC_SetObjectTint): -1 for every other program
     mutable UniformCache uc;
 };
 bool shaderHasEarlyFragmentTests();
@@ -380,6 +381,8 @@ const ShaderProgram* shaderForCurrentState(bool depthOnly = false, bool lines = 
 // The texture map whose goop layer the current state's program tints
 // (GXPC_SetGoopTint), as the last shaderForCurrentState saw it; -1 none.
 int goopMapNow();
+// The colour GXPC_SetObjectTint set for the draws now (0xRRGGBBAA), 0 none.
+uint32_t objectTintNow();
 // The texture unit a goop layer's tint map is bound on (beside u_tex's eight).
 const int kGoopUnit = 8;
 void shaderPrepareStage(int stage);  // while a stage loads: its programs (the warm-up)

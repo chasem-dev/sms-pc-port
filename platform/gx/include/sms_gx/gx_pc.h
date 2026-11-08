@@ -374,6 +374,12 @@ void GXPC_ClearTextureOverrides(void);
 void GXPC_SetGoopTint(const void* mask, int w, int h, const uint8_t* rgba, float lightness);
 // Drops every goop layer's colours (a stage's memory is let go).
 void GXPC_ClearGoopTints(void);
+// The draws that follow in a colour (0xRRGGBBAA; 0 none), until it is set
+// again: one object's model however its data is shared (the mod API's
+// game->object_set_tint, around a J3DShapePacket's draw). The shading is kept:
+// a mid-grey pixel takes the colour, darker ones darker, lighter ones towards
+// white; the alpha says how far towards that. Game thread, as GX calls are.
+void GXPC_SetObjectTint(uint32_t rgba);
 
 /* Statistics for the current frame (reset by GXCopyDisp). */
 typedef struct GXPCStats {

@@ -425,17 +425,17 @@ int callHandler(Sub& s, SmsEvent* ev)
 	return r;
 }
 
-// A Shine's model a handler named relative to its mod's folder, made a full
+// A Shine's or a coin's model a handler named relative to its mod's folder, made a full
 // path (kept until the next one).
 std::string s_shineModel;
-void shineModelPath(SmsMod* m, SmsEvShineSetup* p)
+void modelPath(SmsMod* m, const char** model)
 {
-	if (!p || !p->model || !p->model[0] || p->model == s_shineModel.c_str())
+	if (!*model || !(*model)[0] || *model == s_shineModel.c_str())
 		return;
-	const char* n   = p->model;
+	const char* n   = *model;
 	const bool full = n[0] == '/' || n[0] == '\\' || (n[0] && n[1] == ':');
 	s_shineModel    = full ? std::string(n) : m->dir + "/" + n;
-	p->model        = s_shineModel.c_str();
+	*model          = s_shineModel.c_str();
 }
 
 int dispatchTo(uint32_t type, void* data, uint32_t size, SmsMod* only)
@@ -458,7 +458,9 @@ int dispatchTo(uint32_t type, void* data, uint32_t size, SmsMod* only)
 			continue;
 		const int r = callHandler(s, &ev);
 		if (type == SMS_EV_SHINE_SETUP)
-			shineModelPath(s.mod, (SmsEvShineSetup*)data);
+			modelPath(s.mod, &((SmsEvShineSetup*)data)->model);
+		else if (type == SMS_EV_ITEM_SETUP)
+			modelPath(s.mod, &((SmsEvItemSetup*)data)->model);
 		if (r != SMS_CANCEL)
 			continue;
 		if (canConsume) {
@@ -1034,7 +1036,7 @@ const SmsGameApi s_game = {
 	modg_find_object,   modg_object_name, modg_object_position, modg_object_set_position, apiAreaName,
 	modg_cube_count,    apiInCube,       apiObjectCount,      apiObjectInfo,         apiGround,
 	modg_object_type,   modg_object_health, apiSetHudHidden,     apiHudHidden,
-	modg_object_set_color,
+	modg_object_set_color, modg_object_set_tint,
 };
 
 int apiPlayerGet(SmsPlayer* out)

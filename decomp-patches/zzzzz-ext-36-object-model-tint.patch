@@ -1,0 +1,84 @@
+Reason: extensions (ext/, port_ext.h) may give a map object with a plain model (no animation data: the coins) another model as it makes it (objectModel, TMapObjBase::makeMActors; a blue coin a container makes knows its number then, port_ext_coin_event_id), and draw one J3DModel in a colour of its own however its model data is shared (port_ext_shape_tint_begin around J3DShapePacket::draw): the native mod API's SMS_EV_ITEM_SETUP and game->object_set_tint (API 1.8 beta 1)
+
+--- a/src/MoveBG/MapObjInit.cpp
++++ b/src/MoveBG/MapObjInit.cpp
+@@ -17,6 +17,9 @@
+ #include <JSystem/J3D/J3DGraphBase/J3DTexture.hpp>
+ #include <JSystem/J3D/J3DGraphAnimator/J3DJoint.hpp>
+ #include <JSystem/JDrama/JDRNameRefGen.hpp>
++#ifdef TARGET_PC
++#include "port_ext.h"
++#endif
+ 
+ // rogue includes needed for matching sinit & bss
+ #include <MSound/MSSetSound.hpp>
+@@ -11171,6 +11174,12 @@
+ 	} else {
+ 		char buffer[64];
+ 		snprintf(buffer, 64, "%s.bmd", getMapObjData()->unk0);
++#ifdef TARGET_PC
++		// extensions may give it another model (port_ext.h): a coin a mod's, say
++		if (const char* sms_ext_model = port_ext_object_model(this, mMActorKeeper, buffer))
++			mMActor = initMActor(sms_ext_model, nullptr, getSDLModelFlag());
++		else
++#endif
+ 		mMActor = initMActor(buffer, nullptr, getSDLModelFlag());
+ 	}
+ }
+--- a/libs/JSystem/src/J3D/J3DGraphBase/J3DPacket.cpp
++++ b/libs/JSystem/src/J3D/J3DGraphBase/J3DPacket.cpp
+@@ -7,6 +7,9 @@
+ #include <dolphin/gd.h>
+ #include <dolphin/gx.h>
+ #include <macros.h>
++#ifdef TARGET_PC
++#include "port_ext.h"
++#endif
+ 
+ int J3DDrawPacket::sInterruptFlag;
+ 
+@@ -181,7 +184,16 @@
+ 		mpShape->setNrmMtx(mNormMatrices);
+ 		mpShape->setCurrentViewNoPtr(mpCurrentViewNo);
+ 
++#ifdef TARGET_PC
++		// one model drawn in a colour of its own (port_ext.h, the mod API's
++		// game->object_set_tint), however its model data is shared
++		const int sms_tinted = port_ext_shape_tint_begin(this);
++#endif
+ 		mpShape->draw();
++#ifdef TARGET_PC
++		if (sms_tinted)
++			port_ext_shape_tint_end();
++#endif
+ 
+ 		if (mpCallBack != nullptr)
+ 			mpCallBack(this, 1);
+--- a/src/MoveBG/ItemManager.cpp
++++ b/src/MoveBG/ItemManager.cpp
+@@ -6,6 +6,9 @@
+ #include <MSound/MSoundSE.hpp>
+ #include <JSystem/JParticle/JPAEmitter.hpp>
+ #include <JSystem/JDrama/JDRNameRefGen.hpp>
++#ifdef TARGET_PC
++#include "port_ext.h"
++#endif
+ 
+ // rogue includes needed for matching sinit & bss
+ #include <MSound/MSSetSound.hpp>
+@@ -114,7 +117,15 @@
+ {
+ 	TCoin* result;
+ 	if (event_id < 0x32) {
++#ifdef TARGET_PC
++		// the blue coin made next is this one (port_ext.h): its number is set
++		// only after it has made its model (objectModel)
++		port_ext_coin_event_id = (int)event_id;
++#endif
+ 		result = (TCoin*)newAndRegisterObj("coin_blue");
++#ifdef TARGET_PC
++		port_ext_coin_event_id = -1;
++#endif
+ 	} else if (event_id == 100) {
+ 		result = SMSGetItemManagerBound()->unk78;
+ 	} else if (event_id == 200) {

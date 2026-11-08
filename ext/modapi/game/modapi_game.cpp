@@ -34,6 +34,8 @@
 #include <System/Application.hpp>
 #include <System/FlagManager.hpp>
 #include <System/MarDirector.hpp>
+#include <System/SelectDir.hpp>
+#include <GC2D/SelectMenu.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
 #include <JSystem/J3D/J3DGraphBase/J3DMaterial.hpp>
 #include <JSystem/J3D/J3DGraphLoader/J3DModelLoader.hpp>
@@ -274,6 +276,7 @@ void moveStage() { s_stageReady = false; }
 // a mod may load another, or have Mario come from elsewhere.
 void chooseStageLoad()
 {
+	port_ext_clear_model_tints(); // game->object_set_tint's: the models go with the stage
 	if (!modh_wants(SMS_EV_STAGE_LOADING))
 		return;
 	TGameSequence& cur  = gpApplication.mCurrArea;
@@ -575,6 +578,7 @@ void watchModeAndPause()
 {
 	const int mode = gameMode();
 	if (mode != s_lastMode) {
+		port_ext_clear_model_tints(); // the models went with the stage
 		if (s_lastMode >= 0 && modh_wants(SMS_EV_MODE_CHANGED)) {
 			SmsEvMode ev;
 			ev.from = s_lastMode;
@@ -1052,9 +1056,47 @@ int nozzleFire(void* m, int nozzle, int how)
 	return modh_dispatch(SMS_EV_NOZZLE_FIRE, &ev, sizeof ev);
 }
 
-// A Shine's model from a mod's file (SMS_EV_SHINE_SETUP), loaded into the
-// Shine manager's model data keeper under its path, once a stage (the keeper
-// and the file's bytes live in the stage's heap, as the stage's own models).
+// A model file of a mod's (SMS_EV_SHINE_SETUP's, SMS_EV_ITEM_SETUP's), loaded
+// into an object's model data keeper under its path, once a stage (the keeper
+// and the file's bytes live in the stage's heap, as the stage's own models):
+// the name the keeper has it by, or null when it can't be loaded.
+const char* keepModelFile(void* k, const char* path, const char* event)
+{
+	TModelDataKeeper* keeper = ((TMActorKeeper*)k)->getModelDataKeeper();
+	if (!keeper)
+		return 0;
+	if (keeper->getIndex(path) >= 0)
+		return path;
+	FILE* f = fopen(path, "rb");
+	if (!f) {
+		fprintf(stderr, "[mods] %s: no model %s\n", event, path);
+		return 0;
+	}
+	fseek(f, 0, SEEK_END);
+	const long size = ftell(f);
+	fseek(f, 0, SEEK_SET);
+	u8* data = size > 32 && size < (16 << 20) ? new (0x20) u8[size] : 0;
+	const bool read = data && fread(data, 1, (size_t)size, f) == (size_t)size;
+	fclose(f);
+	if (!read || memcmp(data, "J3D2bmd", 7) != 0) {
+		fprintf(stderr, "[mods] %s: %s is not a model (.bmd)\n", event, path);
+		return 0;
+	}
+	port_res_to_native_named(data, (u32)size, path);
+	J3DModelData* model = J3DModelLoaderDataBase::load(data, ((TMActorKeeper*)k)->getModelLoaderFlags());
+	if (!model)
+		return 0;
+	const size_t n = strlen(path) + 1;
+	char* name     = new char[n];
+	memcpy(name, path, n);
+	TModelDataNode* node = &keeper->mHead;
+	while (node->getNext())
+		node = node->getNext();
+	node->registerDataAndJoinNewNode(new SDLModelData(model), name);
+	return name;
+}
+
+// A Shine's model from a mod's file (SMS_EV_SHINE_SETUP).
 const char* shineModel(void* p, void* k, int collected)
 {
 	if (!p || !k || !modh_wants(SMS_EV_SHINE_SETUP))
@@ -1068,38 +1110,63 @@ const char* shineModel(void* p, void* k, int collected)
 	modh_dispatch(SMS_EV_SHINE_SETUP, &ev, sizeof ev);
 	if (!ev.model || !ev.model[0])
 		return 0;
+	return keepModelFile(k, ev.model, "SMS_EV_SHINE_SETUP");
+}
+
+// The coins' models SmsEvItemSetup.game_model names (SMS_GAME_MODEL_*), files
+// of the stage's map objects' folder. (The Shine's shine.bmd does not show on
+// a coin, so it is not one of them.)
+const char* const kGameModels[] = {0, "coin.bmd", "coin_red.bmd", "coin_blue.bmd"};
+
+// A coin makes its model (SMS_EV_ITEM_SETUP): one of a mod's files, another
+// coin's, or its own. A blue coin's number and flag as TCoinBlue::load reads
+// its flag (TFlagManager::getBlueCoinFlag).
+const char* objectModel(void* p, void* k, const char* name)
+{
+	if (!p || !k || !name || !modh_wants(SMS_EV_ITEM_SETUP))
+		return 0;
+	TCoin* coin = dynamic_cast<TCoin*>((TMapObjBase*)p);
+	if (!coin)
+		return 0;
+	TCoinBlue* blue = dynamic_cast<TCoinBlue*>(coin);
+	SmsEvItemSetup ev;
+	memset(&ev, 0, sizeof ev);
+	ev.object     = obj(coin);
+	ev.kind       = blue ? SMS_ITEM_BLUE_COIN : dynamic_cast<TCoinRed*>(coin) ? SMS_ITEM_RED_COIN : SMS_ITEM_COIN;
+	// its actor type is set after it has made its model: its map object data's
+	ev.actor_type = coin->getMapObjData() ? coin->getMapObjData()->unk4 : coin->getActorType();
+	ev.id         = -1;
+	if (blue) {
+		const u32 id   = port_ext_coin_event_id >= 0 ? (u32)port_ext_coin_event_id : blue->getEventId();
+		ev.id          = id < 50 ? (int)id : 0;
+		const u8 area  = gpMarDirector ? gpMarDirector->getCurrentMap() : gpApplication.mCurrArea.unk0;
+		u8 world       = SMS_getShineStage(area);
+		if (world == 0 || world >= 10)
+			world = 1;
+		ev.flag = 0x10078 + (world - 1) * 50 + ev.id;
+	}
+	setVec(&ev.position, coin->mPosition.x, coin->mPosition.y, coin->mPosition.z);
+	modh_dispatch(SMS_EV_ITEM_SETUP, &ev, sizeof ev);
+	if (ev.model && ev.model[0])
+		if (const char* mine = keepModelFile(k, ev.model, "SMS_EV_ITEM_SETUP"))
+			return mine;
+	if (ev.game_model <= SMS_GAME_MODEL_NONE || ev.game_model > SMS_GAME_MODEL_BLUE_COIN)
+		return 0;
+	const char* file = kGameModels[ev.game_model];
+	if (!strcmp(file, name))
+		return 0;
 	TModelDataKeeper* keeper = ((TMActorKeeper*)k)->getModelDataKeeper();
 	if (!keeper)
 		return 0;
-	if (keeper->getIndex(ev.model) >= 0)
-		return ev.model;
-	FILE* f = fopen(ev.model, "rb");
-	if (!f) {
-		fprintf(stderr, "[mods] SMS_EV_SHINE_SETUP: no model %s\n", ev.model);
+	if (keeper->getIndex(file) >= 0)
+		return file;
+	char path[128];
+	snprintf(path, sizeof path, "%s/%s", keeper->getFolder(), file);
+	if (!JKRGetResource(path)) {
+		fprintf(stderr, "[mods] SMS_EV_ITEM_SETUP: this stage has no %s; the coin keeps its own\n", path);
 		return 0;
 	}
-	fseek(f, 0, SEEK_END);
-	const long size = ftell(f);
-	fseek(f, 0, SEEK_SET);
-	u8* data = size > 32 && size < (16 << 20) ? new (0x20) u8[size] : 0;
-	const bool read = data && fread(data, 1, (size_t)size, f) == (size_t)size;
-	fclose(f);
-	if (!read || memcmp(data, "J3D2bmd", 7) != 0) {
-		fprintf(stderr, "[mods] SMS_EV_SHINE_SETUP: %s is not a model (.bmd)\n", ev.model);
-		return 0;
-	}
-	port_res_to_native_named(data, (u32)size, ev.model);
-	J3DModelData* model = J3DModelLoaderDataBase::load(data, ((TMActorKeeper*)k)->getModelLoaderFlags());
-	if (!model)
-		return 0;
-	const size_t n = strlen(ev.model) + 1;
-	char* name     = new char[n];
-	memcpy(name, ev.model, n);
-	TModelDataNode* node = &keeper->mHead;
-	while (node->getNext())
-		node = node->getNext();
-	node->registerDataAndJoinNewNode(new SDLModelData(model), name);
-	return name;
+	return file;
 }
 
 void yoshiEgg(int kind, void* egg, int* present)
@@ -1229,6 +1296,7 @@ struct Register {
 		e.fileMenu            = fileMenu;
 		e.episodeSelect       = episodeSelect;
 		e.shineTouch          = shineTouch;
+		e.objectModel         = objectModel;
 		e.playerAim           = playerAim;
 		e.hiddenPlayerParts   = hiddenPlayerParts;
 		port_ext_register(&s_extension);
@@ -1238,6 +1306,22 @@ struct Register {
 } // namespace
 
 // ------------------------------------------------------------------ reads and writes
+
+// A world's episode select while it is up (TSelectDir, the app state the
+// decomp calls APP_STATE_TITLE): its world and the episode its cursor is on,
+// once TSelectMenu::initData has run (unk38); -1 otherwise.
+static void selectCursor(int* area, int* episode)
+{
+	*area = *episode = -1;
+	if (gpApplication.mAppState != TApplication::APP_STATE_TITLE)
+		return;
+	TSelectDir* dir = (TSelectDir*)gpApplication.mDirector;
+	TSelectMenu* menu = dir && dir->unk38 ? dir->getSelectMenu() : 0;
+	if (!menu || menu->mSelectedShine >= 8)
+		return;
+	*area    = menu->mStage;
+	*episode = menu->mSelectedShine;
+}
 
 extern "C" void modg_state(SmsGameState* out)
 {
@@ -1252,6 +1336,7 @@ extern "C" void modg_state(SmsGameState* out)
 	s.ticks_per_second = port_active_frame_rate > 0 ? port_active_frame_rate : 30;
 	s.save_file        = gpApplication.mSaveFile;
 	s.paused           = paused() ? 1 : 0;
+	selectCursor(&s.select_area, &s.select_episode);
 	// the host half fills in frame and eclipse
 	const uint32_t n = out->size && out->size < sizeof s ? out->size : (uint32_t)sizeof s;
 	memcpy(out, &s, n);
@@ -1388,6 +1473,21 @@ extern "C" int modg_object_set_color(SmsObject o, int which, SmsColor c)
 			m->setTevColor((u32)(which - SMS_COLOR_TEV0), &tev);
 		}
 	}
+	return 1;
+}
+
+// One object drawn in a colour of its own (game->object_set_tint): its
+// J3DModel's shape packets, which its model data shares with no one.
+extern "C" int modg_object_set_tint(SmsObject o, SmsColor c)
+{
+	JDrama::TNameRef* r = o ? ref(o) : 0;
+	J3DModel* model     = 0;
+	if (TLiveActor* a = r ? dynamic_cast<TLiveActor*>(r) : 0)
+		model = a->getMActor() ? a->getMActor()->getModel() : a->getModel();
+	if (!model || !model->getModelData() || !model->getShapePacketArray())
+		return 0;
+	port_ext_set_model_tint(model, model->getShapePacketArray(),
+	                        (unsigned)(model->getModelData()->getShapeNum() * sizeof(J3DShapePacket)), c);
 	return 1;
 }
 

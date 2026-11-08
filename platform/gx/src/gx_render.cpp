@@ -2462,6 +2462,13 @@ void flushBatch() {
         const float inv = bindGoopTint(gm >= 0 ? g.texImage[gm] : nullptr, kGoopUnit);
         glUniform1f(sp->uGoopRef, inv);
     }
+    // one object's colour (GXPC_SetObjectTint): the batch is all one object's
+    if (sp->uObjTint >= 0) {
+        const uint32_t t = objectTintNow();
+        const float c[4] = {float(t >> 24) / 255.0f, float((t >> 16) & 255) / 255.0f, float((t >> 8) & 255) / 255.0f,
+                            float(t & 255) / 255.0f};
+        glUniform4fv(sp->uObjTint, 1, c);
+    }
 
     uploadUniforms(sp, texW, texH);
 
@@ -3143,6 +3150,10 @@ void executeCopy(uint32_t ctrl) {
     }
 }
 
+// GXPC_SetObjectTint: the colour of the draws now, 0 none. A batch keeps one.
+static uint32_t s_objectTint = 0;
+uint32_t objectTintNow() { return s_objectTint; }
+
 }  // namespace gx
 
 using namespace gx;
@@ -3509,6 +3520,13 @@ static void hudReanchor() {
     if (now == s_hudAnchor) return;
     if (now < 0.0f || s_hudAnchor < 0.0f || hudOffset(now) != hudOffset(s_hudAnchor)) flushBatch();
     s_hudAnchor = now;
+}
+
+void GXPC_SetObjectTint(uint32_t rgba) {
+    if (!(rgba & 0xFF)) rgba = 0;
+    if (rgba == s_objectTint) return;
+    flushBatch();
+    s_objectTint = rgba;
 }
 
 void GXPC_HudPaneBegin(float x1, float x2) {

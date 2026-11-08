@@ -70,6 +70,8 @@ bool earlyZWritesRejected() {
 // ShaderKey.order's bit for the stage whose goop map a goop layer's tint map
 // goes with (buildKey); the order itself is 10 bits.
 static const uint32_t kOrderGoop = 0x80000000u;
+// ShaderKey.order[0]'s bit for a draw in one object's colour (GXPC_SetObjectTint).
+static const uint32_t kOrderTint = 0x40000000u;
 static int s_goopMap = -1;  // the map of the last key built, -1 none
 int goopMapNow() { return s_goopMap; }
 
@@ -115,6 +117,9 @@ static void buildKey(ShaderKey& k) {
         s_goopMap = int(ord & 7);
         break;
     }
+    // One object in a colour of its own (GXPC_SetObjectTint): its programs
+    // tint their result. Old keys never have the bit either.
+    if (objectTintNow()) k.order[0] |= kOrderTint;
     k.alphaFunc = (g.bp[BP_ALPHACOMPARE] >> 16) & 0xFF;
     k.earlyZ = earlyZWritesRejected() && shaderHasEarlyFragmentTests();
     k.fogType = (g.bp[BP_FOG3] >> 21) & 7;
@@ -363,6 +368,8 @@ static std::string genFS(const ShaderKey& k) {
     for (uint32_t st = 0; st < k.numStages && goopStage < 0; st++)
         if (k.order[st] & kOrderGoop) goopStage = int(st);
     if (goopStage >= 0) s.insert(s.find("out vec4 o_color;"), "uniform sampler2D u_goop;\nuniform float u_goopref;\n");
+    const bool objTint = (k.order[0] & kOrderTint) != 0;
+    if (objTint) s.insert(s.find("out vec4 o_color;"), "uniform vec4 u_objtint;\n");
     s += "void main() {\n"
          "  ivec4 cprev = u_tevreg[0], creg0 = u_tevreg[1], creg1 = u_tevreg[2], creg2 = u_tevreg[3];\n"
          "  ivec4 ras0 = texi(v_c0), ras1 = texi(v_c1);\n"
@@ -542,6 +549,17 @@ static std::string genFS(const ShaderKey& k) {
                  coord, coord);
         s += buf;
     }
+    if (objTint) {
+        // One object in its colour: its lightness says how dark (below a
+        // mid-grey) or how near white (above) the colour is drawn, so its
+        // shading and gloss stay; the colour's alpha how far towards it.
+        s += "  {\n"
+             "    vec3 oc = vec3(outc.rgb) / 255.0;\n"
+             "    float ol = dot(oc, vec3(0.299, 0.587, 0.114));\n"
+             "    vec3 tc = ol < 0.5 ? u_objtint.rgb * (2.0 * ol) : mix(u_objtint.rgb, vec3(1.0), 2.0 * ol - 1.0);\n"
+             "    outc.rgb = ivec3(round(mix(oc, tc, u_objtint.a) * 255.0));\n"
+             "  }\n";
+    }
 
     // alpha compare
     {
@@ -650,6 +668,7 @@ static void setupProgram(GLuint p, ShaderProgram& sp, bool aside = false) {
     sp.uAmbMat = glGetUniformLocation(p, "u_chan");
     sp.uLineWidth = glGetUniformLocation(p, "u_linewidth");
     sp.uGoopRef = glGetUniformLocation(p, "u_goopref");
+    sp.uObjTint = glGetUniformLocation(p, "u_objtint");
     loc = glGetUniformLocation(p, "u_goop");
     if (loc >= 0) glUniform1i(loc, kGoopUnit);
     sp.uDstAlpha = -1;
@@ -1167,7 +1186,7 @@ const ShaderProgram* shaderForCurrentState(bool depthOnly, bool lines) {
     buildKey(k);
     k.depthOnly = depthOnly;
     if (depthOnly || lines)  // nothing to tint: their programs are as ever
-        for (uint32_t st = 0; st < 16; st++) k.order[st] &= ~kOrderGoop;
+        for (uint32_t st = 0; st < 16; st++) k.order[st] &= ~(kOrderGoop | kOrderTint);
     key.indScale[0] = k.numInd ? g.bp[BP_RAS1_SS0] : 0;
     key.indScale[1] = k.numInd ? g.bp[BP_RAS1_SS0 + 1] : 0;
     if (lines) return lineProgram(key);

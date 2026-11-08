@@ -47,6 +47,7 @@ int modg_object_position(SmsObject obj, SmsVec3* out);
 int modg_object_set_position(SmsObject obj, const SmsVec3* pos);
 uint32_t modg_object_type(SmsObject obj);
 int modg_object_set_color(SmsObject obj, int which, SmsColor color);
+int modg_object_set_tint(SmsObject obj, SmsColor color);
 // The running disc's game code and maker ("GMSE01"), into out[7].
 void modg_game_code(char* out);
 int modg_object_health(SmsObject obj, int* max);

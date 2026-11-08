@@ -297,6 +297,13 @@ typedef struct PortExtension {
 	// A TMario touched a TShine he is about to take (TMario::receiveMessage),
 	// before its Shine Get: return PORT_SHINE_TOUCH_* (GET as the game does).
 	int (*shineTouch)(void* mario, void* shine);
+	// A map object with a plain model (no animation data: the coins) is about
+	// to make it (TMapObjBase::makeMActors): `name` the model file it takes
+	// ("coin.bmd", in its keeper's folder).
+	// Return the name of another model, one the hook registered in `keeper`
+	// (a TMActorKeeper's model data keeper) or a file in that folder, or
+	// null for the object's own. The first that names one wins.
+	const char* (*objectModel)(void* object, void* keeper, const char* name);
 } PortExtension;
 
 // shineTouch's answers
@@ -437,6 +444,10 @@ int port_ext_file_starting(void);
 void port_ext_file_menu(int file, int isEmpty, int item);
 void port_ext_episode_select(int area, int* offered, int* first, int maxOffered);
 int port_ext_shine_touch(void* mario, void* shine);
+const char* port_ext_object_model(void* object, void* keeper, const char* name);
+// The number of the blue coin TItemManager::newAndRegisterCoin is making (it
+// sets the coin's own only after the coin has made its model), else -1.
+extern int port_ext_coin_event_id;
 int port_ext_player_message(void* mario, void* sender, unsigned message);
 void port_ext_player_mount(void* mario, int mount, int on, void* object);
 void port_ext_player_water(void* mario, int entered, float surfaceY);
@@ -483,6 +494,18 @@ extern int port_ext_death_cause;
 // TMarDirector::setNextStage the port makes itself, so allowNextStage and
 // what follows know it is not the game's way out; GAME otherwise.
 extern int port_ext_stage_change_by;
+
+// ------------------------------------------------------------------ one model's tint
+// A J3DModel drawn in a colour of its own (sms_gx's GXPC_SetObjectTint), however
+// its model data is shared: `packets` its J3DShapePacket array, `bytes` long.
+// 0xRRGGBBAA, the alpha how strongly; 0 takes it off. The stage's change
+// forgets them all (port_ext_clear_model_tints): models go with the stage.
+void port_ext_set_model_tint(const void* model, const void* packets, unsigned bytes, unsigned rgba);
+void port_ext_clear_model_tints(void);
+// J3DShapePacket::draw around its shape's draw: begin returns 1 when the
+// packet's model is tinted (it set the tint), and end is to be called then.
+int port_ext_shape_tint_begin(const void* packet);
+void port_ext_shape_tint_end(void);
 
 // ------------------------------------------------------------------ the HUD
 // Parts of the game's own HUD (TGCConsole2) left out of its drawing. Each
