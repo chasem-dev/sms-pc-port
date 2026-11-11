@@ -10,9 +10,9 @@
 //
 // Output: SDL2 audio (loaded with dlopen, so builds without the GX layer still
 // link) at 32 kHz; the SDL callback drains the FIFO and kicks the CPU when it
-// runs low (three blocks queued, 52 ms, or up to eight after the output ran
-// dry). Without a device (headless, SMS_AUDIO_OUT=null, SDL failure, or no
-// answer from the sound server within SMS_AUDIO_OPEN_TIMEOUT seconds) a host
+// runs low (three blocks queued, 52 ms, or up to eight after a short dry
+// spell; out_queue.h). Without a device (headless, SMS_AUDIO_OUT=null, SDL
+// failure, or no answer from the sound server within SMS_AUDIO_OPEN_TIMEOUT seconds) a host
 // timer paces blocks at the DAC rate. SMS_AUDIO_WAV=path also records
 // every block. SMS_AUDIO=0 drops the output only: the DMA engine keeps its
 // clock (as with no device), so JAudio's audio thread, its sequencer and the
@@ -34,6 +34,7 @@
 #include <condition_variable>
 #include <dlfcn.h>
 #include "dsp_mixer.h"
+#include "out_queue.h"
 #include "port_setting_list.h"
 #include "port_settings.h"
 #include "port_host.h"
@@ -80,10 +81,9 @@ typedef int (*PFN_SDL_GetNumAudioDrivers)(void);
 typedef const char* (*PFN_SDL_GetAudioDriver)(int);
 typedef const char* (*PFN_SDL_GetCurrentAudioDriver)(void);
 
-const u32 kRate = 32000;
-const u32 kBlockFrames = 560; // JAudio's DAC block (0x460 samples), 17.5 ms
-const int kBaseBlocks  = 3;   // blocks the output keeps queued
-const int kMaxExtra    = 5;   // more after it ran dry: up to 8 blocks, 140 ms
+const u32 kRate        = port_out_queue::kRate;
+const u32 kBlockFrames = port_out_queue::kBlockFrames;
+const int kBaseBlocks  = port_out_queue::kBaseBlocks;
 
 struct Ai {
 	bool enabled; // the DMA engine runs (not SMS_NO_AUDIO)
@@ -107,12 +107,12 @@ struct Ai {
 	bool sdl;
 	bool fed; // a block has reached the FIFO
 	s16 lastL, lastR;
-	// Blocks queued beyond kBaseBlocks, added when the output ran dry and
-	// given back one at a time after kRate * 30 frames without (sdl_callback).
+	// Blocks queued beyond kBaseBlocks (out_queue.h), changed by sdl_callback
+	// under mu; `extra` is its copy for fifo_target.
+	port_out_queue::State queue;
 	std::atomic<int> extra;
-	std::atomic<int> grew; // for the log: the new target in blocks
-	u32 dryFrames;         // device frames with nothing to play, this dry spell
-	u32 steadyFrames;      // device frames played since the last dry spell
+	// For the log: the new target in blocks, negative when a block was given back.
+	std::atomic<int> changed;
 	// Null clock
 	std::atomic<int> due;
 	u64 blocks;
@@ -196,25 +196,12 @@ void sdl_callback(void*, uint8_t* stream, int len)
 			out[i * 2]     = (int16_t)((g.lastL * volume) >> 8);
 			out[i * 2 + 1] = (int16_t)((g.lastR * volume) >> 8);
 		}
-		// Ran dry: blocks are made on the emulated CPU, so the game's thread
-		// held it (a load, a shader compile, a slow frame) for longer than the
-		// queue lasts, and the gap clicks. When the spell ends, queue at least
-		// one block more, or enough more to have covered it, so hitches like
-		// it play through.
-		if (dry && g.fed && g.running) {
-			g.dryFrames += (u32)dry;
-			g.steadyFrames = 0;
-		} else if (g.dryFrames) {
-			int cover = (int)((g.dryFrames + kBlockFrames - 1) / kBlockFrames);
-			int need  = std::min(kMaxExtra, std::max(g.extra.load() + 1, cover));
-			if (need > g.extra.load()) {
-				g.extra.store(need);
-				g.grew.store(kBaseBlocks + need);
-			}
-			g.dryFrames = 0;
-		} else if (g.extra.load() > 0 && (g.steadyFrames += (u32)frames) >= kRate * 30) {
-			g.extra.fetch_sub(1);
-			g.steadyFrames = 0;
+		// Ran dry: the game's thread held the emulated CPU for longer than
+		// the queue lasts. Short spells grow the queue, loads leave it, and
+		// steady play gives blocks back (out_queue.h).
+		if (int step = port_out_queue::update(g.queue, frames, dry, g.fed && g.running)) {
+			g.extra.store(g.queue.extra);
+			g.changed.store(step > 0 ? kBaseBlocks + g.queue.extra : -(kBaseBlocks + g.queue.extra));
 		}
 		low = g.count < fifo_target(speed);
 	}
@@ -596,8 +583,14 @@ void ai_poll()
 	if (dac_thread_busy())
 		return; // polled again when it blocks (the scheduler delivers interrupts then)
 	if (g.sdl) {
-		if (int blocks = g.grew.exchange(0))
-			port_log("[audio] the output ran dry; queueing %u ms from now on\n", blocks * kBlockFrames * 1000 / kRate);
+		if (int blocks = g.changed.exchange(0)) {
+			if (blocks > 0)
+				port_log("[audio] the output ran dry; queueing %u ms from now on\n",
+				         (u32)blocks * kBlockFrames * 1000 / kRate);
+			else
+				port_log("[audio] no dropouts for %u s; queueing %u ms\n", port_out_queue::kGiveBackFrames / kRate,
+				         (u32)-blocks * kBlockFrames * 1000 / kRate);
+		}
 		size_t level;
 		size_t target = fifo_target(playback_speed());
 		{
