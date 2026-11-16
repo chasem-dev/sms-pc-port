@@ -98,6 +98,7 @@ void modg_play_system_sound(uint32_t id);
 // API 1.8: general tools (modapi_world.cpp)
 void modg_play_sound_at(uint32_t id, const SmsVec3* at);
 int modg_particle(uint32_t id, const SmsVec3* at);
+int modg_object_particle(SmsObject obj, uint32_t id, int joint);
 int modg_ray(const SmsVec3* a, const SmsVec3* b, SmsVec3* hit);
 int modg_splash(const SmsVec3* at, float size);
 int modg_clean_goop(const SmsVec3* at, float radius);

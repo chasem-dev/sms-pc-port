@@ -1070,7 +1070,7 @@ const SmsGameApi s_game = {
 	modg_cube_count,    apiInCube,       apiObjectCount,      apiObjectInfo,         apiGround,
 	modg_object_type,   modg_object_health, apiSetHudHidden,     apiHudHidden,
 	modg_object_set_color, modg_object_set_tint, modg_particle, modg_ray, modg_splash, modg_clean_goop, modg_wall_at, apiSetViewDistance,
-	modg_out_of_walls,
+	modg_out_of_walls,  modg_object_particle,
 };
 
 int apiPlayerGet(SmsPlayer* out)
@@ -1640,22 +1640,26 @@ int keyHook(int sc, int down, int repeat, int mods)
 		if (down && !repeat)
 			s_keyPressed[sc] = 1;
 	}
+	// A key let go always reaches the game as well: one held down as a menu took the keyboard
+	// (the key that opened a mod's menu, say) is not left held there, playing (Mario walking,
+	// co-op's keyboard in use) after the menu has closed. The game had no press of the others.
+	const int keep = down ? 1 : 0;
 	// the Mods menu's key opens and closes it, and is kept from the game
 	if (sc == s_menuKey && s_menuKey >= 0) {
 		if (down && !repeat)
 			menuToggle();
-		return 1;
+		return keep;
 	}
 	if (menuOpen()) {
 		menuKey(sc, down, repeat); // the menu has the keyboard while open
-		return 1;
+		return keep;
 	}
 	SmsEvKey ev = {sc, down, repeat, mods};
 	if (s_captor) {
 		dispatchTo(SMS_EV_KEY, &ev, sizeof ev, s_captor);
-		return 1;
+		return keep;
 	}
-	return dispatchTo(SMS_EV_KEY, &ev, sizeof ev, nullptr);
+	return dispatchTo(SMS_EV_KEY, &ev, sizeof ev, nullptr) && down;
 }
 
 // ------------------------------------------------------------------ start and stop

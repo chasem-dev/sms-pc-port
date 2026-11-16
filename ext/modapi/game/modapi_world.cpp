@@ -532,6 +532,60 @@ extern "C" int modg_particle(uint32_t id, const SmsVec3* at)
 	return gpMarioParticleManager->emit(id, &p, 0, nullptr) ? 1 : 0;
 }
 
+// One of the game's effects on an object (game->object_particle), as the game puts its own on its
+// actors: bound to its model's joint (TShine::calc's on joint 2) or its position, the actor its
+// owner. The particle manager's lasting effects (its groups 1 and 3: one slot per owner, kept while
+// asked for each frame, TMarioParticleManager::perform) go on while the mod asks; the others play
+// once, following the object.
+namespace {
+TMarioParticleManager::TInfo* lastingRow(uint32_t id, u8* group)
+{
+	if (id >= 253 && id < 253 + 214) {
+		*group = 1;
+		return gpMarioParticleManager->unk10[id - 253];
+	}
+	if (id >= 486 && id < 486 + 19) {
+		*group = 3;
+		return gpMarioParticleManager->unk368[id - 486];
+	}
+	*group = 0;
+	return 0;
+}
+} // namespace
+
+extern "C" int modg_object_particle(SmsObject o, uint32_t id, int joint)
+{
+	TLiveActor* a = o ? dynamic_cast<TLiveActor*>(ref(o)) : 0;
+	if (!a || !gpMarioParticleManager || a->checkLiveFlag(LIVE_FLAG_DEAD | LIVE_FLAG_HIDDEN))
+		return 0;
+	MtxPtr mtx = 0;
+	if (joint >= 0) {
+		J3DModel* model = a->getMActor() ? a->getMActor()->getModel() : 0;
+		if (!model || joint >= (int)model->getModelData()->getJointNum())
+			return 0;
+		mtx = model->getAnmMtx((u16)joint);
+	}
+	u8 group = 0;
+	if (TMarioParticleManager::TInfo* row = lastingRow(id, &group)) {
+		// a lasting effect: one of the slots each such effect has (32 most stages, the game's
+		// own owners among them). TMarioParticleManager::getAvailableIdx takes the first when
+		// none is free, someone else's: refused instead
+		bool slot = false;
+		for (int i = 0; i < gpMarioParticleManager->unk3B4 && !slot; i++)
+			slot = row[i].mEmitter && row[i].unk0 == a;
+		for (int i = 0; i < gpMarioParticleManager->unk3B4 && !slot; i++)
+			slot = !row[i].checkFlag(TMarioParticleManager::INFO_FLAG_UNK4) && !row[i].mEmitter;
+		if (!slot)
+			return 0;
+		// out of view the game asks for none (TShine::calc): it starts again when seen
+		if (a->checkLiveFlag(LIVE_FLAG_CLIPPED_OUT))
+			return 1;
+	}
+	JPABaseEmitter* e = mtx ? gpMarioParticleManager->emitAndBindToMtxPtr((s32)id, mtx, group, a)
+	                        : gpMarioParticleManager->emitAndBindToPosPtr((s32)id, &a->mPosition, group, a);
+	return e ? 1 : 0;
+}
+
 extern "C" int modg_ray(const SmsVec3* a, const SmsVec3* b, SmsVec3* hit)
 {
 	if (!a || !b || !gpMap)

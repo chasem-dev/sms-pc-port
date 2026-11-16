@@ -86,6 +86,8 @@ extern "C" int port_coop_view_rect(int view, float* r);
 extern "C" int modg_player_view(int player, float* r) { return port_coop_view_rect(player, r); }
 
 void PortWorldTick();       // modapi_world.cpp: each tick (the water drops kept as far as asked)
+static void applyPendingTints(); // game->object_set_tint's asked before the object's model was made
+static void clearPendingTints();
 void PortWorldStageSetup(); // ...a new stage (its actors' model scales gone)
 
 namespace {
@@ -148,6 +150,7 @@ void frame()
 	static uint32_t s_frame;
 	if (gameMode() != SMS_MODE_STAGE)
 		s_stageReady = false;
+	applyPendingTints();
 	stageStart();
 	watchModeAndPause();
 	modh_frame(s_frame++, gameMode());
@@ -185,6 +188,7 @@ void afterMovement()
 void stageSetup()
 {
 	PortWorldStageSetup();
+	applyPendingTints();
 	s_stageReady  = true;
 	s_tick        = 0;
 	s_started     = false;
@@ -324,6 +328,7 @@ void moveStage() { s_stageReady = false; }
 void chooseStageLoad()
 {
 	port_ext_clear_model_tints(); // game->object_set_tint's: the models go with the stage
+	clearPendingTints();          // ...and the actors
 	if (!modh_wants(SMS_EV_STAGE_LOADING))
 		return;
 	TGameSequence& cur  = gpApplication.mCurrArea;
@@ -1182,10 +1187,10 @@ const char* shineModel(void* p, void* k, int collected)
 	return keepModelFile(k, ev.model, "SMS_EV_SHINE_SETUP");
 }
 
-// The coins' models SmsEvItemSetup.game_model names (SMS_GAME_MODEL_*), files
-// of the stage's map objects' folder. (The Shine's shine.bmd does not show on
-// a coin, so it is not one of them.)
-const char* const kGameModels[] = {0, "coin.bmd", "coin_red.bmd", "coin_blue.bmd"};
+// The models SmsEvItemSetup.game_model names (SMS_GAME_MODEL_*), files of the
+// stage's map objects' folder. The Shine's has three joints: it shows on a coin
+// since a model of several joints is placed whole (patch zzzzz-ext-36).
+const char* const kGameModels[] = {0, "coin.bmd", "coin_red.bmd", "coin_blue.bmd", "shine.bmd"};
 
 // A coin makes its model (SMS_EV_ITEM_SETUP): one of a mod's files, another
 // coin's, or its own. A blue coin's number and flag as TCoinBlue::load reads
@@ -1219,7 +1224,7 @@ const char* objectModel(void* p, void* k, const char* name)
 	if (ev.model && ev.model[0])
 		if (const char* mine = keepModelFile(k, ev.model, "SMS_EV_ITEM_SETUP"))
 			return mine;
-	if (ev.game_model <= SMS_GAME_MODEL_NONE || ev.game_model > SMS_GAME_MODEL_BLUE_COIN)
+	if (ev.game_model <= SMS_GAME_MODEL_NONE || ev.game_model > SMS_GAME_MODEL_SHINE)
 		return 0;
 	const char* file = kGameModels[ev.game_model];
 	if (!strcmp(file, name))
@@ -1518,13 +1523,19 @@ extern "C" uint32_t modg_hud_hidden(void)
 	return port_hud_hidden();
 }
 
+// An object's model, or null: an actor's that has made it (a coin has none yet
+// at SMS_EV_ITEM_SETUP; TLiveActor::getModel reads it through the MActor).
+static J3DModel* objectModelOf(SmsObject o)
+{
+	JDrama::TNameRef* r = o ? ref(o) : 0;
+	TLiveActor* a       = r ? dynamic_cast<TLiveActor*>(r) : 0;
+	return a && a->getMActor() ? a->getMActor()->getModel() : 0;
+}
+
 // One colour of every material of an object's model (game->object_set_color).
 extern "C" int modg_object_set_color(SmsObject o, int which, SmsColor c)
 {
-	JDrama::TNameRef* r = o ? ref(o) : 0;
-	J3DModel* model     = 0;
-	if (TLiveActor* a = r ? dynamic_cast<TLiveActor*>(r) : 0)
-		model = a->getMActor() ? a->getMActor()->getModel() : a->getModel();
+	J3DModel* model = objectModelOf(o);
 	if (!model || !model->getModelData() || which < SMS_COLOR_MATERIAL || which > SMS_COLOR_TEV2)
 		return 0;
 	J3DModelData* data = model->getModelData();
@@ -1547,16 +1558,61 @@ extern "C" int modg_object_set_color(SmsObject o, int which, SmsColor c)
 
 // One object drawn in a colour of its own (game->object_set_tint): its
 // J3DModel's shape packets, which its model data shares with no one.
-extern "C" int modg_object_set_tint(SmsObject o, SmsColor c)
+static int tintModel(J3DModel* model, SmsColor c)
 {
-	JDrama::TNameRef* r = o ? ref(o) : 0;
-	J3DModel* model     = 0;
-	if (TLiveActor* a = r ? dynamic_cast<TLiveActor*>(r) : 0)
-		model = a->getMActor() ? a->getMActor()->getModel() : a->getModel();
 	if (!model || !model->getModelData() || !model->getShapePacketArray())
 		return 0;
 	port_ext_set_model_tint(model, model->getShapePacketArray(),
 	                        (unsigned)(model->getModelData()->getShapeNum() * sizeof(J3DShapePacket)), c);
+	return 1;
+}
+
+// Tints asked for an actor that has no model yet (a coin at SMS_EV_ITEM_SETUP):
+// kept, and given to its model once it has made it (the stage's setup, the
+// next frame), until the stage changes. The stage's actors stay till then.
+namespace {
+struct PendingTint {
+	TLiveActor* actor;
+	SmsColor color;
+};
+const int kMaxPendingTints = 256;
+PendingTint s_pendingTints[kMaxPendingTints];
+int s_pendingTintCount;
+} // namespace
+
+static void applyPendingTints()
+{
+	int kept = 0;
+	for (int i = 0; i < s_pendingTintCount; i++) {
+		const PendingTint& t = s_pendingTints[i];
+		if (t.actor->getMActor())
+			tintModel(t.actor->getMActor()->getModel(), t.color);
+		else
+			s_pendingTints[kept++] = t;
+	}
+	s_pendingTintCount = kept;
+}
+
+static void clearPendingTints() { s_pendingTintCount = 0; }
+
+extern "C" int modg_object_set_tint(SmsObject o, SmsColor c)
+{
+	JDrama::TNameRef* r = o ? ref(o) : 0;
+	TLiveActor* a       = r ? dynamic_cast<TLiveActor*>(r) : 0;
+	if (!a)
+		return 0;
+	if (a->getMActor())
+		return tintModel(a->getMActor()->getModel(), c);
+	for (int i = 0; i < s_pendingTintCount; i++)
+		if (s_pendingTints[i].actor == a) {
+			s_pendingTints[i].color = c; // 0 too: it then takes none
+			return 1;
+		}
+	if (!(c & 0xFF) || s_pendingTintCount >= kMaxPendingTints)
+		return (c & 0xFF) ? 0 : 1;
+	s_pendingTints[s_pendingTintCount].actor = a;
+	s_pendingTints[s_pendingTintCount].color = c;
+	s_pendingTintCount++;
 	return 1;
 }
 
