@@ -978,10 +978,13 @@ uint64_t pieceResult(uint32_t slot) {
 
 // Adds the query's pieces whose segments have finished to its partial sum
 // and retires their slots (none of them is the piece recording now).
+// By D.completed as the caller's pollCompleted left it: serialDone would ask
+// the driver (a system call) for every piece of a segment not yet submitted,
+// which is all of them within a frame.
 void fold(Query* q) {
     size_t keep = 0;
     for (const Query::Piece& p : q->pieces) {
-        if (int(p.slot) != s_openSlot && serialDone(p.serial)) {
+        if (int(p.slot) != s_openSlot && p.serial <= D.completed) {
             q->partial += pieceResult(p.slot);
             s_retired.push_back(Retired{p.serial, p.slot});
         } else {
@@ -1061,7 +1064,10 @@ uint32_t allocSlot() {
 void beginQueryPiece() {
     Query* q = g_queries.get(S.query);
     if (!q || s_openSlot >= 0) return;
-    if (q->pieces.size() >= kFoldPieces) fold(q);  // a query left running: its finished pieces
+    if (q->pieces.size() >= kFoldPieces) {  // a query left running: its finished pieces
+        pollCompleted();
+        fold(q);
+    }
     const uint32_t slot = allocSlot();
     if (slot == kNoSlot) {
         q->lost = true;
