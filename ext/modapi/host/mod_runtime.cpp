@@ -765,6 +765,7 @@ void dropRegistrations(SmsMod* m)
 	if (s_captor == m)
 		s_captor = nullptr;
 	modg_models_unload(m); // its models gone
+	modg_world_forget_episode_names(m); // the game's episode names again
 	if (m->hudHidden) {
 		m->hudHidden = 0; // what it hid is shown again (unless another mod hides it)
 		applyHudHidden();
@@ -1429,11 +1430,16 @@ int apiWorldPlayCutscene(const char* name, const SmsVec3* focus, int frames)
 	return modg_world_play_cutscene(name, focus, frames);
 }
 int apiWorldCutscenePlaying(void) { return modg_world_cutscene_playing(); }
+// API 1.8 beta 4: an episode's name as the mod has it (Eclipse's select names its own)
+int apiWorldSetEpisodeName(SmsMod* mod, int area, int episode, const char* name)
+{
+	return mod && vanilla() ? modg_world_set_episode_name(mod, area, episode, name) : 0;
+}
 
 const SmsWorldApi s_world = {
 	sizeof(SmsWorldApi),  apiWorldAreaKind,     apiWorldOf,          apiWorldEpisodeCount,
 	apiWorldEpisodeShine, apiWorldEpisodeName,  apiWorldNextEpisode, apiWorldShineEpisode,
-	apiWorldHasCutscene,  apiWorldPlayCutscene, apiWorldCutscenePlaying,
+	apiWorldHasCutscene,  apiWorldPlayCutscene, apiWorldCutscenePlaying, apiWorldSetEpisodeName,
 };
 
 // What the multiplayer game says happened, to every mod.

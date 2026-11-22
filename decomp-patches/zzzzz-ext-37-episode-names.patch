@@ -1,0 +1,146 @@
+Reason: extensions (port_ext.h's episodeName) may name an episode: the episode select and the pause menu show their name, and a save state made in it is listed with it; an episode standing for a Shine the message bank has no name for (70..119, scScenarioNameTable) or for none shows none instead of a message read past the table: the native mod API's world->set_episode_name (API 1.8 beta 4, ext/modapi)
+--- a/src/GC2D/PauseMenu2.cpp
++++ b/src/GC2D/PauseMenu2.cpp
+@@ -419,6 +419,7 @@
+ #endif
+ 		const char* scenarioName;
+ #ifdef TARGET_PC
++		const char* sms_ext_name = port_ext_episode_name((int)shineStage, (int)flag);
+ 		// BetterSunshineEngine: the word at 0x80156D5C (`b 0x80156E04`) goes
+ 		// straight to the scenario-name call, past the checks and the pane
+ 		// moves; that call is loadScenarioNameFromBMGAfterStubStub at retail
+@@ -429,6 +430,18 @@
+ 			scenarioName = ((const char* (*)(void*))sms_mod_n_)(scenarioBmg);
+ 		} else
+ #endif
++#ifdef TARGET_PC
++		// the episode's name as an extension has it (port_ext.h); and none
++		// for a Shine the bank has no name for (it names Shines 0..69,
++		// scScenarioNameTable), as for no Shine
++		if (sms_ext_name) {
++			scenarioName = sms_ext_name;
++		} else if (shineID >= (s16)(sizeof scScenarioNameTable / sizeof scScenarioNameTable[0])) {
++			scenarioName = "";
++			mStageName->add(0, 0xF);
++			mMenuPane->add(0, 0x1E);
++		} else
++#endif
+ 		if (scenarioBmg == nullptr || shineID == -1 || shineStage == 0) {
+ 			scenarioName = "";
+ 			mStageName->add(0, 0xF);
+--- a/src/GC2D/SelectMenu.cpp
++++ b/src/GC2D/SelectMenu.cpp
+@@ -99,6 +99,20 @@
+ 	SMS_MOD_GPR(31, menu);
+ 	return ((const char* (*)())fn)();
+ }
++
++// The episode's name: an extension's (port_ext.h), else the message for the
++// Shine it stands for. The bank names Shines 0..69 (scScenarioNameTable): one
++// standing for another, or none (-1), shows none instead of a message read
++// past the table.
++static inline const char* SelectMenuEpisodeName(void* bmg, u32 stage, u32 scenario)
++{
++	if (const char* name = port_ext_episode_name((int)stage, (int)scenario))
++		return name;
++	const s16 shine = SelectMenuEpisodeShineID(stage, scenario, false);
++	if (shine < 0 || shine >= (s16)(sizeof scScenarioNameTable / sizeof scScenarioNameTable[0]))
++		return "";
++	return SMSGetMessageData(bmg, (u16)SMS_getNormalStage(shine));
++}
+ #endif
+ 
+ // rogue includes needed for matching sinit & bss
+@@ -899,8 +913,8 @@
+ 		strncpy(mScenarioText1->getStringPtr(),
+ 		        ({ typedef __typeof__(SMSGetMessageData(mScenarioBmg2,
+ 		                          (u16)SMS_getNormalStage(shineID))) sms_mod_r_; void* sms_mod_t_ = SMS_MOD_SITE(0x8017539C); sms_mod_t_ ? (SMS_MOD_GPR(31, ((char*)(this) + 0x0)), ((__typeof__(static_cast<sms_mod_r_ (*)(void*, u32)>(&SMSGetMessageData)))sms_mod_t_)(mScenarioBmg2,
+-		                          (u16)SMS_getNormalStage(shineID))) : SMSGetMessageData(mScenarioBmg2,
+-		                          (u16)SMS_getNormalStage(shineID)); }),
++		                          (u16)SMS_getNormalStage(shineID))) : SelectMenuEpisodeName(mScenarioBmg2,
++		                          SMS_getShineStage(mStage), mSelectedShine); }),
+ 		        127);
+ 	}
+ }
+@@ -1201,11 +1215,8 @@
+ #ifdef TARGET_PC
+ 				        sms_mod_n_ ? SelectMenuScenarioName(this, sms_mod_n_) :
+ #endif
+-				        SMSGetMessageData(
+-				            mScenarioBmg2,
+-				            (u16)SMS_getNormalStage(SelectMenuEpisodeShineID(
+-				                SMS_getShineStage(mStage), mSelectedShine,
+-				                false))),
++				        SelectMenuEpisodeName(mScenarioBmg2, SMS_getShineStage(mStage),
++				                              mSelectedShine),
+ 				        127);
+ 
+ #ifdef TARGET_PC
+@@ -1234,11 +1245,8 @@
+ #ifdef TARGET_PC
+ 				        sms_mod_n_ ? SelectMenuScenarioName(this, sms_mod_n_) :
+ #endif
+-				        SMSGetMessageData(
+-				            mScenarioBmg2,
+-				            (u16)SMS_getNormalStage(SelectMenuEpisodeShineID(
+-				                SMS_getShineStage(mStage), mSelectedShine,
+-				                false))),
++				        SelectMenuEpisodeName(mScenarioBmg2, SMS_getShineStage(mStage),
++				                              mSelectedShine),
+ 				        127);
+ 
+ #ifdef TARGET_PC
+@@ -1327,14 +1335,12 @@
+ 				if (sms_mod_n_) {
+ 					scenarioName = SelectMenuScenarioName(this, sms_mod_n_);
+ 				} else {
+-#endif
+-				s16 shineID = SelectMenuEpisodeShineID(SMS_getShineStage(mStage),
+-				                             mSelectedShine, false);
+-#ifdef TARGET_PC
+-				scenarioName = SMSGetMessageData(
+-				    mScenarioBmg2, (u16)SMS_getNormalStage(shineID));
++					scenarioName = SelectMenuEpisodeName(mScenarioBmg2, SMS_getShineStage(mStage),
++					                                     mSelectedShine);
+ 				}
+ #else
++				s16 shineID = SMS_getShineID(SMS_getShineStage(mStage),
++				                             mSelectedShine, false);
+ 				const char* scenarioName = SMSGetMessageData(
+ 				    mScenarioBmg2, (u16)SMS_getNormalStage(shineID));
+ #endif
+@@ -1365,10 +1371,8 @@
+ #ifdef TARGET_PC
+ 				        sms_mod_n_ ? SelectMenuScenarioName(this, sms_mod_n_) :
+ #endif
+-				        SMSGetMessageData(mScenarioBmg2,
+-				                          (u16)SMS_getNormalStage(SelectMenuEpisodeShineID(
+-				                              SMS_getShineStage(mStage),
+-				                              mSelectedShine, false))),
++				        SelectMenuEpisodeName(mScenarioBmg2, SMS_getShineStage(mStage),
++				                              mSelectedShine),
+ 				        127);
+ 
+ #ifdef TARGET_PC
+--- a/src/System/Application.cpp
++++ b/src/System/Application.cpp
+@@ -1115,9 +1115,16 @@
+ 	if (!ApplicationWarpMessage(p->stageName, sizeof p->stageName,
+ 	                            JKRFileLoader::getGlbResource("/common/2d/stagename.bmg"), world))
+ 		snprintf(p->stageName, sizeof p->stageName, "Area %d", (int)p->area);
+-	ApplicationWarpMessage(p->episodeName, sizeof p->episodeName,
+-	                       JKRFileLoader::getGlbResource("/common/2d/scenarioname.bmg"),
+-	                       ApplicationWarpNameId(p->area, flags->getFlag(0x40003), world));
++	// (an extension's name for the episode first, as there: port_ext.h)
++	const char* extName = !port_warp_scenario_name_id && !ApplicationWarpIsEx(p->area)
++	                          ? port_ext_episode_name(world, flags->getFlag(0x40003))
++	                          : nullptr;
++	if (extName)
++		ApplicationWarpText(p->episodeName, sizeof p->episodeName, extName);
++	else
++		ApplicationWarpMessage(p->episodeName, sizeof p->episodeName,
++		                       JKRFileLoader::getGlbResource("/common/2d/scenarioname.bmg"),
++		                       ApplicationWarpNameId(p->area, flags->getFlag(0x40003), world));
+ }
+ 
+ static void ApplicationStateApplyFlags(const PortSaveStatePortable& p)

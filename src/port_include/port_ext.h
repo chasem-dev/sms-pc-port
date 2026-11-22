@@ -304,6 +304,12 @@ typedef struct PortExtension {
 	// (a TMActorKeeper's model data keeper) or a file in that folder, or
 	// null for the object's own. The first that names one wins.
 	const char* (*objectModel)(void* object, void* keeper, const char* name);
+	// The name an episode (0..7) of world `shineStage` (SMS_getShineStage's
+	// number) is shown with in the episode select and the pause menu (and a
+	// save state made in it is listed with), in the game's text (its message
+	// bank's single-byte letters, no escapes), or null for the game's own.
+	// The first that names one wins.
+	const char* (*episodeName)(int shineStage, int episode);
 } PortExtension;
 
 // shineTouch's answers
@@ -437,6 +443,7 @@ int port_ext_nozzle_fire(void* mario, int nozzle, int how);
 const char* port_ext_shine_model(void* shine, void* keeper, int collected);
 void port_ext_yoshi_egg(int kind, void* egg, int* present);
 void port_ext_episode_shine(int shineStage, int episode, int* shine);
+const char* port_ext_episode_name(int shineStage, int episode);
 // 1 while an extension keeps the chosen file from starting (fileStarting).
 int port_ext_file_starting(void);
 // Each step of the file select: the file whose menu takes the player's choice

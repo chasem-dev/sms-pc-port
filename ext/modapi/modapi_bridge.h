@@ -89,6 +89,9 @@ int modg_world_of(int area);
 int modg_world_episode_count(int area);
 int modg_world_episode_shine(int area, int episode);
 int modg_world_episode_name(int area, int episode, char* out, int size);
+// API 1.8 beta 4: an episode's name as a mod has it (`owner` the mod); NULL or "" clears the owner's
+int modg_world_set_episode_name(const void* owner, int area, int episode, const char* utf8);
+void modg_world_forget_episode_names(const void* owner); // the mod's names gone (it unloads)
 int modg_world_next_episode(int area);
 int modg_world_shine_episode(int shine, int* area);
 int modg_world_has_cutscene(const char* name);

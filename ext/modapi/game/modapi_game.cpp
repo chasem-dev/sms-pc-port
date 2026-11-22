@@ -1270,6 +1270,8 @@ void episodeShine(int shineStage, int episode, int* shine)
 		*shine = ev.shine;
 }
 
+const char* episodeName(int shineStage, int episode); // below, with the worlds
+
 void timer(int what, int time)
 {
 	SmsEvTimer ev;
@@ -1366,6 +1368,7 @@ struct Register {
 		e.shineModel          = shineModel;
 		e.yoshiEgg            = yoshiEgg;
 		e.episodeShine        = episodeShine;
+		e.episodeName         = episodeName;
 		e.fileStarting        = fileStarting;
 		e.fileMenu            = fileMenu;
 		e.episodeSelect       = episodeSelect;
@@ -2141,11 +2144,128 @@ extern "C" int modg_world_shine_episode(int shine, int* area)
 	return -1;
 }
 
+// API 1.8 beta 4 (world->set_episode_name): episodes' names as mods have them,
+// in the game's text, by world (SMS_getShineStage's 2..8) and episode. One
+// name an episode, the one set last; its mod's until it unloads.
+namespace {
+enum { kNamedWorlds = 7, kNameBytes = 128 };
+char s_episodeNames[kNamedWorlds][8][kNameBytes];
+const void* s_episodeNameOwners[kNamedWorlds][8];
+
+// One UTF-8 letter at *p (advanced past it; a broken sequence is one byte):
+// its code point, or -1.
+long utf8Next(const u8*& p)
+{
+	const u8 c = *p++;
+	if (c < 0x80)
+		return c;
+	int more  = c >= 0xF8 ? -1 : c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC2 ? 1 : -1;
+	long code = more == 3 ? c & 7 : more == 2 ? c & 15 : c & 31;
+	if (more < 0)
+		return -1;
+	const u8* q = p;
+	for (; more > 0; more--, q++) {
+		if ((*q & 0xC0) != 0x80)
+			return -1; // p stays after the lead byte: the next letter is read as it is
+		code = code << 6 | (*q & 0x3F);
+	}
+	p = q;
+	return code;
+}
+
+// UTF-8 into the game's text (its message banks' letters are Latin-1): one
+// line (line breaks as spaces), no control characters (0x1A starts the
+// banks' escapes), letters the font lacks as '?', curly quotes, dashes and
+// the ellipsis as plain ones.
+void gameText(char* out, int n, const char* utf8)
+{
+	int len      = 0;
+	const u8* p  = (const u8*)utf8;
+	while (*p && len + 1 < n) {
+		const long c = utf8Next(p);
+		const char* put = 0;
+		char one[2]     = {0, 0};
+		if (c == 0x2018 || c == 0x2019 || c == 0x201A || c == 0x2032)
+			put = "'";
+		else if (c == 0x201C || c == 0x201D || c == 0x201E || c == 0x2033)
+			put = "\"";
+		else if (c == 0x2010 || c == 0x2011 || c == 0x2012 || c == 0x2013 || c == 0x2014 || c == 0x2212)
+			put = "-";
+		else if (c == 0x2026)
+			put = "...";
+		else if (c == 0xA0 || c == 0x2002 || c == 0x2003 || c == 0x2009 || c == 0x202F)
+			put = " ";
+		else if (c == '\n' || c == '\r' || c == '\t')
+			put = len && out[len - 1] != ' ' ? " " : ""; // one line
+		else if (c < 0x20 || (c >= 0x7F && c < 0xA0) || c == 0xAD || c == 0x200B || c == 0xFEFF)
+			continue; // other control characters, soft hyphens, zero-width ones
+		else if (c >= 0 && c <= 0xFF)
+			one[0] = (char)c, put = one;
+		else
+			put = "?";
+		const int k = (int)strlen(put);
+		if (len + k + 1 > n)
+			break;
+		memcpy(out + len, put, k);
+		len += k;
+	}
+	out[len] = 0;
+}
+
+// The name slot of a world's episode (any of its areas), or -1.
+int episodeSlot(int area, int episode)
+{
+	const int w = worldIndex(area);
+	return episodeTable(area) && w >= 2 && w <= 8 && episode >= 0 && episode < 8 ? (w - 2) * 8 + episode : -1;
+}
+
+// PortExtension::episodeName: a mod's name for the episode, or null.
+const char* episodeName(int shineStage, int episode)
+{
+	if (shineStage < 2 || shineStage > 8 || episode < 0 || episode >= 8)
+		return 0;
+	const char* name = s_episodeNames[shineStage - 2][episode];
+	return name[0] ? name : 0;
+}
+} // namespace
+
+extern "C" int modg_world_set_episode_name(const void* owner, int area, int episode, const char* utf8)
+{
+	const int slot = episodeSlot(area, episode);
+	if (slot < 0)
+		return 0;
+	char* name         = s_episodeNames[slot / 8][slot % 8];
+	const void*& whose = s_episodeNameOwners[slot / 8][slot % 8];
+	if (!utf8 || !*utf8) {
+		if (name[0] && whose != owner)
+			return 0; // another mod's
+		name[0] = 0;
+		whose   = 0;
+		return 1;
+	}
+	gameText(name, kNameBytes, utf8);
+	whose = name[0] ? owner : 0;
+	return 1;
+}
+
+extern "C" void modg_world_forget_episode_names(const void* owner)
+{
+	for (int w = 0; w < kNamedWorlds; w++)
+		for (int i = 0; i < 8; i++)
+			if (s_episodeNameOwners[w][i] == owner) {
+				s_episodeNames[w][i][0] = 0;
+				s_episodeNameOwners[w][i] = 0;
+			}
+}
+
 extern "C" int modg_world_episode_name(int area, int episode, char* out, int size)
 {
 	if (!out || size <= 0)
 		return 0;
 	out[0]          = 0;
+	const int slot  = episodeSlot(area, episode);
+	if (slot >= 0 && s_episodeNames[slot / 8][slot % 8][0])
+		return plainText(out, size, s_episodeNames[slot / 8][slot % 8]);
 	const int shine = modg_world_episode_shine(area, episode);
 	void* bmg       = JKRFileLoader::getGlbResource("/common/2d/scenarioname.bmg");
 	if (shine < 0 || shine >= (int)(sizeof scScenarioNameTable / sizeof scScenarioNameTable[0]) || !bmg)
