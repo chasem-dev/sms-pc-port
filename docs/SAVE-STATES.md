@@ -12,6 +12,10 @@ Each state holds two copies of the moment.
 - **Exact**: the game's whole memory. That is MEM1 (the emulated 24 or 64 MiB at `0x80000000`, where all of
   the game's heaps are), ARAM (16 MiB, the sound banks and some archives), and the game's own global
   variables. Loading it puts back everything: the level, every actor, the camera, the music where it was.
+  The game's clock (`OSGetTime`) goes back to the state's moment too (`port_time_set`), as a console's time
+  base is part of its state: the game keeps times from it in its memory, such as the stopwatch a timed
+  Shine's countdown reads, and those would otherwise count all the time since the save at once (the
+  countdown ran out as the state loaded).
   It works only in the build that saved it, because the memory holds the build's own addresses (vtables,
   functions, globals). The game is non-PIE everywhere for this, so those addresses are the same every run.
 - **Portable**: where the game was, as plain values (`PortSaveStatePortable` in
@@ -104,6 +108,7 @@ or LZ4-style compressed, in 4 MiB blocks with 64 KiB matches, and readers skip t
 | `JSON` | description for the launcher: time, game, stage and episode names, build fingerprint |
 | `THMB` | PNG of the last frame shown, 320 pixels wide |
 | `INFO` | the build: fingerprint, where the code is, memory sizes, game code and flavour |
+| `TIME` | the game's clock (`OSTime`) at the save, which an exact load sets back |
 | `PORT` | `PortSaveStatePortable` |
 | `THRD` | the game threads' signatures |
 | `MEM1`, `ARAM`, `GLOB` | the memory, compressed |

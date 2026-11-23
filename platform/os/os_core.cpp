@@ -14,6 +14,7 @@
 #include <dolphin/os/OSMemory.h>
 #include <time.h>
 #include <execinfo.h>
+#include <atomic>
 
 extern "C" void port_os_threads_init(void);
 
@@ -21,6 +22,8 @@ static void* s_arena_lo;
 static void* s_arena_hi;
 static s64 s_time_base;      // OSTime at port start
 static struct timespec s_t0; // host monotonic time at port start
+// How far an exact save state load moved the game's clock (port_time_set)
+static std::atomic<s64> s_time_shift;
 
 extern "C" void port_os_init(void)
 {
@@ -79,13 +82,24 @@ extern "C" void OSInit(void) {}
 
 extern "C" s64 port_time_ticks(void)
 {
+	const s64 base = s_time_base + s_time_shift.load(std::memory_order_relaxed);
 	if (port_vi_deterministic())
-		return s_time_base + port_vi_virtual_ticks();
+		return base + port_vi_virtual_ticks();
 	struct timespec t;
 	clock_gettime(CLOCK_MONOTONIC, &t);
 	s64 ns = (s64)(t.tv_sec - s_t0.tv_sec) * 1000000000LL + (t.tv_nsec - s_t0.tv_nsec);
 	// 40.5 MHz timer: ticks = ns * 81 / 2000
-	return s_time_base + ns / 2000 * 81 + (ns % 2000) * 81 / 2000;
+	return base + ns / 2000 * 81 + (ns % 2000) * 81 / 2000;
+}
+
+// The game's clock reads `ticks` now and runs on from there. An exact save
+// state load puts it back to the state's moment, as a console's time base is
+// part of its state: the game keeps times from it in its memory (the timed
+// Shines' stopwatch, its alarms), and they would otherwise count all the time
+// since the save at once.
+extern "C" void port_time_set(s64 ticks)
+{
+	s_time_shift.fetch_add(ticks - port_time_ticks(), std::memory_order_relaxed);
 }
 
 extern "C" OSTime OSGetTime(void)
