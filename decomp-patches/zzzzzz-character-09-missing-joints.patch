@@ -1,0 +1,101 @@
+Reason: port: characters (port_character.h): a pack's model with fewer joints than Mario's (a one-joint cap) crashed the stage's load, TMultiMtxEffect setting a callback past the joint table; a joint the model lacks now takes the effect on a spare joint, so the effect stays for code reaching it by index
+--- a/src/MarioUtil/MtxUtil.cpp
++++ b/src/MarioUtil/MtxUtil.cpp
+@@ -337,6 +337,18 @@
+ 	return 1;
+ }
+ 
++// Port: a character pack's model may have fewer joints than Mario's (his caps
++// have 2 and 3, and TMarioCap hangs its effect on joint 1). Reading past the
++// joint table hands back whatever follows it, and setting a callback there
++// crashes. The effect stays, for the code that reaches it by index
++// (mMtxEffectTbl[1] in MarioDraw.cpp), on a joint no model draws.
++static J3DJoint* TMultiMtxEffectJoint(J3DModel* model, u16 id)
++{
++	static J3DJoint noJoint;
++	J3DModelData* data = model->getModelData();
++	return id < data->getJointNum() ? data->getJointNodePointer(id) : &noJoint;
++}
++
+ // TODO: 92.6%. The residue is all in the inlined TMtxSwingRZReverseXZ
+ // constructor (one level deeper than TMtxSwingRZ's): retail copies mAcc's
+ // TVec3(0, -4, 0) into the by-value TParamT argument with inline lwz/stw
+@@ -348,28 +360,27 @@
+ 	mMtxEffectTbl = new TMtxEffectBase*[mNumBones];
+ 
+ 	for (u16 i = 0; i < mNumBones; ++i) {
++		if (mBoneIDs[i] >= model->getModelData()->getJointNum())
++			OSReport("[character] %s: this model has %d joint(s), so its joint %d stays still\n", prmLocation,
++			         (int)model->getModelData()->getJointNum(), (int)mBoneIDs[i]);
+ 		char* path = new char[0x40];
+ 		snprintf(path, 0x40, "/%s/MtxEffect%d.prm", prmLocation, mBoneIDs[i]);
+ 
+ 		switch (mMtxEffectType[i]) {
+ 		case TMTX_EFFECT_TIME_LAG: {
+ 			TMtxTimeLag* timeLag = new TMtxTimeLag(path);
+-			model->getModelData()
+-			    ->getJointNodePointer(mBoneIDs[i])
++			TMultiMtxEffectJoint(model, mBoneIDs[i])
+ 			    ->setCallBack(TMtxTimeLagCallBack);
+-			model->getModelData()
+-			    ->getJointNodePointer(mBoneIDs[i])
++			TMultiMtxEffectJoint(model, mBoneIDs[i])
+ 			    ->setCallBackUserData(timeLag);
+ 			mMtxEffectTbl[i] = timeLag;
+ 			break;
+ 		}
+ 		case TMTX_EFFECT_SWING_RZ: {
+ 			TMtxSwingRZ* swingRz = new TMtxSwingRZ(path);
+-			model->getModelData()
+-			    ->getJointNodePointer(mBoneIDs[i])
++			TMultiMtxEffectJoint(model, mBoneIDs[i])
+ 			    ->setCallBack(TMtxSwingRZCallBack);
+-			model->getModelData()
+-			    ->getJointNodePointer(mBoneIDs[i])
++			TMultiMtxEffectJoint(model, mBoneIDs[i])
+ 			    ->setCallBackUserData(swingRz);
+ 			mMtxEffectTbl[i] = swingRz;
+ 			break;
+@@ -377,11 +388,9 @@
+ 		case TMTX_EFFECT_SWING_RZ_REVERSE_XZ: {
+ 			TMtxSwingRZReverseXZ* swingRzReverse
+ 			    = new TMtxSwingRZReverseXZ(path);
+-			model->getModelData()
+-			    ->getJointNodePointer(mBoneIDs[i])
++			TMultiMtxEffectJoint(model, mBoneIDs[i])
+ 			    ->setCallBack(TMtxSwingRZReverseXZCallBack);
+-			model->getModelData()
+-			    ->getJointNodePointer(mBoneIDs[i])
++			TMultiMtxEffectJoint(model, mBoneIDs[i])
+ 			    ->setCallBackUserData(swingRzReverse);
+ 			mMtxEffectTbl[i] = swingRzReverse;
+ 			break;
+@@ -395,8 +404,7 @@
+ void TMultiMtxEffect::setUserArea()
+ {
+ 	for (u16 i = 0; i < mNumBones; i++) {
+-		mModel->getModelData()
+-		    ->getJointNodePointer(mBoneIDs[i])
++		TMultiMtxEffectJoint(mModel, mBoneIDs[i])
+ 		    ->setCallBackUserData(mMtxEffectTbl[i]);
+ 	}
+ }
+@@ -405,7 +413,7 @@
+ {
+ 	for (int i = 0; i < mNumBones; i++) {
+ 		J3DJoint* joint
+-		    = mModel->getModelData()->getJointNodePointer(mBoneIDs[i]);
++		    = TMultiMtxEffectJoint(mModel, mBoneIDs[i]);
+ 		switch (mMtxEffectType[i]) {
+ 		case TMTX_EFFECT_TIME_LAG:
+ 			joint->setCallBack(TMtxTimeLagCallBack);
+@@ -423,8 +431,7 @@
+ void TMultiMtxEffect::remove()
+ {
+ 	for (u16 i = 0; i < mNumBones; i++) {
+-		mModel->getModelData()
+-		    ->getJointNodePointer(mBoneIDs[i])
++		TMultiMtxEffectJoint(mModel, mBoneIDs[i])
+ 		    ->setCallBack(nullptr);
+ 	}
+ }
