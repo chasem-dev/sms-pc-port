@@ -56,6 +56,9 @@ extern "C" void port_audio_dsp_settle(void);
 extern "C" int port_thp_video_decode_busy(void);
 extern "C" void port_thp_video_decode_settle(void);
 extern "C" const char* port_card_dir(void);
+extern "C" size_t port_dtk_state_size(void);
+extern "C" void port_dtk_state_save(void* out);
+extern "C" int port_dtk_state_load(const void* in, size_t size);
 // platform/gx (absent in a build without it)
 extern "C" __attribute__((weak)) void GXPC_MemoryWritten(const void* p, uint32_t n);
 extern "C" __attribute__((weak)) uint8_t* GXPC_SaveStateThumbnail(size_t* size);
@@ -633,6 +636,10 @@ int port_savestate_save(const PortSaveStatePortable* portable)
 			const u8* b = (const u8*)(uintptr_t)kRanges.ranges[i][1];
 			job->globals.insert(job->globals.end(), a, b);
 		}
+		// the streamed music (Eclipse's), which plays outside game memory
+		std::vector<uint8_t> dtk(port_dtk_state_size());
+		port_dtk_state_save(dtk.data());
+		job->small.push_back(savestate::make_chunk("DTKS", dtk.data(), dtk.size(), false));
 	}
 	port_log("[savestate] saving %s (%s)\n", job->path.c_str(), exact ? "exact" : "position only");
 	write_in_background(job);
@@ -701,6 +708,14 @@ int port_savestate_load_exact(const char* path, PortSaveStatePortable* portable,
 		port_log("[savestate] %s: damaged; loading the position only\n", path);
 		return 0;
 	}
+	// the streamed music as it was (none in states saved before it was kept)
+	std::vector<uint8_t> dtk;
+	const Chunk* d = savestate::find_chunk(chunks, "DTKS");
+	if (d && d->rawSize == port_dtk_state_size()) {
+		dtk.resize(d->rawSize);
+		if (!savestate::chunk_data(*d, dtk.data(), dtk.size()))
+			dtk.clear();
+	}
 	chunks.clear();
 
 	OSThread* list[64];
@@ -725,6 +740,10 @@ int port_savestate_load_exact(const char* path, PortSaveStatePortable* portable,
 	}
 	for (int i = 0; i < n; i++)
 		*list[i] = keep[i];
+	// The music stream (platform/audio/dtk.cpp) as the restored memory knows it:
+	// what plays, how far, paused or not.
+	if (!dtk.empty())
+		port_dtk_state_load(dtk.data(), dtk.size());
 	// Textures and copies decoded from game memory are checked again.
 	if (GXPC_MemoryWritten)
 		GXPC_MemoryWritten(port_mem1_base, port_mem1_size);

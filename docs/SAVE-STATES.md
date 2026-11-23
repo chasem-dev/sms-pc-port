@@ -107,6 +107,7 @@ or LZ4-style compressed, in 4 MiB blocks with 64 KiB matches, and readers skip t
 | `PORT` | `PortSaveStatePortable` |
 | `THRD` | the game threads' signatures |
 | `MEM1`, `ARAM`, `GLOB` | the memory, compressed |
+| `DTKS` | the music stream (Super Mario Eclipse streams its stage music), which plays outside game memory |
 
 A 64-bit Sunshine state is about 24 MB. The game copies the memory in the frame and compresses and writes it
 on a thread of its own, so saving does not stall the game. Files are written under a temporary name and
@@ -123,9 +124,12 @@ renamed.
   writes archive members as `lib.a[12](obj.o)` in its link map; `savestate_ranges.py` reads both spellings,
   and warns in the build log when it finds no game data.
 - Portable loads restore Mario and the progress, not Yoshi, a ride, or what the level's actors were doing.
-- Super Mario Eclipse's music streams from the disc (`platform/audio/dtk.cpp`), host-side, and is not in
-  a state, so after a load the stream playing may not be the state's until the music next changes. Save
-  states in Eclipse builds have not been tested yet.
+- Super Mario Eclipse's music streams from the disc (`platform/audio/dtk.cpp`), host-side, outside game
+  memory, while the game's music player keeps what it believes plays (paused or not) in game memory. A
+  state keeps the stream too (`DTKS`: which file, how far it has played, its volumes, play state and
+  trigger), and an exact load puts it back, reading the file again when another plays. States saved
+  before it was kept load with the stream left as it is, so the music can stay silent until it next
+  changes (a state saved in a level with streamed music, loaded from the pause menu, which pauses it).
 - **Characters** (`mods/characters`, patch `zzzzzz-character-07`): a state holds whoever Mario was when it
   was saved, his models in the stage's heap and his voice in ARAM. Who he is and whose voice is in ARAM are
   kept in game memory beside them (`sCharacterModel`, `sCharacterVoiceId`), so an exact load brings all of
