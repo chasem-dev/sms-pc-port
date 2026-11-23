@@ -29,6 +29,7 @@
 #include "dsp_mixer.h"
 
 #include <mutex>
+#include <string.h>
 #include <vector>
 
 extern "C" u32 AIGetStreamSampleRate(void);
@@ -181,6 +182,114 @@ extern "C" void port_dtk_mix(s16* lr, size_t frames, u32 outRate)
 	// the AIS interrupt, in the interrupt context the DMA block's runs in
 	if (cb)
 		cb(fired);
+}
+
+// --- Save states ---------------------------------------------------------------
+
+// The stream as a save state keeps it (platform/savestate): the region (which
+// file, from where, how long), how far it has played, the decoder and
+// resampler, and the AI side. It lives here, outside game memory, and the game
+// keeps its own idea of it in memory (BetterSunshineEngine's music player: what
+// plays, paused or not, where the next trigger is), so a state carries both or
+// the two disagree after a load: a state saved with music playing, loaded from
+// the pause menu (where the music is paused), played on in silence.
+namespace {
+struct DtkState {
+	u32 magic; // kDtkMagic
+	u8 active, playing, volL, volR, gainSeen, pad[3];
+	u32 base, offset, size; // the region: a file's FST entry, the offset and length read
+	u32 pos;
+	s32 index;
+	s32 hl1, hl2, hr1, hr2;
+	u32 count, trigger;
+	u64 cb;
+	double t;
+	s16 prevL, prevR, curL, curR;
+	s32 gain;
+	s16 block[28 * 2];
+};
+const u32 kDtkMagic = 0x444b5431; // "DKT1"
+} // namespace
+
+extern "C" size_t port_dtk_state_size(void) { return sizeof(DtkState); }
+
+extern "C" void port_dtk_state_save(void* out)
+{
+	std::lock_guard<std::mutex> lk(g.mu);
+	DtkState s;
+	memset(&s, 0, sizeof s);
+	s.magic    = kDtkMagic;
+	s.active   = g.active;
+	s.playing  = g.playing;
+	s.volL     = g.volL;
+	s.volR     = g.volR;
+	s.gainSeen = g.gainSeen;
+	s.base     = g.base;
+	s.offset   = g.offset;
+	s.size     = (u32)g.data.size();
+	s.pos      = (u32)g.pos;
+	s.index    = g.index;
+	s.hl1 = g.hl1, s.hl2 = g.hl2, s.hr1 = g.hr1, s.hr2 = g.hr2;
+	s.count    = g.count;
+	s.trigger  = g.trigger;
+	s.cb       = (u64)(uintptr_t)g.cb;
+	s.t        = g.t;
+	s.prevL = g.prevL, s.prevR = g.prevR, s.curL = g.curL, s.curR = g.curR;
+	s.gain = g.gain;
+	memcpy(s.block, g.block, sizeof s.block);
+	memcpy(out, &s, sizeof s);
+}
+
+// Reads a region again (platform/dvd/dvd.cpp), as DVDPrepareStreamAsync did.
+extern "C" void port_dvd_stream_region(u32 entry, u32 offset, u32 length, std::vector<u8>& data);
+
+// Puts the stream back as port_dtk_state_save had it, reading its region again
+// when another (or none) is loaded now. Only between frames, with the game's
+// threads waiting (an exact load); the mixer takes the lock.
+extern "C" int port_dtk_state_load(const void* in, size_t size)
+{
+	DtkState s;
+	if (size != sizeof s)
+		return 0;
+	memcpy(&s, in, sizeof s);
+	if (s.magic != kDtkMagic)
+		return 0;
+	std::vector<u8> data;
+	bool reread;
+	{
+		std::lock_guard<std::mutex> lk(g.mu);
+		reread = s.size && (g.base != s.base || g.offset != s.offset || g.data.size() != s.size);
+	}
+	if (reread) {
+		port_dvd_stream_region(s.base, s.offset, s.size, data);
+		if (data.size() != s.size) {
+			port_log("[dtk] save state: the music stream's file could not be read again\n");
+			s.active = 0;
+		}
+	}
+	std::lock_guard<std::mutex> lk(g.mu);
+	if (reread)
+		g.data.swap(data);
+	else if (!s.size)
+		g.data.clear();
+	g.base     = s.base;
+	g.offset   = s.offset;
+	g.active   = s.active && s.pos <= g.data.size();
+	g.pos      = s.pos <= g.data.size() ? s.pos : g.data.size();
+	g.index    = s.index;
+	g.hl1 = s.hl1, g.hl2 = s.hl2, g.hr1 = s.hr1, g.hr2 = s.hr2;
+	memcpy(g.block, s.block, sizeof g.block);
+	g.playing  = s.playing;
+	g.volL     = s.volL;
+	g.volR     = s.volR;
+	g.count    = s.count;
+	g.trigger  = s.trigger;
+	g.cb       = (AISCallback)(uintptr_t)s.cb;
+	g.t        = s.t;
+	g.prevL = s.prevL, g.prevR = s.prevR, g.curL = s.curL, g.curR = s.curR;
+	g.gainSeen = s.gainSeen;
+	g.gain     = s.gain;
+	return 1;
 }
 
 // --- AI stream registers --------------------------------------------------------

@@ -1109,19 +1109,31 @@ extern "C" void port_dtk_cancel(void);
 extern "C" u32 port_dtk_play_addr(void);
 extern "C" int port_dtk_active(void);
 
-extern "C" BOOL DVDPrepareStreamAsync(DVDFileInfo* fi, u32 length, u32 offset, DVDCallback cb)
+// A stream's region: `length` bytes (0: to the end) of FST entry `entry`'s
+// file from `offset`, read whole. Also for a save state load, which reads the
+// region of the stream it puts back (platform/audio/dtk.cpp).
+extern "C" void port_dvd_stream_region(u32 entry, u32 offset, u32 length, std::vector<u8>& data)
 {
-	std::vector<u8> data;
-	u32 entry = fi->startAddr;
+	data.clear();
 	if (entry < g_fst.size() && !g_fst[entry].dir && offset < g_fst[entry].length) {
 		u32 len = g_fst[entry].length - offset;
 		if (length && length < len)
 			len = length;
 		data.resize(len);
-		DVDFileInfo tmp = *fi;
-		s32 n           = do_read(&tmp, data.data(), (s32)len, (s32)offset);
+		DVDFileInfo tmp;
+		memset(&tmp, 0, sizeof tmp);
+		tmp.startAddr = entry;
+		tmp.length    = g_fst[entry].length;
+		s32 n         = do_read(&tmp, data.data(), (s32)len, (s32)offset);
 		data.resize(n > 0 ? (size_t)n : 0);
 	}
+}
+
+extern "C" BOOL DVDPrepareStreamAsync(DVDFileInfo* fi, u32 length, u32 offset, DVDCallback cb)
+{
+	std::vector<u8> data;
+	u32 entry = fi->startAddr;
+	port_dvd_stream_region(entry, offset, length, data);
 	port_dtk_prepare(entry, offset, data);
 	if (cb)
 		port_irq_defer([fi, cb]() { cb(0, fi); });
