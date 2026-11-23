@@ -7,7 +7,9 @@
 // (decomp-patches/port-02-warp-after-file-select.patch). Here the title is
 // left as a multiplayer guest leaves it for the host's stage (ext/multiplayer,
 // skipTitle): once the title stage has set itself up, setNextStage. The flags
-// are a new game's, as TFlagManager's constructor leaves them (firstStart).
+// are a new game's, as TFlagManager's constructor leaves them (firstStart),
+// with any SMS_WARP_FLAGS=flag=value[,flag=value...] set on top (numbers in
+// C notation: 0x10021=1 is Yoshi's Shine, which a stage's Yoshi eggs need).
 #include "port_ext.h"
 
 #include <System/Application.hpp>
@@ -51,6 +53,32 @@ bool read()
 	return true;
 }
 
+// SMS_WARP_FLAGS: save-file flags to set before the stage loads, so that what
+// a level holds can be there on a new game (a Yoshi egg is gone without
+// Yoshi's Shine, TEggYoshi::load).
+void setFlags(TFlagManager* flags)
+{
+	const char* list = getenv("SMS_WARP_FLAGS");
+	if (!list || !*list)
+		return;
+	const char* p = list;
+	while (*p) {
+		char* end;
+		const unsigned long id = strtoul(p, &end, 0);
+		if (end == p || *end != '=')
+			break;
+		p = end + 1;
+		const long value = strtol(p, &end, 0);
+		if (end == p || (*end && *end != ',') || id == 0 || id > 0x7FFFFFFFul)
+			break;
+		flags->setFlag((u32)id, (s32)value);
+		fprintf(stderr, "[warp] flag 0x%lX = %ld\n", id, value);
+		p = *end ? end + 1 : end;
+	}
+	if (*p)
+		fprintf(stderr, "[warp] SMS_WARP_FLAGS=%s: stopped at \"%s\" (flag=value, comma-separated)\n", list, p);
+}
+
 void cover(bool black)
 {
 	if (GXPC_ExtOverlayScreen)
@@ -91,6 +119,7 @@ void frame()
 	flags->setBool(true, 0x3000B);
 	flags->setBool(true, 0x3000C);
 	flags->setBool(true, 0x3000D);
+	setFlags(flags);
 	dir->setNextStage((u16)(((s_area + 1) << 8) | s_episode), nullptr);
 	s_sent = true;
 	fprintf(stderr, "[warp] left the title for area %d, episode %d\n", s_area, s_episode);
