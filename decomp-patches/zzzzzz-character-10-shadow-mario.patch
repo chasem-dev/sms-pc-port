@@ -1,0 +1,76 @@
+Reason: port: characters (port_character.h): Shadow Mario and Il Piantissimo borrow the player's body and animations to pose their own models, so a character from mods/characters made them taller or bent; while a character's archive is on the "mario" volume they load Mario's own body and animations from Mario's archive
+--- a/src/Enemy/enemyMario.cpp
++++ b/src/Enemy/enemyMario.cpp
+@@ -156,6 +156,22 @@
+ // transform 0x178 above transformInfo 0x158, and its low temps start at 0x13c;
+ // ours still has transform (0x120) below transformInfo (0x150).
+ // Inert: Mtx before transformInfo, either or both hoisted, buffer hoisted.
++#ifdef TARGET_PC
++// Port: characters (port_character.h, patch zzzzzz-character-10). Shadow Mario
++// (and Il Piantissimo) is posed by a body on Mario's skeleton playing Mario's
++// animations, and his own model takes that body's joints one by one. Retail
++// borrows the player's body and animation table for it, which a character
++// from mods/characters has made its own: its animations made him taller or
++// bent him out of shape, and a skeleton with more joints than his model wrote
++// past its joint table. While a character's archive is on the "mario" volume
++// he loads Mario's body and animations from Mario's own archive (put there
++// while he loads), as he always has with Mario.
++#include <dolphin/os.h>
++void* ApplicationCharacterArchive(int index); // patch zzzzzz-character-06
++void* ApplicationCharacterMounted();         // patch zzzzzz-coop-12
++void ApplicationCharacterPut(void* arc);
++#endif
++
+ void TEnemyMario::initModel()
+ {
+ 	unk394 = nullptr;
+@@ -164,6 +180,16 @@
+ 	unk3A0 = nullptr;
+ 
+ 	TMario* original = gpMarioOriginal;
++#ifdef TARGET_PC
++	void* playerArc = ApplicationCharacterMounted();
++	void* marioArc  = ApplicationCharacterArchive(0);
++	const bool own  = playerArc != marioArc;
++	if (own) {
++		ApplicationCharacterPut(marioArc);
++		mBodyModelData = J3DModelLoaderDataBase::load(JKRFileLoader::getGlbResource("/mario/bmd/ma_mdl1.bmd"),
++		                                              J3DMLF_MaterialPEFull | (16 << J3DMLF_TevStageNumShift));
++	} else
++#endif
+ 	mBodyModelData   = original->getM3UModel()->getModel()->getModelData();
+ 	mJointIdCenter   = mBodyModelData->getJointName()->getIndex("center");
+ 	mJointIdChnChest = mBodyModelData->getJointName()->getIndex("chn_chest");
+@@ -219,6 +245,19 @@
+ 	marioCommon->unk8                = anmTexPattern;
+ 	marioCommon->unk8                = original->getM3UModel()->unk4->unk8;
+ 	marioCommon->unkC                = anmTexNoAnm;
++#ifdef TARGET_PC
++	if (own) {
++		// Mario's animations, and his face's patterns bound to this body
++		J3DAnmTransform** anmTransform = new J3DAnmTransform*[199];
++		for (int i = 0; i < 199; ++i) {
++			anmTransform[i] = nullptr;
++			snprintf(buffer, 0xff, "/mario/bck/ma_%s.bck", marioAnimeFiles[i].unk4);
++			loadAnm(&anmTransform[i], buffer);
++		}
++		marioCommon->unk4 = anmTransform;
++		marioCommon->unk8 = anmTexPattern;
++	}
++#endif
+ 
+ 	M3UModelMario* modelMario = new M3UModelMario;
+ 	modelMario->unk8          = bodyModel;
+@@ -279,6 +318,12 @@
+ 	mtxEffectTypes[2]               = 0;
+ 	mMultiMtxEffect->mMtxEffectType = mtxEffectTypes;
+ 	mMultiMtxEffect->setup(getM3UModel()->getModel(), "Mario");
++#ifdef TARGET_PC
++	if (own) {
++		ApplicationCharacterPut(playerArc);
++		OSReport("[character] Shadow Mario keeps Mario's own body and animations\n");
++	}
++#endif
+ }
+ 
+ // TODO: wrong! off by 1 instruction!
