@@ -1,0 +1,85 @@
+Reason: port: characters: a character drawn as its look (patch zzzzzz-character-04) showed Mario in mirrors and in the water on the ground, whose copies follow the body, hands and cap; the body's copy now follows the look and the hands' and cap's are left out while it is worn, at a stage's start and after each swap
+--- a/src/Player/MarioDraw.cpp
++++ b/src/Player/MarioDraw.cpp
+@@ -36,6 +36,7 @@
+ #ifdef TARGET_PC
+ // Port: a character's look (patch zzzzzz-character-04), defined at the end of this file.
+ void PortCharacterLookInit(TMario* mario);
++void PortCharacterLookMirror(TMario* mario, bool made); // patch zzzzzzz-character-11
+ void PortCharacterLookCalc(TMario* mario);
+ bool PortCharacterLookView(TMario* mario);
+ bool PortCharacterLookEntry(TMario* mario);
+@@ -1662,6 +1663,9 @@
+ 		TMirrorActor* toroccoMirrorActor = new TMirrorActor("トロッコin鏡");
+ 		toroccoMirrorActor->init(mTorocco->getModel(), 2);
+ 	}
++#ifdef TARGET_PC
++	PortCharacterLookMirror(this, true);
++#endif
+ }
+ 
+ // The three mModel reads here stay raw: routing them through getM3UModel()
+@@ -2862,6 +2866,7 @@
+ 		SMSGetMSound()->setPlayerInfo(&mario->mPosition, &mario->mPrevPosition, body->getAnmMtx(1),
+ 		                              mario->isMario() ? true : false);
+ 	PortCharacterLookInit(mario);
++	PortCharacterLookMirror(mario, false);
+ 	return true;
+ }
+ 
+@@ -3018,4 +3023,55 @@
+ 	own->look->entry();
+ 	return true;
+ }
++
++// Port: a character's look in the mirror scene (patch zzzzzzz-character-11).
++// Mirrors and the water on the ground show copies of the player's body, hands
++// and cap (TMario::initMirrorModel), posed as they are; a look is drawn in
++// their place, so the reflection was Mario, cap and all. The body's copy now
++// follows the look, and the hands' and cap's copies are left out of the
++// mirror while it is worn (TMirrorActor's never-in-a-mirror bit). Run once the
++// copies are made and after each swap, whose retargeting moves the copies of
++// the old body, hands and cap to the new ones but not one of an old look.
++static J3DModel* sPortMirrored[2]; // the model the body's copy follows, per player
++
++void PortCharacterLookMirror(TMario* mario, bool made)
++{
++	PortCharacterOwn* own = PortCharacterOwnOf(mario);
++	if (!own || !mario->mModel)
++		return;
++	J3DModel*& mirrored = sPortMirrored[own - sPortOwn];
++	if (made)
++		mirrored = nullptr;
++	J3DModel* body = mario->mModel->getModel();
++	J3DModel* want = own->look ? own->look->getModel() : body;
++	JDrama::TViewObjPtrListT<JDrama::TViewObj>* scene
++	    = JDrama::TNameRefGen::search<JDrama::TViewObjPtrListT<JDrama::TViewObj> >("鏡シーン");
++	if (!scene)
++		return;
++	JGadget::TList_pointer<JDrama::TViewObj*>& list = scene->getChildren();
++	for (JGadget::TList_pointer<JDrama::TViewObj*>::iterator it = list.begin(); it != list.end(); ++it) {
++		const char* name = (*it)->getName();
++		if (!name)
++			continue;
++		TMirrorActor* actor = (TMirrorActor*)*it;
++		if (!strcmp(name, "マリオin鏡")) {
++			if (actor->unk10 != want && (actor->unk10 == body || (mirrored && actor->unk10 == mirrored))) {
++				actor->unk10 = want;
++				actor->unk14 = new J3DModel(want->getModelData(), 0, 1);
++			}
++		} else if (!strcmp(name, "マリオ手in鏡") || !strcmp(name, "マリオ帽子in鏡")) {
++			bool ours = false;
++			for (int h = 0; h < 2; h++)
++				for (int s = 0; s < 2; s++)
++					ours = ours || actor->unk10 == mario->mHandModels[h][s];
++			if (mario->mCap)
++				ours = ours || actor->unk10 == mario->mCap->unk10[0] || actor->unk10 == mario->mCap->unk10[1];
++			if (ours)
++				actor->unk1A = own->look ? (u16)(actor->unk1A | 1) : (u16)(actor->unk1A & ~1);
++		}
++	}
++	if (own->look && mirrored != want)
++		OSReport("[character] the mirrors show its look\n");
++	mirrored = want;
++}
+ #endif
