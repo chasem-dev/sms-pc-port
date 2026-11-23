@@ -617,6 +617,9 @@ int port_savestate_save(const PortSaveStatePortable* portable)
 	if (!png.empty())
 		job->small.push_back(savestate::make_chunk("THMB", png.data(), png.size(), false));
 	job->small.push_back(savestate::make_chunk("INFO", &info, sizeof info, false));
+	// the game's clock at this moment: an exact load sets it back (port_time_set)
+	const int64_t clock = port_time_ticks();
+	job->small.push_back(savestate::make_chunk("TIME", &clock, sizeof clock, false));
 	job->small.push_back(savestate::make_chunk("PORT", portable, sizeof *portable, false));
 	if (exact) {
 		const std::vector<ThreadSig> threads = thread_sigs();
@@ -690,6 +693,10 @@ int port_savestate_load_exact(const char* path, PortSaveStatePortable* portable,
 		port_log("[savestate] %s: the game's threads are not as they were; loading the position only\n", path);
 		return 0;
 	}
+	// the game's clock at the save (none in states saved before it was kept)
+	int64_t clock = 0;
+	const Chunk* t = savestate::find_chunk(chunks, "TIME");
+	const bool haveClock = t && savestate::chunk_data(*t, (uint8_t*)&clock, sizeof clock);
 	// Everything decompressed and checked before any of it is copied in.
 	std::vector<uint8_t> mem1(now.mem1Size), aram(now.aramSize), globals(now.globalsSize);
 	const Chunk* m = savestate::find_chunk(chunks, "MEM1");
@@ -728,6 +735,11 @@ int port_savestate_load_exact(const char* path, PortSaveStatePortable* portable,
 	// Textures and copies decoded from game memory are checked again.
 	if (GXPC_MemoryWritten)
 		GXPC_MemoryWritten(port_mem1_base, port_mem1_size);
+	// The game's clock as it was at the save, so the times the game keeps in
+	// its memory (a timed Shine's stopwatch, alarms) count on from there
+	// instead of counting all the time since the save at once.
+	if (haveClock)
+		port_time_set(clock);
 	port_log("[savestate] loaded %s exactly\n", path);
 	return 1;
 }

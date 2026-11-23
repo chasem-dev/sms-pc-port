@@ -24,6 +24,7 @@ void port_irq_kick(void);           /* wake an idle CPU (any host thread)    */
 typedef void (*port_irq_poll_fn)(void);
 void port_irq_add_source(port_irq_poll_fn fn); /* polled at each delivery   */
 s64 port_time_ticks(void);
+void port_time_set(s64 ticks);      /* the game's clock reads ticks from now */
 /* Run lower-priority threads until they block, for at most `seconds`. */
 void port_os_run_lower(double seconds);
 #ifdef __cplusplus
