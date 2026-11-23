@@ -26,6 +26,8 @@
 #include <dlfcn.h>
 #include <algorithm>
 #include <chrono>
+#include <stdio.h>
+#include <string>
 #include <vector>
 
 // --- SDL2 event ABI (SDL_events.h, SDL_scancode.h, SDL_gamecontroller.h) ---
@@ -1128,6 +1130,76 @@ extern "C" int port_pad_savestate_labels(int style, char labels[2][16])
 			snprintf(labels[i], 16, "#%d", parts[i]);
 	}
 	return n;
+}
+
+// A key as the performance overlay names it: "Tab", "LShift", "left click",
+// "KP 8", "F5", or the scancode ("#57") for one kKeys has no name for.
+static void key_label(int code, char* out, size_t size)
+{
+	static const struct { const char* key; const char* label; } kLabels[] = {
+		{ "MOUSE_LEFT", "left click" }, { "MOUSE_RIGHT", "right click" }, { "MOUSE_MIDDLE", "middle click" },
+		{ "MOUSE_BACK", "mouse back" }, { "MOUSE_FORWARD", "mouse forward" }, { "LSHIFT", "LShift" },
+		{ "RSHIFT", "RShift" }, { "LCTRL", "LCtrl" }, { "RCTRL", "RCtrl" }, { "LALT", "LAlt" }, { "RALT", "RAlt" },
+		{ "ESCAPE", "Esc" },
+	};
+	const char* name = nullptr;
+	for (size_t k = 0; k < sizeof kKeys / sizeof kKeys[0] && !name; k++)
+		if (kKeys[k].code == code)
+			name = kKeys[k].name;
+	if (!name) {
+		snprintf(out, size, "#%d", code);
+		return;
+	}
+	for (const auto& l : kLabels)
+		if (!strcmp(l.key, name)) {
+			snprintf(out, size, "%s", l.label);
+			return;
+		}
+	// "TAB" as "Tab", "KP_ENTER" as "KP Enter"; letters, digits and F1..F12 as they are
+	std::string s = name;
+	size_t from   = 1;
+	if (!s.compare(0, 3, "KP_")) {
+		s[2] = ' ';
+		from = 4;
+	}
+	if (!(s[0] == 'F' && s.size() > 1 && isdigit((unsigned char)s[1])))
+		for (size_t i = from; i < s.size(); i++)
+			s[i] = s[i] == '_' ? ' ' : (char)tolower((unsigned char)s[i]);
+	snprintf(out, size, "%s", s.c_str());
+}
+
+// The keys bindings.txt (or its defaults) gives a control now, as the
+// performance overlay lists them (platform/gx/src/gx_overlay.cpp): key n of
+// the control (n < 0: all of them, joined by "/"), two held together as
+// "LCtrl+S". Controller buttons are left out. Returns how many keys the
+// control has; out is empty when it has none (or no key n).
+extern "C" int port_pad_control_keys(const char* control, int n, char* out, int size)
+{
+	init();
+	if (size > 0)
+		out[0] = 0;
+	int c = 0;
+	while (c < C_COUNT && strcmp(kControlNames[c], control))
+		c++;
+	if (c == C_COUNT || size <= 0)
+		return 0;
+	std::string text;
+	for (int i = 0; i < g_nbind[c]; i++) {
+		if (n >= 0 && i != n)
+			continue;
+		char first[24], second[24];
+		key_label(combo_first(g_bind[c][i]), first, sizeof first);
+		if (!text.empty())
+			text += "/";
+		text += first;
+		if (combo_second(g_bind[c][i]) >= 0) {
+			key_label(combo_second(g_bind[c][i]), second, sizeof second);
+			text += "+";
+			text += second;
+		}
+	}
+	snprintf(out, (size_t)size, "%s", text.c_str());
+	return g_nbind[c];
 }
 
 // The control bindings.txt binds a key (an SDL scancode) to, alone or as
