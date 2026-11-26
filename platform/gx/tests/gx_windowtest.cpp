@@ -34,6 +34,15 @@ static void checkLayout(gx::WindowArea desktop, double aspect, int scale, gx::Wi
 }
 
 int main(int argc, char** argv) {
+    for (auto size : {gx::WindowArea{0, 0, 1920, 1080}, {0, 0, 2448, 1848}, {0, 0, 1600, 1200},
+                      {0, 0, 1240, 1080}, {0, 0, 2560, 1080}, {0, 0, 5120, 1440}, {0, 0, 640, 480},
+                      {0, 0, 1919, 1080}, {0, 0, 1921, 1080}}) {
+        const auto view = gx::windowView(size.w, size.h);
+        expect(std::abs((4.0 / 3 * view.wide / view.tall) - double(size.w) / size.h) < 1e-5,
+               "projection matches drawable aspect");
+        expect(view.wide >= 4.0f / 3 && view.tall >= 1, "neither axis loses any of the reference frame");
+        expect(view.wide == 4.0f / 3 || view.tall == 1, "only one axis expands");
+    }
     const gx::WindowArea desktops[] = {{0, 40, 1920, 1000}, {0, 0, 1366, 728}, {0, 24, 1280, 656},
         {0, 0, 640, 480}, {0, 0, 320, 240}, {-1920, 120, 1920, 1040}, {1920, -1080, 1080, 1920},
         {0, 24, 1512, 920}, {0, 0, 3840, 2120}};

@@ -5,6 +5,14 @@
 
 namespace gx {
 struct WindowArea { int x, y, w, h; };
+// Extend the 16:9 reference view in one axis. Width is in units of the
+// game's 4:3 frame; tall is the gain in vertical tangent (not in degrees).
+struct WindowView { float wide, tall; };
+inline WindowView windowView(int w, int h) {
+    const float reference = 16.0f / 9.0f;
+    const float aspect = w > 0 && h > 0 ? float(w) / h : reference;
+    return {std::max(aspect, reference) * 0.75f, std::max(1.0f, reference / aspect)};
+}
 struct WindowBorders { int top, left, bottom, right; };
 
 // Desktop coordinates are SDL window units, not high-DPI framebuffer pixels.

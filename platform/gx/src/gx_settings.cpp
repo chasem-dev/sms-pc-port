@@ -240,12 +240,12 @@ int available(int id) {
     if (!rendererReady()) return 0;
     build();
     switch (id) {
-    case RESOLUTION: return !upscaling(postSettings().filter);  // the upscaling mode sets it then
+    case RESOLUTION: return !rendererWindowFormat() && !upscaling(postSettings().filter);  // the upscaling mode sets it then
     case MSAA: return rendererMaxSamples() >= 2;
     case ANISOTROPIC: return s_maxAniso >= 2.0f;
     case FSR_MODE: {
         const int filter = postSettings().filter;
-        return platformHasWindow() && (filter == 3 || filter == 4);
+        return platformHasWindow() && !rendererWindowFormat() && (filter == 3 || filter == 4);
     }
     case FULLSCREEN_SIZE: return platformHasWindow() && platformExclusive();
     case MONITOR: return platformDisplayCount() >= 2;

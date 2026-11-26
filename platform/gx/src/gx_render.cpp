@@ -2,6 +2,7 @@
 // derived from the BP/XF registers, EFB copies (display and texture) and XFB
 // presentation.
 #include "gx_internal.h"
+#include "gx_window_layout.h"
 #include "gl_funcs.h"
 #include "gx_glcache.h"
 #include "gx_glthread.h"
@@ -67,6 +68,9 @@ enum { EFB_W = 640, EFB_H = 528 };
 // so pieces that meet on the GameCube still meet.
 static float s_scale = 1, s_pixelX = 1, s_pixelY = 1;
 static int s_drawW, s_drawH;
+static bool s_windowFormat;
+static float s_tall = 1.0f;
+bool rendererWindowFormat() { return s_windowFormat; }
 void rendererDrawable(int w, int h) {
     if (w > 0 && h > 0) { s_drawW = w; s_drawH = h; }
 }
@@ -90,7 +94,7 @@ float efbScale() { return s_scale; }
 static float s_wide = 1.0f, s_stretch = 1.0f;
 static int s_efbW = EFB_W, s_ox = 0;
 struct XMap {
-    float a = 1, b = 0, clip = 1;
+    float a = 1, b = 0, clip = 1, yScale = 1;
 };
 static XMap s_xmap;
 // GXPC_SetSplitView (split-screen co-op): while on, everything drawn lands in
@@ -150,7 +154,7 @@ static float hudOffset(float at) {
 }
 // the offset of a centred draw whose own centre is at game x `at`
 static float centredOffset(float at) {
-    if (!s_hud) return float(s_ox);
+    if (!s_hud || !s_hudEdges) return float(s_ox);
     return hudOffset(s_hudAnchor >= 0.0f ? s_hudAnchor : at);
 }
 // the game camera's aspect (TMarDirector: video width 660 * 0.91346 / 448)
@@ -1260,13 +1264,10 @@ static void postPresent(GLuint tex, int w, int h, int ox, int oy, int vw, int vh
 // make a framebuffer of falls back to none, and s_msaa says so.
 static bool efbBuild() {
     s_pixelX = s_pixelY = s_scale;
-    const char* format = getenv("SMS_WIDESCREEN");
-    if (format && !strcmp(format, "window") && s_drawW && s_drawH) {
+    if (s_windowFormat && s_drawW && s_drawH) {
         // GMSE01 displays the first 448 of 528 EFB lines. Fit the *display copy*,
         // not the whole EFB, to drawable pixels. Its texels need not be square.
-        const float aspect = (4.0f / 3.0f) * s_wide;
-        float w = std::min(float(s_drawW), s_drawH * aspect);
-        float h = w / aspect;
+        float w = float(s_drawW), h = float(s_drawH);
         GLint limit = 0;
         glGetIntegerv(GL_MAX_TEXTURE_SIZE, &limit);
         const float fit = std::min(1.0f, float(limit) / std::max(w, h * EFB_H / 448.0f));
@@ -1366,11 +1367,11 @@ static void setWide(float wide) {
 // runs (the GL thread, between frames, which the settings menu is). What the game drew into the old
 // buffers is gone: the next frame draws the picture again. False, with the old buffers back, when
 // the new ones do not fit or the driver cannot make them.
-static bool efbRebuild(float scale, int msaa, float wide) {
+static bool efbRebuild(float scale, int msaa, float wide, bool force = false) {
     scale = std::max(1.0f, std::min(8.0f, scale));
     msaa = msaa > 1 ? std::min(msaa, s_maxSamples) : 0;
     wide = wide > 1.0f ? wide : 1.0f;
-    if (scale == s_scale && msaa == s_msaa && wide == s_wide) return true;
+    if (!force && scale == s_scale && msaa == s_msaa && wide == s_wide) return true;
     flushBatch();  // what the game queued for the old buffers
     const float oldScale = s_scale, oldWide = s_wide;
     const int oldMsaa = s_msaa, oldWidth = s_efbW;
@@ -1400,7 +1401,18 @@ bool rendererResize(float scale, int msaa) { return efbRebuild(scale, msaa, s_wi
 
 // The screen format changed (the settings menu, at an area load): the EFB is rebuilt as wide as
 // the format needs. False, with the old one back, when it does not fit.
-bool rendererSetWide(float wide) { return efbRebuild(s_scale, s_msaa, wide); }
+bool rendererSetWide(float wide) {
+    const bool wantWindow = wide == 0.0f;
+    const bool oldWindow = s_windowFormat;
+    const WindowView view = windowView(s_drawW, s_drawH);
+    s_windowFormat = wantWindow;
+    if (!efbRebuild(s_scale, s_msaa, wantWindow ? view.wide : wide, oldWindow != wantWindow)) {
+        s_windowFormat = oldWindow;
+        return false;
+    }
+    s_tall = wantWindow ? view.tall : 1.0f;
+    return true;
+}
 
 // Screen Icons At Edges (GXPC_SetHud): with the gameplay HUD not being drawn, which it is not
 // while the menu runs.
@@ -1431,7 +1443,11 @@ void rendererInit(float efbScale) {
                "gets a GPU driver only if its 32-bit GL libraries are installed; the 64-bit build "
                "(SMS_ARCH=64 ./build.sh) uses the system's driver.", renderer);
     if (const char* e = getenv("SMS_WIDESCREEN_HUD")) s_hudWanted = !strcmp(e, "edges");
-    setWide(s_wide);
+    const char* format = getenv("SMS_WIDESCREEN");
+    s_windowFormat = format && !strcmp(format, "window");
+    const WindowView view = windowView(s_drawW, s_drawH);
+    s_tall = s_windowFormat ? view.tall : 1.0f;
+    setWide(s_windowFormat ? view.wide : s_wide);
     if (s_efbW != EFB_W) logmsg("widescreen: EFB %dx%d", s_efbW, EFB_H);
     {
         GLint maxSamples = 0;
@@ -1681,6 +1697,11 @@ static void applyGlState() {
     if (sh < 0) sh = 0;
     glcCap(GL_SCISSOR_TEST, c.scissor, true);
     scissorColumns(left, sw, s_xmap);
+    if (s_xmap.yScale != 1.0f && !(top <= 0 && top + sh >= 448)) {
+        const int t = int(floorf((top - 224) * s_xmap.yScale + 224));
+        sh = int(ceilf((top + sh - 224) * s_xmap.yScale + 224)) - t;
+        top = t;
+    }
     if (s_split.on) {  // into the split view's part of the frame
         int t = int(floorf(splitY(float(top)))), b = int(ceilf(splitY(float(top + sh))));
         top = t;
@@ -1837,6 +1858,10 @@ static void drawViewport(float vp[8]) {
     if (s_efbW != EFB_W) {  // the draw's widescreen mapping (centre and half-width, clip x scale)
         vp[4] = (vp[4] - 342.0f) * s_xmap.a + s_xmap.b + 342.0f;
         vp[0] *= s_xmap.a * s_xmap.clip;
+    }
+    if (s_xmap.yScale != 1.0f) {
+        vp[5] = (vp[5] - 342.0f - 224.0f) * s_xmap.yScale + 224.0f + 342.0f;
+        vp[1] *= s_xmap.yScale;
     }
     if (s_split.on) {  // the split view's part of the frame
         vp[4] = splitX(vp[4] - 342.0f) + 342.0f;
@@ -2329,7 +2354,7 @@ static XMap drawXMapExact() {
         float aspect = p00 != 0.0f ? fabsf(p11 / p00) : 0.0f;
         float wideAspect = kCamAspect * sqrtf(s_wide);
         if (s_split.on) wideAspect *= s_split.sx / s_split.sy;  // a split view's camera is narrower or wider
-        if (aspect < wideAspect) m.clip = 1.0f / s_stretch;  // not widened by the game
+        if (aspect * s_tall < wideAspect) m.clip = 1.0f / s_stretch;  // not widened by the game
         return m;
     }
     // 2D across the whole width: artwork (menus, the map, movies: colour
@@ -2360,6 +2385,10 @@ static XMap drawXMapExact() {
 
 static XMap drawXMap() {
     XMap m = drawXMapExact();
+    // Art uses the centred reference frame, not the extra vertical space.
+    // A sub-viewport used to render a texture must keep its EFB coordinates.
+    if (s_tall != 1.0f && fabsf(fabsf(xff(XFR_VIEWPORT + 1)) * 2.0f - 448.0f) < 2.0f &&
+        (m.a != s_stretch || m.clip != 1.0f)) m.yScale = 1.0f / s_tall;
     m.b = pixelAligned(m.b);
     return m;
 }
@@ -3461,12 +3490,12 @@ int GXPC_PresentXFB(const void* xfb, int winW, int winH) {
     // letterbox to 4:3, or to the widened aspect
     float aspect = 4.0f / 3.0f * float(s_efbW) / float(EFB_W);
     int vw = winW, vh = winH;
-    if (s_post.aspect != 1) {
+    if (!s_windowFormat && s_post.aspect != 1) {
         if (float(vw) > float(vh) * aspect) vw = int(float(vh) * aspect + 0.5f);
         else vh = int(float(vw) / aspect + 0.5f);
     }
     const int baseH = int(float(x.h) / s_pixelY + 0.5f);  // the picture's height at the GameCube's resolution
-    if (s_post.aspect == 2 && baseH > 0 && vh >= baseH) {
+    if (!s_windowFormat && s_post.aspect == 2 && baseH > 0 && vh >= baseH) {
         vh = vh / baseH * baseH;
         vw = int(float(vh) * aspect + 0.5f);
     }
@@ -3526,7 +3555,7 @@ void GXPC_GetLastFrameStats(GXPCStats* out) {
 }
 
 void GXPC_SetHud(int on) {
-    if (!s_hudEdges || s_hud == (on != 0)) return;
+    if ((!s_hudEdges && !s_windowFormat) || s_hud == (on != 0)) return;
     flushBatch();
     s_hud = on != 0;
     s_hudPanes.clear();
@@ -3614,6 +3643,8 @@ void GXPC_SetWidescreen(float widthOver43) {
     if (s_ready) return;  // the EFB size is fixed once it exists
     s_wide = widthOver43 > 1.0f ? widthOver43 : 1.0f;
 }
+int GXPC_WindowFormat(void) { return s_windowFormat; }
+float GXPC_VerticalGain(void) { return s_tall; }
 float GXPC_GetWidescreen(void) { return s_wide; }
 
 double GXPC_GxSeconds(void) { return s_gxSeconds + g_decodeSeconds; }
