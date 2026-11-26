@@ -65,8 +65,13 @@ enum { EFB_W = 640, EFB_H = 528 };
 // The internal resolution: the EFB is s_scale times the GameCube's. FSR 1's
 // modes make it fractional; EFB rectangles map through scaled() edge by edge,
 // so pieces that meet on the GameCube still meet.
-static float s_scale = 1;
-static int scaled(int v) { return int(lroundf(float(v) * s_scale)); }
+static float s_scale = 1, s_pixelX = 1, s_pixelY = 1;
+static int s_drawW, s_drawH;
+void rendererDrawable(int w, int h) {
+    if (w > 0 && h > 0) { s_drawW = w; s_drawH = h; }
+}
+static int scaledY(int v) { return int(lroundf(float(v) * s_pixelY)); }
+static int scaled(int v) { return int(lroundf(float(v) * s_pixelX)); }
 float efbScale() { return s_scale; }
 
 // Widescreen (GXPC_SetWidescreen): the EFB is s_efbW = 640 * s_wide wide,
@@ -1254,7 +1259,23 @@ static void postPresent(GLuint tex, int w, int h, int ox, int oy, int vw, int vh
 // caller then frees what is left (efbFree) and builds the last size again. MSAA the driver cannot
 // make a framebuffer of falls back to none, and s_msaa says so.
 static bool efbBuild() {
-    const int W = scaled(s_efbW), H = scaled(EFB_H);
+    s_pixelX = s_pixelY = s_scale;
+    const char* format = getenv("SMS_WIDESCREEN");
+    if (format && !strcmp(format, "window") && s_drawW && s_drawH) {
+        // GMSE01 displays the first 448 of 528 EFB lines. Fit the *display copy*,
+        // not the whole EFB, to drawable pixels. Its texels need not be square.
+        const float aspect = (4.0f / 3.0f) * s_wide;
+        float w = std::min(float(s_drawW), s_drawH * aspect);
+        float h = w / aspect;
+        GLint limit = 0;
+        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &limit);
+        const float fit = std::min(1.0f, float(limit) / std::max(w, h * EFB_H / 448.0f));
+        s_pixelX = w * fit / s_efbW;
+        s_pixelY = h * fit / 448.0f;
+        logmsg("window drawable %dx%d, EFB %dx%d, display copy %dx%d", s_drawW, s_drawH,
+               scaled(s_efbW), scaledY(EFB_H), scaled(s_efbW), scaledY(448));
+    }
+    const int W = scaled(s_efbW), H = scaledY(EFB_H);
     while (glGetError() != GL_NO_ERROR) {}
     glGenTextures(1, &s_efbColor);
     glBindTexture(GL_TEXTURE_2D, s_efbColor);
@@ -1367,7 +1388,7 @@ static bool efbRebuild(float scale, int msaa, float wide) {
         if (oldWide != s_wide) setWide(oldWide);
         if (!efbBuild()) logmsg("the EFB could not be built again");
     } else {
-        logmsg("internal resolution %gx (%dx%d), %d samples", double(s_scale), scaled(s_efbW), scaled(EFB_H), s_msaa);
+        logmsg("internal resolution %gx (%dx%d), %d samples", double(s_scale), scaled(s_efbW), scaledY(EFB_H), s_msaa);
     }
     glcInvalidate();
     forgetResolvedEfb();
@@ -1396,7 +1417,7 @@ int rendererMsaa() { return s_msaa; }
 int rendererMaxSamples() { return s_maxSamples; }
 void rendererEfbSize(int* w, int* h) {
     *w = scaled(s_efbW);
-    *h = scaled(EFB_H);
+    *h = scaledY(EFB_H);
 }
 
 void rendererInit(float efbScale) {
@@ -1639,7 +1660,7 @@ void glcForgetTexture(GLuint tex) {
 
 static void applyGlState() {
     GlCache& c = g_glc;
-    int W = scaled(s_efbW), H = scaled(EFB_H);
+    int W = scaled(s_efbW), H = scaledY(EFB_H);
     if (c.fbo != s_efbFbo) {
         c.fbo = s_efbFbo;
         glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
@@ -1665,7 +1686,7 @@ static void applyGlState() {
         top = t;
         sh = b - t;
     }
-    GLint sc[4] = {scaled(left), scaled(top), scaled(left + sw) - scaled(left), scaled(top + sh) - scaled(top)};
+    GLint sc[4] = {scaled(left), scaledY(top), scaled(left + sw) - scaled(left), scaledY(top + sh) - scaledY(top)};
     if (memcmp(sc, c.sc, sizeof sc) != 0) {
         memcpy(c.sc, sc, sizeof sc);
         glScissor(sc[0], sc[1], sc[2], sc[3]);
@@ -1795,7 +1816,7 @@ static void applyGlState() {
     glcCap(GL_CLIP_DISTANCE0 + 1, c.clip1, clipOn);
     glcCap(GL_DEPTH_CLAMP, c.depthClamp, clipOn);
     uint32_t lp = g.bp[BP_LPSIZE];
-    float pt = float((lp >> 8) & 0xFF) / 6.0f * float(s_scale);
+    float pt = float((lp >> 8) & 0xFF) / 6.0f * float(s_pixelY);
     if (pt < 1.0f) pt = 1.0f;
     if (!(c.pointSize == pt)) {
         c.pointSize = pt;
@@ -2148,7 +2169,7 @@ uint32_t pixMetricRead() {
         for (auto& q : s_pixPending) samples += queryResult(q.first);
         pixReleasePending();
         s_pixSamples = samples;
-        uint64_t v = uint64_t(double(samples) / (double(s_scale) * double(s_scale))) + uint64_t(s_pixTris) * 4;
+        uint64_t v = uint64_t(double(samples) / (double(s_pixelX) * double(s_pixelY))) + uint64_t(s_pixTris) * 4;
         return v > 0xFFFFFFFFu ? 0xFFFFFFFFu : uint32_t(v);
     }
     glEndQuery(GL_SAMPLES_PASSED);
@@ -2180,7 +2201,7 @@ uint32_t pixMetricRead() {
     s_pixCur = poolQuery();
     s_pixCurPooled = true;
     glBeginQuery(GL_SAMPLES_PASSED, s_pixCur);
-    uint64_t v = uint64_t(double(samples) / (double(s_scale) * double(s_scale))) + uint64_t(s_pixTris) * 4;
+    uint64_t v = uint64_t(double(samples) / (double(s_pixelX) * double(s_pixelY))) + uint64_t(s_pixTris) * 4;
     return v > 0xFFFFFFFFu ? 0xFFFFFFFFu : uint32_t(v);
 }
 
@@ -2633,7 +2654,7 @@ static int s_resolvedRect[4];
 static GLuint efbReadFbo(int x0 = 0, int y0 = 0, int x1 = INT32_MAX, int y1 = INT32_MAX,
                          GLbitfield bits = GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT) {
     if (!s_msaa) return s_efbFbo;
-    const int W = scaled(s_efbW), H = scaled(EFB_H);
+    const int W = scaled(s_efbW), H = scaledY(EFB_H);
     glDisable(GL_SCISSOR_TEST);
 #ifdef __APPLE__
     // macOS resolves the whole EFB: a part of a multisampled image is far
@@ -2668,7 +2689,7 @@ static void clearRect(int x0, int x1, int y, int h) {
     uint32_t ar = g.bp[BP_CLEAR_AR], gb = g.bp[BP_CLEAR_GB], z = g.bp[BP_CLEAR_Z];
     glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
     glEnable(GL_SCISSOR_TEST);
-    glScissor(x0, scaled(y), x1 - x0, scaled(y + h) - scaled(y));
+    glScissor(x0, scaledY(y), x1 - x0, scaledY(y + h) - scaledY(y));
     bool hasAlpha = (g.bp[BP_PE_CONTROL] & 7) == 1;
     // Copy clears obey the PE write enables, just like ordinary EFB writes.
     // A copy clear in RGB8 must not overwrite the backing alpha used later by
@@ -2994,15 +3015,15 @@ static void copyEfb(uint32_t ctrl) {
     if (s_efbW != EFB_W && !stretched && !(x == 0 && w == s_efbW))
         fx = float(x - s_ox) + pixelAligned(float(s_ox));  // where the centred draws it copies landed
     // a split view's copy takes its part of the frame (the texture keeps its size)
-    const int fullOw = x1 - x0, fullOh = scaled(y + h) - scaled(y);
+    const int fullOw = x1 - x0, fullOh = scaledY(y + h) - scaledY(y);
     float fy = float(y), fh = float(h);
     if (s_split.on && !disp) {
         fx = splitX(fx);
         fw *= s_split.sx;
         fy = splitY(fy);
         fh *= s_split.sy;
-        x0 = int(floorf(fx * s_scale));
-        x1 = int(ceilf((fx + fw) * s_scale));
+        x0 = int(floorf(fx * s_pixelX));
+        x1 = int(ceilf((fx + fw) * s_pixelX));
     }
     if (stretched) {
         // A stretched piece's edges fall inside widened pixels, and its quad
@@ -3010,10 +3031,10 @@ static void copyEfb(uint32_t ctrl) {
         // those columns too. Taken to whole widened pixels, they went a column
         // past the quad the circle wipe's blur draws its centre cell back with,
         // which left a black line down the opening iris above 1x.
-        x0 = int(lroundf(float(x) * s_stretch * s_scale));
-        x1 = int(lroundf(float(x + w) * s_stretch * s_scale));
-        fx = float(x0) / s_scale;
-        fw = float(x1 - x0) / s_scale;
+        x0 = int(lroundf(float(x) * s_stretch * s_pixelX));
+        x1 = int(lroundf(float(x + w) * s_stretch * s_pixelX));
+        fx = float(x0) / s_pixelX;
+        fw = float(x1 - x0) / s_pixelX;
     }
     glDisable(GL_SCISSOR_TEST);
     glDisable(GL_BLEND);
@@ -3026,7 +3047,7 @@ static void copyEfb(uint32_t ctrl) {
 
     if (disp) {
         Xfb& xfb = s_xfbs[dest];
-        const int y0 = scaled(y), sw = x1 - x0, sh = scaled(y + h) - y0;
+        const int y0 = scaledY(y), sw = x1 - x0, sh = scaledY(y + h) - y0;
         if (!xfb.tex || xfb.w != sw || xfb.h != sh) {
             if (!xfb.tex) glGenTextures(1, &xfb.tex);
             glBindTexture(GL_TEXTURE_2D, xfb.tex);
@@ -3074,7 +3095,7 @@ static void copyEfb(uint32_t ctrl) {
         uint32_t mode = fmt | (intensity ? 16u : 0u) | (zcopy ? 32u : 0u);
         efbCopyRegister(dest, tex, ow, oh, mode);
         // s_efbColor (s_efbDepth for depth copies), sampled below, holds the current EFB
-        efbReadFbo(x0, int(floorf(fy * s_scale)), x1, int(ceilf((fy + fh) * s_scale)), zcopy ? GL_DEPTH_BUFFER_BIT : GL_COLOR_BUFFER_BIT);
+        efbReadFbo(x0, int(floorf(fy * s_pixelY)), x1, int(ceilf((fy + fh) * s_pixelY)), zcopy ? GL_DEPTH_BUFFER_BIT : GL_COLOR_BUFFER_BIT);
         glBindFramebuffer(GL_FRAMEBUFFER, s_tmpFbo);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
         glViewport(0, 0, ow, oh);
@@ -3085,8 +3106,8 @@ static void copyEfb(uint32_t ctrl) {
         glBindTexture(GL_TEXTURE_2D, s_efbColor);
         float rect[4] = {fx / float(s_efbW), fy / EFB_H, fw / float(s_efbW), fh / EFB_H};
         glUniform4fv(s_copyURect, 1, rect);
-        // the copy's rectangle in EFB pixels (the scaled EFB is scaled(s_efbW) x scaled(EFB_H) of them)
-        const float pxX = float(scaled(s_efbW)) / float(s_efbW), pxY = float(scaled(EFB_H)) / EFB_H;
+        // the copy's rectangle in EFB pixels (the scaled EFB is scaled(s_efbW) x scaledY(EFB_H) of them)
+        const float pxX = float(scaled(s_efbW)) / float(s_efbW), pxY = float(scaledY(EFB_H)) / EFB_H;
         const float left = fx * pxX, top = fy * pxY, across = fw * pxX, down = fh * pxY;
         const float src[4] = {left, top, half ? 0.0f : across / float(ow), down / float(oh)};
         glUniform4fv(s_copyUSrc, 1, src);
@@ -3281,15 +3302,15 @@ static uint32_t peekSync(int x, int y, bool depth) {
     s_syncReads++;
     uint32_t v = 0;
     uint8_t px[4] = {0, 0, 0, 0};
-    glBindFramebuffer(GL_FRAMEBUFFER, efbReadFbo(scaled(x), scaled(y), scaled(x) + 1, scaled(y) + 1,
+    glBindFramebuffer(GL_FRAMEBUFFER, efbReadFbo(scaled(x), scaledY(y), scaled(x) + 1, scaledY(y) + 1,
                                                  depth ? GL_DEPTH_BUFFER_BIT : GL_COLOR_BUFFER_BIT));
     if (depth) {
         glPixelStorei(GL_PACK_ALIGNMENT, 4);
-        glReadPixels(scaled(x), scaled(y), 1, 1, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, &v);
+        glReadPixels(scaled(x), scaledY(y), 1, 1, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, &v);
         return v;
     }
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glReadPixels(scaled(x), scaled(y), 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    glReadPixels(scaled(x), scaledY(y), 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
     return uint32_t(px[0]) | uint32_t(px[1]) << 8 | uint32_t(px[2]) << 16 | uint32_t(px[3]) << 24;
 }
 
@@ -3318,7 +3339,7 @@ static GLuint peekSource(bool depth) {
     const GLuint src = efbReadFbo(0, 0, INT32_MAX, INT32_MAX, bits);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, src);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s_peekFbo);
-    glBlitFramebuffer(0, 0, scaled(s_efbW), scaled(EFB_H), 0, 0, s_efbW, EFB_H, bits, GL_NEAREST);
+    glBlitFramebuffer(0, 0, scaled(s_efbW), scaledY(EFB_H), 0, 0, s_efbW, EFB_H, bits, GL_NEAREST);
     return s_peekFbo;
 }
 
@@ -3444,7 +3465,7 @@ int GXPC_PresentXFB(const void* xfb, int winW, int winH) {
         if (float(vw) > float(vh) * aspect) vw = int(float(vh) * aspect + 0.5f);
         else vh = int(float(vw) / aspect + 0.5f);
     }
-    const int baseH = int(float(x.h) / s_scale + 0.5f);  // the picture's height at the GameCube's resolution
+    const int baseH = int(float(x.h) / s_pixelY + 0.5f);  // the picture's height at the GameCube's resolution
     if (s_post.aspect == 2 && baseH > 0 && vh >= baseH) {
         vh = vh / baseH * baseH;
         vw = int(float(vh) * aspect + 0.5f);
@@ -3474,7 +3495,7 @@ void GXPC_ReadEFB(uint8_t* rgba, int* w, int* h) {
     flushBatch();
     glcInvalidate();
     *w = scaled(s_efbW);
-    *h = scaled(EFB_H);
+    *h = scaledY(EFB_H);
     if (!rgba) return;
     glBindFramebuffer(GL_FRAMEBUFFER, efbReadFbo());
     glPixelStorei(GL_PACK_ALIGNMENT, 1);

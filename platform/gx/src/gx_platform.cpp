@@ -664,6 +664,7 @@ bool openWindow(float scale, bool vulkan) {
         else
 #endif
             SDL_GL_GetDrawableSize(s_window, &drawW, &drawH);
+        rendererDrawable(drawW, drawH);
         float outW = float(drawW), outH = float(drawH);
         if (envTrue("SMS_FULLSCREEN")) {
             const float dpi = layout.w > 0 ? float(drawW) / float(layout.w) : 1.0f;
