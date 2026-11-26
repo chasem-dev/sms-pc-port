@@ -207,6 +207,7 @@ struct Buffer {
         bool d24;
     };
     std::vector<Conv> pendingConv;
+    std::vector<uint8_t> conversionScratch;
     // the mapped range (glMapBufferRange)
     VkDeviceSize mapOffset = 0, mapLength = 0;
     GLbitfield mapAccess = 0;
