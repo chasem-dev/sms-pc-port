@@ -1363,6 +1363,7 @@ void GXPC_Present(const void* xfb) {
 #endif
             else SDL_GL_SwapWindow(s_window);
             tSwapped = nowSeconds();
+            rendererRefit(w, h);
         });
         {  // the wait for the frame's queued work counts as GX's, the rest is presenting
             const double waited = glt::waitedSeconds() - waited0;

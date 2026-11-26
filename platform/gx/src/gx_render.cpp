@@ -1367,15 +1367,20 @@ static void setWide(float wide) {
 // runs (the GL thread, between frames, which the settings menu is). What the game drew into the old
 // buffers is gone: the next frame draws the picture again. False, with the old buffers back, when
 // the new ones do not fit or the driver cannot make them.
-static bool efbRebuild(float scale, int msaa, float wide, bool force = false) {
+static bool efbRebuild(float scale, int msaa, float wide, bool window, int drawW, int drawH) {
     scale = std::max(1.0f, std::min(8.0f, scale));
     msaa = msaa > 1 ? std::min(msaa, s_maxSamples) : 0;
     wide = wide > 1.0f ? wide : 1.0f;
-    if (!force && scale == s_scale && msaa == s_msaa && wide == s_wide) return true;
+    if (scale == s_scale && msaa == s_msaa && wide == s_wide && window == s_windowFormat &&
+        (!window || (s_drawW == drawW && s_drawH == drawH))) return true;
     flushBatch();  // what the game queued for the old buffers
     const float oldScale = s_scale, oldWide = s_wide;
     const int oldMsaa = s_msaa, oldWidth = s_efbW;
+    const bool oldWindow = s_windowFormat;
+    const int oldDrawW = s_drawW, oldDrawH = s_drawH;
     efbFree();
+    s_windowFormat = window;
+    rendererDrawable(drawW, drawH);
     s_scale = scale;
     s_msaa = msaa;
     if (wide != s_wide) setWide(wide);
@@ -1384,6 +1389,8 @@ static bool efbRebuild(float scale, int msaa, float wide, bool force = false) {
         logmsg("internal resolution %gx with %d samples, %d wide did not fit; back to %gx with %d, %d wide",
                double(scale), msaa, s_efbW, double(oldScale), oldMsaa, efbWidthFor(oldWide));
         efbFree();
+        s_windowFormat = oldWindow;
+        rendererDrawable(oldDrawW, oldDrawH);
         s_scale = oldScale;
         s_msaa = oldMsaa;
         if (oldWide != s_wide) setWide(oldWide);
@@ -1397,21 +1404,25 @@ static bool efbRebuild(float scale, int msaa, float wide, bool force = false) {
     return ok;
 }
 
-bool rendererResize(float scale, int msaa) { return efbRebuild(scale, msaa, s_wide); }
+bool rendererResize(float scale, int msaa) { return efbRebuild(scale, msaa, s_wide, s_windowFormat, s_drawW, s_drawH); }
 
 // The screen format changed (the settings menu, at an area load): the EFB is rebuilt as wide as
 // the format needs. False, with the old one back, when it does not fit.
 bool rendererSetWide(float wide) {
     const bool wantWindow = wide == 0.0f;
-    const bool oldWindow = s_windowFormat;
     const WindowView view = windowView(s_drawW, s_drawH);
-    s_windowFormat = wantWindow;
-    if (!efbRebuild(s_scale, s_msaa, wantWindow ? view.wide : wide, oldWindow != wantWindow)) {
-        s_windowFormat = oldWindow;
-        return false;
-    }
+    if (!efbRebuild(s_scale, s_msaa, wantWindow ? view.wide : wide, wantWindow, s_drawW, s_drawH)) return false;
     s_tall = wantWindow ? view.tall : 1.0f;
     return true;
+}
+
+// Called after the swap. The displayed XFB is intact; the next game frame
+// renders into the new EFB, with its matching camera and screen-copy lens.
+void rendererRefit(int w, int h) {
+    if (w <= 0 || h <= 0 || (s_drawW == w && s_drawH == h)) return;
+    if (!s_windowFormat) { rendererDrawable(w, h); return; }
+    const WindowView view = windowView(w, h);
+    if (efbRebuild(s_scale, s_msaa, view.wide, true, w, h)) s_tall = view.tall;
 }
 
 // Screen Icons At Edges (GXPC_SetHud): with the gameplay HUD not being drawn, which it is not
@@ -3487,6 +3498,14 @@ int GXPC_PresentXFB(const void* xfb, int winW, int winH) {
     auto it = s_xfbs.find(xfb);
     if (it == s_xfbs.end()) return 0;
     const Xfb& x = it->second;
+    if (s_windowFormat && g_gxStats) {
+        static int last[4] = {};
+        const int sizes[4] = {winW, winH, x.w, x.h};
+        if (memcmp(last, sizes, sizeof last)) {
+            logmsg("window frame %u: drawable %dx%d, XFB %dx%d", GXPC_FrameCount(), winW, winH, x.w, x.h);
+            memcpy(last, sizes, sizeof last);
+        }
+    }
     // letterbox to 4:3, or to the widened aspect
     float aspect = 4.0f / 3.0f * float(s_efbW) / float(EFB_W);
     int vw = winW, vh = winH;

@@ -82,6 +82,8 @@ int offOnCount() { return 2; }
 const char* offOnName(int i) { return i == 1 ? "On" : i == 0 ? "Off" : ""; }
 
 // ------------------------------------------------------------------ screen format
+// What setupObjects used when it constructed this area's camera and menus.
+float s_areaWide = 1.0f;
 const float kSameWide = 0.002f;
 std::atomic<float> s_pendingWide{0.0f};  // the width chosen, 0 while it is the one in force
 
@@ -360,7 +362,12 @@ float GXPC_ApplyWidescreen(void) {
         if (!ok) logmsg("widescreen: a frame %.3f times 4:3 wide did not fit; keeping %.3f", double(want),
                         double(GXPC_GetWidescreen()));
     }
-    return GXPC_GetWidescreen();
+    s_areaWide = GXPC_GetWidescreen();
+    return s_areaWide;
+}
+
+float GXPC_HorizontalGain(void) {
+    return rendererWindowFormat() ? GXPC_GetWidescreen() / s_areaWide : 1.0f;
 }
 
 }  // extern "C"
