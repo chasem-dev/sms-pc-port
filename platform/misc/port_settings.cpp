@@ -189,7 +189,7 @@ const Words kWords[] = {
                    {"Steam Deck", "\"steamdeck\""}, {"Nintendo", "\"nintendo\""}}},
 };
 // Off and On, as false and true.
-const char* const kSwitches[] = {"mpCollision", "fxaa", "heatHaze", "textures", "shaderWarmup", "fullscreen", "hudEdges", "overlay", "hdr",
+const char* const kSwitches[] = {"mpCollision", "fxaa", "heatHaze", "textures", "shaderWarmup", "fullscreen", "hudEdges", "overlay", "fpsCounter", "hdr",
                                  "hdrCalibration", "skipMovies", "invertCameraX", "invertCameraY", "freeCamera", "mouseCamera",
                                  "closeCameraMouse", "cstickOrbit", "rawMouse", "invertFluddAimY", "preciseTimer"};
 // Whole numbers, as shown; Off is 0.

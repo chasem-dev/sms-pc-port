@@ -38,6 +38,7 @@ enum Id {
     GAME_GAMMA,
     DISPLAY_GAMMA,
     VSYNC,
+    FPS_COUNTER,
     OVERLAY,
     MOUSE_LOOK,
     RAW_MOUSE,
@@ -211,6 +212,7 @@ void build() {
         else snprintf(out, n, "%.3g", double(v));
     });
     listNames(VSYNC, {"Off", "On", "Adaptive"});
+    listNames(FPS_COUNTER, {"Off", "On"});
     listNames(OVERLAY, {"Off", "On"});
     listNames(MOUSE_LOOK, {"Off", "On"});
     listNames(RAW_MOUSE, {"Off", "On"});
@@ -254,6 +256,7 @@ int available(int id) {
     case FULLSCREEN:
     case FULLSCREEN_TYPE:
     case VSYNC:
+    case FPS_COUNTER:
     case OVERLAY:
     case MOUSE_LOOK: return platformHasWindow();
     case RAW_MOUSE: return platformHasWindow() && platformRawMouseMatters();  // Windows and X11
@@ -292,6 +295,7 @@ int get(int id) {
     case GAME_GAMMA: return nearest(c, post.gameGamma);
     case DISPLAY_GAMMA: return nearest(c, post.displayGamma);
     case VSYNC: return platformVsync() < 0 ? 2 : std::min(platformVsync(), 1);
+    case FPS_COUNTER: return fpsCounterEnabled() ? 1 : 0;
     case OVERLAY: return GXPC_OverlayVisible() ? 1 : 0;
     case MOUSE_LOOK: return platformMouseLook() ? 1 : 0;
     case RAW_MOUSE: return platformRawMouse() ? 1 : 0;
@@ -362,6 +366,7 @@ int set(int id, int value) {
         case DISPLAY_GAMMA: post.displayGamma = v; break;
         case ASPECT: post.aspect = int(v + 0.5f); break;
         case VSYNC: ok = platformSetVsync(v >= 1.5f ? -1 : int(v + 0.5f)); return;
+        case FPS_COUNTER: setFpsCounter(v >= 0.5f); return;
         case OVERLAY:
             if ((v >= 0.5f) != (GXPC_OverlayVisible() != 0)) GXPC_OverlayToggle();
             return;
@@ -431,6 +436,8 @@ const PortSetting* gx_port_settings(int* count) {
                            "Your display's gamma, for TV Gamma. sRGB suits most PC monitors."),
         row<VSYNC>("vsync", PORT_SETTINGS_PAGE_DISPLAY, 90, "V-Sync",
                    "Waits for the display. No tearing, but it can hold the frame rate down."),
+        row<FPS_COUNTER>("fpsCounter", PORT_SETTINGS_PAGE_DISPLAY, 99, "FPS Counter",
+                         "Shows game frames per second without opening the performance overlay."),
         row<OVERLAY>("overlay", PORT_SETTINGS_PAGE_DISPLAY, 100, "Performance Overlay",
                      "Shows the frame rate and where the time goes. The backtick key does this too."),
         row<MOUSE_LOOK>("mouseCamera", PORT_SETTINGS_PAGE_GAMEPLAY, 80, "Mouse Look",

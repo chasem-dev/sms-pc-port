@@ -4,6 +4,7 @@
 // Text is rasterised on the CPU with stb_easy_font and blended on top of the
 // presented frame (GXPC_DrawOverlay), so it touches no game-visible GL state.
 #include "gx_internal.h"
+#include "gx_counter_layout.h"
 #include "gl_funcs.h"
 #include "sms_gx/gx_pc.h"
 
@@ -20,6 +21,7 @@
 namespace {
 
 bool s_visible = false;
+bool s_counter = false;
 bool s_panelDirty = true;
 const int kSpeeds[] = {1, 2, 4, 10};
 std::atomic<int> s_speedIndex(0);
@@ -88,6 +90,8 @@ std::string s_renderer;
 }  // namespace
 
 namespace gx {
+bool fpsCounterEnabled() { return s_counter; }
+void setFpsCounter(bool enabled) { s_counter = enabled; s_panelDirty = true; }
 void invalidateOverlay() {
     s_panelDirty = true;
     s_renderer.clear();
@@ -142,11 +146,37 @@ void GXPC_OverlayDraw(int winW, int winH) {
     static bool s_envChecked = false;
     if (!s_envChecked) {  // SMS_OVERLAY=1: start with the overlay open
         s_envChecked = true;
+        const char* counter = getenv("SMS_FPS_COUNTER");
+        s_counter = counter && !strcmp(counter, "1");
         const char* e = getenv("SMS_OVERLAY");
         if (e && *e && strcmp(e, "0") != 0 && !s_visible) GXPC_OverlayToggle();
     }
     s_clock.shownFrames++;
-    if (!s_visible) return;
+    if (!s_visible) {
+        if (s_counter && s_clock.fps > 0) {
+            static double lastFps = 0;
+            static std::vector<uint8_t> pixels;
+            static int w, h;
+            const uint8_t* upload = nullptr;
+            if (s_panelDirty || lastFps != s_clock.fps) {
+                lastFps = s_clock.fps;
+                char text[32];
+                snprintf(text, sizeof text, "%.1f FPS", lastFps);
+                const int pad = 4; // same font and inset as the performance overlay
+                w = gx::overlayTextWidth(text) + pad * 2;
+                h = stb_easy_font_height(text) + pad * 2;
+                pixels.resize(size_t(w) * h * 4);
+                const uint8_t bg[] = {16, 16, 24, 128}, fg[] = {255, 220, 64, 255};
+                gx::overlayFillRect(pixels, w, h, 0, 0, w, h, bg);
+                gx::overlayText(pixels, w, h, pad, pad, text, fg);
+                upload = pixels.data();
+                s_panelDirty = false;
+            }
+            const auto layout = gx::counterLayout(winW, winH, w, h);
+            GXPC_DrawOverlay(upload, w, h, layout.x, layout.y, layout.scale, winW, winH);
+        }
+        return;
+    }
     if (s_renderer.empty()) {
         const char* r = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
         s_renderer = r ? r : "?";

@@ -221,3 +221,6 @@ frame_rate = 60
 # Save states (README.md, Save states); default: savestates beside save_dir
 # save_state_dir = /path/to/save/states/folder
 # disc_image = /path/to/GMSE01.iso
+
+# Show the game frame rate without the debug overlay.
+# fps_counter = off

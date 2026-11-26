@@ -879,6 +879,7 @@ static const struct {
 	{ "soft_trigger", "SMS_SOFT_TRIGGER" }, // L_SOFT / R_SOFT press depth, percent
 	{ "stick_deadzone", "SMS_STICK_DEADZONE" }, // controller sticks' dead zone, percent of their travel (15)
 	{ "fludd_trigger", "SMS_FLUDD_TRIGGER" }, // DualSense R2 resistance while Mario has FLUDD, percent (0: off)
+	{ "fps_counter", "SMS_FPS_COUNTER" },
 	{ "overlay", "SMS_OVERLAY" },
 	{ "save_dir", "SMS_SAVE_DIR" },
 	{ "save_state_dir", "SMS_SAVE_STATE_DIR" },
