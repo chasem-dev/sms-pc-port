@@ -879,6 +879,7 @@ static const struct {
 	{ "soft_trigger", "SMS_SOFT_TRIGGER" }, // L_SOFT / R_SOFT press depth, percent
 	{ "stick_deadzone", "SMS_STICK_DEADZONE" }, // controller sticks' dead zone, percent of their travel (15)
 	{ "fludd_trigger", "SMS_FLUDD_TRIGGER" }, // DualSense R2 resistance while Mario has FLUDD, percent (0: off)
+	{ "fps_counter", "SMS_FPS_COUNTER" },
 	{ "overlay", "SMS_OVERLAY" },
 	{ "save_dir", "SMS_SAVE_DIR" },
 	{ "save_state_dir", "SMS_SAVE_STATE_DIR" },
@@ -898,6 +899,55 @@ static const struct {
 	{ "rumble", "SMS_RUMBLE" },                       // controller rumble, on by default
 	{ "rumble_strength", "SMS_RUMBLE_STRENGTH" },     // percent
 };
+
+static const char* setting_env(const char* key, size_t length)
+{
+	for (const auto& setting : kSettings)
+		if (strlen(setting.name) == length && !strncmp(setting.name, key, length))
+			return setting.env;
+	return NULL;
+}
+
+static const char* setting_value(const char* value)
+{
+	if (!strcmp(value, "on") || !strcmp(value, "yes") || !strcmp(value, "true"))
+		return "1";
+	if (!strcmp(value, "off") || !strcmp(value, "no") || !strcmp(value, "false"))
+		return "0";
+	return value;
+}
+
+static void apply_setting_flags(int argc, char** argv)
+{
+	for (int i = 1; i < argc; ++i) {
+		if (!strcmp(argv[i], "--help")) {
+			puts("Usage: sms [options] [disc image]\n"
+			     "  --help  --headless  --window  --vsync  --vulkan  --opengl  --display-info\n"
+			     "One-launch settings (override environment and settings.txt):");
+			for (const auto& setting : kSettings)
+				printf("  --%s=value\n", setting.name);
+			exit(0);
+		}
+		if (strncmp(argv[i], "--", 2))
+			continue;
+		const char* key = argv[i] + 2;
+		const char* eq = strchr(key, '=');
+		if (!eq)
+			continue; // leave the renderer's switches alone
+		const char* env = setting_env(key, eq - key);
+		if (!env || !eq[1]) {
+			fprintf(stderr, "Invalid setting: %s (see --help)\n", argv[i]);
+			exit(2);
+		}
+		const char* value = setting_value(eq + 1);
+		if (!strcmp(env, "SMS_TEXTURE_PACKS") && !strcmp(value, "1"))
+			value = ""; // the built-in search path, not a directory named 1
+		if (port_setenv(env, value, 1)) {
+			fprintf(stderr, "Could not apply %s\n", argv[i]);
+			exit(2);
+		}
+	}
+}
 
 static void load_settings()
 {
@@ -940,19 +990,12 @@ static void load_settings()
 			while (c > v && (c[-1] == ' ' || c[-1] == '\t'))
 				*--c = 0;
 		}
-		const char* env = strncmp(p, "SMS_", 4) == 0 ? p : NULL;
-		for (size_t i = 0; !env && i < sizeof kSettings / sizeof kSettings[0]; i++)
-			if (strcmp(p, kSettings[i].name) == 0)
-				env = kSettings[i].env;
+		const char* env = strncmp(p, "SMS_", 4) == 0 ? p : setting_env(p, strlen(p));
 		if (!env) {
 			port_log("[port] %s: unknown setting \"%s\"\n", path, p);
 			continue;
 		}
-		const char* val = v;
-		if (!strcmp(v, "on") || !strcmp(v, "yes") || !strcmp(v, "true"))
-			val = "1";
-		else if (!strcmp(v, "off") || !strcmp(v, "no") || !strcmp(v, "false"))
-			val = "0";
+		const char* val = setting_value(v);
 		if (!strcmp(env, "SMS_TEXTURE_PACKS") && !strcmp(val, "1"))
 			continue; // on: the default folder
 		if (!*val || getenv(env))
@@ -977,6 +1020,7 @@ extern "C" void port_init(int argc, char** argv)
 	sms_server_init(argc, argv);
 #endif
 	load_settings();
+	apply_setting_flags(argc, argv);
 	pick_glx_vendor();
 	if (const char* m = getenv("SMS_SKIP_MOVIES"))
 		port_skip_movies = *m && strcmp(m, "0") != 0;

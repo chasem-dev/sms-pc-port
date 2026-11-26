@@ -390,6 +390,8 @@ void shaderPrepareStage(int stage);  // while a stage loads: its programs (the w
 // ---------------------------------------------------------------- overlay panels
 // Each slot keeps its own texture, so panels drawn in the same frame keep their
 // cached bitmaps. GXPC_DrawOverlay draws the debug overlay's slot.
+bool fpsCounterEnabled();
+void setFpsCounter(bool);
 enum OverlaySlot {
     OVERLAY_DEBUG,
     OVERLAY_CHEAT_MENU,
