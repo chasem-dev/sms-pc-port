@@ -1,0 +1,61 @@
+Reason: port: Window stretches only the four stage-entry black mask panes to the current drawable. Keep their native animation coordinates so a resize does not leave the bars at the old extent. The name of the stage stays at the UI scale.
+--- a/src/GC2D/ConsoleStr.cpp
++++ b/src/GC2D/ConsoleStr.cpp
+@@ -67,6 +67,8 @@
+ // SMS_WIDESCREEN (platform): the displayed width over the GameCube's 4:3, 1
+ // when off.
+ extern "C" float port_widescreen;
++extern "C" int GXPC_WindowFormat();
++extern "C" { bool port_window_title_card = false; }
+ // sms_gx: draw the following 2D at the 4:3 frame's scale, centred, and past
+ // its edges (0 goes back).
+ extern "C" void GXPC_SetWide2D(int on);
+@@ -81,7 +83,7 @@
+                             TExPane** wipes)
+ {
+ 	J2DPane* root = screen->search('ROOT');
+-	if (port_widescreen <= 1.0f || root == nullptr)
++	if (GXPC_WindowFormat() || port_widescreen <= 1.0f || root == nullptr)
+ 		return;
+ 	const int w     = screen->getWidth(); // the 4:3 frame (600 x 480)
+ 	const int extra = (int)(w * (port_widescreen - 1.0f) / 2.0f + 0.999f) + 1;
+@@ -405,9 +407,11 @@
+ 		local_1a0.setup2D();
+ 		if (unk2B4 == 4) {
+ #ifdef TARGET_PC
++			port_window_title_card = GXPC_WindowFormat();
+ 			GXPC_SetWide2D(1);
+ 			unk14->draw(0, 0, &local_1a0);
+ 			GXPC_SetWide2D(0);
++			port_window_title_card = false;
+ #else
+ 			unk14->draw(0, 0, &local_1a0);
+ #endif
+--- a/libs/JSystem/src/J2D/J2DPane.cpp
++++ b/libs/JSystem/src/J2D/J2DPane.cpp
+@@ -11,6 +11,8 @@
+ // sms_gx widescreen: panes report their extent as they are drawn, so the HUD
+ // can move each piece (the outermost pane that is not a screen-sized
+ // container, and all it contains) as one.
++extern "C" bool port_window_title_card;
++extern "C" void GXPC_SetStretch2D(int);
+ extern "C" void GXPC_HudPaneBegin(float x1, float x2);
+ extern "C" void GXPC_HudPaneEnd(void);
+ #endif
+@@ -230,7 +232,16 @@
+ 				tmpGraf.setScissor();
+ 			}
+ 			GXSetCullMode(mCullMode);
++#ifdef TARGET_PC
++			const bool stageMask = port_window_title_card &&
++			    (mUserInfoTag == 'msk1' || mUserInfoTag == 'msk2' ||
++			     mUserInfoTag == 'wp_l' || mUserInfoTag == 'wp_r');
++			if (stageMask) GXPC_SetStretch2D(1);
++#endif
+ 			drawSelf(x, y, &tmpGraf.mPosMtx);
++#ifdef TARGET_PC
++			if (stageMask) GXPC_SetStretch2D(0);
++#endif
+ 
+ 			for (JSUTreeIterator<J2DPane> iter = mPaneTree.getFirstChild();
+ 			     iter != mPaneTree.getEndChild(); ++iter) {
