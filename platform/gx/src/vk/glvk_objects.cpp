@@ -131,9 +131,18 @@ void bufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const void* 
 }
 
 static void applyConversions(Buffer* b) {
+    // Read/modify/write on mapped graphics memory can stall at every pixel,
+    // even when the driver advertises it as host-cached. Convert in CPU RAM
+    // and transfer in bulk; keep the actual GL buffer's contents identical.
+    uint8_t* data = b->map;
+    if (b->alloc) {
+        b->conversionScratch.resize(size_t(b->size));
+        memcpy(b->conversionScratch.data(), b->map, size_t(b->size));
+        data = b->conversionScratch.data();
+    }
     for (const Buffer::Conv& c : b->pendingConv) {
         if (c.offset + c.count * 4 > b->size) continue;
-        uint32_t* p = reinterpret_cast<uint32_t*>(b->map + c.offset);
+        uint32_t* p = reinterpret_cast<uint32_t*>(data + c.offset);
         if (c.d24) {
             for (VkDeviceSize i = 0; i < c.count; i++) {
                 const uint32_t d = p[i] & 0xFFFFFF;
@@ -149,6 +158,10 @@ static void applyConversions(Buffer* b) {
         }
     }
     b->pendingConv.clear();
+    if (b->alloc) {
+        memcpy(b->map, data, size_t(b->size));
+        if (!b->coherent) vmaFlushAllocation(D.vma, b->alloc, 0, b->size);
+    }
 }
 
 void* mapBufferRange(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access) {
