@@ -255,6 +255,8 @@ Changes apply at once, behind the menu. They are the options of the same names i
 
 A few take effect later: the **frame rate** from the next area (it is chosen as an area loads, so 120 can be chosen only when the game started at 120), the **screen format** as the next area loads (the camera is set up then), HD texture loading and shader warm-up as areas load. Language packs, Super Mario Eclipse, HD cutscenes, key and controller bindings and the launcher's own options (updates, Discord, theme) stay in the launcher: they are set before the game starts.
 
+**Start in latest save** (Gameplay) is off by default. Turn it on to load the newest valid native file at the next launch. It uses the game's last-save time, with A before B before C on a tie. If no file can be loaded, the normal file screen or memory card prompt opens instead. Automatic startup does not write or repair the card or load a save state. The menu keeps this preference in `start-in-latest-save.txt` in the game's working directory, separately from the memory card and launcher settings.
+
 ### Save states
 
 A save state is the game at one moment: in a level, F5 or L1 + R1 (LB + RB) saves it. The pause menu shows those buttons at its top right with **LOAD SAVE STATE**: press them there to open the list of states, newest first, with a picture of each; A loads one, Y deletes it, B goes back. F6 loads the newest without the menu. The buttons show as your keyboard or controller shows them, from the launcher's button prompt pictures (their names without the launcher).

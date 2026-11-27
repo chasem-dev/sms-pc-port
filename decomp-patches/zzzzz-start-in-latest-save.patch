@@ -1,0 +1,148 @@
+Reason: read the newest valid bookmark through the ordinary file load, once at startup
+--- a/src/GC2D/CardLoad.cpp
++++ b/src/GC2D/CardLoad.cpp
+@@ -1,6 +1,8 @@
+ #include <GC2D/CardLoad.hpp>
+ #ifdef TARGET_PC
+ #include "port_ext.h"
++extern "C" int port_continue_pending;
++extern "C" int port_continue_entering_stage;
+ #endif
+ #include <stdio.h>
+ #include <JSystem/JKernel/JKRFileLoader.hpp>
+@@ -939,6 +941,14 @@
+ 			unk258 = 0;
+ 			unkC0  = 0;
+ 			unk208->show();
++#ifdef TARGET_PC
++			if (port_continue_pending) {
++				// The same camera transition and card reads as pressing Start.
++				gpCameraOption->moveToLoadFromTitle();
++				gpMarioOriginal->waitingStart(nullptr, 0.0f);
++				unk14 = 8;
++			}
++#endif
+ 			break;
+ 		}
+ 
+@@ -2402,6 +2412,12 @@
+ 				TFlagManager::getInstance()->loadOption(stream);
+ 				unk1C = PROGRESS_UNK0;
+ 			} else {
++#ifdef TARGET_PC
++				if (port_continue_pending) {
++					port_continue_pending = 0;
++					OSReport("[continue] option read failed (%d); manual file selection\n", rc);
++				}
++#endif
+ 				unk1C = changeMode(rc);
+ 			}
+ 		} else {
+@@ -2422,6 +2438,32 @@
+ 	case PROGRESS_UNK2: {
+ 		int rc = gpCardManager->getLastStatus();
+ 		if (rc != CARD_RESULT_BUSY) {
++#ifdef TARGET_PC
++			if (port_continue_pending) {
++				port_continue_pending = 0;
++				int latest = -1;
++				if (rc == CARD_RESULT_READY) {
++					for (int i = 0; i < 3; ++i) {
++						const TCardBookmarkInfo& slot = unk40[i];
++						// Native sector checks set unk0 on corruption; unk18
++						// counts saves and unk8 is the last-save OSTime.
++						// Strict comparison keeps A before B before C on a tie.
++						if (!slot.unk0 && slot.unk18
++						    && (latest < 0 || slot.unk8 > unk40[latest].unk8))
++							latest = i;
++					}
++				}
++				if (latest >= 0) {
++					SMSGetApplication()->mSaveFile = unkB0 = latest;
++					gpCardManager->readBlock(latest);
++					port_continue_entering_stage = 1;
++					unk1C = PROGRESS_UNK28;
++					OSReport("[continue] loading file %c\n", 'A' + latest);
++					break;
++				}
++				OSReport("[continue] no valid saved file; manual file selection\n");
++			}
++#endif
+ 			if (rc == CARD_RESULT_READY) {
+ 				unk10 = 1;
+ 				unk1C = PROGRESS_UNK13;
+@@ -2867,6 +2909,11 @@
+ #endif
+ 				unk1C = PROGRESS_UNK29;
+ 			} else {
++#ifdef TARGET_PC
++				if (port_continue_entering_stage)
++					unk10 = 0;
++				port_continue_entering_stage = 0;
++#endif
+ 				unk1C = changeMode(rc);
+ 			}
+ 		}
+--- a/src/System/MovieDirector.cpp
++++ b/src/System/MovieDirector.cpp
+@@ -205,6 +205,7 @@
+ extern "C" int GXPC_WindowFormat();
+ // SMS_SKIP_INTRO (platform): the opening movie ends as it starts (direct).
+ extern "C" int port_skip_intro;
++extern "C" int port_continue_entering_stage;
+ 
+ // A movie of one frame stands in for one a mod took out: Super Mario Eclipse
+ // v1.1.0 keeps stolennozuru.thp (Shadow Mario taking FLUDD before a secret
+@@ -644,11 +645,30 @@
+ 	// movie of its own chains and sets their flags. SMS_SKIP_INTRO skips the
+ 	// opening movie (9, Entrance.thp: the title's spray-painted M) the same
+ 	// way on its first frame, and so does a placeholder (placeholder_movie).
++	// These movies are selected by checkAdditionalMovie when entering the
++	// Airstrip or Plaza. Finish through the ordinary movie transition so
++	// the story flags are set, but never enter its optional save dialog.
++	const int movie = gpApplication.getMovie();
++	const bool continueMovie = port_continue_entering_stage
++	                           && (movie == 1 || movie == 3 || movie == 18
++	                               || movie == 19 || movie == 13);
++	if (continueMovie && (movie == 18 || movie == 19)) {
++		OSReport("[continue] leaving startup movie %d without saving\n", movie);
++		THPPlayerStop();
++		gpApplication.getFader()->setFadeStatus(TSMSFader::FADE_STATUS_FULLY_FADED_OUT);
++		if (movie == 19) {
++			gpApplication.setMovie(13);
++			return TApplication::APP_STATE_MOVIE;
++		}
++		return TApplication::APP_STATE_GAMEPLAY;
++	}
+ 	bool skipped = false;
+ 	if (TMovieSkipPrompt::shown(this)
+ 	    && (getGamePad()->checkFrameMeaning(0x20)
+ 	        || (port_skip_intro && gpApplication.getMovie() == 9)
+-	        || placeholder_movie())) {
++	        || continueMovie || placeholder_movie())) {
++		if (continueMovie)
++			OSReport("[continue] skipping startup movie %d\n", movie);
+ 		skipped = true;
+ 		THPPlayerStop();
+ 		gpApplication.getFader()->setFadeStatus(
+--- a/src/System/MarDirectorEvent.cpp
++++ b/src/System/MarDirectorEvent.cpp
+@@ -127,8 +127,18 @@
+ }
+ #endif
+ 
++#ifdef TARGET_PC
++extern "C" int port_continue_entering_stage;
++#endif
++
+ void TMarDirector::movement_game()
+ {
++#ifdef TARGET_PC
++	if (port_continue_entering_stage && mMap != 15
++	    && !checkFlag(DIRECTOR_FLAG_STAGE_TRANSITION_PENDING)) {
++		port_continue_entering_stage = 0;
++	}
++#endif
+ 	MDECursor(this)->associateNPC(nullptr);
+ 
+ 	switch (unk124) {

@@ -57,10 +57,16 @@ void mkdirs(const std::string& p)
 			port_mkdir(p.substr(0, i).c_str(), 0755);
 }
 
-std::string card_dir()
+std::string card_dir(bool create = true)
 {
-	if (!g_dir.empty())
+	static bool made_dir;
+	if (!g_dir.empty()) {
+		if (create && !made_dir) {
+			mkdirs(g_dir);
+			made_dir = true;
+		}
 		return g_dir;
+	}
 	if (const char* d = getenv("SMS_SAVE_DIR"))
 		g_dir = d;
 	else if (const char* x = getenv("XDG_DATA_HOME"))
@@ -71,7 +77,10 @@ std::string card_dir()
 #endif
 	else
 		g_dir = std::string(getenv("HOME") ? getenv("HOME") : ".") + "/.local/share/sms-port/card-a";
-	mkdirs(g_dir);
+	if (create) {
+		mkdirs(g_dir);
+		made_dir = true;
+	}
 	port_log("[card] slot A: %s\n", g_dir.c_str());
 	return g_dir;
 }
@@ -170,14 +179,18 @@ void save(int no)
 }
 
 void migrate_eclipse_settings();
+extern "C" int port_continue_read_only;
 
 void load()
 {
 	if (g_loaded)
 		return;
 	g_loaded = true;
-	std::string dir = card_dir();
-	finish_write(dir + "/index.txt");
+	std::string dir = card_dir(!port_continue_read_only);
+	// An automatic load may inspect a damaged card, but must not repair it
+	// on disk. Keep stock recovery for normal launches and explicit writes.
+	if (!port_continue_read_only)
+		finish_write(dir + "/index.txt");
 	std::vector<u8> idx;
 	if (!read_all(dir + "/index.txt", idx))
 		return;
@@ -195,8 +208,10 @@ void load()
 		CardFile& f = g_files[no++];
 		std::vector<u8> st;
 		const std::string base = dir + "/" + safe(name);
-		finish_write(base + ".dat");
-		finish_write(base + ".stat");
+		if (!port_continue_read_only) {
+			finish_write(base + ".dat");
+			finish_write(base + ".stat");
+		}
 		if (!read_all(base + ".dat", f.data) || !read_all(base + ".stat", st) || st.size() != sizeof(CARDStat))
 			continue;
 		memcpy(&f.stat, st.data(), sizeof f.stat);
@@ -206,6 +221,8 @@ void load()
 			f.name = name;
 		f.used = true;
 		if (f.stat.length && f.data.size() != f.stat.length) {
+			if (port_continue_read_only)
+				continue; // let the native reader report the short read
 			// cut short by a stop mid-write: keep a copy, then give the game whole sectors to check
 			port_log("[card] %s is %u bytes, not %u: the game stopped while saving it. A copy is in "
 			         "%s.dat.damaged; the game will check what is left\n",
@@ -215,7 +232,8 @@ void load()
 			write_file(base + ".dat", f.data.data(), f.data.size());
 		}
 	}
-	migrate_eclipse_settings();
+	if (!port_continue_read_only)
+		migrate_eclipse_settings();
 }
 
 void save_index()
