@@ -664,6 +664,7 @@ bool openWindow(float scale, bool vulkan) {
         else
 #endif
             SDL_GL_GetDrawableSize(s_window, &drawW, &drawH);
+        rendererDrawable(drawW, drawH);
         float outW = float(drawW), outH = float(drawH);
         if (envTrue("SMS_FULLSCREEN")) {
             const float dpi = layout.w > 0 ? float(drawW) / float(layout.w) : 1.0f;
@@ -1362,6 +1363,7 @@ void GXPC_Present(const void* xfb) {
 #endif
             else SDL_GL_SwapWindow(s_window);
             tSwapped = nowSeconds();
+            rendererRefit(w, h);
         });
         {  // the wait for the frame's queued work counts as GX's, the rest is presenting
             const double waited = glt::waitedSeconds() - waited0;

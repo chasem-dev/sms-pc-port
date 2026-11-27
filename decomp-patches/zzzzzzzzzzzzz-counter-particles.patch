@@ -1,0 +1,65 @@
+Reason: keep counter particles with their HUD group and GO! trails inside their centred frame in Screen edges.
+--- a/libs/JSystem/src/JParticle/JPAEmitterManager.cpp
++++ b/libs/JSystem/src/JParticle/JPAEmitterManager.cpp
+@@ -6,6 +6,13 @@
+ #include <JSystem/JKernel/JKRHeap.hpp>
+ #include <JSystem/JKernel/JKRSolidHeap.hpp>
+ #include <macros.h>
++#ifdef TARGET_PC
++extern JPAEmitterManager* gpEmitterManager4D2;
++extern "C" int GXPC_ScreenEdgeHud();
++extern "C" void GXPC_HudTaggedPane(unsigned tag, float x1, float x2);
++extern "C" void GXPC_HudPaneEnd();
++extern "C" void GXPC_SetGoTrailClip(int on);
++#endif
+ 
+ JPAEmitterManager::JPAEmitterManager(JPAResourceManager* param_1, s32 param_2,
+                                      s32 param_3, s32 param_4, JKRHeap* param_5)
+@@ -158,13 +165,43 @@
+ 
+ 	JSUList<JPABaseEmitter>* list = &unk44[group_id];
+ 
++#ifdef TARGET_PC
++	// GCConsole2 emits 1FB continuously at its top counters. A changed
++	// digit emits 1FC at its pane, including the red counter at bottom left.
++	JPADataBlockLinkInfo *spark = nullptr, *burst = nullptr, *goTrail = nullptr;
++	if (this == gpEmitterManager4D2 && GXPC_ScreenEdgeHud() && getResourceManager(0)) {
++		JPAEmitterResource* res = getResourceManager(0)->getEmitterResource();
++		JPAEmitterData* a = res->getByUserIndex(0x1fb);
++		JPAEmitterData* b = res->getByUserIndex(0x1fc);
++		if (a) spark = a->getLinkInfo()[0];
++		if (b) burst = b->getLinkInfo()[0];
++		if (JPAEmitterData* go = res->getByUserIndex(0x1fd))
++			goTrail = go->getLinkInfo()[0];
++	}
++#endif
+ 	for (JSULink<JPABaseEmitter>* link = list->getFirst();
+ 	     link != list->getEnd(); link  = link->getNext()) {
+-
+ 		JPABaseEmitter* emitter = link->getObject();
+-
+-		if (emitter->isDraw())
+-			emitter->draw(info->getCameraMtxPtr());
++		if (!emitter->isDraw()) continue;
++#ifdef TARGET_PC
++		// GO! letters fly out of the centred frame. Clip their trails there
++		// too, rather than letting them reappear over the widened world.
++		const bool go = goTrail && emitter->mEmitterDataBlockInfo == goTrail;
++		if (go) GXPC_SetGoTrailClip(1);
++		const bool counter = emitter->mEmitterDataBlockInfo &&
++		    (emitter->mEmitterDataBlockInfo == spark || emitter->mEmitterDataBlockInfo == burst);
++		if (counter) {
++			const JGeometry::TVec3<f32>& at = emitter->getGlobalTranslation();
++			const unsigned tag = emitter->mEmitterDataBlockInfo == spark ? 'c_0' :
++			    at.y > 300 ? 'r_0' : at.x > 210 ? 'm_0' : 'c_0';
++			GXPC_HudTaggedPane(tag, at.x, at.x);
++		}
++#endif
++		emitter->draw(info->getCameraMtxPtr());
++#ifdef TARGET_PC
++		if (counter) GXPC_HudPaneEnd();
++		if (go) GXPC_SetGoTrailClip(0);
++#endif
+ 	}
+ }
+ 

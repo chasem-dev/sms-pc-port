@@ -1,0 +1,116 @@
+Reason: port: Window extends the gameplay projection and culling planes together, without changing the camera controller or its authored animation.
+--- a/src/Camera/cameragc.cpp
++++ b/src/Camera/cameragc.cpp
+@@ -1269,6 +1269,12 @@
+ 		for (int i = 0; i < 4; ++i)
+ 			for (int j = 0; j < 4; ++j)
+ 				graphics->mProjMtx.mMtx[i][j] = unk16C[i][j];
++#ifdef TARGET_PC
++		// Keep the camera controller's authored FOV, also during demo animation.
++		// Widen the vertical tangent only in the projection used for drawing.
++		graphics->mProjMtx.mMtx[0][0] /= GXPC_HorizontalGain();
++		graphics->mProjMtx.mMtx[1][1] /= GXPC_VerticalGain();
++#endif
+ 		graphics->setViewMtx(unk1EC);
+ 		graphics->mNearPlane = mNear;
+ 		graphics->mFarPlane  = mFar;
+--- a/src/Camera/cameragc.cpp
++++ b/src/Camera/cameragc.cpp
+@@ -1,3 +1,7 @@
++#ifdef TARGET_PC
++extern "C" float GXPC_VerticalGain();
++extern "C" float GXPC_HorizontalGain();
++#endif
+ #include <Camera/Camera.hpp>
+ #include <MarioUtil/MathUtil.hpp>
+ #include <System/MarDirector.hpp>
+--- a/src/MarioUtil/DrawUtil.cpp
++++ b/src/MarioUtil/DrawUtil.cpp
+@@ -711,6 +711,10 @@
+ static f32 sKeepViewClipNear;
+ static f32 sKeepViewClipFar;
+ 
++#ifdef TARGET_PC
++extern "C" float GXPC_VerticalGain();
++extern "C" float GXPC_HorizontalGain();
++#endif
+ void SetViewFrustumClipCheckPerspective(f32 fovy, f32 aspect, f32 clip_near,
+                                         f32 clip_far)
+ {
+--- a/src/MarioUtil/DrawUtil.cpp
++++ b/src/MarioUtil/DrawUtil.cpp
+@@ -714,6 +714,15 @@
+ void SetViewFrustumClipCheckPerspective(f32 fovy, f32 aspect, f32 clip_near,
+                                         f32 clip_far)
+ {
++#ifdef TARGET_PC
++	aspect *= GXPC_HorizontalGain();
++	const float gain = GXPC_VerticalGain();
++	if (gain != 1.0f) {
++		const float halfDegree = 3.141593f / 360.0f;
++		fovy = atanf(tanf(fovy * halfDegree) * gain) / halfDegree;
++		aspect /= gain;
++	}
++#endif
+ 	if (fovy != sKeepViewClipFovy || aspect != sKeepViewClipAspect
+ 	    || clip_near != sKeepViewClipNear || clip_far != sKeepViewClipFar) {
+ 		sKeepViewClipFovy   = fovy;
+--- a/src/MarioUtil/MtxUtil.cpp
++++ b/src/MarioUtil/MtxUtil.cpp
+@@ -487,10 +487,18 @@
+ {
+ }
+ 
++#ifdef TARGET_PC
++extern "C" float GXPC_VerticalGain();
++extern "C" float GXPC_HorizontalGain();
++#endif
+ void SMS_GetLightPerspectiveForEffectMtx(MtxPtr mtx)
+ {
+ 	C_MTXPerspective(mtx, gpCamera->getFovy(), gpCamera->getAspect(),
+ 	                 gpCamera->getNear(), gpCamera->getFar());
++#ifdef TARGET_PC
++	mtx[0][0] /= GXPC_HorizontalGain();
++	mtx[1][1] /= GXPC_VerticalGain();
++#endif
+ 	mtx[2][0] = 0.0f;
+ 	mtx[2][1] = 0.0f;
+ 	mtx[2][2] = -1.0f;
+--- a/src/System/MovieDirector.cpp
++++ b/src/System/MovieDirector.cpp
+@@ -202,6 +202,7 @@
+ // when off. Movies fill that frame (rsetup); TTHPRender has sms_gx stretch
+ // them.
+ extern "C" float port_widescreen;
++extern "C" int GXPC_WindowFormat();
+ // SMS_SKIP_INTRO (platform): the opening movie ends as it starts (direct).
+ extern "C" int port_skip_intro;
+ 
+@@ -451,7 +452,7 @@
+ 	// is narrower by that much. Only this display copy changes; the player
+ 	// still decodes the full size.
+ 	{
+-		double wide = port_widescreen > 1.0f ? port_widescreen : 1.0;
++		double wide = !GXPC_WindowFormat() && port_widescreen > 1.0f ? port_widescreen : 1.0;
+ 		double scale = 1.0;
+ 		if (videoInfo.xSize >= SMSGetGameRenderWidth()
+ 		    || videoInfo.ySize > SMSGetGameRenderHeight()) {
+--- a/src/System/THPRender.cpp
++++ b/src/System/THPRender.cpp
+@@ -3,6 +3,7 @@
+ #ifdef TARGET_PC
+ // sms_gx: with widescreen, stretch 2D across the whole frame. MovieDirector
+ // sizes the movie for it, so it fills the wide frame in its own shape.
++extern "C" int GXPC_WindowFormat();
+ extern "C" void GXPC_SetStretch2D(int on);
+ #endif
+ 
+@@ -22,7 +23,7 @@
+ 		GXLoadPosMtxImm(graphics->mViewMtx, GX_PNMTX0);
+ 		GXSetCurrentMtx(GX_PNMTX0);
+ #ifdef TARGET_PC
+-		GXPC_SetStretch2D(1);
++		GXPC_SetStretch2D(!GXPC_WindowFormat());
+ #endif
+ 		frameNumber = THPPlayerDrawCurrentFrame(0, mPos.x, mPos.y, mSize.x,
+ 		                                        mSize.y);

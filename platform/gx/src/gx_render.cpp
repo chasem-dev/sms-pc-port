@@ -2,6 +2,8 @@
 // derived from the BP/XF registers, EFB copies (display and texture) and XFB
 // presentation.
 #include "gx_internal.h"
+#include "gx_hud_layout.h"
+#include "gx_window_layout.h"
 #include "gl_funcs.h"
 #include "gx_glcache.h"
 #include "gx_glthread.h"
@@ -65,8 +67,16 @@ enum { EFB_W = 640, EFB_H = 528 };
 // The internal resolution: the EFB is s_scale times the GameCube's. FSR 1's
 // modes make it fractional; EFB rectangles map through scaled() edge by edge,
 // so pieces that meet on the GameCube still meet.
-static float s_scale = 1;
-static int scaled(int v) { return int(lroundf(float(v) * s_scale)); }
+static float s_scale = 1, s_pixelX = 1, s_pixelY = 1;
+static int s_drawW, s_drawH;
+static bool s_windowFormat;
+static float s_tall = 1.0f;
+bool rendererWindowFormat() { return s_windowFormat; }
+void rendererDrawable(int w, int h) {
+    if (w > 0 && h > 0) { s_drawW = w; s_drawH = h; }
+}
+static int scaledY(int v) { return int(lroundf(float(v) * s_pixelY)); }
+static int scaled(int v) { return int(lroundf(float(v) * s_pixelX)); }
 float efbScale() { return s_scale; }
 
 // Widescreen (GXPC_SetWidescreen): the EFB is s_efbW = 640 * s_wide wide,
@@ -85,9 +95,10 @@ float efbScale() { return s_scale; }
 static float s_wide = 1.0f, s_stretch = 1.0f;
 static int s_efbW = EFB_W, s_ox = 0;
 struct XMap {
-    float a = 1, b = 0, clip = 1;
+    float a = 1, b = 0, clip = 1, yScale = 1, yOffset = 0;
 };
 static XMap s_xmap;
+static bool s_goTrailClip = false;
 // GXPC_SetSplitView (split-screen co-op): while on, everything drawn lands in
 // a part of the frame, as if that part were the whole: viewports, scissors,
 // EFB copies and their clears, and peeks are moved and scaled into it, after
@@ -103,9 +114,13 @@ static float splitY(float y) { return s_split.on ? s_split.y + y * s_split.sy : 
 // A scissor's columns (game x and width) in the EFB: into a draw's widescreen
 // mapping (the whole width stays whole), then a split view's part of the
 // frame, each rounded out to whole EFB pixels.
-static void scissorColumns(int& left, int& sw, const XMap& m) {
+static void scissorColumns(int& left, int& sw, const XMap& m, bool goTrailClip = false) {
     if (s_efbW != EFB_W) {
-        if (left <= 0 && left + sw >= EFB_W) {
+        if (goTrailClip) {
+            const int right = std::clamp<int>(left + sw, 0, EFB_W);
+            left = std::clamp<int>(left, 0, EFB_W) + s_ox;
+            sw = right + s_ox - left;
+        } else if (left <= 0 && left + sw >= EFB_W) {
             left = 0;
             sw = s_efbW;
         } else {
@@ -129,14 +144,24 @@ static bool s_wide2D = false;     // GXPC_SetWide2D: 2D the game laid out past t
 // is narrower than three quarters of the screen (wider ones are the HUD's
 // screen-sized containers), with everything in it (GXPC_HudPaneBegin), or
 // else a draw on its own.
-// SMS_WIDESCREEN_HUD=edges, or the settings menu's Screen Icons At Edges, is s_hudWanted; it
-// applies only in widescreen, and s_hudEdges is what is in force.
-static bool s_hudWanted = false, s_hudEdges = false, s_hud = false;
+// Keep the legacy horizontal choice and index for existing preferences.
+static HudPosition s_hudPosition = HudPosition::Centre;
+static bool s_hudEdges = false, s_hud = false, s_radarHud = false;
+static Dock s_dock = Dock::None, s_manualDock = Dock::None;
+static MenuScreen s_menuScreen = MenuScreen::None;
+
+static bool screenEdgeHud() {
+    if (s_hudPosition != HudPosition::Screen) return false;
+    // Window's exact 16:9 drawable uses the reference layout unchanged.
+    if (s_windowFormat) return int64_t(s_drawW) * 9 != int64_t(s_drawH) * 16;
+    return s_efbW > EFB_W;
+}
 struct HudPane {
     float x1, x2;
+    Dock dock;
 };
-static std::vector<HudPane> s_hudPanes;  // the J2D panes being drawn, outermost first
-static float s_hudAnchor = -1.0f;        // the piece's centre (game x), -1 for none
+static std::vector<HudPane> s_hudPanes;
+static float s_hudAnchor = -1.0f;
 
 static float hudOffset(float at) {
     if (at < float(EFB_W) / 3) return 0.0f;
@@ -145,7 +170,7 @@ static float hudOffset(float at) {
 }
 // the offset of a centred draw whose own centre is at game x `at`
 static float centredOffset(float at) {
-    if (!s_hud) return float(s_ox);
+    if (!s_hud || !s_hudEdges || screenEdgeHud()) return float(s_ox);
     return hudOffset(s_hudAnchor >= 0.0f ? s_hudAnchor : at);
 }
 // the game camera's aspect (TMarDirector: video width 660 * 0.91346 / 448)
@@ -1254,7 +1279,20 @@ static void postPresent(GLuint tex, int w, int h, int ox, int oy, int vw, int vh
 // caller then frees what is left (efbFree) and builds the last size again. MSAA the driver cannot
 // make a framebuffer of falls back to none, and s_msaa says so.
 static bool efbBuild() {
-    const int W = scaled(s_efbW), H = scaled(EFB_H);
+    s_pixelX = s_pixelY = s_scale;
+    if (s_windowFormat && s_drawW && s_drawH) {
+        // GMSE01 displays the first 448 of 528 EFB lines. Fit the *display copy*,
+        // not the whole EFB, to drawable pixels. Its texels need not be square.
+        float w = float(s_drawW), h = float(s_drawH);
+        GLint limit = 0;
+        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &limit);
+        const float fit = std::min(1.0f, float(limit) / std::max(w, h * EFB_H / 448.0f));
+        s_pixelX = w * fit / s_efbW;
+        s_pixelY = h * fit / 448.0f;
+        logmsg("window drawable %dx%d, EFB %dx%d, display copy %dx%d", s_drawW, s_drawH,
+               scaled(s_efbW), scaledY(EFB_H), scaled(s_efbW), scaledY(448));
+    }
+    const int W = scaled(s_efbW), H = scaledY(EFB_H);
     while (glGetError() != GL_NO_ERROR) {}
     glGenTextures(1, &s_efbColor);
     glBindTexture(GL_TEXTURE_2D, s_efbColor);
@@ -1328,32 +1366,42 @@ static int efbWidthFor(float wide) { return wide > 1.0f ? (int(float(EFB_W) * wi
 
 // Everything the widescreen mapping derives from the width over 4:3. What was drawn under the old
 // mapping is flushed or gone by now, so the per-draw mapping starts over.
+static void clearHudPanes() {
+    s_hudPanes.clear();
+    s_hudAnchor = -1.0f;
+    s_dock = Dock::None;
+}
+
 static void setWide(float wide) {
     s_wide = wide;
     s_efbW = efbWidthFor(wide);
     s_ox = (s_efbW - EFB_W) / 2;
     s_stretch = float(s_efbW) / float(EFB_W);
-    s_hudEdges = s_hudWanted && s_efbW != EFB_W;
+    s_hudEdges = s_hudPosition == HudPosition::Horizontal && s_efbW != EFB_W;
     s_xmap = XMap();
     s_stretch2D = false;  // the game's faders set it again when they draw
     s_hud = false;
-    s_hudPanes.clear();
-    s_hudAnchor = -1.0f;
+    clearHudPanes();
 }
 
 // Changes the internal resolution, the MSAA sample count and the width over 4:3 while the game
 // runs (the GL thread, between frames, which the settings menu is). What the game drew into the old
 // buffers is gone: the next frame draws the picture again. False, with the old buffers back, when
 // the new ones do not fit or the driver cannot make them.
-static bool efbRebuild(float scale, int msaa, float wide) {
+static bool efbRebuild(float scale, int msaa, float wide, bool window, int drawW, int drawH) {
     scale = std::max(1.0f, std::min(8.0f, scale));
     msaa = msaa > 1 ? std::min(msaa, s_maxSamples) : 0;
     wide = wide > 1.0f ? wide : 1.0f;
-    if (scale == s_scale && msaa == s_msaa && wide == s_wide) return true;
+    if (scale == s_scale && msaa == s_msaa && wide == s_wide && window == s_windowFormat &&
+        (!window || (s_drawW == drawW && s_drawH == drawH))) return true;
     flushBatch();  // what the game queued for the old buffers
     const float oldScale = s_scale, oldWide = s_wide;
     const int oldMsaa = s_msaa, oldWidth = s_efbW;
+    const bool oldWindow = s_windowFormat;
+    const int oldDrawW = s_drawW, oldDrawH = s_drawH;
     efbFree();
+    s_windowFormat = window;
+    rendererDrawable(drawW, drawH);
     s_scale = scale;
     s_msaa = msaa;
     if (wide != s_wide) setWide(wide);
@@ -1362,12 +1410,14 @@ static bool efbRebuild(float scale, int msaa, float wide) {
         logmsg("internal resolution %gx with %d samples, %d wide did not fit; back to %gx with %d, %d wide",
                double(scale), msaa, s_efbW, double(oldScale), oldMsaa, efbWidthFor(oldWide));
         efbFree();
+        s_windowFormat = oldWindow;
+        rendererDrawable(oldDrawW, oldDrawH);
         s_scale = oldScale;
         s_msaa = oldMsaa;
         if (oldWide != s_wide) setWide(oldWide);
         if (!efbBuild()) logmsg("the EFB could not be built again");
     } else {
-        logmsg("internal resolution %gx (%dx%d), %d samples", double(s_scale), scaled(s_efbW), scaled(EFB_H), s_msaa);
+        logmsg("internal resolution %gx (%dx%d), %d samples", double(s_scale), scaled(s_efbW), scaledY(EFB_H), s_msaa);
     }
     glcInvalidate();
     forgetResolvedEfb();
@@ -1375,28 +1425,42 @@ static bool efbRebuild(float scale, int msaa, float wide) {
     return ok;
 }
 
-bool rendererResize(float scale, int msaa) { return efbRebuild(scale, msaa, s_wide); }
+bool rendererResize(float scale, int msaa) { return efbRebuild(scale, msaa, s_wide, s_windowFormat, s_drawW, s_drawH); }
 
 // The screen format changed (the settings menu, at an area load): the EFB is rebuilt as wide as
 // the format needs. False, with the old one back, when it does not fit.
-bool rendererSetWide(float wide) { return efbRebuild(s_scale, s_msaa, wide); }
+bool rendererSetWide(float wide) {
+    const bool wantWindow = wide == 0.0f;
+    const WindowView view = windowView(s_drawW, s_drawH);
+    if (!efbRebuild(s_scale, s_msaa, wantWindow ? view.wide : wide, wantWindow, s_drawW, s_drawH)) return false;
+    s_tall = wantWindow ? view.tall : 1.0f;
+    return true;
+}
+
+// Called after the swap. The displayed XFB is intact; the next game frame
+// renders into the new EFB, with its matching camera and screen-copy lens.
+void rendererRefit(int w, int h) {
+    if (w <= 0 || h <= 0 || (s_drawW == w && s_drawH == h)) return;
+    if (!s_windowFormat) { rendererDrawable(w, h); return; }
+    const WindowView view = windowView(w, h);
+    if (efbRebuild(s_scale, s_msaa, view.wide, true, w, h)) s_tall = view.tall;
+}
 
 // Screen Icons At Edges (GXPC_SetHud): with the gameplay HUD not being drawn, which it is not
 // while the menu runs.
-void rendererSetHudEdges(bool on) {
+void rendererSetHudPosition(int position) {
     flushBatch();
-    s_hudWanted = on;
-    s_hudEdges = on && s_efbW != EFB_W;
+    s_hudPosition = static_cast<HudPosition>(position);
+    s_hudEdges = s_hudPosition == HudPosition::Horizontal && s_efbW != EFB_W;
     s_hud = false;
-    s_hudPanes.clear();
-    s_hudAnchor = -1.0f;
+    clearHudPanes();
 }
-bool rendererHudEdges() { return s_hudWanted; }
+int rendererHudPosition() { return static_cast<int>(s_hudPosition); }
 int rendererMsaa() { return s_msaa; }
 int rendererMaxSamples() { return s_maxSamples; }
 void rendererEfbSize(int* w, int* h) {
     *w = scaled(s_efbW);
-    *h = scaled(EFB_H);
+    *h = scaledY(EFB_H);
 }
 
 void rendererInit(float efbScale) {
@@ -1409,8 +1473,15 @@ void rendererInit(float efbScale) {
         logmsg("WARNING: %s renders on the CPU and cannot keep the game at full speed. On Linux the 32-bit build "
                "gets a GPU driver only if its 32-bit GL libraries are installed; the 64-bit build "
                "(SMS_ARCH=64 ./build.sh) uses the system's driver.", renderer);
-    if (const char* e = getenv("SMS_WIDESCREEN_HUD")) s_hudWanted = !strcmp(e, "edges");
-    setWide(s_wide);
+    if (const char* e = getenv("SMS_WIDESCREEN_HUD")) {
+        s_hudPosition = !strcmp(e, "screen") ? HudPosition::Screen
+                     : !strcmp(e, "edges") ? HudPosition::Horizontal : HudPosition::Centre;
+    }
+    const char* format = getenv("SMS_WIDESCREEN");
+    s_windowFormat = format && !strcmp(format, "window");
+    const WindowView view = windowView(s_drawW, s_drawH);
+    s_tall = s_windowFormat ? view.tall : 1.0f;
+    setWide(s_windowFormat ? view.wide : s_wide);
     if (s_efbW != EFB_W) logmsg("widescreen: EFB %dx%d", s_efbW, EFB_H);
     {
         GLint maxSamples = 0;
@@ -1639,7 +1710,7 @@ void glcForgetTexture(GLuint tex) {
 
 static void applyGlState() {
     GlCache& c = g_glc;
-    int W = scaled(s_efbW), H = scaled(EFB_H);
+    int W = scaled(s_efbW), H = scaledY(EFB_H);
     if (c.fbo != s_efbFbo) {
         c.fbo = s_efbFbo;
         glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
@@ -1659,13 +1730,19 @@ static void applyGlState() {
     if (sw < 0) sw = 0;
     if (sh < 0) sh = 0;
     glcCap(GL_SCISSOR_TEST, c.scissor, true);
-    scissorColumns(left, sw, s_xmap);
+    scissorColumns(left, sw, s_xmap, s_goTrailClip);
+    if (s_xmap.yScale != 1.0f && (s_goTrailClip || !(top <= 0 && top + sh >= hudFrameHeight))) {
+        const float centre = hudFrameHeight / 2;
+        const int t = int(floorf((top - centre) * s_xmap.yScale + centre + s_xmap.yOffset));
+        sh = int(ceilf((top + sh - centre) * s_xmap.yScale + centre + s_xmap.yOffset)) - t;
+        top = t;
+    }
     if (s_split.on) {  // into the split view's part of the frame
         int t = int(floorf(splitY(float(top)))), b = int(ceilf(splitY(float(top + sh))));
         top = t;
         sh = b - t;
     }
-    GLint sc[4] = {scaled(left), scaled(top), scaled(left + sw) - scaled(left), scaled(top + sh) - scaled(top)};
+    GLint sc[4] = {scaled(left), scaledY(top), scaled(left + sw) - scaled(left), scaledY(top + sh) - scaledY(top)};
     if (memcmp(sc, c.sc, sizeof sc) != 0) {
         memcpy(c.sc, sc, sizeof sc);
         glScissor(sc[0], sc[1], sc[2], sc[3]);
@@ -1795,7 +1872,7 @@ static void applyGlState() {
     glcCap(GL_CLIP_DISTANCE0 + 1, c.clip1, clipOn);
     glcCap(GL_DEPTH_CLAMP, c.depthClamp, clipOn);
     uint32_t lp = g.bp[BP_LPSIZE];
-    float pt = float((lp >> 8) & 0xFF) / 6.0f * float(s_scale);
+    float pt = float((lp >> 8) & 0xFF) / 6.0f * float(s_pixelY);
     if (pt < 1.0f) pt = 1.0f;
     if (!(c.pointSize == pt)) {
         c.pointSize = pt;
@@ -1816,6 +1893,11 @@ static void drawViewport(float vp[8]) {
     if (s_efbW != EFB_W) {  // the draw's widescreen mapping (centre and half-width, clip x scale)
         vp[4] = (vp[4] - 342.0f) * s_xmap.a + s_xmap.b + 342.0f;
         vp[0] *= s_xmap.a * s_xmap.clip;
+    }
+    if (s_xmap.yScale != 1.0f || s_xmap.yOffset != 0.0f) {
+        const float centre = hudFrameHeight / 2;
+        vp[5] = (vp[5] - 342.0f - centre) * s_xmap.yScale + centre + 342.0f + s_xmap.yOffset;
+        vp[1] *= s_xmap.yScale;
     }
     if (s_split.on) {  // the split view's part of the frame
         vp[4] = splitX(vp[4] - 342.0f) + 342.0f;
@@ -2148,7 +2230,7 @@ uint32_t pixMetricRead() {
         for (auto& q : s_pixPending) samples += queryResult(q.first);
         pixReleasePending();
         s_pixSamples = samples;
-        uint64_t v = uint64_t(double(samples) / (double(s_scale) * double(s_scale))) + uint64_t(s_pixTris) * 4;
+        uint64_t v = uint64_t(double(samples) / (double(s_pixelX) * double(s_pixelY))) + uint64_t(s_pixTris) * 4;
         return v > 0xFFFFFFFFu ? 0xFFFFFFFFu : uint32_t(v);
     }
     glEndQuery(GL_SAMPLES_PASSED);
@@ -2180,7 +2262,7 @@ uint32_t pixMetricRead() {
     s_pixCur = poolQuery();
     s_pixCurPooled = true;
     glBeginQuery(GL_SAMPLES_PASSED, s_pixCur);
-    uint64_t v = uint64_t(double(samples) / (double(s_scale) * double(s_scale))) + uint64_t(s_pixTris) * 4;
+    uint64_t v = uint64_t(double(samples) / (double(s_pixelX) * double(s_pixelY))) + uint64_t(s_pixTris) * 4;
     return v > 0xFFFFFFFFu ? 0xFFFFFFFFu : uint32_t(v);
 }
 
@@ -2308,7 +2390,7 @@ static XMap drawXMapExact() {
         float aspect = p00 != 0.0f ? fabsf(p11 / p00) : 0.0f;
         float wideAspect = kCamAspect * sqrtf(s_wide);
         if (s_split.on) wideAspect *= s_split.sx / s_split.sy;  // a split view's camera is narrower or wider
-        if (aspect < wideAspect) m.clip = 1.0f / s_stretch;  // not widened by the game
+        if (aspect * s_tall < wideAspect) m.clip = 1.0f / s_stretch;  // not widened by the game
         return m;
     }
     // 2D across the whole width: artwork (menus, the map, movies: colour
@@ -2339,6 +2421,19 @@ static XMap drawXMapExact() {
 
 static XMap drawXMap() {
     XMap m = drawXMapExact();
+    // Art uses the centred reference frame, not the extra vertical space.
+    // A sub-viewport used to render a texture must keep its EFB coordinates.
+    if (s_tall != 1.0f && fabsf(fabsf(xff(XFR_VIEWPORT + 1)) * 2.0f - 448.0f) < 2.0f &&
+        (m.a != s_stretch || m.clip != 1.0f)) m.yScale = 1.0f / s_tall;
+    const auto dock = s_manualDock == Dock::None ? s_dock : s_manualDock;
+    if (s_radarHud || (dock != Dock::None && !s_wide2D && !s_stretch2D)) {
+        const auto layout = hudLayout(s_efbW, s_tall, s_radarHud ? Dock::None : dock);
+        m.a = layout.xScale;
+        m.clip = 1;
+        m.b = layout.xOffset;
+        m.yScale = layout.yScale;
+        m.yOffset = layout.yOffset;
+    }
     m.b = pixelAligned(m.b);
     return m;
 }
@@ -2633,7 +2728,7 @@ static int s_resolvedRect[4];
 static GLuint efbReadFbo(int x0 = 0, int y0 = 0, int x1 = INT32_MAX, int y1 = INT32_MAX,
                          GLbitfield bits = GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT) {
     if (!s_msaa) return s_efbFbo;
-    const int W = scaled(s_efbW), H = scaled(EFB_H);
+    const int W = scaled(s_efbW), H = scaledY(EFB_H);
     glDisable(GL_SCISSOR_TEST);
 #ifdef __APPLE__
     // macOS resolves the whole EFB: a part of a multisampled image is far
@@ -2668,7 +2763,7 @@ static void clearRect(int x0, int x1, int y, int h) {
     uint32_t ar = g.bp[BP_CLEAR_AR], gb = g.bp[BP_CLEAR_GB], z = g.bp[BP_CLEAR_Z];
     glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
     glEnable(GL_SCISSOR_TEST);
-    glScissor(x0, scaled(y), x1 - x0, scaled(y + h) - scaled(y));
+    glScissor(x0, scaledY(y), x1 - x0, scaledY(y + h) - scaledY(y));
     bool hasAlpha = (g.bp[BP_PE_CONTROL] & 7) == 1;
     // Copy clears obey the PE write enables, just like ordinary EFB writes.
     // A copy clear in RGB8 must not overwrite the backing alpha used later by
@@ -2994,15 +3089,15 @@ static void copyEfb(uint32_t ctrl) {
     if (s_efbW != EFB_W && !stretched && !(x == 0 && w == s_efbW))
         fx = float(x - s_ox) + pixelAligned(float(s_ox));  // where the centred draws it copies landed
     // a split view's copy takes its part of the frame (the texture keeps its size)
-    const int fullOw = x1 - x0, fullOh = scaled(y + h) - scaled(y);
+    const int fullOw = x1 - x0, fullOh = scaledY(y + h) - scaledY(y);
     float fy = float(y), fh = float(h);
     if (s_split.on && !disp) {
         fx = splitX(fx);
         fw *= s_split.sx;
         fy = splitY(fy);
         fh *= s_split.sy;
-        x0 = int(floorf(fx * s_scale));
-        x1 = int(ceilf((fx + fw) * s_scale));
+        x0 = int(floorf(fx * s_pixelX));
+        x1 = int(ceilf((fx + fw) * s_pixelX));
     }
     if (stretched) {
         // A stretched piece's edges fall inside widened pixels, and its quad
@@ -3010,10 +3105,10 @@ static void copyEfb(uint32_t ctrl) {
         // those columns too. Taken to whole widened pixels, they went a column
         // past the quad the circle wipe's blur draws its centre cell back with,
         // which left a black line down the opening iris above 1x.
-        x0 = int(lroundf(float(x) * s_stretch * s_scale));
-        x1 = int(lroundf(float(x + w) * s_stretch * s_scale));
-        fx = float(x0) / s_scale;
-        fw = float(x1 - x0) / s_scale;
+        x0 = int(lroundf(float(x) * s_stretch * s_pixelX));
+        x1 = int(lroundf(float(x + w) * s_stretch * s_pixelX));
+        fx = float(x0) / s_pixelX;
+        fw = float(x1 - x0) / s_pixelX;
     }
     glDisable(GL_SCISSOR_TEST);
     glDisable(GL_BLEND);
@@ -3026,7 +3121,7 @@ static void copyEfb(uint32_t ctrl) {
 
     if (disp) {
         Xfb& xfb = s_xfbs[dest];
-        const int y0 = scaled(y), sw = x1 - x0, sh = scaled(y + h) - y0;
+        const int y0 = scaledY(y), sw = x1 - x0, sh = scaledY(y + h) - y0;
         if (!xfb.tex || xfb.w != sw || xfb.h != sh) {
             if (!xfb.tex) glGenTextures(1, &xfb.tex);
             glBindTexture(GL_TEXTURE_2D, xfb.tex);
@@ -3074,7 +3169,7 @@ static void copyEfb(uint32_t ctrl) {
         uint32_t mode = fmt | (intensity ? 16u : 0u) | (zcopy ? 32u : 0u);
         efbCopyRegister(dest, tex, ow, oh, mode);
         // s_efbColor (s_efbDepth for depth copies), sampled below, holds the current EFB
-        efbReadFbo(x0, int(floorf(fy * s_scale)), x1, int(ceilf((fy + fh) * s_scale)), zcopy ? GL_DEPTH_BUFFER_BIT : GL_COLOR_BUFFER_BIT);
+        efbReadFbo(x0, int(floorf(fy * s_pixelY)), x1, int(ceilf((fy + fh) * s_pixelY)), zcopy ? GL_DEPTH_BUFFER_BIT : GL_COLOR_BUFFER_BIT);
         glBindFramebuffer(GL_FRAMEBUFFER, s_tmpFbo);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
         glViewport(0, 0, ow, oh);
@@ -3085,8 +3180,8 @@ static void copyEfb(uint32_t ctrl) {
         glBindTexture(GL_TEXTURE_2D, s_efbColor);
         float rect[4] = {fx / float(s_efbW), fy / EFB_H, fw / float(s_efbW), fh / EFB_H};
         glUniform4fv(s_copyURect, 1, rect);
-        // the copy's rectangle in EFB pixels (the scaled EFB is scaled(s_efbW) x scaled(EFB_H) of them)
-        const float pxX = float(scaled(s_efbW)) / float(s_efbW), pxY = float(scaled(EFB_H)) / EFB_H;
+        // the copy's rectangle in EFB pixels (the scaled EFB is scaled(s_efbW) x scaledY(EFB_H) of them)
+        const float pxX = float(scaled(s_efbW)) / float(s_efbW), pxY = float(scaledY(EFB_H)) / EFB_H;
         const float left = fx * pxX, top = fy * pxY, across = fw * pxX, down = fh * pxY;
         const float src[4] = {left, top, half ? 0.0f : across / float(ow), down / float(oh)};
         glUniform4fv(s_copyUSrc, 1, src);
@@ -3281,15 +3376,15 @@ static uint32_t peekSync(int x, int y, bool depth) {
     s_syncReads++;
     uint32_t v = 0;
     uint8_t px[4] = {0, 0, 0, 0};
-    glBindFramebuffer(GL_FRAMEBUFFER, efbReadFbo(scaled(x), scaled(y), scaled(x) + 1, scaled(y) + 1,
+    glBindFramebuffer(GL_FRAMEBUFFER, efbReadFbo(scaled(x), scaledY(y), scaled(x) + 1, scaledY(y) + 1,
                                                  depth ? GL_DEPTH_BUFFER_BIT : GL_COLOR_BUFFER_BIT));
     if (depth) {
         glPixelStorei(GL_PACK_ALIGNMENT, 4);
-        glReadPixels(scaled(x), scaled(y), 1, 1, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, &v);
+        glReadPixels(scaled(x), scaledY(y), 1, 1, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, &v);
         return v;
     }
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glReadPixels(scaled(x), scaled(y), 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    glReadPixels(scaled(x), scaledY(y), 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
     return uint32_t(px[0]) | uint32_t(px[1]) << 8 | uint32_t(px[2]) << 16 | uint32_t(px[3]) << 24;
 }
 
@@ -3318,7 +3413,7 @@ static GLuint peekSource(bool depth) {
     const GLuint src = efbReadFbo(0, 0, INT32_MAX, INT32_MAX, bits);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, src);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s_peekFbo);
-    glBlitFramebuffer(0, 0, scaled(s_efbW), scaled(EFB_H), 0, 0, s_efbW, EFB_H, bits, GL_NEAREST);
+    glBlitFramebuffer(0, 0, scaled(s_efbW), scaledY(EFB_H), 0, 0, s_efbW, EFB_H, bits, GL_NEAREST);
     return s_peekFbo;
 }
 
@@ -3437,15 +3532,23 @@ int GXPC_PresentXFB(const void* xfb, int winW, int winH) {
     auto it = s_xfbs.find(xfb);
     if (it == s_xfbs.end()) return 0;
     const Xfb& x = it->second;
+    if (s_windowFormat && g_gxStats) {
+        static int last[4] = {};
+        const int sizes[4] = {winW, winH, x.w, x.h};
+        if (memcmp(last, sizes, sizeof last)) {
+            logmsg("window frame %u: drawable %dx%d, XFB %dx%d", GXPC_FrameCount(), winW, winH, x.w, x.h);
+            memcpy(last, sizes, sizeof last);
+        }
+    }
     // letterbox to 4:3, or to the widened aspect
     float aspect = 4.0f / 3.0f * float(s_efbW) / float(EFB_W);
     int vw = winW, vh = winH;
-    if (s_post.aspect != 1) {
+    if (!s_windowFormat && s_post.aspect != 1) {
         if (float(vw) > float(vh) * aspect) vw = int(float(vh) * aspect + 0.5f);
         else vh = int(float(vw) / aspect + 0.5f);
     }
-    const int baseH = int(float(x.h) / s_scale + 0.5f);  // the picture's height at the GameCube's resolution
-    if (s_post.aspect == 2 && baseH > 0 && vh >= baseH) {
+    const int baseH = int(float(x.h) / s_pixelY + 0.5f);  // the picture's height at the GameCube's resolution
+    if (!s_windowFormat && s_post.aspect == 2 && baseH > 0 && vh >= baseH) {
         vh = vh / baseH * baseH;
         vw = int(float(vh) * aspect + 0.5f);
     }
@@ -3474,7 +3577,7 @@ void GXPC_ReadEFB(uint8_t* rgba, int* w, int* h) {
     flushBatch();
     glcInvalidate();
     *w = scaled(s_efbW);
-    *h = scaled(EFB_H);
+    *h = scaledY(EFB_H);
     if (!rgba) return;
     glBindFramebuffer(GL_FRAMEBUFFER, efbReadFbo());
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
@@ -3505,16 +3608,23 @@ void GXPC_GetLastFrameStats(GXPCStats* out) {
 }
 
 void GXPC_SetHud(int on) {
-    if (!s_hudEdges || s_hud == (on != 0)) return;
+    if ((!s_hudEdges && !s_windowFormat && !screenEdgeHud()) || s_hud == (on != 0)) return;
     flushBatch();
     s_hud = on != 0;
-    s_hudPanes.clear();
-    s_hudAnchor = -1.0f;
+    clearHudPanes();
 }
 
 // Anchor on the outermost pane that is a piece, not a container; the batch
 // queued so far keeps its mapping when the anchor moves to another side.
 static void hudReanchor() {
+    if (screenEdgeHud()) {
+        Dock next = Dock::None;
+        for (const auto& p : s_hudPanes) {
+            if (p.dock != Dock::None) { next = p.dock; break; }
+        }
+        if (next != s_dock) { flushBatch(); s_dock = next; }
+        return;
+    }
     float now = -1.0f;
     for (const HudPane& p : s_hudPanes) {
         if (p.x2 - p.x1 < float(EFB_W) * 3 / 4) {
@@ -3534,14 +3644,27 @@ void GXPC_SetObjectTint(uint32_t rgba) {
     s_objectTint = rgba;
 }
 
-void GXPC_HudPaneBegin(float x1, float x2) {
-    if (!s_hud) return;
-    s_hudPanes.push_back({std::min(x1, x2), std::max(x1, x2)});
+int GXPC_ScreenEdgeHud() { return screenEdgeHud(); }
+
+void GXPC_SetGoTrailClip(int on) {
+    if (s_goTrailClip == (on != 0)) return;
+    flushBatch();
+    s_goTrailClip = on != 0;
+}
+
+void GXPC_HudTaggedPane(unsigned tag, float x1, float x2) {
+    if (!s_hud && s_menuScreen == MenuScreen::None) return;
+    if (!s_hudEdges && !screenEdgeHud()) return;
+    const auto dock = s_menuScreen != MenuScreen::None && s_menuScreen != MenuScreen::GameplayHud
+                      ? menuDock(s_menuScreen, tag) : hudDock(tag);
+    s_hudPanes.push_back({std::min(x1, x2), std::max(x1, x2), dock});
     hudReanchor();
 }
 
+void GXPC_HudPaneBegin(float x1, float x2) { GXPC_HudTaggedPane(0, x1, x2); }
+
 void GXPC_HudPaneEnd(void) {
-    if (!s_hud || s_hudPanes.empty()) return;
+    if (s_hudPanes.empty()) return;
     s_hudPanes.pop_back();
     hudReanchor();
 }
@@ -3561,6 +3684,47 @@ void GXPC_HudPieceEnd(void) {
     GXPC_HudPaneEnd();
     if (!s_hudPieceInHud.back()) GXPC_SetHud(0);
     s_hudPieceInHud.pop_back();
+}
+
+gx::MenuScreen GXPC_MenuScreen(const char* name) {
+    if (!strcmp(name, "pause_1.blo")) return MenuScreen::Pause;
+    if (!strcmp(name, "load.blo")) return MenuScreen::Load;
+    if (!strcmp(name, "option.blo")) return MenuScreen::Option;
+    if (!strcmp(name, "scenario_select_1.blo")) return MenuScreen::Episode;
+    if (!strcmp(name, "standard_1.blo")) return MenuScreen::GameplayHud;
+    return MenuScreen::None;
+}
+
+MenuScreen GXPC_SetMenuScreen(MenuScreen screen) {
+    const auto previous = s_menuScreen;
+    if (screenEdgeHud() && s_menuScreen != screen) {
+        flushBatch();
+        s_menuScreen = screen;
+    }
+    return previous;
+}
+
+void GXPC_MenuPieceBegin(Dock dock, float left, float right) {
+    if (screenEdgeHud()) { flushBatch(); s_manualDock = dock; }
+    else if (left != right) GXPC_HudPieceBegin(left, right);
+}
+
+void GXPC_MenuPieceEnd() {
+    if (s_manualDock != Dock::None) { flushBatch(); s_manualDock = Dock::None; }
+    else GXPC_HudPieceEnd();
+}
+
+bool GXPC_RadarBegin(RadarPlace::Value place, float radius, RadarLayout* layout) {
+    if (!s_hud || !screenEdgeHud()) return false;
+    *layout = radarLayout(s_efbW, s_tall, place, radius);
+    flushBatch();
+    s_radarHud = true;
+    return true;
+}
+
+void GXPC_RadarEnd() {
+    flushBatch();
+    s_radarHud = false;
 }
 
 void GXPC_SetSplitView(int on, float x, float y, float w, float h) {
@@ -3593,6 +3757,8 @@ void GXPC_SetWidescreen(float widthOver43) {
     if (s_ready) return;  // the EFB size is fixed once it exists
     s_wide = widthOver43 > 1.0f ? widthOver43 : 1.0f;
 }
+int GXPC_WindowFormat(void) { return s_windowFormat; }
+float GXPC_VerticalGain(void) { return s_tall; }
 float GXPC_GetWidescreen(void) { return s_wide; }
 
 double GXPC_GxSeconds(void) { return s_gxSeconds + g_decodeSeconds; }

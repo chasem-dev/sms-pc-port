@@ -296,6 +296,10 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND SMS_WITH_GX AND SMS_ARCH STREQUAL 
 endif()
 if(SMS_WITH_GX AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/platform/gx/CMakeLists.txt)
   add_subdirectory(platform/gx)
+  if(SMS_GX_BUILD_TESTS)
+    enable_testing()
+    add_test(NAME sms_screen_layouts COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_layouts.py")
+  endif()
 endif()
 
 add_library(sms_game STATIC ${SMS_DECOMP_CXX_SOURCES} ${SMS_DECOMP_C_SOURCES})

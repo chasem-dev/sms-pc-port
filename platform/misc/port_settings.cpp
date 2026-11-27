@@ -171,13 +171,14 @@ struct Words {
     Word words[7];
 };
 const Words kWords[] = {
+    {"hudEdges", {{"16:9 area", "false"}, {"Horizontal edges", "true"}, {"Screen edges", "\"screen\""}}},
     {"graphicsPreset", {{"Low", "\"low\""}, {"Medium", "\"medium\""}, {"High", "\"high\""}, {"Ultra", "\"ultra\""}, {"Custom", "\"custom\""}}},
     {"presentFilter", {{"Bilinear", "\"bilinear\""}, {"Sharp", "\"sharp\""}, {"Nearest", "\"nearest\""}, {"FSR 1", "\"fsr\""}, {"NIS", "\"nis\""}}},
     {"fsrMode", {{"Native", "\"native\""}, {"Quality", "\"quality\""}, {"Balanced", "\"balanced\""}, {"Performance", "\"performance\""},
                  {"Ultra Performance", "\"ultraperformance\""}}},
     {"textureLoading", {{"Per Stage", "\"stage\""}, {"All At Once", "\"all\""}, {"While Playing", "\"play\""}}},
     {"fullscreenMode", {{"Borderless", "\"desktop\""}, {"Exclusive", "\"exclusive\""}}},
-    {"widescreen", {{"Original (4 by 3)", "\"off\""}, {"16 by 10", "\"16:10\""}, {"16 by 9", "\"16:9\""}, {"21 by 9", "\"21:9\""}}},
+    {"widescreen", {{"Original (4 by 3)", "\"off\""}, {"16 by 10", "\"16:10\""}, {"16 by 9", "\"16:9\""}, {"21 by 9", "\"21:9\""}, {"Window", "\"window\""}}},
     {"aspect", {{"Keep", "\"keep\""}, {"Stretch", "\"stretch\""}, {"Whole Multiples", "\"integer\""}}},
     {"colorSpace", {{"Off", "\"off\""}, {"NTSC-M", "\"ntsc-m\""}, {"NTSC-J", "\"ntsc-j\""}, {"PAL", "\"pal\""}}},
     {"gameGamma", {{"Off", "\"off\""}, {"2.2", "\"2.2\""}, {"2.35", "\"2.35\""}, {"2.5", "\"2.5\""}, {"2.8", "\"2.8\""}}},

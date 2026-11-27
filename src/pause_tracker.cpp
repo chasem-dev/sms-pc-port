@@ -41,8 +41,7 @@
 
 // sms_gx widescreen: with the HUD at the screen edges (SMS_WIDESCREEN_HUD=edges)
 // the tracker goes to the left edge with the counters above it
-extern "C" void GXPC_HudPieceBegin(float x1, float x2);
-extern "C" void GXPC_HudPieceEnd(void);
+#include "sms_gx/gx_menu_layout.h"
 
 namespace {
 
@@ -318,7 +317,7 @@ void PauseTrackerDraw(const JDrama::TRect& viewport, u8 alpha)
 	J2DOrthoGraph graph(viewport);
 	graph.setPort(); // the menu's screen left its own projection
 	graph.setup2D();
-	GXPC_HudPieceBegin(kLeft - 10.0f, kLeft - 10.0f + kBrushW);
+	GXPC_MenuPieceBegin(gx::dock::BottomLeft, kLeft - 10.0f, kLeft - 10.0f + kBrushW);
 	nameRow(alpha);
 	const Tally& t = sTally[sWorld];
 	f32 y          = kShineY;
@@ -328,5 +327,5 @@ void PauseTrackerDraw(const JDrama::TRect& viewport, u8 alpha)
 	}
 	if (t.allBlueCoins)
 		counterRow(sBlueCoinArt, t.blueCoins, t.allBlueCoins, y, alpha);
-	GXPC_HudPieceEnd();
+	GXPC_MenuPieceEnd();
 }

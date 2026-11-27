@@ -169,6 +169,9 @@ PostSettings postSettings();
 void postApply(const PostSettings& settings);
 // The internal resolution (a scale of 640x528) and MSAA samples (0: none); false, with the old
 // ones kept, when the new buffers do not fit.
+bool rendererWindowFormat();
+void rendererRefit(int w, int h);
+void rendererDrawable(int w, int h);
 bool rendererResize(float scale, int msaa);
 int rendererMsaa();
 int rendererMaxSamples();

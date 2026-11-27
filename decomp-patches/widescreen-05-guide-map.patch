@@ -1,7 +1,7 @@
 Reason: port: with SMS_WIDESCREEN the map screen (TGuide) fills the wide frame, as the 16:9 map of later releases does, instead of a 4:3 sheet over the live game: its layout is widened as it loads (paper, bands and grid run to the screen edges, extra vertical grid lines are copied from the layout's own, the drawings beside the island move outward), it draws through sms_gx's GXPC_SetWide2D (4:3 scale, centred, past the 4:3 edges), and the cursor reaches the wider edges
 --- a/src/GC2D/Guide.cpp
 +++ b/src/GC2D/Guide.cpp
-@@ -44,6 +44,118 @@
+@@ -44,6 +44,120 @@
  }
  #endif
  
@@ -9,6 +9,7 @@ Reason: port: with SMS_WIDESCREEN the map screen (TGuide) fills the wide frame, 
 +// SMS_WIDESCREEN (platform): the displayed width over the GameCube's 4:3, 1
 +// when off.
 +extern "C" float port_widescreen;
++extern "C" int GXPC_WindowFormat();
 +// sms_gx: draw the following 2D at the 4:3 frame's scale, centred, and past
 +// its edges (0 goes back).
 +extern "C" void GXPC_SetWide2D(int on);
@@ -35,7 +36,8 @@ Reason: port: with SMS_WIDESCREEN the map screen (TGuide) fills the wide frame, 
 +		return;
 +	const int w     = screen->getWidth(); // the 4:3 frame (600 x 480)
 +	const int h     = screen->getHeight();
-+	const int extra = (int)(w * (port_widescreen - 1.0f) / 2.0f + 0.999f);
++	const float wide = GXPC_WindowFormat() ? 4.0f / 3.0f : port_widescreen;
++	const int extra = (int)(w * (wide - 1.0f) / 2.0f + 0.999f);
 +	const int shift = extra / 2;
 +	guide_wide_extra = extra;
 +

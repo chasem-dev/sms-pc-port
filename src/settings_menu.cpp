@@ -25,6 +25,7 @@
 #include <stdio.h>
 
 #include "port_menu_draw.h"
+#include "sms_gx/gx_menu_layout.h"
 #include "port_settings.h"
 #include "port_settings_menu.h"
 
@@ -310,11 +311,15 @@ void SettingsMenuDraw(const JDrama::TRect& screen)
 	for (char* c = heading; *c; c++)
 		if (*c >= 'a' && *c <= 'z')
 			*c -= 'a' - 'A';
+	GXPC_MenuPieceBegin(gx::dock::TopLeft);
 	text(heading, 28.0f, 14.0f, 22.0f, kWhite, LEFT, alpha);
+	GXPC_MenuPieceEnd();
+	GXPC_MenuPieceBegin(gx::dock::TopRight);
 	char position[24];
 	snprintf(position, sizeof position, "%d of %d", sSelected + 1, sRowCount);
 	text(position, width - 28.0f, 20.0f, 12.0f, kPale, RIGHT, alpha);
 
+	GXPC_MenuPieceEnd();
 	// the rows near the selection, sliding as it moves
 	const int first = (int)sFirst;
 	for (int i = first - 1; i <= first + kVisibleRows; i++) {
@@ -326,6 +331,7 @@ void SettingsMenuDraw(const JDrama::TRect& screen)
 		drawRow(i, y, alpha);
 	}
 
+	GXPC_MenuPieceBegin(gx::dock::Bottom);
 	// what the option does, or what went wrong; then, for the picture, how it is drawn now
 	const PortSetting* option = onPages() ? nullptr : optionAt(sSelected);
 	const char* note = sNote[0] ? sNote : option ? option->hint : "";
@@ -337,4 +343,5 @@ void SettingsMenuDraw(const JDrama::TRect& screen)
 	}
 	text(onPages() ? "@ Open     Hold + Preview     # Back" : "@ Change     Hold + Preview     # Back", width / 2,
 	     height - 36.0f, 15.0f, kWhite, CENTRE, alpha);
+	GXPC_MenuPieceEnd();
 }

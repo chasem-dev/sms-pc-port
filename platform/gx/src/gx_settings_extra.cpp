@@ -82,6 +82,8 @@ int offOnCount() { return 2; }
 const char* offOnName(int i) { return i == 1 ? "On" : i == 0 ? "Off" : ""; }
 
 // ------------------------------------------------------------------ screen format
+// What setupObjects used when it constructed this area's camera and menus.
+float s_areaWide = 1.0f;
 const float kSameWide = 0.002f;
 std::atomic<float> s_pendingWide{0.0f};  // the width chosen, 0 while it is the one in force
 
@@ -91,7 +93,7 @@ const Values& wideValues() {
     if (!built) {
         built = true;
         // the widths of 16:10, 16:9 and 21:9 over 4:3
-        list = numbers({1.0f, 1.2f, 4.0f / 3.0f, 1.75f}, GXPC_GetWidescreen(), kSameWide, [](float v, char* out, size_t n) {
+        list = numbers({1.0f, 1.2f, 4.0f / 3.0f, 1.75f}, rendererWindowFormat() ? 4.0f / 3.0f : GXPC_GetWidescreen(), kSameWide, [](float v, char* out, size_t n) {
             const auto is = [&](float w) { return fabsf(v - w) < kSameWide; };
             if (v < 1.0f + kSameWide) snprintf(out, n, "Original (4 by 3)");
             else if (is(1.2f)) snprintf(out, n, "16 by 10");
@@ -99,6 +101,8 @@ const Values& wideValues() {
             else if (is(1.75f)) snprintf(out, n, "21 by 9");
             else snprintf(out, n, "Wide %.2f", double(v * 4.0f / 3.0f));
         });
+        list.value.push_back(-1.0f);
+        list.name.push_back("Window");
     }
     return list;
 }
@@ -106,7 +110,7 @@ const Values& wideValues() {
 // The width the frame has, or will have once the next area is made.
 float wideAfter() {
     const float pending = s_pendingWide.load();
-    return pending > 0.0f ? pending : GXPC_GetWidescreen();
+    return pending != 0.0f ? pending : rendererWindowFormat() ? -1.0f : GXPC_GetWidescreen();
 }
 
 int wideAvailable() { return rendererReady(); }
@@ -118,17 +122,19 @@ int wideSet(int i) {
     const Values& list = wideValues();
     if (i < 0 || i >= int(list.value.size())) return 0;
     const float v = list.value[size_t(i)];
-    s_pendingWide = fabsf(v - GXPC_GetWidescreen()) < kSameWide ? 0.0f : v;
+    s_pendingWide = fabsf(v - (rendererWindowFormat() ? -1.0f : GXPC_GetWidescreen())) < kSameWide ? 0.0f : v;
     return 1;
 }
 
 // ------------------------------------------------------------------ screen icons at the edges
-int hudAvailable() { return rendererReady() && wideAfter() > 1.0f + kSameWide; }
-int hudGet() { return rendererHudEdges() ? 1 : 0; }
+int hudAvailable() { return rendererReady() && (wideAfter() < 0.0f || wideAfter() > 1.0f + kSameWide); }
+int hudCount() { return 3; }
+const char* hudName(int i) { return i == 2 ? "Screen edges" : i == 1 ? "Horizontal edges" : "16:9 area"; }
+int hudGet() { return rendererHudPosition(); }
 
 int hudSet(int i) {
-    if (i < 0 || i > 1) return 0;
-    rendererSetHudEdges(i == 1);
+    if (i < 0 || i >= hudCount()) return 0;
+    rendererSetHudPosition(i);
     return 1;
 }
 
@@ -296,10 +302,10 @@ int warmupSet(int i) {
 
 const PortSetting kSettings[] = {
     {"widescreen", PORT_SETTINGS_PAGE_DISPLAY, 50, "Screen Format",
-     "A wider view, with the HUD and menus kept in the middle. From the next area.", 1, wideAvailable, wideCount,
+     "Window fits the picture to the window. From the next area.", 1, wideAvailable, wideCount,
      wideName, wideGet, wideSet},
-    {"hudEdges", PORT_SETTINGS_PAGE_DISPLAY, 55, "Screen Icons At Edges",
-     "With a wide view, moves the HUD's counters to the edges of the screen.", 0, hudAvailable, offOnCount, offOnName,
+    {"hudEdges", PORT_SETTINGS_PAGE_DISPLAY, 55, "HUD Position",
+     "Screen edges docks the HUD and menu chrome. The content stays centred.", 0, hudAvailable, hudCount, hudName,
      hudGet, hudSet},
     {"hdr", PORT_SETTINGS_PAGE_DISPLAY, 110, "HDR",
      "Shows the picture in HDR. Needs Windows HDR turned on for this display.", 0, hdrToggleAvailable, offOnCount,
@@ -352,13 +358,18 @@ const PortSetting* gx_port_settings_extra(int* count) {
 // builds the frame at the width the menu chose, if it chose one, and returns the width in force.
 float GXPC_ApplyWidescreen(void) {
     const float want = s_pendingWide.exchange(0.0f);
-    if (want > 0.0f && rendererReady() && fabsf(want - GXPC_GetWidescreen()) >= kSameWide) {
+    if (want != 0.0f && rendererReady()) {
         bool ok = true;
-        glt::sync([&] { ok = rendererSetWide(want); });
+        glt::sync([&] { ok = rendererSetWide(want < 0.0f ? 0.0f : want); });
         if (!ok) logmsg("widescreen: a frame %.3f times 4:3 wide did not fit; keeping %.3f", double(want),
                         double(GXPC_GetWidescreen()));
     }
-    return GXPC_GetWidescreen();
+    s_areaWide = GXPC_GetWidescreen();
+    return s_areaWide;
+}
+
+float GXPC_HorizontalGain(void) {
+    return rendererWindowFormat() ? GXPC_GetWidescreen() / s_areaWide : 1.0f;
 }
 
 }  // extern "C"
