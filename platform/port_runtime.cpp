@@ -825,7 +825,7 @@ static const struct {
 	{ "hd_cutscenes", "SMS_HD_CUTSCENES" }, // a pack folder (plays without HD textures too); 0 disables
 	{ "eclipse_sunshine_movies", "SMS_ECLIPSE_SUNSHINE_MOVIES" }, // Sunshine disc for Eclipse's movies; 0 for none
 	{ "widescreen", "SMS_WIDESCREEN" },
-	{ "widescreen_hud", "SMS_WIDESCREEN_HUD" }, // centre or edges
+	{ "widescreen_hud", "SMS_WIDESCREEN_HUD" }, // centre, edges or screen
 	{ "frame_rate", "SMS_FRAME_RATE" },         // 30, 60 (default), or 120
 	{ "mod", "SMS_MOD" },
 	{ "character", "SMS_CHARACTER" }, // mario (default), or an archive in mods/characters/<id>.szs

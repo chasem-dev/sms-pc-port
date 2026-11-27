@@ -25,8 +25,8 @@ texture_packs = on
 # view; the HUD and menus stay at 4:3 in the middle.
 # window fits the drawable: more world above and below 16:9, or at the sides.
 widescreen = on
-# With widescreen, where the gameplay HUD goes: centre (with the menus), or
-# edges (counters to the left edge, the water gauge to the right one).
+# HUD position: centre (default), edges (legacy horizontal placement),
+# or screen (dock gameplay HUD groups at normal size).
 # widescreen_hud = centre
 
 # Frame rate for the title, file select, episode select and stages: 30 (GameCube

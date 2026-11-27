@@ -171,6 +171,7 @@ struct Words {
     Word words[7];
 };
 const Words kWords[] = {
+    {"hudEdges", {{"16:9 area", "false"}, {"Horizontal edges", "true"}, {"Screen edges", "\"screen\""}}},
     {"graphicsPreset", {{"Low", "\"low\""}, {"Medium", "\"medium\""}, {"High", "\"high\""}, {"Ultra", "\"ultra\""}, {"Custom", "\"custom\""}}},
     {"presentFilter", {{"Bilinear", "\"bilinear\""}, {"Sharp", "\"sharp\""}, {"Nearest", "\"nearest\""}, {"FSR 1", "\"fsr\""}, {"NIS", "\"nis\""}}},
     {"fsrMode", {{"Native", "\"native\""}, {"Quality", "\"quality\""}, {"Balanced", "\"balanced\""}, {"Performance", "\"performance\""},

@@ -128,11 +128,13 @@ int wideSet(int i) {
 
 // ------------------------------------------------------------------ screen icons at the edges
 int hudAvailable() { return rendererReady() && (wideAfter() < 0.0f || wideAfter() > 1.0f + kSameWide); }
-int hudGet() { return rendererHudEdges() ? 1 : 0; }
+int hudCount() { return 3; }
+const char* hudName(int i) { return i == 2 ? "Screen edges" : i == 1 ? "Horizontal edges" : "16:9 area"; }
+int hudGet() { return rendererHudPosition(); }
 
 int hudSet(int i) {
-    if (i < 0 || i > 1) return 0;
-    rendererSetHudEdges(i == 1);
+    if (i < 0 || i >= hudCount()) return 0;
+    rendererSetHudPosition(i);
     return 1;
 }
 
@@ -300,10 +302,10 @@ int warmupSet(int i) {
 
 const PortSetting kSettings[] = {
     {"widescreen", PORT_SETTINGS_PAGE_DISPLAY, 50, "Screen Format",
-     "A wider view, with the HUD and menus kept in the middle. From the next area.", 1, wideAvailable, wideCount,
+     "Window fits the picture to the window. From the next area.", 1, wideAvailable, wideCount,
      wideName, wideGet, wideSet},
-    {"hudEdges", PORT_SETTINGS_PAGE_DISPLAY, 55, "Screen Icons At Edges",
-     "With a wide view, moves the HUD's counters to the edges of the screen.", 0, hudAvailable, offOnCount, offOnName,
+    {"hudEdges", PORT_SETTINGS_PAGE_DISPLAY, 55, "HUD Position",
+     "Screen edges moves HUD groups without growing them.", 0, hudAvailable, hudCount, hudName,
      hudGet, hudSet},
     {"hdr", PORT_SETTINGS_PAGE_DISPLAY, 110, "HDR",
      "Shows the picture in HDR. Needs Windows HDR turned on for this display.", 0, hdrToggleAvailable, offOnCount,

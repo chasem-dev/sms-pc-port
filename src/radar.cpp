@@ -58,6 +58,7 @@
 #include <System/StageUtil.hpp>
 #include <dolphin/pad.h>
 #include <dolphin/gx.h>
+#include <dolphin/mtx.h>
 #include <dolphin/os.h>
 #include <math.h>
 #include <stdint.h>
@@ -68,6 +69,7 @@
 #include "port_framerate.h"
 #include "port_radar.h"
 #include "sms_modhook.h"
+#include "sms_gx/gx_radar_layout.h"
 
 extern "C" void* port_low_alloc(unsigned long size);
 extern "C" void GXPC_HudPaneBegin(float x1, float x2);
@@ -114,14 +116,8 @@ f32 sRadius   = kRadius;
 
 // SMS_RADAR_PLACE (radar_place): how the radar and the life meter share the
 // top right
-enum Place {
-	kCorner,     // corner: the top right, under the meter when it comes
-	kYield,      // yield: the top right, pushed down under the meter while it is there
-	kBeside,     // beside: the top right, a little smaller to the meter's left while it is there
-	kBelow,      // below: always under the meter's place, so neither moves
-	kBottomLeft, // bottom_left: the bottom left, across from the FLUDD gauge
-};
-Place sPlace = kYield;
+namespace RadarPlace = gx::RadarPlace;
+RadarPlace::Value sPlace = RadarPlace::Yield;
 // the life meter's place at rest (its back, l_ba, in the HUD's 2D units)
 const f32 kLifeX1 = 500.0f, kLifeY1 = 50.0f, kLifeX2 = 574.0f, kLifeY2 = 121.0f;
 const f32 kLifeRays    = 1.2f;  // its rays reach past its back: its round width, as a part of the back's
@@ -1040,7 +1036,7 @@ void RadarDraw(const JDrama::TRect& viewport, f32 lifeX1, f32 lifeY1, f32 lifeX2
 			static const char* const names[] = { "corner", "yield", "beside", "below", "bottom_left" };
 			for (int i = 0; i < (int)(sizeof names / sizeof names[0]); i++)
 				if (!strcmp(p, names[i]))
-					sPlace = (Place)i;
+					sPlace = static_cast<RadarPlace::Value>(i);
 		}
 		sWin[0].tex = (u8*)port_low_alloc(kWin * kWin * 4);
 		sWin[1].tex = (u8*)port_low_alloc(kWin * kWin * 4);
@@ -1086,55 +1082,72 @@ void RadarDraw(const JDrama::TRect& viewport, f32 lifeX1, f32 lifeY1, f32 lifeX2
 	const f32 mx = gpMarioPos->x, mz = gpMarioPos->z;
 	updateWindow(mx, mz);
 
-	// its place (Place): at the top right of the frame, clear of the HUD's
-	// lives counter, unless the life meter needs it
-	f32 R = sRadius, cx = viewport.x2 - kMargin - R, cy = viewport.y1 + kMargin + 6.0f + R;
-	// the meter in the radar's way: on screen and over its place (not in the
-	// middle of the frame, where it first comes in)
-	const bool life = lifeY2 > 0.0f && lifeY2 > lifeY1 && lifeX2 > cx - R && lifeX1 < cx + R && lifeY1 < cy + R;
-	switch (sPlace) {
-	case kCorner:
-		break;
-	case kYield: // riding down and up under it as it comes and goes
-		if (life && lifeY2 + kPlaceGap + R > cy)
-			cy = lifeY2 + kPlaceGap + R;
-		break;
-	case kBeside: // beside its place at rest, the rays clear
-		if (life) {
-			R *= kBesideScale;
-			cx = (kLifeX1 + kLifeX2) * 0.5f - (kLifeX2 - kLifeX1) * 0.5f * kLifeRays - kPlaceGap - R;
-			cy = (kLifeY1 + kLifeY2) * 0.5f;
-		}
-		break;
-	case kBelow:
-		cy = kLifeY2 + kPlaceGap + R;
-		break;
-	case kBottomLeft:
-		cx = viewport.x1 + kMargin + R;
-		cy = viewport.y2 - kMargin - 10.0f - R;
-		break;
-	}
-	if (sPlaceR <= 0.0f || sAlpha <= 0.125f * frames60) { // shown again: straight there
-		sPlaceX = cx;
-		sPlaceY = cy;
-		sPlaceR = R;
-	} else {
-		const f32 ease = 1.0f - powf(1.0f - kPlaceEase, frames60);
-		sPlaceX += (cx - sPlaceX) * ease;
-		sPlaceY += (cy - sPlaceY) * ease;
-		sPlaceR += (R - sPlaceR) * ease;
-	}
-	R  = sPlaceR;
-	cx = sPlaceX;
-	cy = sPlaceY;
-	const f32 mapR  = R * kMapR / (kTex * 0.5f); // the map's radius on screen
-	const f32 scale = mapR / sZoom;              // 2D units per world unit (x right, z down)
-
-	// a 2D of its own on the viewport (the HUD's has its own projection by now)
+	// Use the same projection for all draws, including the border, arrows and label.
 	J2DOrthoGraph graph(viewport);
 	graph.setPort();
 	graph.setup2D();
-	GXPC_HudPaneBegin(cx - R, cx + R);
+	gx::RadarLayout fitted;
+	const bool edgeFit = GXPC_RadarBegin(sPlace, sRadius, &fitted);
+	f32 R, cx, cy;
+	if (edgeFit) {
+		// Match the policy's full HUD viewport. The legacy radar's graph
+		// otherwise clips the extra space at the centred frame's scissor.
+		GXSetViewport(0, 0, 640, 448, 0.0f, 1.0f);
+		GXSetScissor(0, 0, 640, 448);
+		Mtx44 ortho;
+		C_MTXOrtho(ortho, 0.0f, 480.0f, 0.0f, 600.0f, -1.0f, 1.0f);
+		GXSetProjection(ortho, GX_ORTHOGRAPHIC);
+		R = fitted.radius;
+		cx = fitted.x;
+		cy = fitted.y;
+	} else {
+		// its place (Place): at the top right of the frame, clear of the HUD's
+		// lives counter, unless the life meter needs it
+		R = sRadius;
+		cx = viewport.x2 - kMargin - R;
+		cy = viewport.y1 + kMargin + 6.0f + R;
+		// the meter in the radar's way: on screen and over its place (not in the
+		// middle of the frame, where it first comes in)
+		const bool life = lifeY2 > 0.0f && lifeY2 > lifeY1 && lifeX2 > cx - R && lifeX1 < cx + R && lifeY1 < cy + R;
+		switch (sPlace) {
+		case RadarPlace::Corner:
+			break;
+		case RadarPlace::Yield: // riding down and up under it as it comes and goes
+			if (life && lifeY2 + kPlaceGap + R > cy)
+				cy = lifeY2 + kPlaceGap + R;
+			break;
+		case RadarPlace::Beside: // beside its place at rest, the rays clear
+			if (life) {
+				R *= kBesideScale;
+				cx = (kLifeX1 + kLifeX2) * 0.5f - (kLifeX2 - kLifeX1) * 0.5f * kLifeRays - kPlaceGap - R;
+				cy = (kLifeY1 + kLifeY2) * 0.5f;
+			}
+			break;
+		case RadarPlace::Below:
+			cy = kLifeY2 + kPlaceGap + R;
+			break;
+		case RadarPlace::BottomLeft:
+			cx = viewport.x1 + kMargin + R;
+			cy = viewport.y2 - kMargin - 10.0f - R;
+			break;
+		}
+		if (sPlaceR <= 0.0f || sAlpha <= 0.125f * frames60) { // shown again: straight there
+			sPlaceX = cx;
+			sPlaceY = cy;
+			sPlaceR = R;
+		} else {
+			const f32 ease = 1.0f - powf(1.0f - kPlaceEase, frames60);
+			sPlaceX += (cx - sPlaceX) * ease;
+			sPlaceY += (cy - sPlaceY) * ease;
+			sPlaceR += (R - sPlaceR) * ease;
+		}
+		R  = sPlaceR;
+		cx = sPlaceX;
+		cy = sPlaceY;
+		GXPC_HudPaneBegin(cx - R, cx + R);
+	}
+	const f32 mapR  = R * kMapR / (kTex * 0.5f); // the map's radius on screen
+	const f32 scale = mapR / sZoom;              // 2D units per world unit (x right, z down)
 
 	// the map, a little past kMapR so the border's inner edge covers its own
 	const f32 perTexel = R / (kTex * 0.5f); // 2D units per texel of the border's texture
@@ -1197,8 +1210,16 @@ void RadarDraw(const JDrama::TRect& viewport, f32 lifeX1, f32 lifeY1, f32 lifeX2
 		// as the reach in metres (the system font has no %)
 		char label[24];
 		snprintf(label, sizeof label, "%d m", (int)(sZoom / 100.0f + 0.5f));
-		text(label, cx, cy + R + 2.0f, 13.0f, sAlpha * clamp01(sZoomShown / 15.0f));
+		const f32 labelH = 13.0f;
+		const f32 labelW = textWidth(label, labelH) + 3.0f;
+		text(label, cx, cy + R + 2.0f, edgeFit && labelW > 2 * R ? labelH * (2 * R - 3) / (labelW - 3) : labelH,
+		     sAlpha * clamp01(sZoomShown / 15.0f));
 	}
 
-	GXPC_HudPaneEnd();
+	if (edgeFit) {
+		GXPC_RadarEnd();
+		graph.setPort();
+	} else {
+		GXPC_HudPaneEnd();
+	}
 }

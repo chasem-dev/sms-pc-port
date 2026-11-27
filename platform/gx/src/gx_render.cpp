@@ -2,6 +2,7 @@
 // derived from the BP/XF registers, EFB copies (display and texture) and XFB
 // presentation.
 #include "gx_internal.h"
+#include "gx_hud_layout.h"
 #include "gx_window_layout.h"
 #include "gl_funcs.h"
 #include "gx_glcache.h"
@@ -94,9 +95,10 @@ float efbScale() { return s_scale; }
 static float s_wide = 1.0f, s_stretch = 1.0f;
 static int s_efbW = EFB_W, s_ox = 0;
 struct XMap {
-    float a = 1, b = 0, clip = 1, yScale = 1;
+    float a = 1, b = 0, clip = 1, yScale = 1, yOffset = 0;
 };
 static XMap s_xmap;
+static bool s_goTrailClip = false;
 // GXPC_SetSplitView (split-screen co-op): while on, everything drawn lands in
 // a part of the frame, as if that part were the whole: viewports, scissors,
 // EFB copies and their clears, and peeks are moved and scaled into it, after
@@ -112,9 +114,13 @@ static float splitY(float y) { return s_split.on ? s_split.y + y * s_split.sy : 
 // A scissor's columns (game x and width) in the EFB: into a draw's widescreen
 // mapping (the whole width stays whole), then a split view's part of the
 // frame, each rounded out to whole EFB pixels.
-static void scissorColumns(int& left, int& sw, const XMap& m) {
+static void scissorColumns(int& left, int& sw, const XMap& m, bool goTrailClip = false) {
     if (s_efbW != EFB_W) {
-        if (left <= 0 && left + sw >= EFB_W) {
+        if (goTrailClip) {
+            const int right = std::clamp<int>(left + sw, 0, EFB_W);
+            left = std::clamp<int>(left, 0, EFB_W) + s_ox;
+            sw = right + s_ox - left;
+        } else if (left <= 0 && left + sw >= EFB_W) {
             left = 0;
             sw = s_efbW;
         } else {
@@ -138,14 +144,23 @@ static bool s_wide2D = false;     // GXPC_SetWide2D: 2D the game laid out past t
 // is narrower than three quarters of the screen (wider ones are the HUD's
 // screen-sized containers), with everything in it (GXPC_HudPaneBegin), or
 // else a draw on its own.
-// SMS_WIDESCREEN_HUD=edges, or the settings menu's Screen Icons At Edges, is s_hudWanted; it
-// applies only in widescreen, and s_hudEdges is what is in force.
-static bool s_hudWanted = false, s_hudEdges = false, s_hud = false;
+// Keep the legacy horizontal choice and index for existing preferences.
+static HudPosition s_hudPosition = HudPosition::Centre;
+static bool s_hudEdges = false, s_hud = false, s_radarHud = false;
+static Dock s_dock = Dock::None;
+
+static bool screenEdgeHud() {
+    if (s_hudPosition != HudPosition::Screen) return false;
+    // Window's exact 16:9 drawable uses the reference layout unchanged.
+    if (s_windowFormat) return int64_t(s_drawW) * 9 != int64_t(s_drawH) * 16;
+    return s_efbW > EFB_W;
+}
 struct HudPane {
     float x1, x2;
+    Dock dock;
 };
-static std::vector<HudPane> s_hudPanes;  // the J2D panes being drawn, outermost first
-static float s_hudAnchor = -1.0f;        // the piece's centre (game x), -1 for none
+static std::vector<HudPane> s_hudPanes;
+static float s_hudAnchor = -1.0f;
 
 static float hudOffset(float at) {
     if (at < float(EFB_W) / 3) return 0.0f;
@@ -154,7 +169,7 @@ static float hudOffset(float at) {
 }
 // the offset of a centred draw whose own centre is at game x `at`
 static float centredOffset(float at) {
-    if (!s_hud || !s_hudEdges) return float(s_ox);
+    if (!s_hud || !s_hudEdges || screenEdgeHud()) return float(s_ox);
     return hudOffset(s_hudAnchor >= 0.0f ? s_hudAnchor : at);
 }
 // the game camera's aspect (TMarDirector: video width 660 * 0.91346 / 448)
@@ -1350,17 +1365,22 @@ static int efbWidthFor(float wide) { return wide > 1.0f ? (int(float(EFB_W) * wi
 
 // Everything the widescreen mapping derives from the width over 4:3. What was drawn under the old
 // mapping is flushed or gone by now, so the per-draw mapping starts over.
+static void clearHudPanes() {
+    s_hudPanes.clear();
+    s_hudAnchor = -1.0f;
+    s_dock = Dock::None;
+}
+
 static void setWide(float wide) {
     s_wide = wide;
     s_efbW = efbWidthFor(wide);
     s_ox = (s_efbW - EFB_W) / 2;
     s_stretch = float(s_efbW) / float(EFB_W);
-    s_hudEdges = s_hudWanted && s_efbW != EFB_W;
+    s_hudEdges = s_hudPosition == HudPosition::Horizontal && s_efbW != EFB_W;
     s_xmap = XMap();
     s_stretch2D = false;  // the game's faders set it again when they draw
     s_hud = false;
-    s_hudPanes.clear();
-    s_hudAnchor = -1.0f;
+    clearHudPanes();
 }
 
 // Changes the internal resolution, the MSAA sample count and the width over 4:3 while the game
@@ -1427,15 +1447,14 @@ void rendererRefit(int w, int h) {
 
 // Screen Icons At Edges (GXPC_SetHud): with the gameplay HUD not being drawn, which it is not
 // while the menu runs.
-void rendererSetHudEdges(bool on) {
+void rendererSetHudPosition(int position) {
     flushBatch();
-    s_hudWanted = on;
-    s_hudEdges = on && s_efbW != EFB_W;
+    s_hudPosition = static_cast<HudPosition>(position);
+    s_hudEdges = s_hudPosition == HudPosition::Horizontal && s_efbW != EFB_W;
     s_hud = false;
-    s_hudPanes.clear();
-    s_hudAnchor = -1.0f;
+    clearHudPanes();
 }
-bool rendererHudEdges() { return s_hudWanted; }
+int rendererHudPosition() { return static_cast<int>(s_hudPosition); }
 int rendererMsaa() { return s_msaa; }
 int rendererMaxSamples() { return s_maxSamples; }
 void rendererEfbSize(int* w, int* h) {
@@ -1453,7 +1472,10 @@ void rendererInit(float efbScale) {
         logmsg("WARNING: %s renders on the CPU and cannot keep the game at full speed. On Linux the 32-bit build "
                "gets a GPU driver only if its 32-bit GL libraries are installed; the 64-bit build "
                "(SMS_ARCH=64 ./build.sh) uses the system's driver.", renderer);
-    if (const char* e = getenv("SMS_WIDESCREEN_HUD")) s_hudWanted = !strcmp(e, "edges");
+    if (const char* e = getenv("SMS_WIDESCREEN_HUD")) {
+        s_hudPosition = !strcmp(e, "screen") ? HudPosition::Screen
+                     : !strcmp(e, "edges") ? HudPosition::Horizontal : HudPosition::Centre;
+    }
     const char* format = getenv("SMS_WIDESCREEN");
     s_windowFormat = format && !strcmp(format, "window");
     const WindowView view = windowView(s_drawW, s_drawH);
@@ -1707,10 +1729,11 @@ static void applyGlState() {
     if (sw < 0) sw = 0;
     if (sh < 0) sh = 0;
     glcCap(GL_SCISSOR_TEST, c.scissor, true);
-    scissorColumns(left, sw, s_xmap);
-    if (s_xmap.yScale != 1.0f && !(top <= 0 && top + sh >= 448)) {
-        const int t = int(floorf((top - 224) * s_xmap.yScale + 224));
-        sh = int(ceilf((top + sh - 224) * s_xmap.yScale + 224)) - t;
+    scissorColumns(left, sw, s_xmap, s_goTrailClip);
+    if (s_xmap.yScale != 1.0f && (s_goTrailClip || !(top <= 0 && top + sh >= hudFrameHeight))) {
+        const float centre = hudFrameHeight / 2;
+        const int t = int(floorf((top - centre) * s_xmap.yScale + centre + s_xmap.yOffset));
+        sh = int(ceilf((top + sh - centre) * s_xmap.yScale + centre + s_xmap.yOffset)) - t;
         top = t;
     }
     if (s_split.on) {  // into the split view's part of the frame
@@ -1870,8 +1893,9 @@ static void drawViewport(float vp[8]) {
         vp[4] = (vp[4] - 342.0f) * s_xmap.a + s_xmap.b + 342.0f;
         vp[0] *= s_xmap.a * s_xmap.clip;
     }
-    if (s_xmap.yScale != 1.0f) {
-        vp[5] = (vp[5] - 342.0f - 224.0f) * s_xmap.yScale + 224.0f + 342.0f;
+    if (s_xmap.yScale != 1.0f || s_xmap.yOffset != 0.0f) {
+        const float centre = hudFrameHeight / 2;
+        vp[5] = (vp[5] - 342.0f - centre) * s_xmap.yScale + centre + 342.0f + s_xmap.yOffset;
         vp[1] *= s_xmap.yScale;
     }
     if (s_split.on) {  // the split view's part of the frame
@@ -2400,6 +2424,14 @@ static XMap drawXMap() {
     // A sub-viewport used to render a texture must keep its EFB coordinates.
     if (s_tall != 1.0f && fabsf(fabsf(xff(XFR_VIEWPORT + 1)) * 2.0f - 448.0f) < 2.0f &&
         (m.a != s_stretch || m.clip != 1.0f)) m.yScale = 1.0f / s_tall;
+    if (s_radarHud || (s_dock != Dock::None && !s_wide2D && !s_stretch2D)) {
+        const auto layout = hudLayout(s_efbW, s_tall, s_radarHud ? Dock::None : s_dock);
+        m.a = layout.xScale;
+        m.clip = 1;
+        m.b = layout.xOffset;
+        m.yScale = layout.yScale;
+        m.yOffset = layout.yOffset;
+    }
     m.b = pixelAligned(m.b);
     return m;
 }
@@ -3574,16 +3606,23 @@ void GXPC_GetLastFrameStats(GXPCStats* out) {
 }
 
 void GXPC_SetHud(int on) {
-    if ((!s_hudEdges && !s_windowFormat) || s_hud == (on != 0)) return;
+    if ((!s_hudEdges && !s_windowFormat && !screenEdgeHud()) || s_hud == (on != 0)) return;
     flushBatch();
     s_hud = on != 0;
-    s_hudPanes.clear();
-    s_hudAnchor = -1.0f;
+    clearHudPanes();
 }
 
 // Anchor on the outermost pane that is a piece, not a container; the batch
 // queued so far keeps its mapping when the anchor moves to another side.
 static void hudReanchor() {
+    if (screenEdgeHud()) {
+        Dock next = Dock::None;
+        for (const auto& p : s_hudPanes) {
+            if (p.dock != Dock::None) { next = p.dock; break; }
+        }
+        if (next != s_dock) { flushBatch(); s_dock = next; }
+        return;
+    }
     float now = -1.0f;
     for (const HudPane& p : s_hudPanes) {
         if (p.x2 - p.x1 < float(EFB_W) * 3 / 4) {
@@ -3603,14 +3642,25 @@ void GXPC_SetObjectTint(uint32_t rgba) {
     s_objectTint = rgba;
 }
 
-void GXPC_HudPaneBegin(float x1, float x2) {
-    if (!s_hud) return;
-    s_hudPanes.push_back({std::min(x1, x2), std::max(x1, x2)});
+int GXPC_ScreenEdgeHud() { return screenEdgeHud(); }
+
+void GXPC_SetGoTrailClip(int on) {
+    if (s_goTrailClip == (on != 0)) return;
+    flushBatch();
+    s_goTrailClip = on != 0;
+}
+
+void GXPC_HudTaggedPane(unsigned tag, float x1, float x2) {
+    if (!s_hud || (!s_hudEdges && !screenEdgeHud())) return;
+    const auto dock = hudDock(tag);
+    s_hudPanes.push_back({std::min(x1, x2), std::max(x1, x2), dock});
     hudReanchor();
 }
 
+void GXPC_HudPaneBegin(float x1, float x2) { GXPC_HudTaggedPane(0, x1, x2); }
+
 void GXPC_HudPaneEnd(void) {
-    if (!s_hud || s_hudPanes.empty()) return;
+    if (s_hudPanes.empty()) return;
     s_hudPanes.pop_back();
     hudReanchor();
 }
@@ -3630,6 +3680,19 @@ void GXPC_HudPieceEnd(void) {
     GXPC_HudPaneEnd();
     if (!s_hudPieceInHud.back()) GXPC_SetHud(0);
     s_hudPieceInHud.pop_back();
+}
+
+bool GXPC_RadarBegin(RadarPlace::Value place, float radius, RadarLayout* layout) {
+    if (!s_hud || !screenEdgeHud()) return false;
+    *layout = radarLayout(s_efbW, s_tall, place, radius);
+    flushBatch();
+    s_radarHud = true;
+    return true;
+}
+
+void GXPC_RadarEnd() {
+    flushBatch();
+    s_radarHud = false;
 }
 
 void GXPC_SetSplitView(int on, float x, float y, float w, float h) {

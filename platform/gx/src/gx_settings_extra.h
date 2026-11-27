@@ -10,8 +10,8 @@ namespace gx {
 // with the old frame back, when the new one does not fit. The gameplay HUD's pieces at the screen
 // edges apply in widescreen only (the game thread).
 bool rendererSetWide(float widthOver43);
-void rendererSetHudEdges(bool on);
-bool rendererHudEdges();
+void rendererSetHudPosition(int position);
+int rendererHudPosition();
 
 // gx_hdr.cpp. The HDR picture's look. Paper white and peak are in nits and used with calibration
 // off; with it on they are what Windows reports (the auto ones). Contrast, saturation and
