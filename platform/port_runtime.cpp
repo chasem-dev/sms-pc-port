@@ -72,6 +72,27 @@ int port_skip_movies = 0;
 // opening movie (zz-movie-skip-02).
 extern "C" int port_skip_intro;
 int port_skip_intro = 0;
+
+extern "C" {
+int port_continue_pending = 0;
+int port_continue_entering_stage = 0;
+int port_continue_read_only = 0;
+}
+static constexpr char kContinuePreference[] = "start-in-latest-save.txt";
+static bool continue_preference;
+
+static void load_continue_preference()
+{
+	if (FILE* f = fopen(kContinuePreference, "r")) {
+		char value[8];
+		continue_preference = fgets(value, sizeof value, f) && !strcmp(value, "on\n")
+		                      && fgetc(f) == EOF && !ferror(f);
+		fclose(f);
+	}
+	port_continue_pending = port_continue_read_only = continue_preference;
+	if (port_continue_pending)
+		port_skip_intro = 1;
+}
 // SMS_HEAT_HAZE=0 turns off the heat-wave shimmer (patch zzz-heat-haze-01).
 extern "C" int port_heat_haze;
 int port_heat_haze = 1;
@@ -982,6 +1003,7 @@ extern "C" void port_init(int argc, char** argv)
 		port_skip_movies = *m && strcmp(m, "0") != 0;
 	if (const char* i = getenv("SMS_SKIP_INTRO"))
 		port_skip_intro = *i && strcmp(i, "0") != 0;
+	load_continue_preference();
 	if (const char* p = getenv("SMS_PRECISE_TIMER"))
 		port_set_precise_timer(*p && strcmp(p, "0") != 0 && strcmp(p, "off") != 0);
 	if (port_precise_timer())
@@ -1097,7 +1119,33 @@ int precise_timer_available()
 int precise_timer_get() { return port_precise_timer() != 0; }
 int precise_timer_set(int v) { port_set_precise_timer(v != 0); return 1; }
 
+int continue_get() { return continue_preference; }
+int continue_set(int v)
+{
+	const char* temp = "start-in-latest-save.txt.tmp";
+	if (FILE* f = fopen(temp, "w")) {
+		const bool written = fputs(v ? "on\n" : "off\n", f) >= 0;
+		if (fclose(f) == 0 && written) {
+#ifdef _WIN32
+			const bool replaced = MoveFileExA(temp, kContinuePreference, MOVEFILE_REPLACE_EXISTING);
+#else
+			const bool replaced = rename(temp, kContinuePreference) == 0;
+#endif
+			if (replaced) {
+				continue_preference = v != 0;
+				return 1;
+			}
+		}
+		remove(temp);
+	}
+	port_log("[continue] could not save startup preference\n");
+	return 0;
+}
+
 const PortSetting kRuntimeSettings[] = {
+	{ NULL, PORT_SETTINGS_PAGE_GAMEPLAY, 21, "Start in latest save",
+	  "Load your newest saved file on the next launch. Turn off to choose a file at startup.",
+	  0, NULL, off_on_count, off_on_name, continue_get, continue_set },
 	{ "skipMovies", PORT_SETTINGS_PAGE_GAMEPLAY, 20, "Skip Cutscenes",
 	  "Skips story movies. Movies playing in the world, like the plaza's, still play.", 0, NULL, off_on_count,
 	  off_on_name, skip_movies_get, skip_movies_set },
