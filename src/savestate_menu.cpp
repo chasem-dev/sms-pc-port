@@ -40,8 +40,7 @@
 
 // sms_gx widescreen: with the HUD at the screen edges (SMS_WIDESCREEN_HUD=edges)
 // the list goes to the left edge and the pictures to the right one
-extern "C" void GXPC_HudPieceBegin(float x1, float x2);
-extern "C" void GXPC_HudPieceEnd(void);
+#include "sms_gx/gx_menu_layout.h"
 
 namespace {
 
@@ -278,7 +277,7 @@ void SaveStateMenuDraw(const JDrama::TRect& screen)
 	fill(width / 2, height / 2, width, height, 0.0f, 0x000014C8, alpha);
 
 	// the heading, with the buttons that opened it, over the list
-	GXPC_HudPieceBegin(kListX, kListX + kRowW);
+	GXPC_MenuPieceBegin(gx::dock::TopLeft, kListX, kListX + kRowW);
 	f32 x = 28.0f + text("LOAD SAVE STATE", 28.0f, 14.0f, 22.0f, kWhite, LEFT, alpha) + 12.0f;
 	PortSaveStateHint hint;
 	port_savestate_hint(&hint);
@@ -293,14 +292,18 @@ void SaveStateMenuDraw(const JDrama::TRect& screen)
 		}
 	}
 
+	GXPC_MenuPieceEnd();
+
 	if (sCount == 0) {
-		GXPC_HudPieceEnd();
 		text("No save states yet", width / 2, 180.0f, 20.0f, kWhite, CENTRE, alpha);
 		text("Save one in a level with the buttons above", width / 2, 210.0f, 13.0f, kPale, CENTRE, alpha);
+		GXPC_MenuPieceBegin(gx::dock::Bottom);
 		text("# Back", width / 2, height - 36.0f, 15.0f, kWhite, CENTRE, alpha);
+		GXPC_MenuPieceEnd();
 		return;
 	}
 
+	GXPC_MenuPieceBegin(gx::dock::Centre, kListX, kListX + kRowW);
 	// the list: the rows near the selection, sliding as it moves
 	const int first = (int)sListFirst;
 	for (int i = first - 1; i <= first + kListRows; i++) {
@@ -311,10 +314,10 @@ void SaveStateMenuDraw(const JDrama::TRect& screen)
 			continue;
 		drawRow(i, y, alpha);
 	}
-	GXPC_HudPieceEnd();
+	GXPC_MenuPieceEnd();
 
 	const f32 kPictureX = width - kPictureFromRight;
-	GXPC_HudPieceBegin(kPictureX - kPictureW / 2, width - 28.0f);
+	GXPC_MenuPieceBegin(gx::dock::Centre, kPictureX - kPictureW / 2, width - 28.0f);
 	// the pictures, scrolling as the list does: the selection in front, the
 	// states before and after it behind, above and below, where the stack
 	// has slid to (sShown); the farthest first
@@ -349,12 +352,17 @@ void SaveStateMenuDraw(const JDrama::TRect& screen)
 			cx += icon(sArt.life, cx, 362.0f, 20.0f, alpha) + 2.0f;
 			count(sArt, st->lives, cx, 363.0f, 16.0f, alpha);
 		}
+	}
+	GXPC_MenuPieceEnd();
+	if (st) {
+		GXPC_MenuPieceBegin(gx::dock::TopRight, kPictureX - kPictureW / 2, width - 28.0f);
 		char position[24];
 		snprintf(position, sizeof position, "%d of %d", sSelected + 1, sCount);
 		text(position, width - 28.0f, 20.0f, 12.0f, kPale, RIGHT, alpha);
+		GXPC_MenuPieceEnd();
 	}
-	GXPC_HudPieceEnd();
 
+	GXPC_MenuPieceBegin(gx::dock::Bottom);
 	// a note, then the buttons (the font's button glyphs, as the game writes them)
 	const char* note = sNote;
 	if (!note[0] && st && st->sameGame && !st->exact)
@@ -362,4 +370,5 @@ void SaveStateMenuDraw(const JDrama::TRect& screen)
 	if (note[0])
 		text(note, width / 2, height - 62.0f, 12.0f, kNoteColour, CENTRE, alpha);
 	text("@ Load     \xA5 Delete     # Back", width / 2, height - 36.0f, 15.0f, kWhite, CENTRE, alpha);
+	GXPC_MenuPieceEnd();
 }

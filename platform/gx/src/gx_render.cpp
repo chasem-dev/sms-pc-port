@@ -147,7 +147,8 @@ static bool s_wide2D = false;     // GXPC_SetWide2D: 2D the game laid out past t
 // Keep the legacy horizontal choice and index for existing preferences.
 static HudPosition s_hudPosition = HudPosition::Centre;
 static bool s_hudEdges = false, s_hud = false, s_radarHud = false;
-static Dock s_dock = Dock::None;
+static Dock s_dock = Dock::None, s_manualDock = Dock::None;
+static MenuScreen s_menuScreen = MenuScreen::None;
 
 static bool screenEdgeHud() {
     if (s_hudPosition != HudPosition::Screen) return false;
@@ -2424,8 +2425,9 @@ static XMap drawXMap() {
     // A sub-viewport used to render a texture must keep its EFB coordinates.
     if (s_tall != 1.0f && fabsf(fabsf(xff(XFR_VIEWPORT + 1)) * 2.0f - 448.0f) < 2.0f &&
         (m.a != s_stretch || m.clip != 1.0f)) m.yScale = 1.0f / s_tall;
-    if (s_radarHud || (s_dock != Dock::None && !s_wide2D && !s_stretch2D)) {
-        const auto layout = hudLayout(s_efbW, s_tall, s_radarHud ? Dock::None : s_dock);
+    const auto dock = s_manualDock == Dock::None ? s_dock : s_manualDock;
+    if (s_radarHud || (dock != Dock::None && !s_wide2D && !s_stretch2D)) {
+        const auto layout = hudLayout(s_efbW, s_tall, s_radarHud ? Dock::None : dock);
         m.a = layout.xScale;
         m.clip = 1;
         m.b = layout.xOffset;
@@ -3651,8 +3653,10 @@ void GXPC_SetGoTrailClip(int on) {
 }
 
 void GXPC_HudTaggedPane(unsigned tag, float x1, float x2) {
-    if (!s_hud || (!s_hudEdges && !screenEdgeHud())) return;
-    const auto dock = hudDock(tag);
+    if (!s_hud && s_menuScreen == MenuScreen::None) return;
+    if (!s_hudEdges && !screenEdgeHud()) return;
+    const auto dock = s_menuScreen != MenuScreen::None && s_menuScreen != MenuScreen::GameplayHud
+                      ? menuDock(s_menuScreen, tag) : hudDock(tag);
     s_hudPanes.push_back({std::min(x1, x2), std::max(x1, x2), dock});
     hudReanchor();
 }
@@ -3680,6 +3684,34 @@ void GXPC_HudPieceEnd(void) {
     GXPC_HudPaneEnd();
     if (!s_hudPieceInHud.back()) GXPC_SetHud(0);
     s_hudPieceInHud.pop_back();
+}
+
+gx::MenuScreen GXPC_MenuScreen(const char* name) {
+    if (!strcmp(name, "pause_1.blo")) return MenuScreen::Pause;
+    if (!strcmp(name, "load.blo")) return MenuScreen::Load;
+    if (!strcmp(name, "option.blo")) return MenuScreen::Option;
+    if (!strcmp(name, "scenario_select_1.blo")) return MenuScreen::Episode;
+    if (!strcmp(name, "standard_1.blo")) return MenuScreen::GameplayHud;
+    return MenuScreen::None;
+}
+
+MenuScreen GXPC_SetMenuScreen(MenuScreen screen) {
+    const auto previous = s_menuScreen;
+    if (screenEdgeHud() && s_menuScreen != screen) {
+        flushBatch();
+        s_menuScreen = screen;
+    }
+    return previous;
+}
+
+void GXPC_MenuPieceBegin(Dock dock, float left, float right) {
+    if (screenEdgeHud()) { flushBatch(); s_manualDock = dock; }
+    else if (left != right) GXPC_HudPieceBegin(left, right);
+}
+
+void GXPC_MenuPieceEnd() {
+    if (s_manualDock != Dock::None) { flushBatch(); s_manualDock = Dock::None; }
+    else GXPC_HudPieceEnd();
 }
 
 bool GXPC_RadarBegin(RadarPlace::Value place, float radius, RadarLayout* layout) {

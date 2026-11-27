@@ -56,10 +56,12 @@ def disc_file(disc, path):
     return disc.read(be32(fst, i * 12 + 4), be32(fst, i * 12 + 8))
 
 
-def yaz0(src):
+def yaz0(src, limit=None):
     if src[:4] != b"Yaz0":
-        return src
+        return src[:limit]
     size, out, s = be32(src, 4), bytearray(), 16
+    if limit is not None:
+        size = min(size, limit)
     while len(out) < size:
         code = src[s]
         s += 1

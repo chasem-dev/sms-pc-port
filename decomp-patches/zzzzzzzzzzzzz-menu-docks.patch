@@ -1,0 +1,107 @@
+Reason: identify menu chrome by its owning screen, not by shared child pane names.
+--- a/libs/JSystem/include/JSystem/J2D/J2DScreen.hpp
++++ b/libs/JSystem/include/JSystem/J2D/J2DScreen.hpp
+@@ -31,7 +31,12 @@
+ 
+ protected:
+ 	/* 0xEC */ bool mbClipToParent;
+-	/* 0xED */ char padding[3];
++#ifdef TARGET_PC
++	unsigned char mMenuScreen = 0; // draw role; keep the retail object layout
++	char padding[2];
++#else
++	char padding[3];
++#endif
+ 	/* 0xF0 */ JUtility::TColor mColor;
+ };
+ 
+--- a/libs/JSystem/src/J2D/J2DScreen.cpp
++++ b/libs/JSystem/src/J2D/J2DScreen.cpp
+@@ -7,6 +7,9 @@
+ #include <JSystem/JSupport/JSUMemoryInputStream.hpp>
+ #include <dolphin/gx.h>
+ #include <dolphin/os.h>
++#ifdef TARGET_PC
++#include "sms_gx/gx_menu_layout.h"
++#endif
+ 
+ J2DScreen::~J2DScreen() { }
+ 
+@@ -157,6 +160,9 @@
+ 
+ void J2DScreen::draw(int x, int y, const J2DGrafContext* pCtx)
+ {
++#ifdef TARGET_PC
++	const gx::MenuScreen previous = GXPC_SetMenuScreen(static_cast<gx::MenuScreen>(mMenuScreen));
++#endif
+ 	if (pCtx) {
+ 		J2DGrafContext ctx(*pCtx);
+ 		J2DPane::draw(x, y, pCtx, mbClipToParent);
+@@ -167,6 +173,9 @@
+ 		J2DPane::draw(x, y, &graph, mbClipToParent);
+ 		graph.setScissor();
+ 	}
++#ifdef TARGET_PC
++	GXPC_SetMenuScreen(previous);
++#endif
+ 	GXSetNumTexGens(0);
+ 	GXSetNumTevStages(1);
+ 	GXSetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
+@@ -189,6 +198,9 @@
+ J2DSetScreen::J2DSetScreen(const char* name, JKRArchive* arch)
+     : J2DScreen()
+ {
++#ifdef TARGET_PC
++	mMenuScreen = static_cast<unsigned char>(GXPC_MenuScreen(name));
++#endif
+ 	u8* res = (u8*)JKRGetNameResource(name, arch);
+ 	if (res) {
+ 		u32 sz = JKRFileLoader::getResSize(res, nullptr);
+--- a/src/GC2D/PauseMenu2.cpp
++++ b/src/GC2D/PauseMenu2.cpp
+@@ -48,8 +48,7 @@
+ 
+ // sms_gx widescreen: with the HUD at the screen edges (SMS_WIDESCREEN_HUD=edges)
+ // the hint goes to the right edge
+-extern "C" void GXPC_HudPieceBegin(float x1, float x2);
+-extern "C" void GXPC_HudPieceEnd(void);
++#include "sms_gx/gx_menu_layout.h"
+ 
+ // Port: the save state hint at the pause menu's top right (save states,
+ // port_savestate.h): SAVE_STATE's buttons, L1 + R1 by default, and "LOAD SAVE
+@@ -149,7 +148,7 @@
+ 	graph.setPort(); // the menu's screen left its own projection
+ 	graph.setup2D();
+ 	const f32 label = PauseHintTextWidth(font, kLabel, textSize);
+-	GXPC_HudPieceBegin(right - (buttons > label ? buttons : label), place.edge);
++	GXPC_MenuPieceBegin(gx::dock::TopRight, right - (buttons > label ? buttons : label), place.edge);
+ 	// a drop shadow, then the hint (the icons' shadow is their shape in black)
+ 	for (int pass = 0; pass < 2; pass++) {
+ 		const f32 offset = pass == 0 ? 2.0f : 0.0f;
+@@ -173,7 +172,7 @@
+ 		font->drawString_size_scale(right - label + offset, labelLine + offset, textSize, textSize, kLabel,
+ 		                            strlen(kLabel), false);
+ 	}
+-	GXPC_HudPieceEnd();
++	GXPC_MenuPieceEnd();
+ 	gfx->setScissor(gfx->getScissor());
+ }
+ 
+@@ -201,7 +200,7 @@
+ 	graph.setPort(); // the menu's screen left its own projection
+ 	graph.setup2D();
+ 	// at the right edge with the save state hint (widescreen_hud = edges)
+-	GXPC_HudPieceBegin(right - width, place.edge);
++	GXPC_MenuPieceBegin(gx::dock::TopRight, right - width, place.edge);
+ 	// a drop shadow, then the hint
+ 	for (int pass = 0; pass < 2; pass++) {
+ 		const f32 offset = pass == 0 ? 2.0f : 0.0f;
+@@ -210,7 +209,7 @@
+ 		font->drawString_size_scale(right - width + offset, labelLine + offset,
+ 		                            textSize, textSize, kLabel, strlen(kLabel), false);
+ 	}
+-	GXPC_HudPieceEnd();
++	GXPC_MenuPieceEnd();
+ 	gfx->setScissor(gfx->getScissor());
+ }
+ 

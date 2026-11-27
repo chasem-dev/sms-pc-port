@@ -55,7 +55,9 @@ jobs:
           ARCH: ${{ matrix.arch }}
         run: |
           cmake -S . -B build/window -DCMAKE_BUILD_TYPE=Release -DSMS_ARCH="$ARCH" -DSMS_GX_BUILD_TESTS=ON
-          cmake --build build/window --target gx_windowtest gx_windowsmoke gx_borderlesstest sms_thread_cancel_test -j2
+          cmake --build build/window --target gx_windowtest gx_hudtest gx_windowsmoke gx_borderlesstest sms_thread_cancel_test -j2
+      - name: Check screen layout classifications
+        run: ctest --test-dir build/window -R '^sms_screen_layouts$' --output-on-failure
       - name: Check that a cancelled thread never runs again
         run: ctest --test-dir build/window -R '^sms_thread_cancel_test$' --output-on-failure --timeout 120
       - name: Check window placement, fullscreen, and headless rendering
@@ -81,7 +83,7 @@ jobs:
           EOF
           chmod +x "$RUNNER_TEMP/bin/smoke"
           export PATH="$RUNNER_TEMP/bin:$PATH"
-          ctest --test-dir build/window/platform/gx -R '^gx_windowtest$' --output-on-failure
+          ctest --test-dir build/window/platform/gx -R '^gx_(windowtest|hudtest)$' --output-on-failure
           # SDL desktop fullscreen is managed by the desktop window manager.
           xvfb-run -a -s '-screen 0 1280x800x24' bash -e -c '
             # This path is used on Windows. Test its SDL calls before the X11

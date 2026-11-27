@@ -3,10 +3,10 @@
 #include <cmath>
 #include <cstdint>
 #include "gx_window_layout.h"
+#include "sms_gx/gx_menu_layout.h"
 #include "sms_gx/gx_radar_layout.h"
 
 namespace gx {
-enum class Dock { None, TopLeft, Top, TopRight, Right, BottomLeft, Bottom, BottomRight };
 enum class HudPosition { Centre, Horizontal, Screen };
 // GMSE01 game_6.szs / standard_1.blo. Identify the group at rest by
 // its pane tag, not by the animated position of a digit or its parent.
@@ -23,6 +23,20 @@ constexpr Dock hudDock(uint32_t tag) {
     default: return Dock::None;
     }
 }
+constexpr Dock menuDock(MenuScreen screen, unsigned tag) {
+    switch (screen) {
+    case MenuScreen::Pause: return tag == 'brek' ? Dock::Bottom : Dock::None;
+    case MenuScreen::Load: return tag == 'w_0' ? Dock::Top : tag == 'w_11' ? Dock::Bottom : Dock::None;
+    case MenuScreen::Option: return tag == 'w_0' ? Dock::Top : Dock::None;
+    case MenuScreen::Episode:
+        if (tag == 'msk1') return Dock::TopBand;
+        if (tag == 'msk2') return Dock::BottomBand;
+        if (tag == 'map' || tag == 'bi_0' || tag == 'rc_0' || tag == 'pi_0' || tag == 'mm_0' ||
+            tag == 'sr_0' || tag == 'mo_0' || tag == 'mr_0') return Dock::Top;
+        return Dock::None;
+    default: return Dock::None;
+    }
+}
 // In the EFB, vertical gain adds headroom inside the 448 displayed
 // lines. Return offsets in EFB units after the reference art is scaled.
 struct HudLayout { float xOffset, yScale, yOffset, xScale = 1; };
@@ -33,6 +47,8 @@ constexpr HudLayout hudLayout(int width, float tall, Dock dock) {
     const float sy = 1 / tall;
     const float padY = hudFrameHeight / 2 * (1 - sy);
     switch (dock) {
+    case Dock::TopBand: return {0, sy, -padY, width / hudFrameWidth};
+    case Dock::BottomBand: return {0, sy, padY, width / hudFrameWidth};
     case Dock::TopLeft: return {0, sy, -padY};
     case Dock::Top: return {padX, sy, -padY};
     case Dock::TopRight: return {2 * padX, sy, -padY};

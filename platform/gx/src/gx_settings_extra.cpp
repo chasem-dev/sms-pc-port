@@ -305,7 +305,7 @@ const PortSetting kSettings[] = {
      "Window fits the picture to the window. From the next area.", 1, wideAvailable, wideCount,
      wideName, wideGet, wideSet},
     {"hudEdges", PORT_SETTINGS_PAGE_DISPLAY, 55, "HUD Position",
-     "Screen edges moves HUD groups without growing them.", 0, hudAvailable, hudCount, hudName,
+     "Screen edges docks the HUD and menu chrome. The content stays centred.", 0, hudAvailable, hudCount, hudName,
      hudGet, hudSet},
     {"hdr", PORT_SETTINGS_PAGE_DISPLAY, 110, "HDR",
      "Shows the picture in HDR. Needs Windows HDR turned on for this display.", 0, hdrToggleAvailable, offOnCount,
