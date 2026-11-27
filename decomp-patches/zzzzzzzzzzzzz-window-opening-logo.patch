@@ -1,0 +1,31 @@
+--- a/src/GC2D/hx_wiper.c
++++ b/src/GC2D/hx_wiper.c
+@@ -191,6 +191,11 @@
+ 
+ static inline u32 Hx_HalfWidth(void) { return hx.width / 2; }
+ 
++#ifdef TARGET_PC
++extern int GXPC_WindowFormat(void);
++extern float GXPC_GetWidescreen(void);
++#endif
++
+ static void Hx_CameraInit(void)
+ {
+ 	static f32 camLoc[3] = { 320.0f, 240.0f, -30.0f };
+@@ -210,6 +215,16 @@
+ 	objPt[1]  = cy;
+ 
+ 	C_MTXOrtho(proj, cy, -cy, -cx, cx, near, far);
++#ifdef TARGET_PC
++	// The fader stretches its whole canvas. Keep the opening logo (wipe 12)
++	// and its pen strokes at the 16:9 width on wider Window drawables.
++	if (hx.wipeNo == 0xC && GXPC_WindowFormat()) {
++		const f32 wide = GXPC_GetWidescreen();
++		const f32 reference = 4.0f / 3.0f;  // 16:9 in units of 4:3
++		if (wide > reference)
++			proj[0][0] *= reference / wide;
++	}
++#endif
+ 	GXSetProjection(proj, GX_ORTHOGRAPHIC);
+ 	GXSetViewport(0.0f, 0.0f, 640.0f, 480.0f, 0.0f, 1.0f);
+ 	C_MTXLookAt(view, (Vec*)camLoc, (Vec*)up, (Vec*)objPt);
