@@ -10,8 +10,10 @@ struct WindowArea { int x, y, w, h; };
 struct WindowView { float wide, tall; };
 inline WindowView windowView(int w, int h) {
     const float reference = 16.0f / 9.0f;
+    const float referenceWide = 4.0f / 3.0f;
     const float aspect = w > 0 && h > 0 ? float(w) / h : reference;
-    return {std::max(aspect, reference) * 0.75f, std::max(1.0f, reference / aspect)};
+    // Clamp in 4:3 units: x87 can keep the scaled 16:9 aspect below the float 4:3 floor.
+    return {std::max(referenceWide, aspect * 0.75f), std::max(1.0f, reference / aspect)};
 }
 struct WindowBorders { int top, left, bottom, right; };
 
